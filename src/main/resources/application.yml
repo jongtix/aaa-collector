@@ -6,3 +6,26 @@ spring:
       enabled: true
   jackson:
     time-zone: Asia/Seoul
+
+logging:
+  pattern:
+    # 로컬 개발 전용. %m CRLF 방어 미적용 — 소비자가 개발자 본인이며 프로덕션은 ECS JSON 사용. 외부 파이프 또는 다중 개발자 환경으로 전환 시 %replace(%m){'\r\n|\r|\n',' '} 적용 필요.
+    console: "%clr(%d{yyyy-MM-dd HH:mm:ss.SSS}){faint} %clr([%5p]){} %clr([%8.8X{trace_id}]){blue} %clr(${PID:-}){magenta} %clr(--- [%15.15t]){faint} %clr(%-40.40logger{39}){cyan}%clr(:%L){faint} %clr(:){faint} %m%n%wEx"
+  file:
+    name: ${LOG_PATH:/var/log/aaa-collector}/aaa-collector.log
+  structured:
+    format:
+      file: ecs
+  logback:
+    rollingpolicy:
+      file-name-pattern: ${LOG_PATH:/var/log/aaa-collector}/aaa-collector.%d{yyyy-MM-dd}.%i.log.gz
+      max-file-size: 1GB
+      max-history: 30
+      total-size-cap: 50GB
+  level:
+    root: INFO
+    org.springframework: WARN
+    org.hibernate: WARN
+    io.lettuce: WARN
+    io.netty: WARN
+    com.aaa.collector: INFO
