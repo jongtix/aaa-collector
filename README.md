@@ -44,17 +44,11 @@ AAA (Algorithmic Alpha Advisor) 프로젝트의 데이터 수집 서비스.
 
 ```
 aaa-collector/
-├── config/
-│   ├── pmd/ruleset.xml          — PMD 룰셋
-│   └── spotbugs/exclude.xml     — SpotBugs 제외 필터
-├── docs/
-│   └── TODO.md                  — 작업 진행 상태 추적
-├── scripts/
-│   ├── pre-commit               — Git pre-commit hook
-│   └── pre-push                 — Git pre-push hook
-├── src/
-│   ├── main/java/com/aaa/collector/
-│   └── main/resources/
+├── config/                 — 정적 분석 도구 설정 (PMD, SpotBugs)
+├── docs/                   — 서비스 로컬 문서 (TODO)
+├── scripts/                — Git hook 스크립트
+├── src/main/               — 애플리케이션 소스 및 설정
+├── src/test/               — 단위 및 아키텍처 테스트
 ├── build.gradle.kts
 └── README.md
 ```

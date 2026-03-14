@@ -13,8 +13,8 @@
 - [x] KST 시간대 통일 설정
 - [x] Spotless / PMD / SpotBugs 코드 품질 도구 설정
 - [x] pre-commit / pre-push Git 훅 구성
-- [ ] 구조화 로그(JSON) + 민감 정보 마스킹 설정
-- [ ] Trace ID 생성 및 로그 포함
+- [x] 구조화 로그(JSON) + 민감 정보 마스킹 설정
+- [x] Trace ID 생성 및 로그 포함
 - [ ] Spring Boot Actuator `health`만 노출 — Swagger UI 프로덕션 비활성화
 - [ ] 컨테이너 `healthcheck` 설정 (`/actuator/health`)
 
