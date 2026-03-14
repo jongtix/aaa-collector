@@ -1,4 +1,11 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <FindBugsFilter>
-    <!-- 오탐 발생 시 여기에 추가 -->
+    <!--
+        MaskingLevel.mdcKeys: Set.of()로 생성된 불변 집합을 반환하므로 실제 노출 위험 없음.
+        SpotBugs가 반환 타입(Set)만 보고 오탐할 경우 대비.
+    -->
+    <Match>
+        <Class name="com.aaa.collector.common.logging.MaskingLevel"/>
+        <Bug pattern="EI_EXPOSE_REP"/>
+    </Match>
 </FindBugsFilter>

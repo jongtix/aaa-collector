@@ -27,6 +27,7 @@ dependencies {
 
     // --- Test ---
     testImplementation("org.springframework.boot:spring-boot-starter-test")      // JUnit 5, Mockito, AssertJ, Spring Test
+    testImplementation("com.tngtech.archunit:archunit-junit5:1.4.1")             // 아키텍처 규칙 검증
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")                // IDE/Gradle 테스트 실행 엔진
 
     // --- Static Analysis ---
