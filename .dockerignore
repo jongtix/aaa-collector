@@ -1,0 +1,40 @@
+# Git
+.git/
+.gitignore
+
+# Gradle
+.gradle/
+build/
+
+# IDE
+.idea/
+*.iws
+*.ipr
+.vscode/
+out/
+
+# Claude Code
+.claude/
+
+# OS
+.DS_Store
+
+# Environment & Secrets
+.env
+.env.*
+
+# Documentation
+docs/
+*.md
+
+# Static Analysis & Git Hooks
+config/
+scripts/
+
+# Logs
+*.log
+/logs/
+
+# Temporary
+*.tmp
+*.bak
