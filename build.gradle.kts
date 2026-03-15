@@ -23,12 +23,13 @@ repositories {
 
 dependencies {
     // --- Runtime ---
-    implementation("org.springframework.boot:spring-boot-starter-web")           // 내장 Tomcat, Spring MVC, Jackson
+    implementation("org.springframework.boot:spring-boot-starter-web")          // 내장 Tomcat, Spring MVC, Jackson
+    implementation("org.springframework.boot:spring-boot-starter-actuator")     // 헬스체크 엔드포인트
 
     // --- Test ---
-    testImplementation("org.springframework.boot:spring-boot-starter-test")      // JUnit 5, Mockito, AssertJ, Spring Test
-    testImplementation("com.tngtech.archunit:archunit-junit5:1.4.1")             // 아키텍처 규칙 검증
-    testRuntimeOnly("org.junit.platform:junit-platform-launcher")                // IDE/Gradle 테스트 실행 엔진
+    testImplementation("org.springframework.boot:spring-boot-starter-test")     // JUnit 5, Mockito, AssertJ, Spring Test
+    testImplementation("com.tngtech.archunit:archunit-junit5:1.4.1")            // 아키텍처 규칙 검증
+    testRuntimeOnly("org.junit.platform:junit-platform-launcher")               // IDE/Gradle 테스트 실행 엔진
 
     // --- Static Analysis ---
     spotbugsPlugins("com.h3xstream.findsecbugs:findsecbugs-plugin:1.14.0")

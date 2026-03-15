@@ -29,3 +29,12 @@ logging:
     io.lettuce: WARN
     io.netty: WARN
     com.aaa.collector: INFO
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health
+  endpoint:
+    health:
+      show-details: never
