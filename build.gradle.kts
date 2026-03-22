@@ -25,10 +25,18 @@ dependencies {
     // --- Runtime ---
     implementation("org.springframework.boot:spring-boot-starter-web")          // 내장 Tomcat, Spring MVC, Jackson
     implementation("org.springframework.boot:spring-boot-starter-actuator")     // 헬스체크 엔드포인트
+    implementation("org.springframework.boot:spring-boot-starter-data-redis")   // Redis 연동
+
+    // --- Lombok ---
+    compileOnly("org.projectlombok:lombok")                                     // 보일러플레이트 제거 (@Slf4j, @RequiredArgsConstructor 등)
+    annotationProcessor("org.projectlombok:lombok")
 
     // --- Test ---
     testImplementation("org.springframework.boot:spring-boot-starter-test")     // JUnit 5, Mockito, AssertJ, Spring Test
     testImplementation("com.tngtech.archunit:archunit-junit5:1.4.1")            // 아키텍처 규칙 검증
+    testImplementation("org.wiremock.integrations:wiremock-spring-boot:3.5.0")  // 외부 API mock 서버
+    testImplementation("org.testcontainers:testcontainers")                     // 컨테이너 기반 통합 테스트
+    testImplementation("org.testcontainers:junit-jupiter")                      // Testcontainers JUnit 5 확장
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")               // IDE/Gradle 테스트 실행 엔진
 
     // --- Static Analysis ---
