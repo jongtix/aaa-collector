@@ -9,6 +9,12 @@ spring:
       enabled: true
   jackson:
     time-zone: Asia/Seoul
+    property-naming-strategy: SNAKE_CASE
+  data:
+    redis:
+      host: ${REDIS_HOST}
+      port: ${REDIS_PORT}
+      password: ${REDIS_APPUSER_PASSWORD}
   lifecycle:
     timeout-per-shutdown-phase: 30s
 
@@ -34,6 +40,31 @@ logging:
     io.lettuce: WARN
     io.netty: WARN
     com.aaa.collector: INFO
+
+kis:
+  base-url: ${KIS_BASE_URL}
+  user-id: ${KIS_USER_ID}
+  accounts:
+    - alias: isa
+      account-number: ${KIS_ACCT_ISA_NUMBER}
+      app-key: ${KIS_ACCT_ISA_APP_KEY}
+      app-secret: ${KIS_ACCT_ISA_APP_SECRET}
+    - alias: gold
+      account-number: ${KIS_ACCT_GOLD_NUMBER}
+      app-key: ${KIS_ACCT_GOLD_APP_KEY}
+      app-secret: ${KIS_ACCT_GOLD_APP_SECRET}
+    - alias: pension
+      account-number: ${KIS_ACCT_PENSION_NUMBER}
+      app-key: ${KIS_ACCT_PENSION_APP_KEY}
+      app-secret: ${KIS_ACCT_PENSION_APP_SECRET}
+    - alias: stock
+      account-number: ${KIS_ACCT_STOCK_NUMBER}
+      app-key: ${KIS_ACCT_STOCK_APP_KEY}
+      app-secret: ${KIS_ACCT_STOCK_APP_SECRET}
+    - alias: dc
+      account-number: ${KIS_ACCT_DC_NUMBER}
+      app-key: ${KIS_ACCT_DC_APP_KEY}
+      app-secret: ${KIS_ACCT_DC_APP_SECRET}
 
 management:
   endpoints:
