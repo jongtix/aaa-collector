@@ -1,9 +1,10 @@
 package com.aaa.collector.common.logging;
 
 /**
- * 로그 마스킹 유틸리티 클래스.
+ * 범용 문자열 마스킹 유틸리티 클래스.
  *
- * <p>MDC에 값을 넣기 전 pre-masking(1차 방어)에 사용한다. 모든 메서드는 stateless이며 thread-safe하다.
+ * <p>MDC pre-masking(1차 방어), credential 로그 보호 등 다양한 목적으로 사용할 수 있다. 모든 메서드는 stateless이며
+ * thread-safe하다.
  */
 public final class LogMaskingUtils {
 

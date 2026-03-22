@@ -22,7 +22,7 @@ class LogMaskingUtilsTest {
         @Test
         @DisplayName("빈 문자열은 그대로 반환한다")
         void emptyStringReturnsEmpty() {
-            assertThat(LogMaskingUtils.maskFrontOnly("")).isEqualTo("");
+            assertThat(LogMaskingUtils.maskFrontOnly("")).isEmpty();
         }
 
         @Test
@@ -63,7 +63,7 @@ class LogMaskingUtilsTest {
         @Test
         @DisplayName("빈 문자열은 그대로 반환한다")
         void emptyStringReturnsEmpty() {
-            assertThat(LogMaskingUtils.maskFrontBack("")).isEqualTo("");
+            assertThat(LogMaskingUtils.maskFrontBack("")).isEmpty();
         }
 
         @Test
@@ -104,7 +104,7 @@ class LogMaskingUtilsTest {
         @Test
         @DisplayName("빈 문자열은 그대로 반환한다")
         void emptyStringReturnsEmpty() {
-            assertThat(LogMaskingUtils.maskBackOnly("")).isEqualTo("");
+            assertThat(LogMaskingUtils.maskBackOnly("")).isEmpty();
         }
 
         @Test
