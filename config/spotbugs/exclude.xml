@@ -8,4 +8,23 @@
         <Class name="com.aaa.collector.common.logging.MaskingLevel"/>
         <Bug pattern="EI_EXPOSE_REP"/>
     </Match>
+
+    <!--
+        EI_EXPOSE_REP2: Spring DI 생성자 주입 패턴.
+        싱글톤 Bean을 final 필드에 저장하는 표준 패턴이며, 방어적 복사가 불필요.
+        kis.token 패키지의 모든 Spring Bean에 적용.
+    -->
+    <Match>
+        <Package name="com.aaa.collector.kis.token"/>
+        <Bug pattern="EI_EXPOSE_REP2"/>
+    </Match>
+
+    <!--
+        KisProperties: @ConfigurationProperties record.
+        Spring Boot가 불변 리스트로 바인딩하므로 accounts() 반환값은 실제 mutable 아님.
+    -->
+    <Match>
+        <Class name="com.aaa.collector.kis.token.KisProperties"/>
+        <Bug pattern="EI_EXPOSE_REP"/>
+    </Match>
 </FindBugsFilter>

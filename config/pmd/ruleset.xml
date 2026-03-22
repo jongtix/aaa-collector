@@ -37,6 +37,13 @@
         <exclude name="ShortMethodName"/>
         <!-- package-private은 Java 언어 수준에서 명시적. Spotless와 충돌하므로 주석 강제 불필요 -->
         <exclude name="CommentDefaultAccessModifier"/>
+        <!-- SLF4J 관례: private static final Logger log = ... -->
+        <exclude name="FieldNamingConventions"/>
+    </rule>
+    <rule ref="category/java/codestyle.xml/FieldNamingConventions">
+        <properties>
+            <property name="staticFinalFieldPattern" value="[A-Z][A-Z_0-9]*|log"/>
+        </properties>
     </rule>
 
     <!-- Design -->
