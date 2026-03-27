@@ -4,7 +4,7 @@ FROM eclipse-temurin:21-jdk-alpine@sha256:fd10ef3691adde33aa57cd1070eedd4ecbe7ef
 WORKDIR /collector
 
 # Gradle wrapper + 빌드 설정 (의존성 레이어 캐시용 — src 변경 시 재다운로드 방지)
-COPY gradlew settings.gradle.kts build.gradle.kts ./
+COPY gradlew settings.gradle.kts build.gradle.kts gradle.properties ./
 COPY gradle/ gradle/
 RUN ./gradlew dependencies --no-daemon
 
@@ -17,7 +17,7 @@ RUN ./gradlew build -x test --no-daemon
 FROM eclipse-temurin:21-jre-alpine@sha256:693c22ea458d62395bac47a2da405d0d18c77b205211ceec4846a550a37684b6
 
 # 비루트 유저 생성 + 로그 디렉토리 준비 (read_only 컨테이너에서 collector 유저 쓰기 권한 보장)
-RUN addgroup -S collector && adduser -S collector -G collector \
+RUN addgroup -S -g 1004 collector && adduser -S -u 1004 collector -G collector \
     && mkdir -p /var/log/aaa-collector/dump && chown -R collector:collector /var/log/aaa-collector
 
 # 애플리케이션 JAR 복사
