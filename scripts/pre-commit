@@ -1,10 +1,10 @@
 #!/bin/sh
-# Pre-commit hook: Spotless + PMD (fast checks only)
-# SpotBugs → CI, Tests → pre-push
+# Pre-commit hook: Spotless (fast checks only)
+# PMD + Tests → pre-push, SpotBugs → CI
 
 echo "[pre-commit] Running code quality checks..."
 
-if ! ./gradlew spotlessCheck pmdMain pmdTest --daemon --quiet; then
+if ! ./gradlew spotlessCheck --daemon --quiet; then
     echo "[pre-commit] Code quality checks failed. Fix issues and try again."
     echo "[pre-commit] Run './gradlew spotlessApply' to auto-fix formatting."
     exit 1
