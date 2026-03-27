@@ -28,9 +28,9 @@
       }
     ],
     [
-      "gradle-semantic-release-plugin",
+      "@semantic-release/exec",
       {
-        "gradlePropertiesFile": "gradle.properties"
+        "prepareCmd": "sed -i 's/^version=.*/version=${nextRelease.version}/' gradle.properties"
       }
     ],
     [

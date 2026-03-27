@@ -62,7 +62,7 @@ jobs:
           -p @semantic-release/release-notes-generator@14.1.0
           -p @semantic-release/git@10.0.1
           -p @semantic-release/github@12.0.6
-          -p gradle-semantic-release-plugin@1.10.3
+          -p @semantic-release/exec@7.1.0
           -p conventional-changelog-conventionalcommits@9.3.0
           semantic-release
         env:
