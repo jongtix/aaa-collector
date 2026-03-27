@@ -8,9 +8,11 @@ COPY gradlew settings.gradle.kts build.gradle.kts gradle.properties ./
 COPY gradle/ gradle/
 RUN ./gradlew dependencies --no-daemon
 
-# 소스 복사 및 빌드 (테스트는 CI에서 실행)
+# 소스 복사 및 빌드
+# -x check: 정적 분석(spotbugsMain, spotbugsTest, pmdMain, pmdTest, spotlessCheck)과
+#           테스트는 CI(release.yml)에서 실행하므로 Docker 빌드에서는 JAR 생성만 수행
 COPY src/ src/
-RUN ./gradlew build -x test --no-daemon
+RUN ./gradlew build -x check --no-daemon
 
 # === Runtime stage ===
 # digest pin: 이미지 변경 시 docker manifest inspect로 AMD64 digest 재조회 필요
