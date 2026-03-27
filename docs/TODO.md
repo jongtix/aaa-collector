@@ -25,13 +25,13 @@
 - [x] 갱신 실패 처리: 최대 3회 재시도 → 실패 시 안전 모드 진입 + 로그 기록
 
 ### 1-3. CI/CD 파이프라인
-- [ ] GitHub Actions 워크플로우 작성 — Docker 이미지 빌드
-- [ ] GHCR(GitHub Container Registry) 이미지 푸시 설정
-- [ ] semantic-release 설정 — 커밋 기반 SemVer 자동 결정 (`feat` → minor, `fix` → patch, `!` → major)
-- [ ] Gitmoji + Conventional Commits 혼합 포맷 지원 (`headerPattern` 커스텀)
-- [ ] `gradle-semantic-release-plugin` 연동 — `gradle.properties` 자동 업데이트
-- [ ] Docker 이미지 3-태그 동시 push: `:v1.2.3` + `:latest` + `:sha-<commit>`
-- [ ] Dependabot 설정 — `gradle` + `github-actions` 에코시스템
+- [x] GitHub Actions 워크플로우 작성 — Docker 이미지 빌드
+- [x] GHCR(GitHub Container Registry) 이미지 푸시 설정
+- [x] semantic-release 설정 — 커밋 기반 SemVer 자동 결정 (`feat` → minor, `fix` → patch, `!` → major)
+- [x] Gitmoji + Conventional Commits 혼합 포맷 지원 (`headerPattern` 커스텀)
+- [x] `gradle-semantic-release-plugin` 연동 — `gradle.properties` 자동 업데이트
+- [x] Docker 이미지 3-태그 동시 push: `:v1.2.3` + `:latest` + `:sha-<commit>`
+- [x] Dependabot 설정 — `gradle` + `github-actions` 에코시스템
 - [ ] GitHub Push → GHCR 이미지 빌드 → Watchtower 자동 업데이트 흐름 동작 확인
 
 ### 1-4. DB 스키마 (Phase 1)
