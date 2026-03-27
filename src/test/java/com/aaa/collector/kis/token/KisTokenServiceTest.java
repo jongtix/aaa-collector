@@ -658,9 +658,7 @@ class KisTokenServiceTest {
                 .thenThrow(new RuntimeException("slow failure"));
 
         // Act
-        Thread issueAllThread =
-                Thread.ofVirtual()
-                        .start(interruptibleService::issueAll);
+        Thread issueAllThread = Thread.ofVirtual().start(interruptibleService::issueAll);
 
         // issueOne이 sleeper에 진입할 때까지 대기 후 issueAll 스레드를 인터럽트
         assertThat(issueOneStarted.await(5, TimeUnit.SECONDS))
