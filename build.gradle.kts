@@ -34,7 +34,7 @@ dependencies {
     // --- Test ---
     testImplementation("org.springframework.boot:spring-boot-starter-test")     // JUnit 5, Mockito, AssertJ, Spring Test
     testImplementation("com.tngtech.archunit:archunit-junit5:1.4.1")            // 아키텍처 규칙 검증
-    testImplementation("org.wiremock.integrations:wiremock-spring-boot:3.5.0")  // 외부 API mock 서버
+    testImplementation("org.wiremock.integrations:wiremock-spring-boot:4.2.1")  // 외부 API mock 서버
     testImplementation("org.testcontainers:testcontainers")                     // 컨테이너 기반 통합 테스트
     testImplementation("org.testcontainers:junit-jupiter")                      // Testcontainers JUnit 5 확장
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")               // IDE/Gradle 테스트 실행 엔진
