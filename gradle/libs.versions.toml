@@ -1,0 +1,37 @@
+[versions]
+spring-boot = "3.5.13"
+dependency-management = "1.1.7"
+spotless = "8.4.0"
+spotbugs = "6.4.8"
+pmd = "7.22.0"
+google-java-format = "1.35.0"
+archunit = "1.4.1"
+wiremock = "3.10.6"
+findsecbugs = "1.14.0"
+
+[libraries]
+# Spring Boot (버전은 spring-dependency-management가 관리)
+spring-boot-starter-web = { group = "org.springframework.boot", name = "spring-boot-starter-web" }
+spring-boot-starter-actuator = { group = "org.springframework.boot", name = "spring-boot-starter-actuator" }
+spring-boot-starter-data-redis = { group = "org.springframework.boot", name = "spring-boot-starter-data-redis" }
+spring-boot-starter-test = { group = "org.springframework.boot", name = "spring-boot-starter-test" }
+
+# Lombok
+lombok = { group = "org.projectlombok", name = "lombok" }
+
+# Test
+archunit = { group = "com.tngtech.archunit", name = "archunit-junit5", version.ref = "archunit" }
+wiremock-spring-boot = { group = "org.wiremock.integrations", name = "wiremock-spring-boot", version.ref = "wiremock" }
+testcontainers = { group = "org.testcontainers", name = "testcontainers" }
+testcontainers-junit = { group = "org.testcontainers", name = "junit-jupiter" }
+junit-platform-launcher = { group = "org.junit.platform", name = "junit-platform-launcher" }
+
+# Static Analysis
+pmd-java = { group = "net.sourceforge.pmd", name = "pmd-java", version.ref = "pmd" }
+findsecbugs = { group = "com.h3xstream.findsecbugs", name = "findsecbugs-plugin", version.ref = "findsecbugs" }
+
+[plugins]
+spring-boot = { id = "org.springframework.boot", version.ref = "spring-boot" }
+dependency-management = { id = "io.spring.dependency-management", version.ref = "dependency-management" }
+spotless = { id = "com.diffplug.spotless", version.ref = "spotless" }
+spotbugs = { id = "com.github.spotbugs", version.ref = "spotbugs" }

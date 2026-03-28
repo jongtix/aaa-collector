@@ -1,9 +1,9 @@
 plugins {
     java
-    id("org.springframework.boot") version "3.5.13"
-    id("io.spring.dependency-management") version "1.1.7"
-    id("com.diffplug.spotless") version "8.4.0"
-    id("com.github.spotbugs") version "6.4.8"
+    alias(libs.plugins.spring.boot)
+    alias(libs.plugins.dependency.management)
+    alias(libs.plugins.spotless)
+    alias(libs.plugins.spotbugs)
     pmd
 }
 
@@ -23,25 +23,25 @@ repositories {
 
 dependencies {
     // --- Runtime ---
-    implementation("org.springframework.boot:spring-boot-starter-web")          // 내장 Tomcat, Spring MVC, Jackson
-    implementation("org.springframework.boot:spring-boot-starter-actuator")     // 헬스체크 엔드포인트
-    implementation("org.springframework.boot:spring-boot-starter-data-redis")   // Redis 연동
+    implementation(libs.spring.boot.starter.web)          // 내장 Tomcat, Spring MVC, Jackson
+    implementation(libs.spring.boot.starter.actuator)     // 헬스체크 엔드포인트
+    implementation(libs.spring.boot.starter.data.redis)   // Redis 연동
 
     // --- Lombok ---
-    compileOnly("org.projectlombok:lombok")                                     // 보일러플레이트 제거 (@Slf4j, @RequiredArgsConstructor 등)
-    annotationProcessor("org.projectlombok:lombok")
+    compileOnly(libs.lombok)                                     // 보일러플레이트 제거 (@Slf4j, @RequiredArgsConstructor 등)
+    annotationProcessor(libs.lombok)
 
     // --- Test ---
-    testImplementation("org.springframework.boot:spring-boot-starter-test")     // JUnit 5, Mockito, AssertJ, Spring Test
-    testImplementation("com.tngtech.archunit:archunit-junit5:1.4.1")            // 아키텍처 규칙 검증
-    testImplementation("org.wiremock.integrations:wiremock-spring-boot:3.10.6")  // 외부 API mock 서버
-    testImplementation("org.testcontainers:testcontainers")                     // 컨테이너 기반 통합 테스트
-    testImplementation("org.testcontainers:junit-jupiter")                      // Testcontainers JUnit 5 확장
-    testImplementation("net.sourceforge.pmd:pmd-java:7.22.0")                   // PMD RuleSetLoader API — ruleset.xml 파싱 검증
-    testRuntimeOnly("org.junit.platform:junit-platform-launcher")               // IDE/Gradle 테스트 실행 엔진
+    testImplementation(libs.spring.boot.starter.test)     // JUnit 5, Mockito, AssertJ, Spring Test
+    testImplementation(libs.archunit)                      // 아키텍처 규칙 검증
+    testImplementation(libs.wiremock.spring.boot)          // 외부 API mock 서버
+    testImplementation(libs.testcontainers)                // 컨테이너 기반 통합 테스트
+    testImplementation(libs.testcontainers.junit)          // Testcontainers JUnit 5 확장
+    testImplementation(libs.pmd.java)                      // PMD RuleSetLoader API — ruleset.xml 파싱 검증
+    testRuntimeOnly(libs.junit.platform.launcher)          // IDE/Gradle 테스트 실행 엔진
 
     // --- Static Analysis ---
-    spotbugsPlugins("com.h3xstream.findsecbugs:findsecbugs-plugin:1.14.0")
+    spotbugsPlugins(libs.findsecbugs)
 }
 
 tasks.named<org.springframework.boot.gradle.tasks.bundling.BootJar>("bootJar") {
@@ -62,7 +62,7 @@ tasks.named<org.springframework.boot.gradle.tasks.run.BootRun>("bootRun") {
 // --- Spotless (코드 포맷 자동화) ---
 spotless {
     java {
-        googleJavaFormat("1.35.0").aosp()
+        googleJavaFormat(libs.versions.google.java.format.get()).aosp()
         removeUnusedImports()
         formatAnnotations()
         trimTrailingWhitespace()
@@ -84,7 +84,7 @@ tasks.withType<com.github.spotbugs.snom.SpotBugsTask> {
 
 // --- PMD (코드 품질 검사) ---
 pmd {
-    toolVersion = "7.22.0"
+    toolVersion = libs.versions.pmd.get()
     isConsoleOutput = true
     ruleSets = emptyList()
     ruleSetFiles = files("config/pmd/ruleset.xml")
