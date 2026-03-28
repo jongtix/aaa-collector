@@ -75,3 +75,6 @@ management:
   endpoint:
     health:
       show-details: never
+  health:
+    redis:
+      enabled: false
