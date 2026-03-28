@@ -37,6 +37,7 @@ dependencies {
     testImplementation("org.wiremock.integrations:wiremock-spring-boot:3.10.6")  // 외부 API mock 서버
     testImplementation("org.testcontainers:testcontainers")                     // 컨테이너 기반 통합 테스트
     testImplementation("org.testcontainers:junit-jupiter")                      // Testcontainers JUnit 5 확장
+    testImplementation("net.sourceforge.pmd:pmd-java:7.22.0")                   // PMD RuleSetLoader API — ruleset.xml 파싱 검증
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")               // IDE/Gradle 테스트 실행 엔진
 
     // --- Static Analysis ---
