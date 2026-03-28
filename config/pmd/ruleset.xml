@@ -42,7 +42,7 @@
     </rule>
     <rule ref="category/java/codestyle.xml/FieldNamingConventions">
         <properties>
-            <property name="staticFinalFieldPattern" value="[A-Z][A-Z_0-9]*|log"/>
+            <property name="constantPattern" value="[A-Z][A-Z_0-9]*|log"/>
         </properties>
     </rule>
 
