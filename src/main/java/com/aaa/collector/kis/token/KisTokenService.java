@@ -66,6 +66,10 @@ public class KisTokenService {
         this.accountLocks = buildAccountLocks(kisProperties, lockFactory);
     }
 
+    // PMD.UseConcurrentHashMap: 생성자에서 1회 호출되는 빌드 전용 메서드.
+    // HashMap은 로컬 변수이며 Map.copyOf()로 즉시 불변 맵으로 교체된다.
+    // ruleset 전역 제외 시 Virtual Threads 환경의 실제 동시성 버그를 놓칠 수 있어 메서드 단위로 억제한다.
+    @SuppressWarnings("PMD.UseConcurrentHashMap")
     private static Map<String, Lock> buildAccountLocks(
             KisProperties properties, LockFactory lockFactory) {
         Map<String, Lock> locks = new HashMap<>();
@@ -154,7 +158,6 @@ public class KisTokenService {
      * @throws KisTokenIssueException 락 획득 타임아웃, 인터럽트, 또는 최대 재시도 횟수 소진 후에도 발급 실패 시
      * @throws KisApiResponseException KIS API 응답 검증 실패 시 (재시도 없이 즉시 전파)
      */
-    @SuppressWarnings("PMD.AvoidCatchingGenericException") // 모든 예외를 재시도 대상으로 포착
     public String issueOne(KisAccountCredential credential) {
         String alias = credential.alias();
         Lock lock = accountLocks.get(alias);
@@ -181,7 +184,7 @@ public class KisTokenService {
         }
     }
 
-    @SuppressWarnings("PMD.AvoidCatchingGenericException")
+    @SuppressWarnings("PMD.AvoidCatchingGenericException") // 모든 예외를 재시도 대상으로 포착
     private String issueWithRetry(KisAccountCredential credential, String alias) {
         Exception lastException = null;
 
@@ -214,7 +217,7 @@ public class KisTokenService {
                     LocalDateTime.parse(response.accessTokenTokenExpired(), TOKEN_TIME_FORMATTER);
         } catch (DateTimeParseException e) {
             throw new KisApiResponseException(
-                    alias, "accessTokenTokenExpired 파싱 실패: " + e.getMessage());
+                    alias, "accessTokenTokenExpired 파싱 실패: " + e.getMessage(), e);
         }
         Duration ttl = calculateTtl(alias, expiredAt);
 

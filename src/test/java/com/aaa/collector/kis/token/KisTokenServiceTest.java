@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.timeout;
 import static org.mockito.Mockito.times;
@@ -16,6 +17,7 @@ import java.time.Duration;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
+import java.time.format.DateTimeParseException;
 import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.CountDownLatch;
@@ -243,7 +245,7 @@ class KisTokenServiceTest {
         // Arrange
         // tryLock이 즉시 false를 반환하는 mock Lock을 주입한다.
         // 실제 60초 대기 없이 타임아웃 경로를 검증할 수 있다.
-        Lock timeoutLock = org.mockito.Mockito.mock(Lock.class);
+        Lock timeoutLock = mock(Lock.class);
         when(timeoutLock.tryLock(anyLong(), any(TimeUnit.class))).thenReturn(false);
 
         KisTokenService serviceWithTimeoutLock =
@@ -272,7 +274,7 @@ class KisTokenServiceTest {
         // Arrange
         // tryLock 호출 시 InterruptedException을 던지는 mock Lock을 주입한다.
         // CountDownLatch + Thread 조합 없이 인터럽트 경로를 단순하게 검증한다.
-        Lock interruptibleLock = org.mockito.Mockito.mock(Lock.class);
+        Lock interruptibleLock = mock(Lock.class);
         when(interruptibleLock.tryLock(anyLong(), any(TimeUnit.class)))
                 .thenThrow(new InterruptedException("테스트용 인터럽트"));
 
@@ -347,7 +349,7 @@ class KisTokenServiceTest {
                 new KisTokenResponse(
                         null,
                         "Bearer",
-                        86400,
+                        86_400,
                         LocalDateTime.of(2026, 3, 19, 9, 0).format(TOKEN_TIME_FORMATTER));
         when(kisTokenClient.requestToken(credential)).thenReturn(response);
 
@@ -364,7 +366,7 @@ class KisTokenServiceTest {
     @DisplayName("requestAndSaveToken — accessTokenTokenExpired가 null이면 KisApiResponseException 발생")
     void requestAndSaveToken_nullExpiredAt_throwsKisApiResponseException() {
         // Arrange: accessToken=정상, accessTokenTokenExpired=null
-        KisTokenResponse response = new KisTokenResponse("valid-token", "Bearer", 86400, null);
+        KisTokenResponse response = new KisTokenResponse("valid-token", "Bearer", 86_400, null);
         when(kisTokenClient.requestToken(credential)).thenReturn(response);
 
         // Act & Assert
@@ -384,7 +386,7 @@ class KisTokenServiceTest {
                 new KisTokenResponse(
                         "",
                         "Bearer",
-                        86400,
+                        86_400,
                         LocalDateTime.of(2026, 3, 19, 9, 0).format(TOKEN_TIME_FORMATTER));
         when(kisTokenClient.requestToken(credential)).thenReturn(response);
 
@@ -405,7 +407,7 @@ class KisTokenServiceTest {
                 new KisTokenResponse(
                         "   ",
                         "Bearer",
-                        86400,
+                        86_400,
                         LocalDateTime.of(2026, 3, 19, 9, 0).format(TOKEN_TIME_FORMATTER));
         when(kisTokenClient.requestToken(credential)).thenReturn(response);
 
@@ -423,7 +425,7 @@ class KisTokenServiceTest {
             "requestAndSaveToken — accessTokenTokenExpired가 빈 문자열이면 KisApiResponseException 발생")
     void requestAndSaveToken_blankExpiredAt_throwsKisApiResponseException() {
         // Arrange: accessToken=정상, accessTokenTokenExpired=""
-        KisTokenResponse response = new KisTokenResponse("valid-token", "Bearer", 86400, "");
+        KisTokenResponse response = new KisTokenResponse("valid-token", "Bearer", 86_400, "");
         when(kisTokenClient.requestToken(credential)).thenReturn(response);
 
         // Act & Assert
@@ -441,12 +443,14 @@ class KisTokenServiceTest {
     void requestAndSaveToken_malformedExpiredAt_throwsKisApiResponseException() {
         // Arrange: accessToken=정상, accessTokenTokenExpired="2026/03/19" (yyyy/MM/dd 형식은 파싱 불가)
         KisTokenResponse response =
-                new KisTokenResponse("valid-token", "Bearer", 86400, "2026/03/19");
+                new KisTokenResponse("valid-token", "Bearer", 86_400, "2026/03/19");
         when(kisTokenClient.requestToken(credential)).thenReturn(response);
 
         // Act & Assert
         assertThatThrownBy(() -> kisTokenService.issueOne(credential))
-                .isInstanceOf(KisApiResponseException.class);
+                .isInstanceOf(KisApiResponseException.class)
+                .cause()
+                .isInstanceOf(DateTimeParseException.class);
 
         // Assert
         verify(kisTokenClient, times(1)).requestToken(credential);
@@ -676,6 +680,7 @@ class KisTokenServiceTest {
     // ── Helper ────────────────────────────────────────────────────────────────
 
     private KisTokenResponse tokenResponse(String token, LocalDateTime expiredAt) {
-        return new KisTokenResponse(token, "Bearer", 86400, expiredAt.format(TOKEN_TIME_FORMATTER));
+        return new KisTokenResponse(
+                token, "Bearer", 86_400, expiredAt.format(TOKEN_TIME_FORMATTER));
     }
 }

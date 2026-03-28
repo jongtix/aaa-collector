@@ -3,6 +3,7 @@ package com.aaa.collector.kis.token;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import java.util.ArrayList;
 import java.util.List;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -98,7 +99,7 @@ class KisPropertiesTest {
     @Test
     @DisplayName("accounts가 빈 리스트이면 IllegalArgumentException이 발생한다")
     void constructor_withEmptyAccounts_throwsIllegalArgumentException() {
-        var emptyList = List.<KisAccountCredential>of();
+        List<KisAccountCredential> emptyList = List.of();
         assertThatThrownBy(
                         () ->
                                 new KisProperties(
@@ -111,8 +112,7 @@ class KisPropertiesTest {
     @DisplayName("accounts는 방어 복사되어 불변 리스트로 저장된다")
     void constructor_accountsIsDefensivelyCopied() {
         // Arrange
-        java.util.ArrayList<KisAccountCredential> mutableList =
-                new java.util.ArrayList<>(DUMMY_ACCOUNTS);
+        List<KisAccountCredential> mutableList = new ArrayList<>(DUMMY_ACCOUNTS);
 
         // Act
         KisProperties props =
@@ -162,8 +162,8 @@ class KisPropertiesTest {
         KisProperties props =
                 new KisProperties("https://openapi.koreainvestment.com", "user", DUMMY_ACCOUNTS);
 
-        var accounts = props.accounts();
-        var element = DUMMY_ACCOUNTS.get(0);
+        List<KisAccountCredential> accounts = props.accounts();
+        KisAccountCredential element = DUMMY_ACCOUNTS.get(0);
         assertThatThrownBy(() -> accounts.add(element))
                 .isInstanceOf(UnsupportedOperationException.class);
     }

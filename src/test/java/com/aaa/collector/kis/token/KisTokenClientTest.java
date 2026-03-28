@@ -78,7 +78,7 @@ class KisTokenClientTest {
 
         assertThat(response.accessToken()).isEqualTo("test-token-123");
         assertThat(response.tokenType()).isEqualTo("Bearer");
-        assertThat(response.expiresIn()).isEqualTo(86400);
+        assertThat(response.expiresIn()).isEqualTo(86_400);
         assertThat(response.accessTokenTokenExpired()).isEqualTo("2026-03-17 08:30:00");
 
         wireMockServer.verify(

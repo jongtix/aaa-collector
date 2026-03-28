@@ -8,12 +8,30 @@
 
     <!-- Best Practices -->
     <rule ref="category/java/bestpractices.xml">
+        <!-- AssertJ의 서술형 API가 메시지 역할을 대체하므로 불필요 -->
         <exclude name="UnitTestAssertionsShouldIncludeMessage"/>
+        <!-- 임계값 5로 별도 설정 -->
+        <exclude name="UnitTestContainsTooManyAsserts"/>
+        <!-- info/warn은 프로덕션에서 항상 활성화 — guard 실익 없으므로 trace,debug만 검사 -->
+        <exclude name="GuardLogStatement"/>
+    </rule>
+    <rule ref="category/java/bestpractices.xml/UnitTestContainsTooManyAsserts">
+        <properties>
+            <property name="maximumAsserts" value="5"/>
+        </properties>
+    </rule>
+    <rule ref="category/java/bestpractices.xml/GuardLogStatement">
+        <properties>
+            <property name="logLevels" value="trace,debug"/>
+            <property name="guardsMethods" value="isTraceEnabled,isDebugEnabled"/>
+        </properties>
     </rule>
 
     <!-- Error Prone -->
     <rule ref="category/java/errorprone.xml">
+        <!-- Spring Boot 환경에서 Serializable 사용 빈도가 낮아 실익 없음 -->
         <exclude name="MissingSerialVersionUID"/>
+        <!-- 테스트 픽스처 리터럴 반복 허용 + 어노테이션 리터럴 제외로 별도 설정 -->
         <exclude name="AvoidDuplicateLiterals"/>
     </rule>
     <rule ref="category/java/errorprone.xml/AvoidDuplicateLiterals">
@@ -27,11 +45,16 @@
 
     <!-- Code Style (노이즈가 많은 룰 제외) -->
     <rule ref="category/java/codestyle.xml">
+        <!-- final 강제는 가독성 대비 실익 없음 — Spotless/컴파일러에 위임 -->
         <exclude name="MethodArgumentCouldBeFinal"/>
         <exclude name="LocalVariableCouldBeFinal"/>
+        <!-- 가드 절(early return) 패턴 허용 -->
         <exclude name="OnlyOneReturn"/>
+        <!-- record, @Component 등 생성자 자동 생성 클래스에서 불필요 -->
         <exclude name="AtLeastOneConstructor"/>
+        <!-- i, e, ex 등 관례적 짧은 변수명 허용 -->
         <exclude name="ShortVariable"/>
+        <!-- 서술적 변수명이 길어지는 것은 가독성에 기여 -->
         <exclude name="LongVariable"/>
         <!-- 팩토리 메서드 관례(Optional.of, Set.of 등)와 동일한 짧은 메서드명 허용 -->
         <exclude name="ShortMethodName"/>
@@ -39,6 +62,31 @@
         <exclude name="CommentDefaultAccessModifier"/>
         <!-- SLF4J 관례: private static final Logger log = ... -->
         <exclude name="FieldNamingConventions"/>
+        <!-- 테스트 메서드명 method_condition_expected 패턴 허용을 위해 별도 설정 -->
+        <exclude name="MethodNamingConventions"/>
+        <!-- 테스트 메서드명 toString_xxx, getXxx_xxx 패턴이 getter/transformer로 오탐되므로 별도 설정 -->
+        <exclude name="LinguisticNaming"/>
+        <!-- 테스트에서 Mockito/AssertJ/WireMock static import는 관례이므로 별도 설정 -->
+        <exclude name="TooManyStaticImports"/>
+    </rule>
+    <rule ref="category/java/codestyle.xml/TooManyStaticImports">
+        <properties>
+            <property name="violationSuppressXPath"
+                      value="//ClassDeclaration[ends-with(@SimpleName, 'Test')]"/>
+        </properties>
+    </rule>
+    <rule ref="category/java/codestyle.xml/LinguisticNaming">
+        <properties>
+            <property name="violationSuppressXPath"
+                      value="//ClassDeclaration[ends-with(@SimpleName, 'Test')]"/>
+        </properties>
+    </rule>
+    <rule ref="category/java/codestyle.xml/MethodNamingConventions">
+        <properties>
+            <!-- 테스트 클래스에서는 _ 허용 (method_condition_expected 패턴) -->
+            <property name="violationSuppressXPath"
+                      value="//ClassDeclaration[ends-with(@SimpleName, 'Test')]"/>
+        </properties>
     </rule>
     <rule ref="category/java/codestyle.xml/FieldNamingConventions">
         <properties>
@@ -48,19 +96,34 @@
 
     <!-- Design -->
     <rule ref="category/java/design.xml">
+        <!-- Builder/Stream/AssertJ 체이닝에서 과도한 오탐 발생 -->
         <exclude name="LawOfDemeter"/>
+        <!-- 패키지 간 결합도는 ArchUnit으로 관리 -->
         <exclude name="LoosePackageCoupling"/>
+        <!-- record, DTO 등 데이터 전용 클래스 허용 -->
         <exclude name="DataClass"/>
+        <!-- 임계값 20 + 테스트 클래스 제외로 별도 설정 -->
         <exclude name="TooManyMethods"/>
+        <!-- 테스트에서 mock/assertion/도메인 클래스 import가 많은 것은 자연스러우므로 별도 설정 -->
+        <exclude name="ExcessiveImports"/>
+    </rule>
+    <rule ref="category/java/design.xml/ExcessiveImports">
+        <properties>
+            <property name="violationSuppressXPath"
+                      value="//ClassDeclaration[ends-with(@SimpleName, 'Test')]"/>
+        </properties>
     </rule>
     <rule ref="category/java/design.xml/TooManyMethods">
         <properties>
             <property name="maxmethods" value="20"/>
+            <property name="violationSuppressXPath"
+                      value="//ClassDeclaration[ends-with(@SimpleName, 'Test')]"/>
         </properties>
     </rule>
 
     <!-- Multithreading -->
     <rule ref="category/java/multithreading.xml">
+        <!-- Virtual Threads(Executors.newVirtualThreadPerTaskExecutor) 사용을 위해 제외 -->
         <exclude name="DoNotUseThreads"/>
     </rule>
 

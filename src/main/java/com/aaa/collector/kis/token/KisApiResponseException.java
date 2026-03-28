@@ -16,4 +16,13 @@ public class KisApiResponseException extends CollectorException {
     public KisApiResponseException(String alias, String detail) {
         super("[" + alias + "] KIS API 응답 검증 실패: " + detail);
     }
+
+    /**
+     * @param alias 응답 검증에 실패한 계정 식별자
+     * @param detail 검증 실패 상세 내용
+     * @param cause 원인 예외
+     */
+    public KisApiResponseException(String alias, String detail, Throwable cause) {
+        super("[" + alias + "] KIS API 응답 검증 실패: " + detail, cause);
+    }
 }

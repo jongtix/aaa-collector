@@ -3,6 +3,7 @@ package com.aaa.collector.kis.token;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import java.util.List;
+import java.util.concurrent.locks.Lock;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.web.client.RestClient;
@@ -30,8 +31,8 @@ class KisTokenConfigTest {
     void lockFactory_withDifferentKeys_returnsDistinctLockInstances() {
         LockFactory lockFactory = kisTokenConfig.lockFactory();
 
-        var lock1 = lockFactory.create("key-a");
-        var lock2 = lockFactory.create("key-b");
+        Lock lock1 = lockFactory.create("key-a");
+        Lock lock2 = lockFactory.create("key-b");
 
         assertThat(lock1).isNotNull();
         assertThat(lock2).isNotNull();
@@ -43,8 +44,8 @@ class KisTokenConfigTest {
     void lockFactory_withSameKey_returnsNewLockInstanceEachTime() {
         LockFactory lockFactory = kisTokenConfig.lockFactory();
 
-        var lock1 = lockFactory.create("same-key");
-        var lock2 = lockFactory.create("same-key");
+        Lock lock1 = lockFactory.create("same-key");
+        Lock lock2 = lockFactory.create("same-key");
 
         assertThat(lock1).isNotSameAs(lock2);
     }

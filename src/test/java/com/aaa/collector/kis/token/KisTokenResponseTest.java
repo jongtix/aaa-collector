@@ -11,7 +11,7 @@ class KisTokenResponseTest {
 
     private static final String ACCESS_TOKEN = "test-access-token-value";
     private static final String TOKEN_TYPE = "Bearer";
-    private static final int EXPIRES_IN = 86400;
+    private static final int EXPIRES_IN = 86_400;
     private static final String ACCESS_TOKEN_TOKEN_EXPIRED = "2026-03-21 00:00:00";
 
     @Nested

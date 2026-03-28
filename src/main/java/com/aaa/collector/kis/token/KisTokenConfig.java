@@ -29,7 +29,7 @@ public class KisTokenConfig {
      */
     @Bean
     RestClient kisRestClient(RestClient.Builder restClientBuilder, KisProperties kisProperties) {
-        var settings =
+        ClientHttpRequestFactorySettings settings =
                 ClientHttpRequestFactorySettings.defaults()
                         .withConnectTimeout(CONNECT_TIMEOUT)
                         .withReadTimeout(READ_TIMEOUT);
