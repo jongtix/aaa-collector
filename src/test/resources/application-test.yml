@@ -1,0 +1,20 @@
+# KIS 프로퍼티 — 테스트용 더미 값
+kis:
+  base-url: https://localhost
+  user-id: testUser
+  accounts:
+    - alias: test
+      account-number: "12345678"
+      app-key: test-app-key
+      app-secret: test-app-secret
+
+# Redis 비밀번호 — 프로덕션은 환경변수 필수, 테스트는 빈 값으로 오버라이드
+spring:
+  data:
+    redis:
+      password: ""
+  # Redis auto-config 제외 — @SpringBootTest에서 Redis 연결 불필요
+  autoconfigure:
+    exclude:
+      - org.springframework.boot.autoconfigure.data.redis.RedisAutoConfiguration
+      - org.springframework.boot.autoconfigure.data.redis.RedisRepositoriesAutoConfiguration
