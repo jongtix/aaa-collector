@@ -32,7 +32,7 @@
 - [x] `gradle-semantic-release-plugin` 연동 — `gradle.properties` 자동 업데이트
 - [x] Docker 이미지 3-태그 동시 push: `:v1.2.3` + `:latest` + `:sha-<commit>`
 - [x] Dependabot 설정 — `gradle` + `github-actions` 에코시스템
-- [ ] GitHub Push → GHCR 이미지 빌드 → Watchtower 자동 업데이트 흐름 동작 확인
+- [x] GitHub Push → GHCR 이미지 빌드 → Watchtower 자동 업데이트 흐름 동작 확인
 
 ### 1-4. DB 스키마 (Phase 1)
 - [ ] KIS API 실제 응답 데이터 확인 후 스키마 설계
@@ -95,7 +95,7 @@
 - [ ] NAS 자원 모니터링 (디스크/RAM/CPU) + 3단계 임계치 알림
 
 ### 완료 기준
-- [ ] GitHub Push → GHCR 이미지 빌드 → Watchtower 자동 업데이트 흐름 동작 확인 (1-3에서 구현)
+- [x] GitHub Push → GHCR 이미지 빌드 → Watchtower 자동 업데이트 흐름 동작 확인 (1-3에서 구현)
 - [ ] 수집 누락률 < 1% (장중 기준)
 - [ ] 데이터 파이프라인 장애 시 자동 복구 (Fallback 체인 동작 확인)
 - [ ] 수집 지연 < 5초 (실시간 체결 기준)
