@@ -25,7 +25,11 @@ dependencies {
     // --- Runtime ---
     implementation(libs.spring.boot.starter.web)          // 내장 Tomcat, Spring MVC, Jackson
     implementation(libs.spring.boot.starter.actuator)     // 헬스체크 엔드포인트
+    implementation(libs.spring.boot.starter.data.jpa)     // JPA + Hibernate
     implementation(libs.spring.boot.starter.data.redis)   // Redis 연동
+    runtimeOnly(libs.mysql.connector)                     // MySQL JDBC 드라이버
+    runtimeOnly(libs.flyway.core)                         // Flyway 스키마 마이그레이션
+    runtimeOnly(libs.flyway.mysql)                        // Flyway MySQL 방언
 
     // --- Lombok ---
     compileOnly(libs.lombok)                                     // 보일러플레이트 제거 (@Slf4j, @RequiredArgsConstructor 등)
@@ -37,6 +41,10 @@ dependencies {
     testImplementation(libs.wiremock.spring.boot)          // 외부 API mock 서버
     testImplementation(libs.testcontainers)                // 컨테이너 기반 통합 테스트
     testImplementation(libs.testcontainers.junit)          // Testcontainers JUnit 5 확장
+    testImplementation(libs.testcontainers.mysql)          // Testcontainers MySQL
+    testImplementation(libs.spring.boot.testcontainers)    // @ServiceConnection 지원
+    testImplementation(libs.flyway.core)                    // 테스트에서 Flyway 빈 직접 참조
+    testRuntimeOnly(libs.commons.codec)                    // Testcontainers MySQLContainer가 요구하는 전이 의존성
     testImplementation(libs.pmd.java)                      // PMD RuleSetLoader API — ruleset.xml 파싱 검증
     testRuntimeOnly(libs.junit.platform.launcher)          // IDE/Gradle 테스트 실행 엔진
 

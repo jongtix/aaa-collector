@@ -13,17 +13,26 @@ findsecbugs = "1.14.0"
 # Spring Boot (버전은 spring-dependency-management가 관리)
 spring-boot-starter-web = { group = "org.springframework.boot", name = "spring-boot-starter-web" }
 spring-boot-starter-actuator = { group = "org.springframework.boot", name = "spring-boot-starter-actuator" }
+spring-boot-starter-data-jpa = { group = "org.springframework.boot", name = "spring-boot-starter-data-jpa" }
 spring-boot-starter-data-redis = { group = "org.springframework.boot", name = "spring-boot-starter-data-redis" }
 spring-boot-starter-test = { group = "org.springframework.boot", name = "spring-boot-starter-test" }
+
+# Database
+mysql-connector = { group = "com.mysql", name = "mysql-connector-j" }
+flyway-core = { group = "org.flywaydb", name = "flyway-core" }
+flyway-mysql = { group = "org.flywaydb", name = "flyway-mysql" }
 
 # Lombok
 lombok = { group = "org.projectlombok", name = "lombok" }
 
 # Test
+testcontainers-mysql = { group = "org.testcontainers", name = "mysql" }
 archunit = { group = "com.tngtech.archunit", name = "archunit-junit5", version.ref = "archunit" }
 wiremock-spring-boot = { group = "org.wiremock.integrations", name = "wiremock-spring-boot", version.ref = "wiremock" }
 testcontainers = { group = "org.testcontainers", name = "testcontainers" }
 testcontainers-junit = { group = "org.testcontainers", name = "junit-jupiter" }
+spring-boot-testcontainers = { group = "org.springframework.boot", name = "spring-boot-testcontainers" }
+commons-codec = { group = "commons-codec", name = "commons-codec" }
 junit-platform-launcher = { group = "org.junit.platform", name = "junit-platform-launcher" }
 
 # Static Analysis
