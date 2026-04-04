@@ -8,13 +8,12 @@ kis:
       app-key: test-app-key
       app-secret: test-app-secret
 
-# Redis 비밀번호 — 프로덕션은 환경변수 필수, 테스트는 빈 값으로 오버라이드
+# 프로덕션은 환경변수 필수, 테스트는 빈 값으로 오버라이드
 spring:
+  flyway:
+    # 빈 값 → Flyway가 datasource 계정으로 fallback (Testcontainers @ServiceConnection 활용)
+    user: ""
+    password: ""
   data:
     redis:
       password: ""
-  # Redis auto-config 제외 — @SpringBootTest에서 Redis 연결 불필요
-  autoconfigure:
-    exclude:
-      - org.springframework.boot.autoconfigure.data.redis.RedisAutoConfiguration
-      - org.springframework.boot.autoconfigure.data.redis.RedisRepositoriesAutoConfiguration

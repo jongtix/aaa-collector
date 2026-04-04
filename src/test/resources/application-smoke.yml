@@ -1,0 +1,13 @@
+# smoke 프로파일 — DB/Redis AutoConfiguration 전담 exclude
+# @SpringBootTest에서 실제 DB/Redis 연결이 불필요한 smoke 테스트용
+spring:
+  jpa:
+    auditing:
+      enabled: false # JPA AutoConfiguration이 exclude되므로 Auditing도 비활성화
+  autoconfigure:
+    exclude:
+      - org.springframework.boot.autoconfigure.jdbc.DataSourceAutoConfiguration
+      - org.springframework.boot.autoconfigure.orm.jpa.HibernateJpaAutoConfiguration
+      - org.springframework.boot.autoconfigure.flyway.FlywayAutoConfiguration
+      - org.springframework.boot.autoconfigure.data.redis.RedisAutoConfiguration
+      - org.springframework.boot.autoconfigure.data.redis.RedisRepositoriesAutoConfiguration

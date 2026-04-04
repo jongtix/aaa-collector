@@ -3,10 +3,12 @@ package com.aaa.collector.arch;
 import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.noClasses;
 import static com.tngtech.archunit.library.dependencies.SlicesRuleDefinition.slices;
 
+import com.aaa.collector.common.logging.SafeMdc;
 import com.tngtech.archunit.core.importer.ImportOption;
 import com.tngtech.archunit.junit.AnalyzeClasses;
 import com.tngtech.archunit.junit.ArchTest;
 import com.tngtech.archunit.lang.ArchRule;
+import org.slf4j.MDC;
 
 /**
  * MDC 및 패키지 아키텍처 규칙을 검증하는 ArchUnit 테스트.
@@ -28,9 +30,9 @@ class MdcArchitectureTest {
                     .that()
                     .resideInAPackage("com.aaa.collector..")
                     .and()
-                    .areNotAssignableTo(com.aaa.collector.common.logging.SafeMdc.class)
+                    .areNotAssignableTo(SafeMdc.class)
                     .should()
-                    .callMethod(org.slf4j.MDC.class, "put", String.class, String.class)
+                    .callMethod(MDC.class, "put", String.class, String.class)
                     .because(
                             "MDC.put()은 SafeMdc.put()을 통해서만 호출해야 한다."
                                     + " SafeMdc는 MaskingLevel 등록 키를 자동 마스킹하여 민감 데이터 누출을 방지한다.");
@@ -41,9 +43,9 @@ class MdcArchitectureTest {
                     .that()
                     .resideInAPackage("com.aaa.collector..")
                     .and()
-                    .areNotAssignableTo(com.aaa.collector.common.logging.SafeMdc.class)
+                    .areNotAssignableTo(SafeMdc.class)
                     .should()
-                    .callMethod(org.slf4j.MDC.class, "remove", String.class)
+                    .callMethod(MDC.class, "remove", String.class)
                     .because(
                             "MDC.remove()는 SafeMdc.remove()를 통해서만 호출해야 한다."
                                     + " 직접 호출 시 SafeMdc의 키 관리 정책을 우회할 수 있다.");
@@ -54,9 +56,9 @@ class MdcArchitectureTest {
                     .that()
                     .resideInAPackage("com.aaa.collector..")
                     .and()
-                    .areNotAssignableTo(com.aaa.collector.common.logging.SafeMdc.class)
+                    .areNotAssignableTo(SafeMdc.class)
                     .should()
-                    .callMethod(org.slf4j.MDC.class, "clear")
+                    .callMethod(MDC.class, "clear")
                     .because(
                             "MDC.clear()는 SafeMdc.clear()를 통해서만 호출해야 한다."
                                     + " 직접 호출 시 SafeMdc의 키 관리 정책을 우회할 수 있다.");
@@ -78,7 +80,8 @@ class MdcArchitectureTest {
                     .resideOutsideOfPackages(
                             "com.aaa.collector.common..",
                             "java..",
-                            "javax..",
+                            "jakarta..",
+                            "lombok..",
                             "org.slf4j..",
                             "org.springframework..",
                             "com.fasterxml..")
