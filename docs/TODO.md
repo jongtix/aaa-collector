@@ -35,21 +35,25 @@
 - [x] GitHub Push → GHCR 이미지 빌드 → Watchtower 자동 업데이트 흐름 동작 확인
 
 ### 1-4. DB 스키마 (Phase 1)
-- [ ] KIS API 실제 응답 데이터 확인 후 스키마 설계
-- [ ] 종목 마스터 테이블 설계 및 생성: `stocks`, `stock_grades`
-- [ ] 가격 데이터 테이블: `daily_ohlcv` (`asset_type` ENUM)
-- [ ] 시장 지표 테이블: `market_indicators` (환율, VIX)
-- [ ] 해외선물 테이블: `futures_daily`
-- [ ] 시간외 데이터 테이블: `extended_hours` (`session` ENUM)
-- [ ] 수급 데이터 테이블: `investor_trend`, `short_sale`, `credit_balance`
-- [ ] 거시경제 테이블: `macro_indicators` (금리종합, 증시자금종합 포함)
-- [ ] 재무제표 테이블: `financials`
-- [ ] 뉴스 테이블: `news_headlines`
-- [ ] 공시 테이블: `disclosures`
-- [ ] 기업 이벤트 테이블: `corporate_events`
-- [ ] 투자의견 테이블: `analyst_estimates`
-- [ ] 모든 시간 컬럼 `DATETIME` 사용 (`TIMESTAMP` 금지)
-- [ ] Unique Key 설정 (종목코드 + 타임스탬프) — 중복 INSERT 방지
+- [x] Flyway 의존성 추가 및 `ddl-auto=validate` 설정
+- [x] KIS API 실제 응답 데이터 확인 후 스키마 설계
+- [x] Priority 1: `stocks` 종목 마스터 테이블 설계 및 생성
+- [x] Priority 1: `daily_ohlcv` 가격 데이터 테이블
+- [x] Priority 1: `market_indicators` 시장 지표 테이블 (환율, VIX)
+- [x] Priority 1: `investor_trend` 투자자별 매매동향 테이블
+- [ ] Priority 2: `short_sale` 공매도 테이블
+- [ ] Priority 2: `macro_indicators` 거시경제 테이블 (금리종합, 증시자금종합 포함)
+- [ ] Priority 2: `credit_balance` 신용잔고 테이블
+- [ ] Priority 3: `stock_grades` 종목 등급 테이블
+- [ ] Priority 3: `futures_daily` 해외선물 테이블
+- [ ] Priority 3: `financials` 재무제표 테이블
+- [ ] Priority 3: `corporate_events` 기업 이벤트 테이블
+- [ ] Priority 3: `analyst_estimates` 투자의견 테이블
+- [ ] Priority 3: `news_headlines` 뉴스 테이블
+- [ ] Priority 4: `extended_hours` 시간외 데이터 테이블 (외부 API 스펙 미확정)
+- [ ] Priority 4: `disclosures` 공시 테이블 (외부 API 스펙 미확정)
+- [x] 모든 시간 컬럼 `DATETIME` 사용 (`TIMESTAMP` 금지)
+- [x] Unique Key 설정 (종목코드 + 타임스탬프) — 중복 INSERT 방지
 
 ### 1-5. 관심 종목 동기화
 - [ ] 장 시작 전 KIS API → DB 동기화 구현 — 1일 2회(07:30, 15:45 KST)
