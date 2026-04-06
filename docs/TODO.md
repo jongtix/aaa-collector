@@ -41,19 +41,27 @@
 - [x] Priority 1: `daily_ohlcv` 가격 데이터 테이블
 - [x] Priority 1: `market_indicators` 시장 지표 테이블 (환율, VIX)
 - [x] Priority 1: `investor_trend` 투자자별 매매동향 테이블
-- [ ] Priority 2: `short_sale` 공매도 테이블
-- [ ] Priority 2: `macro_indicators` 거시경제 테이블 (금리종합, 증시자금종합 포함)
-- [ ] Priority 2: `credit_balance` 신용잔고 테이블
-- [ ] Priority 3: `stock_grades` 종목 등급 테이블
-- [ ] Priority 3: `futures_daily` 해외선물 테이블
-- [ ] Priority 3: `financials` 재무제표 테이블
-- [ ] Priority 3: `corporate_events` 기업 이벤트 테이블
-- [ ] Priority 3: `analyst_estimates` 투자의견 테이블
-- [ ] Priority 3: `news_headlines` 뉴스 테이블
-- [ ] Priority 4: `extended_hours` 시간외 데이터 테이블 (외부 API 스펙 미확정)
-- [ ] Priority 4: `disclosures` 공시 테이블 (외부 API 스펙 미확정)
+- [x] Priority 2: `short_sale_domestic` / `short_sale_overseas` 공매도 테이블 (국내/미국 분리)
+- [x] Priority 2: `macro_indicators` 거시경제 테이블 (금리종합, 증시자금종합 포함)
+- [x] Priority 2: `credit_balance` 신용잔고 테이블
+- [x] Priority 3: `stock_grades` 종목 등급 테이블
+- [x] Priority 3: `futures_daily` 해외선물 테이블
+- [x] Priority 3: `financials` 재무제표 테이블
+- [x] Priority 3: `corporate_events` 기업 이벤트 테이블
+- [x] Priority 3: `analyst_estimates` 투자의견 테이블
+- [x] Priority 3: `news_headlines` 뉴스 테이블
 - [x] 모든 시간 컬럼 `DATETIME` 사용 (`TIMESTAMP` 금지)
 - [x] Unique Key 설정 (종목코드 + 타임스탬프) — 중복 INSERT 방지
+
+### 1-4a. GitHub Actions CD 전환 (Watchtower 대체)
+- [ ] NAS에 GitHub Actions self-hosted runner 설치
+- [ ] CD 워크플로 작성: `docker compose pull collector && docker compose up -d collector`
+- [ ] CD 워크플로 healthcheck 검증 단계 추가 (`/actuator/health` UP 상태 대기 루프)
+- [ ] Watchtower auto-restart 비활성화 (두 배포 메커니즘 race condition 방지)
+- [ ] Watchtower 컨테이너 제거 + ADR 업데이트 동시 수행
+
+### 1-4b. Package by Feature 리팩토링
+- [ ] `domain/` 중간 패키지 제거 — 하위 feature를 `com.aaa.collector` 직하로 이동 (ADR-010 준수)
 
 ### 1-5. 관심 종목 동기화
 - [ ] 장 시작 전 KIS API → DB 동기화 구현 — 1일 2회(07:30, 15:45 KST)
@@ -85,7 +93,8 @@
 - [ ] VIX 일봉 Fallback 체인: CBOE CDN → FRED → yfinance
 - [ ] Pre/After-Hours 1분봉: yfinance → Alpaca → Polygon.io (스냅샷 2~3회/일)
 - [ ] FINRA Daily Short Volume, FINRA Short Interest 수집
-- [ ] DART OpenAPI 공시 폴링 (분당 1000회 제한)
+- [ ] DART OpenAPI 공시 폴링 (분당 1000회 제한) + `disclosures` 테이블 추가 (API 스펙 확인 후)
+- [ ] `extended_hours` 테이블 추가 (yfinance/Alpaca/Polygon.io 응답 스펙 확인 후)
 - [ ] 한국은행 ECOS: 기준금리, CPI, GDP, 경상수지
 - [ ] FRED API: GDP, CPI, DFF, UNRATE, DGS10, VIXCLS (120 req/min)
 - [ ] Fallback 전환 시 Redis 카운터 기록
