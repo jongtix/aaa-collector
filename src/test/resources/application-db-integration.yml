@@ -1,6 +1,8 @@
 # db-integration 프로파일 — Testcontainers MySQL 연동 통합 테스트 전담
 # DataSource URL은 @ServiceConnection이 자동 주입하므로 별도 설정 불필요
 spring:
+  flyway:
+    validate-migration-naming: true
   jpa:
     hibernate:
       ddl-auto: validate
