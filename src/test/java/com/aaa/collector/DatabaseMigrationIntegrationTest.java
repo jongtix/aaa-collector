@@ -15,6 +15,9 @@ import org.testcontainers.containers.MySQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
+// 참고: deploy.yml의 마이그레이션 버전 파싱 스크립트(V*.sql → 최대 버전 번호 추출)는
+// Flyway의 validate-migration-naming: true 설정에 의해 비표준 파일명이 빌드 시점에
+// 차단되므로, 이 테스트가 스크립트 파싱 안전망 역할을 겸한다.
 @SpringBootTest
 @ActiveProfiles({"test", "db-integration"})
 @Testcontainers
