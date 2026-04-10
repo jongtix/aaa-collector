@@ -1,3 +1,5 @@
+-- ROLLBACK_SAFE: true
+-- 이유: 테이블 신규 생성. 구버전 앱에서 해당 테이블을 참조하지 않으므로 롤백 시 영향 없음.
 CREATE TABLE stocks (
     id          BIGINT AUTO_INCREMENT PRIMARY KEY,
     symbol      VARCHAR(16)  NOT NULL COMMENT '종목코드 (005930, AAPL, 0001 등)',

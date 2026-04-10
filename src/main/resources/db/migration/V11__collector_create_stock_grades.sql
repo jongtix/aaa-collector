@@ -1,3 +1,5 @@
+-- ROLLBACK_SAFE: true
+-- 이유: 테이블 신규 생성. 구버전 앱에서 해당 테이블을 참조하지 않으므로 롤백 시 영향 없음.
 CREATE TABLE stock_grades (
     id          BIGINT      NOT NULL AUTO_INCREMENT,
     stock_id    BIGINT      NOT NULL,
