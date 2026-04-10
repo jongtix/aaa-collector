@@ -48,6 +48,7 @@ public class NewsHeadline extends BaseEntity {
     @Column(name = "source", length = 20)
     private final String source;
 
+    // KIS API(FHKST01011800)가 iscd1~iscd5 최대 5개만 반환하므로 컬럼 분리로 충분
     @Column(name = "stock_code1", length = 9)
     private final String stockCode1;
 
