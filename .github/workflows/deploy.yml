@@ -1,0 +1,131 @@
+# Docker 워크플로(CI) 성공 후에만 배포 트리거 — 빌드 실패 시 배포 차단
+name: Deploy
+
+on:
+  workflow_run:
+    # Depends on: .github/workflows/docker.yml (name: "Docker")
+    workflows: ["Docker"]
+    types: [completed]
+
+permissions: {}  # 워크플로 전체 기본 권한 차단, job별 최소 권한 선언
+
+jobs:
+  deploy:
+    runs-on: self-hosted
+    timeout-minutes: 10
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    permissions:
+      contents: read  # checkout 전용, 그 외 권한 불필요
+
+    env:
+      AAA_INFRA_DIR: ${{ vars.AAA_INFRA_DIR }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+
+      - name: Check for new migrations
+        id: migration_check
+        run: |
+          # 프로젝트 시크릿은 'openssl rand -hex 24' 생성값(0-9, a-f)만 사용하므로
+          # export 접두사·CRLF·특수문자 없이 단순 KEY=VALUE 형식이 보장됨
+          _parse_env() { awk -F= -v key="$1" '$1==key{v=$2; gsub(/^[ \t"'"'"']+|[ \t"'"'"']+$/, "", v); print v; exit}' "$2"; }
+          AAA_SSD_BASE=$(_parse_env  'AAA_SSD_BASE'        "$AAA_INFRA_DIR/.env")
+          MYSQL_DATABASE=$(_parse_env 'MYSQL_DATABASE'      "$AAA_SSD_BASE/secrets/.env.common")
+          FLYWAY_PASS=$(_parse_env   'MYSQL_FLYWAY_PASSWORD' "$AAA_SSD_BASE/secrets/.env.collector")
+          echo "::add-mask::$FLYWAY_PASS"
+
+          if [ -z "$AAA_SSD_BASE" ] || [ -z "$MYSQL_DATABASE" ] || [ -z "$FLYWAY_PASS" ]; then
+            echo "has_migrations=true" >> $GITHUB_OUTPUT
+            echo "detail=환경변수 읽기 실패 — 안전을 위해 수동 처리" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          DB_VERSION=$(docker exec -e MYSQL_PWD="$FLYWAY_PASS" aaa-mysql \
+            mysql -uflyway "$MYSQL_DATABASE" \
+            -sNe "SELECT version FROM flyway_schema_history \
+                  WHERE success=1 ORDER BY installed_rank DESC LIMIT 1" \
+            2>/dev/null || echo "")
+
+          if [ -z "$DB_VERSION" ]; then
+            echo "has_migrations=true" >> $GITHUB_OUTPUT
+            echo "detail=DB 버전 조회 실패 — 안전을 위해 수동 처리" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          IMG_VERSION=$(ls src/main/resources/db/migration/V*.sql \
+            | sed -E 's/.*V([0-9]+)__.*/\1/' | sort -n | tail -1)
+
+          if [ -z "$IMG_VERSION" ]; then
+            echo "has_migrations=true" >> $GITHUB_OUTPUT
+            echo "detail=마이그레이션 파일 탐색 실패 — 안전을 위해 수동 처리" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          if [ "$IMG_VERSION" -gt "$DB_VERSION" ]; then
+            echo "has_migrations=true"  >> $GITHUB_OUTPUT
+            echo "detail=DB V${DB_VERSION} → Image V${IMG_VERSION} 마이그레이션 포함" >> $GITHUB_OUTPUT
+          else
+            echo "has_migrations=false" >> $GITHUB_OUTPUT
+            echo "detail=DB V${DB_VERSION} = Image V${IMG_VERSION} 스키마 동일" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Save current image digest
+        id: prev
+        run: |
+          PREV_DIGEST=$(docker inspect collector --format='{{index .RepoDigests 0}}' 2>/dev/null || echo "")
+          echo "prev_digest=$PREV_DIGEST" >> $GITHUB_OUTPUT
+
+      - name: Pull latest image
+        run: docker compose --project-directory "$AAA_INFRA_DIR" pull collector
+
+      - name: Deploy collector
+        # 컨테이너 헬스체크 통과까지 최대 3분 대기 (JVM cold start + healthcheck interval 포함)
+        run: docker compose --project-directory "$AAA_INFRA_DIR" up -d --wait --wait-timeout 180 collector
+
+      - name: Rollback on failure
+        id: rollback
+        if: failure() && steps.prev.outputs.prev_digest != '' && steps.migration_check.outputs.has_migrations == 'false'
+        env:
+          PREV_DIGEST: ${{ steps.prev.outputs.prev_digest }}
+        run: |
+          echo "Rolling back to $PREV_DIGEST..."
+          docker pull "$PREV_DIGEST"
+          COLLECTOR_IMAGE="$PREV_DIGEST" \
+            docker compose --project-directory "$AAA_INFRA_DIR" up -d --wait --wait-timeout 180 collector
+          echo "Rollback complete."
+
+      - name: Notify on failure
+        # Redis·캐시 포맷 변경은 자동 감지 불가 — 마이그레이션 없는 실패라도 롤백이 안전한지 보장할 수 없다.
+        # 자동 차단 대신 알림으로 운영자에게 위임: 수신 시 Redis Streams 메시지 포맷 변경 여부를 수동 확인.
+        if: always() && (failure() || steps.rollback.outcome != 'skipped')
+        env:
+          BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          HAS_MIGRATIONS: ${{ steps.migration_check.outputs.has_migrations }}
+          MIGRATION_DETAIL: ${{ steps.migration_check.outputs.detail }}
+          ROLLBACK_OUTCOME: ${{ steps.rollback.outcome }}
+          PREV_DIGEST: ${{ steps.prev.outputs.prev_digest }}
+          SHA: ${{ github.event.workflow_run.head_sha }}
+          BRANCH: ${{ github.event.workflow_run.head_branch }}
+        run: |
+          echo "::add-mask::$BOT_TOKEN"
+          echo "::add-mask::$CHAT_ID"
+          set +x
+          SHORT_SHA="${SHA:0:7}"
+          if [ "$HAS_MIGRATIONS" = "true" ]; then
+            TEXT="🚨 <b>aaa-collector 배포 실패</b>%0A⚠️ 마이그레이션 포함 — 수동 롤백 필요%0A${MIGRATION_DETAIL}%0A브랜치: ${BRANCH}%0A커밋: ${SHORT_SHA}"
+          elif [ "$ROLLBACK_OUTCOME" = "success" ]; then
+            SHORT_DIGEST="${PREV_DIGEST##*@}"
+            SHORT_DIGEST="${SHORT_DIGEST:0:15}"
+            TEXT="⚠️ <b>aaa-collector 배포 실패 — 자동 롤백 완료</b>%0A이전 이미지로 복구: ${SHORT_DIGEST}%0ARedis·캐시 포맷 변경 여부를 수동으로 확인하세요.%0A브랜치: ${BRANCH}%0A커밋: ${SHORT_SHA}"
+          else
+            TEXT="🚨 <b>aaa-collector 배포 실패 — 자동 롤백도 실패</b>%0A수동 개입이 필요합니다.%0A브랜치: ${BRANCH}%0A커밋: ${SHORT_SHA}"
+          fi
+          printf 'url = "https://api.telegram.org/bot%s/sendMessage"\n' "$BOT_TOKEN" \
+            | curl -sf -K - \
+              --data-urlencode "chat_id=${CHAT_ID}" \
+              --data-urlencode "parse_mode=HTML" \
+              --data-urlencode "text=${TEXT}"
