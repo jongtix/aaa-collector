@@ -5,6 +5,8 @@ on:
     branches:
       - main
 
+permissions: {}  # 워크플로 전체 기본 권한 차단, job별 최소 권한 선언
+
 jobs:
   # TODO: JDK + Gradle 설정이 3회 이상 반복될 경우 Reusable Workflow 추출 검토
   test:
