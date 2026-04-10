@@ -1,3 +1,5 @@
+-- ROLLBACK_SAFE: true
+-- 이유: 테이블 신규 생성. 구버전 앱에서 해당 테이블을 참조하지 않으므로 롤백 시 영향 없음.
 CREATE TABLE short_sale_domestic (
     id                      BIGINT        AUTO_INCREMENT PRIMARY KEY,
     stock_id                BIGINT        NOT NULL COMMENT 'stocks.id FK',
@@ -13,5 +15,6 @@ CREATE TABLE short_sale_domestic (
     created_at              DATETIME      NOT NULL,
     updated_at              DATETIME      NOT NULL,
     CONSTRAINT fk_short_sale_domestic_stock FOREIGN KEY (stock_id) REFERENCES stocks (id),
-    UNIQUE KEY uk_short_sale_domestic (stock_id, trade_date)
+    UNIQUE KEY uk_short_sale_domestic (stock_id, trade_date),
+    KEY idx_short_sale_domestic_trade_date (trade_date)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
