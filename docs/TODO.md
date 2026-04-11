@@ -61,7 +61,7 @@
 - [x] Watchtower 컨테이너 제거 + ADR 업데이트 동시 수행
 
 ### 1-4b. Package by Feature 리팩토링
-- [ ] `domain/` 중간 패키지 제거 — 하위 feature를 `com.aaa.collector` 직하로 이동 (ADR-010 준수)
+- [x] `domain/` 중간 패키지 제거 — 하위 feature를 `com.aaa.collector` 직하로 이동 (ADR-010 준수)
 
 ### 1-5. 관심 종목 동기화
 - [ ] 장 시작 전 KIS API → DB 동기화 구현 — 1일 2회(07:30, 15:45 KST)
