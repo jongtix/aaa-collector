@@ -114,15 +114,16 @@ jobs:
           echo "::add-mask::$BOT_TOKEN"
           echo "::add-mask::$CHAT_ID"
           set +x
+          NL=$'\n'
           SHORT_SHA="${SHA:0:7}"
           if [ "$HAS_MIGRATIONS" = "true" ]; then
-            TEXT="🚨 <b>aaa-collector 배포 실패</b>%0A⚠️ 마이그레이션 포함 — 수동 롤백 필요%0A${MIGRATION_DETAIL}%0A브랜치: ${BRANCH}%0A커밋: ${SHORT_SHA}"
+            TEXT="🚨 <b>aaa-collector 배포 실패</b>${NL}⚠️ 마이그레이션 포함 — 수동 롤백 필요${NL}${MIGRATION_DETAIL}${NL}브랜치: ${BRANCH}${NL}커밋: ${SHORT_SHA}"
           elif [ "$ROLLBACK_OUTCOME" = "success" ]; then
             SHORT_DIGEST="${PREV_DIGEST##*@}"
             SHORT_DIGEST="${SHORT_DIGEST:0:15}"
-            TEXT="⚠️ <b>aaa-collector 배포 실패 — 자동 롤백 완료</b>%0A이전 이미지로 복구: ${SHORT_DIGEST}%0ARedis·캐시 포맷 변경 여부를 수동으로 확인하세요.%0A브랜치: ${BRANCH}%0A커밋: ${SHORT_SHA}"
+            TEXT="⚠️ <b>aaa-collector 배포 실패 — 자동 롤백 완료</b>${NL}이전 이미지로 복구: ${SHORT_DIGEST}${NL}Redis·캐시 포맷 변경 여부를 수동으로 확인하세요.${NL}브랜치: ${BRANCH}${NL}커밋: ${SHORT_SHA}"
           else
-            TEXT="🚨 <b>aaa-collector 배포 실패 — 자동 롤백도 실패</b>%0A수동 개입이 필요합니다.%0A브랜치: ${BRANCH}%0A커밋: ${SHORT_SHA}"
+            TEXT="🚨 <b>aaa-collector 배포 실패 — 자동 롤백도 실패</b>${NL}수동 개입이 필요합니다.${NL}브랜치: ${BRANCH}${NL}커밋: ${SHORT_SHA}"
           fi
           printf 'url = "https://api.telegram.org/bot%s/sendMessage"\n' "$BOT_TOKEN" \
             | curl -sf -K - \
