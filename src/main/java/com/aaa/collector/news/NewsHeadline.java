@@ -1,4 +1,4 @@
-package com.aaa.collector.domain.news;
+package com.aaa.collector.news;
 
 import com.aaa.collector.common.entity.BaseEntity;
 import jakarta.persistence.Column;

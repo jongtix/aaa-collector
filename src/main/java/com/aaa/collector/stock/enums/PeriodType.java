@@ -1,4 +1,4 @@
-package com.aaa.collector.domain.stock.enums;
+package com.aaa.collector.stock.enums;
 
 /** 재무제표 결산 주기. */
 public enum PeriodType {

@@ -1,4 +1,4 @@
-package com.aaa.collector.domain.stock.enums;
+package com.aaa.collector.stock.enums;
 
 /**
  * 종목이 거래되는 시장.

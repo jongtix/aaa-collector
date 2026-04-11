@@ -1,4 +1,4 @@
-package com.aaa.collector.domain.futures;
+package com.aaa.collector.futures;
 
 import com.aaa.collector.common.entity.BaseEntity;
 import jakarta.persistence.Column;

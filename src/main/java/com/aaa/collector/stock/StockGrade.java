@@ -1,4 +1,4 @@
-package com.aaa.collector.domain.stock;
+package com.aaa.collector.stock;
 
 import com.aaa.collector.common.entity.BaseEntity;
 import jakarta.persistence.Column;

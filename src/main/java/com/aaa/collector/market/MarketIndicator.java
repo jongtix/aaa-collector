@@ -1,7 +1,7 @@
-package com.aaa.collector.domain.market;
+package com.aaa.collector.market;
 
 import com.aaa.collector.common.entity.BaseEntity;
-import com.aaa.collector.domain.market.enums.IndicatorCode;
+import com.aaa.collector.market.enums.IndicatorCode;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;

@@ -1,7 +1,7 @@
-package com.aaa.collector.domain.macro;
+package com.aaa.collector.macro;
 
 import com.aaa.collector.common.entity.BaseEntity;
-import com.aaa.collector.domain.macro.enums.MacroSource;
+import com.aaa.collector.macro.enums.MacroSource;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;

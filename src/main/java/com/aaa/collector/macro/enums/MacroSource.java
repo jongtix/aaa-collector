@@ -1,4 +1,4 @@
-package com.aaa.collector.domain.macro.enums;
+package com.aaa.collector.macro.enums;
 
 /**
  * 거시경제 지표 데이터 소스.

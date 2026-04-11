@@ -1,4 +1,4 @@
-package com.aaa.collector.domain.stock.enums;
+package com.aaa.collector.stock.enums;
 
 /** 자산 유형. */
 public enum AssetType {

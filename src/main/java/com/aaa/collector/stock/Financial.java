@@ -1,7 +1,7 @@
-package com.aaa.collector.domain.stock;
+package com.aaa.collector.stock;
 
 import com.aaa.collector.common.entity.BaseEntity;
-import com.aaa.collector.domain.stock.enums.PeriodType;
+import com.aaa.collector.stock.enums.PeriodType;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
