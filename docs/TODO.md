@@ -54,11 +54,11 @@
 - [x] Unique Key 설정 (종목코드 + 타임스탬프) — 중복 INSERT 방지
 
 ### 1-4a. GitHub Actions CD 전환 (Watchtower 대체)
-- [ ] NAS에 GitHub Actions self-hosted runner 설치
-- [ ] CD 워크플로 작성: `docker compose pull collector && docker compose up -d collector`
-- [ ] CD 워크플로 healthcheck 검증 단계 추가 (`/actuator/health` UP 상태 대기 루프)
-- [ ] Watchtower auto-restart 비활성화 (두 배포 메커니즘 race condition 방지)
-- [ ] Watchtower 컨테이너 제거 + ADR 업데이트 동시 수행
+- [x] NAS에 GitHub Actions self-hosted runner 설치
+- [x] CD 워크플로 작성: `docker compose pull collector && docker compose up -d collector`
+- [x] CD 워크플로 healthcheck 검증 단계 추가 (`/actuator/health` UP 상태 대기 루프)
+- [x] Watchtower auto-restart 비활성화 (두 배포 메커니즘 race condition 방지)
+- [x] Watchtower 컨테이너 제거 + ADR 업데이트 동시 수행
 
 ### 1-4b. Package by Feature 리팩토링
 - [ ] `domain/` 중간 패키지 제거 — 하위 feature를 `com.aaa.collector` 직하로 이동 (ADR-010 준수)
