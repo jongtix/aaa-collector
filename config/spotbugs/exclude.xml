@@ -27,4 +27,17 @@
         <Class name="com.aaa.collector.kis.token.KisProperties"/>
         <Bug pattern="EI_EXPOSE_REP"/>
     </Match>
+
+    <!--
+        KisGroupListResponse / KisStockListByGroupResponse: Jackson 역직렬화 전용 record.
+        output2 필드는 Jackson이 외부 JSON에서 채우는 읽기 전용 DTO이며, 방어적 복사 불필요.
+    -->
+    <Match>
+        <Class name="com.aaa.collector.watchlist.KisGroupListResponse"/>
+        <Bug pattern="EI_EXPOSE_REP,EI_EXPOSE_REP2"/>
+    </Match>
+    <Match>
+        <Class name="com.aaa.collector.watchlist.KisStockListByGroupResponse"/>
+        <Bug pattern="EI_EXPOSE_REP,EI_EXPOSE_REP2"/>
+    </Match>
 </FindBugsFilter>
