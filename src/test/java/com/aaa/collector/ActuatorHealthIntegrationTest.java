@@ -2,6 +2,7 @@ package com.aaa.collector;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.aaa.collector.stock.StockRepository;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -30,6 +31,10 @@ class ActuatorHealthIntegrationTest {
     @MockitoBean
     @SuppressWarnings("unused")
     private StringRedisTemplate redisTemplate;
+
+    @MockitoBean
+    @SuppressWarnings("unused")
+    private StockRepository stockRepository;
 
     @Test
     @DisplayName("GET /actuator/health → HTTP 200 반환")

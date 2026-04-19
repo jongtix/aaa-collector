@@ -2,29 +2,13 @@ package com.aaa.collector.kis.token;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import java.util.List;
 import java.util.concurrent.locks.Lock;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
-import org.springframework.web.client.RestClient;
 
 class KisTokenConfigTest {
 
     private final KisTokenConfig kisTokenConfig = new KisTokenConfig();
-
-    private static final List<KisAccountCredential> DUMMY_ACCOUNTS =
-            List.of(new KisAccountCredential("test", "12345678", "appkey", "appsecret"));
-
-    @Test
-    @DisplayName("kisRestClient — KisProperties baseUrl로 RestClient가 생성된다 (non-null)")
-    void kisRestClient_withValidProperties_returnsNonNullRestClient() {
-        KisProperties props =
-                new KisProperties("https://openapi.koreainvestment.com", "user", DUMMY_ACCOUNTS);
-
-        RestClient restClient = kisTokenConfig.kisRestClient(RestClient.builder(), props);
-
-        assertThat(restClient).isNotNull();
-    }
 
     @Test
     @DisplayName("lockFactory — 서로 다른 키에 대해 독립적인 Lock 인스턴스를 반환한다")
