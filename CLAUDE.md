@@ -36,6 +36,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - `precision`, `scale`, `length` 명시 — `ddl-auto=validate` 검증 대상
 - `BaseEntity`의 `createdAt`/`updatedAt`은 `nullable=false`, `updatable=false` 유지 — JPA Auditing 동작에 필요
 - `DEFAULT` 값은 Flyway DDL이 단독 관리 — 엔티티에서 `columnDefinition`으로 중복 선언하지 않음
+- `TINYINT`/`SMALLINT` 등 좁은 정수 컬럼은 `@JdbcTypeCode(Types.TINYINT)` + `int` 로 매핑 — Java 타입은 도메인 의미 기준(`int`), DB 타입 일치는 `@JdbcTypeCode`로 명시. `columnDefinition` 사용 금지
+
+## API Specs (`api-specs/kis/`)
+
+- KIS API 파라미터 Description의 `Unique key(N)` 표기는 해당 값(N)을 그대로 요청 파라미터로 사용한다는 의미
 
 ## Project Documents
 
