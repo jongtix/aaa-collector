@@ -131,6 +131,26 @@
     <rule ref="category/java/performance.xml"/>
 
     <!-- Custom Rules -->
+    <!-- Java 21 SequencedCollection API 사용 강제: get(0) → getFirst() -->
+    <rule name="UseGetFirst"
+          language="java"
+          message="Use getFirst() instead of get(0) (Java 21 SequencedCollection API)."
+          class="net.sourceforge.pmd.lang.rule.xpath.XPathRule">
+        <description>
+            Java 21의 SequencedCollection.getFirst()가 get(0)보다 의도를 명확히 표현한다.
+        </description>
+        <priority>3</priority>
+        <properties>
+            <property name="xpath">
+                <value>
+                    <![CDATA[
+                    //MethodCall[@MethodName='get'][ArgumentList/NumericLiteral[@Image='0']]
+                    ]]>
+                </value>
+            </property>
+        </properties>
+    </rule>
+
     <!-- Virtual Threads 환경에서 fixedDelay/fixedDelayString 사용 금지 (Spring Framework #31900, #31749) -->
     <rule name="NoFixedDelayScheduled"
           language="java"
