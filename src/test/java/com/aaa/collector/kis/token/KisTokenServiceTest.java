@@ -60,7 +60,12 @@ class KisTokenServiceTest {
     void setUp() {
         credential =
                 new KisAccountCredential("test", "12345678", "test-app-key", "test-app-secret");
-        kisProperties = new KisProperties("https://localhost", "testUser", List.of(credential));
+        kisProperties =
+                new KisProperties(
+                        "https://localhost",
+                        "testUser",
+                        List.of(credential),
+                        new KisProperties.RateLimit(20, 20));
         kisTokenService =
                 new KisTokenService(
                         kisProperties,
@@ -563,7 +568,10 @@ class KisTokenServiceTest {
                 new KisAccountCredential("stock", "87654321", "stock-app-key", "stock-app-secret");
         KisProperties multiAccountProperties =
                 new KisProperties(
-                        "https://localhost", "testUser", List.of(credential, secondCredential));
+                        "https://localhost",
+                        "testUser",
+                        List.of(credential, secondCredential),
+                        new KisProperties.RateLimit(20, 20));
         KisTokenService multiAccountService =
                 new KisTokenService(
                         multiAccountProperties,
@@ -597,7 +605,11 @@ class KisTokenServiceTest {
         KisAccountCredential accountB =
                 new KisAccountCredential("stock", "87654321", "stock-app-key", "stock-app-secret");
         KisProperties multiAccountProperties =
-                new KisProperties("https://localhost", "testUser", List.of(credential, accountB));
+                new KisProperties(
+                        "https://localhost",
+                        "testUser",
+                        List.of(credential, accountB),
+                        new KisProperties.RateLimit(20, 20));
         KisTokenService multiAccountService =
                 new KisTokenService(
                         multiAccountProperties,
