@@ -27,6 +27,8 @@ dependencies {
     implementation(libs.spring.boot.starter.actuator)     // 헬스체크 엔드포인트
     implementation(libs.spring.boot.starter.data.jpa)     // JPA + Hibernate
     implementation(libs.spring.boot.starter.data.redis)   // Redis 연동
+    implementation(libs.spring.retry)                      // @Retryable 재시도
+    implementation(libs.bucket4j)                          // KIS API TPS 20 rate limiting
     runtimeOnly(libs.mysql.connector)                     // MySQL JDBC 드라이버
     runtimeOnly(libs.flyway.core)                         // Flyway 스키마 마이그레이션
     runtimeOnly(libs.flyway.mysql)                        // Flyway MySQL 방언
