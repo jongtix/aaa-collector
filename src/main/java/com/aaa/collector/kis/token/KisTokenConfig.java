@@ -1,12 +1,8 @@
 package com.aaa.collector.kis.token;
 
-import java.time.Duration;
 import java.util.concurrent.locks.ReentrantLock;
-import org.springframework.boot.http.client.ClientHttpRequestFactoryBuilder;
-import org.springframework.boot.http.client.ClientHttpRequestFactorySettings;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
-import org.springframework.web.client.RestClient;
 
 /**
  * KIS 토큰 모듈 빈 설정.
@@ -16,29 +12,6 @@ import org.springframework.web.client.RestClient;
  */
 @Configuration
 public class KisTokenConfig {
-
-    private static final Duration CONNECT_TIMEOUT = Duration.ofSeconds(5);
-    private static final Duration READ_TIMEOUT = Duration.ofSeconds(10);
-
-    /**
-     * KIS API 전용 {@link RestClient} 빈.
-     *
-     * <p>{@link KisProperties#baseUrl()}을 기반으로 연결/읽기 타임아웃이 설정된 RestClient를 생성한다.
-     *
-     * @return KIS API 호출용 RestClient
-     */
-    @Bean
-    RestClient kisRestClient(RestClient.Builder restClientBuilder, KisProperties kisProperties) {
-        ClientHttpRequestFactorySettings settings =
-                ClientHttpRequestFactorySettings.defaults()
-                        .withConnectTimeout(CONNECT_TIMEOUT)
-                        .withReadTimeout(READ_TIMEOUT);
-
-        return restClientBuilder
-                .baseUrl(kisProperties.baseUrl())
-                .requestFactory(ClientHttpRequestFactoryBuilder.simple().build(settings))
-                .build();
-    }
 
     /**
      * 계좌 alias마다 {@link ReentrantLock}을 생성하는 기본 {@link LockFactory} 빈.

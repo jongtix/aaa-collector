@@ -10,9 +10,14 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
  * @param baseUrl KIS Open API 기본 URL (HTTPS 필수)
  * @param userId 한국투자증권 MTS 사용자 ID — 관심 그룹·종목 조회 시 사용 예정
  * @param accounts 계좌별 인증 정보 목록
+ * @param rateLimit KIS API rate limit 설정 (필수)
  */
 @ConfigurationProperties(prefix = "kis")
-public record KisProperties(String baseUrl, String userId, List<KisAccountCredential> accounts) {
+public record KisProperties(
+        String baseUrl, String userId, List<KisAccountCredential> accounts, RateLimit rateLimit) {
+
+    /** KIS API rate limit 설정. */
+    public record RateLimit(int capacity, int refillPerSecond) {}
 
     public KisProperties {
         List<String> errors = new ArrayList<>();
@@ -25,6 +30,19 @@ public record KisProperties(String baseUrl, String userId, List<KisAccountCreden
         }
         if (accounts == null || accounts.isEmpty()) {
             errors.add("kis.accounts must not be null or empty");
+        }
+        if (rateLimit == null) {
+            errors.add("kis.rate-limit must be configured");
+        } else {
+            if (rateLimit.capacity() <= 0) {
+                errors.add(
+                        "kis.rate-limit.capacity must be positive, got: " + rateLimit.capacity());
+            }
+            if (rateLimit.refillPerSecond() <= 0) {
+                errors.add(
+                        "kis.rate-limit.refill-per-second must be positive, got: "
+                                + rateLimit.refillPerSecond());
+            }
         }
 
         if (!errors.isEmpty()) {
