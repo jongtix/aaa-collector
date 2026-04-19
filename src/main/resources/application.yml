@@ -68,6 +68,9 @@ logging:
 kis:
   base-url: ${KIS_BASE_URL}
   user-id: ${KIS_USER_ID}
+  rate-limit:
+    capacity: 20           # KIS API TPS 상한 (ADR-023)
+    refill-per-second: 20
   accounts:
     - alias: isa
       account-number: ${KIS_ACCT_ISA_NUMBER}
