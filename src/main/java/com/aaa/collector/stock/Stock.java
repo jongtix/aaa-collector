@@ -13,6 +13,8 @@ import jakarta.persistence.Id;
 import jakarta.persistence.Table;
 import jakarta.persistence.UniqueConstraint;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.util.Objects;
 import lombok.AccessLevel;
 import lombok.Builder;
 import lombok.Getter;
@@ -38,10 +40,10 @@ public class Stock extends BaseEntity {
     private final String symbol;
 
     @Column(name = "name_ko", length = 100)
-    private final String nameKo;
+    private String nameKo;
 
     @Column(name = "name_en", length = 100)
-    private final String nameEn;
+    private String nameEn;
 
     @Enumerated(EnumType.STRING)
     @Column(name = "market", length = 10)
@@ -55,7 +57,10 @@ public class Stock extends BaseEntity {
     private final LocalDate listedDate;
 
     @Column(name = "active")
-    private final boolean active;
+    private boolean active;
+
+    @Column(name = "watchlist_removed_at")
+    private LocalDateTime watchlistRemovedAt;
 
     @Builder
     private Stock(
@@ -65,7 +70,8 @@ public class Stock extends BaseEntity {
             Market market,
             AssetType assetType,
             LocalDate listedDate,
-            boolean active) {
+            boolean active,
+            LocalDateTime watchlistRemovedAt) {
         super();
         this.symbol = symbol;
         this.nameKo = nameKo;
@@ -74,5 +80,34 @@ public class Stock extends BaseEntity {
         this.assetType = assetType;
         this.listedDate = listedDate;
         this.active = active;
+        this.watchlistRemovedAt = watchlistRemovedAt;
+    }
+
+    /**
+     * 관심종목 동기화 시 변경 가능한 필드를 갱신한다.
+     *
+     * @return 하나 이상의 필드가 실제로 변경된 경우 {@code true}
+     */
+    public boolean updateNames(String nameKo, String nameEn) {
+        boolean changed = false;
+
+        if (nameKo != null && !Objects.equals(nameKo, this.nameKo)) {
+            this.nameKo = nameKo;
+            changed = true;
+        }
+        if (nameEn != null && !Objects.equals(nameEn, this.nameEn)) {
+            this.nameEn = nameEn;
+            changed = true;
+        }
+        if (!this.active) {
+            this.active = true;
+            changed = true;
+        }
+        if (this.watchlistRemovedAt != null) {
+            this.watchlistRemovedAt = null; // NOPMD: intentional null reset for JPA dirty checking
+            changed = true;
+        }
+
+        return changed;
     }
 }

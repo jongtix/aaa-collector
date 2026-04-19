@@ -6,6 +6,10 @@ public enum AssetType {
     STOCK,
     /** 상장지수펀드 */
     ETF,
+    /** 상장지수증권 */
+    ETN,
+    /** 원자재 현물 (금현물 등) */
+    COMMODITY,
     /** 지수 (코스피지수, S&P500 등) */
     INDEX
 }
