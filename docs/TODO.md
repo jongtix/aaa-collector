@@ -64,10 +64,17 @@
 - [x] `domain/` 중간 패키지 제거 — 하위 feature를 `com.aaa.collector` 직하로 이동 (ADR-010 준수)
 
 ### 1-5. 관심 종목 동기화
-- [ ] 장 시작 전 KIS API → DB 동기화 구현 — 1일 2회(07:30, 15:45 KST)
-- [ ] 동기화 실패 시 직전 DB 목록 유지 + 로그 기록
-- [ ] 종목 등급 자동 분류 로직 (A/B/C/F)
-- [ ] 중복 ETF 대표 선정 알고리즘 구현
+- ~~[ ] Flyway 마이그레이션 — `V15__collector_create_etf_metadata.sql`, `V16__collector_create_etf_representative_history.sql`~~ (ETF 대표 선정 피처 브랜치로 이관 — 1-5 범위 초과)
+- ~~[ ] Entity / Repository — `EtfMetadata`, `EtfRepresentativeHistory`~~ (ETF 대표 선정 피처 브랜치로 이관 — 1-5 범위 초과)
+- [x] KIS API → DB 동기화 구현 — 1일 2회(07:30, 15:45 KST)
+  - KIS API: `intstock_grouplist`(관심종목 그룹조회) → `intstock_stocklist_by_group`(관심종목 그룹별 종목조회) 순차 호출
+  - 동기화 실패 시 직전 DB 목록 유지 + 로그 기록
+- [ ] 종목 등급 자동 분류 로직 (A/B/C/F) — TECHSPEC 6.5절 기준, 동기화 직후 실행
+- [ ] 중복 ETF 대표 선정 알고리즘 구현 — ADTV(20거래일) → 상장일 빠른 순 → 종목코드 오름차순
+  - 그룹화 키: `(거래소, 기초지수 코드, 배수, 방향, 환헤지 여부)` 5튜플 — 기초지수 코드(`etf_trgt_nmix_bstp_code`) 세분화 여부를 샘플 API 호출로 먼저 검증
+  - 신규 상장 유예: 거래이력 20거래일 미만 ETF는 대표 후보에서 제외
+  - 대표 교체 시 `etf_representative_history` 기록
+- [ ] 주간 ETF 대표 재계산 스케줄 — 매주 월요일 장 시작 전 KST (`@Scheduled` cron)
 - [ ] Redis 캐싱: `cache:stock:list`, `cache:grade:{종목코드}`
 
 ### 1-6. KIS WebSocket 실시간 수집
