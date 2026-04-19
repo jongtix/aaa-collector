@@ -8,6 +8,7 @@ google-java-format = "1.35.0"
 archunit = "1.4.2"
 wiremock = "3.10.6"
 findsecbugs = "1.14.0"
+bucket4j = "8.10.1"
 
 [libraries]
 # Spring Boot (버전은 spring-dependency-management가 관리)
@@ -16,6 +17,7 @@ spring-boot-starter-actuator = { group = "org.springframework.boot", name = "spr
 spring-boot-starter-data-jpa = { group = "org.springframework.boot", name = "spring-boot-starter-data-jpa" }
 spring-boot-starter-data-redis = { group = "org.springframework.boot", name = "spring-boot-starter-data-redis" }
 spring-boot-starter-test = { group = "org.springframework.boot", name = "spring-boot-starter-test" }
+spring-retry = { group = "org.springframework.retry", name = "spring-retry" }
 
 # Database
 mysql-connector = { group = "com.mysql", name = "mysql-connector-j" }
@@ -34,6 +36,9 @@ testcontainers-junit = { group = "org.testcontainers", name = "junit-jupiter" }
 spring-boot-testcontainers = { group = "org.springframework.boot", name = "spring-boot-testcontainers" }
 commons-codec = { group = "commons-codec", name = "commons-codec" }
 junit-platform-launcher = { group = "org.junit.platform", name = "junit-platform-launcher" }
+
+# Rate Limiting
+bucket4j = { group = "com.bucket4j", name = "bucket4j-core", version.ref = "bucket4j" }
 
 # Static Analysis
 pmd-java = { group = "net.sourceforge.pmd", name = "pmd-java", version.ref = "pmd" }
