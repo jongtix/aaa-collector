@@ -1,11 +1,11 @@
 [versions]
 spring-boot = "3.5.13"
 dependency-management = "1.1.7"
-spotless = "8.4.0"
-spotbugs = "6.5.0"
-pmd = "7.23.0"
+spotless = "8.5.1"
+spotbugs = "6.5.4"
+pmd = "7.24.0"
 google-java-format = "1.35.0"
-archunit = "1.4.1"
+archunit = "1.4.2"
 wiremock = "3.10.6"
 findsecbugs = "1.14.0"
 
