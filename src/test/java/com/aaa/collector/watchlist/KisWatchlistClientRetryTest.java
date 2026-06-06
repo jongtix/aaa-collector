@@ -32,6 +32,9 @@ import org.springframework.web.client.RestClientException;
 @ContextConfiguration(classes = KisWatchlistClientRetryTest.Config.class)
 class KisWatchlistClientRetryTest {
 
+    @Autowired KisWatchlistClient kisWatchlistClient;
+    @Autowired KisApiExecutor kisApiExecutor;
+
     @Configuration
     @EnableRetry
     static class Config {
@@ -51,9 +54,6 @@ class KisWatchlistClientRetryTest {
             return new KisWatchlistClient(kisApiExecutor, kisProperties);
         }
     }
-
-    @Autowired KisWatchlistClient kisWatchlistClient;
-    @Autowired KisApiExecutor kisApiExecutor;
 
     @BeforeEach
     void setUp() {
