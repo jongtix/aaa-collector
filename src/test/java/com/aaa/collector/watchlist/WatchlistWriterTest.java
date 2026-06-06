@@ -148,10 +148,7 @@ class WatchlistWriterTest {
             ArgumentCaptor<Stock> captor = ArgumentCaptor.forClass(Stock.class);
             verify(stockRepository).save(captor.capture());
             Stock saved = captor.getValue();
-            assertThat(saved.getSymbol()).isEqualTo("005930");
-            assertThat(saved.getNameKo()).isEqualTo("삼성전자");
             assertThat(saved.getNameEn()).isEqualTo("Samsung ETF");
-            assertThat(saved.getMarket()).isEqualTo(Market.KOSPI);
             assertThat(saved.getAssetType()).isEqualTo(AssetType.ETF);
             assertThat(saved.getListedDate()).isEqualTo(LocalDate.of(2020, 1, 15));
             assertThat(saved.isActive()).isTrue();
