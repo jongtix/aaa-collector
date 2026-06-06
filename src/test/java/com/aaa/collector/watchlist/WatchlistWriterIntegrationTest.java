@@ -66,7 +66,7 @@ class WatchlistWriterIntegrationTest {
             Stock saved = savedInactiveStock("005930", Market.KOSPI);
 
             watchlistWriter.upsertAll(
-                    List.of(new ResolvedStock("005930", "테스트종목", Market.KOSPI, null)));
+                    List.of(new ResolvedStock("005930", "테스트종목", Market.KOSPI, null)), 0);
             em.flush();
             em.clear();
 
@@ -91,7 +91,7 @@ class WatchlistWriterIntegrationTest {
             em.clear();
 
             watchlistWriter.upsertAll(
-                    List.of(new ResolvedStock("000660", "SK하이닉스", Market.KOSPI, null)));
+                    List.of(new ResolvedStock("000660", "SK하이닉스", Market.KOSPI, null)), 0);
             em.flush();
             em.clear();
 
@@ -118,7 +118,7 @@ class WatchlistWriterIntegrationTest {
 
             // Act
             watchlistWriter.upsertAll(
-                    List.of(new ResolvedStock("ACME", "ACME Inc", Market.NASDAQ, null)));
+                    List.of(new ResolvedStock("ACME", "ACME Inc", Market.NASDAQ, null)), 0);
             em.flush();
             em.clear();
 

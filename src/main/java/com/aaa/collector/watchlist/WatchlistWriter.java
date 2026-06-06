@@ -22,7 +22,7 @@ public class WatchlistWriter {
     private final WatchlistEntryWriter entryWriter;
 
     /** 수집된 종목 목록을 {@code stocks} 테이블에 upsert한다. */
-    public void upsertAll(List<ResolvedStock> stocks) {
+    public void upsertAll(List<ResolvedStock> stocks, int failedGroupCount) {
         if (stocks.isEmpty()) {
             return;
         }
@@ -57,7 +57,11 @@ public class WatchlistWriter {
                 .map(Stock::getId)
                 .forEach(touchedIds::add);
 
-        markRemoved(existingByKey, touchedIds, counter);
+        if (failedGroupCount > 0) {
+            log.warn("그룹 조회 {}건 실패 — markRemoved skip, 다음 sync 주기로 미룸", failedGroupCount);
+        } else {
+            markRemoved(existingByKey, touchedIds, counter);
+        }
 
         log.info(
                 "관심종목 동기화 완료 — inserted={}, updated={}, removed={}, unchanged={}",
