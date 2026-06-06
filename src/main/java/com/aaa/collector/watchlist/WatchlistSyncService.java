@@ -11,6 +11,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicInteger;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -32,18 +33,22 @@ public class WatchlistSyncService {
         List<KisGroupListResponse.Group> groups = kisWatchlistClient.fetchGroups();
         log.info("관심 그룹 조회 완료 — {}개 그룹", groups.size());
 
-        List<KisStockListByGroupResponse.Stock> rawStocks = collectUniqueStocks(groups);
+        AtomicInteger failedGroupCount = new AtomicInteger(0);
+        List<KisStockListByGroupResponse.Stock> rawStocks =
+                collectUniqueStocks(groups, failedGroupCount);
         log.info("중복 제거 후 종목 수: {}", rawStocks.size());
 
         List<ResolvedStock> resolved = resolveStocks(rawStocks);
-        watchlistWriter.upsertAll(resolved);
+        watchlistWriter.upsertAll(resolved, failedGroupCount.get());
     }
 
     private List<KisStockListByGroupResponse.Stock> collectUniqueStocks(
-            List<KisGroupListResponse.Group> groups) {
+            List<KisGroupListResponse.Group> groups, AtomicInteger failedGroupCount) {
         try (ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor()) {
             List<CompletableFuture<List<KisStockListByGroupResponse.Stock>>> futures =
-                    groups.stream().map(group -> fetchStocksAsync(group, executor)).toList();
+                    groups.stream()
+                            .map(group -> fetchStocksAsync(group, executor, failedGroupCount))
+                            .toList();
 
             Map<String, KisStockListByGroupResponse.Stock> unique = new ConcurrentHashMap<>();
             futures.stream()
@@ -55,7 +60,9 @@ public class WatchlistSyncService {
     }
 
     private CompletableFuture<List<KisStockListByGroupResponse.Stock>> fetchStocksAsync(
-            KisGroupListResponse.Group group, ExecutorService executor) {
+            KisGroupListResponse.Group group,
+            ExecutorService executor,
+            AtomicInteger failedGroupCount) {
         return CompletableFuture.supplyAsync(
                         () -> {
                             try {
@@ -63,6 +70,7 @@ public class WatchlistSyncService {
                             } catch (InterruptedException ex) {
                                 Thread.currentThread().interrupt();
                                 log.warn("rate limit 대기 중 인터럽트 — group={}", group.interGrpCode());
+                                failedGroupCount.incrementAndGet();
                                 return List.<KisStockListByGroupResponse.Stock>of();
                             }
                             return kisWatchlistClient.fetchStocksByGroup(group.interGrpCode());
@@ -74,6 +82,7 @@ public class WatchlistSyncService {
                                     "그룹 {} 조회 실패, skip — {}",
                                     group.interGrpCode(),
                                     ex.getMessage());
+                            failedGroupCount.incrementAndGet();
                             return List.of();
                         });
     }

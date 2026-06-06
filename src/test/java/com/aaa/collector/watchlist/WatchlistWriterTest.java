@@ -81,10 +81,51 @@ class WatchlistWriterTest {
         @Test
         @DisplayName("빈 목록 — findAllBySymbolIn 미호출, save 미호출")
         void upsertAll_emptyList_noRepositoryCalls() {
-            watchlistWriter.upsertAll(List.of());
+            watchlistWriter.upsertAll(List.of(), 0);
 
             verify(stockRepository, never()).findAllBySymbolIn(anyCollection());
             verify(stockRepository, never()).save(any());
+        }
+    }
+
+    @Nested
+    @DisplayName("upsertAll — 그룹 부분 실패")
+    class PartialGroupFailure {
+
+        @Test
+        @DisplayName("failedGroupCount=1 — markWatchlistRemoved 미호출")
+        void upsertAll_oneGroupFailed_skipsMarkWatchlistRemoved() {
+            ResolvedStock resolved = new ResolvedStock("000660", "SK하이닉스", Market.KOSPI, null);
+            Stock removedStock = stockWith("005930", Market.KOSPI, "삼성전자", null, true, null, 2L);
+            when(stockRepository.findAllBySymbolIn(any())).thenReturn(List.of(removedStock));
+
+            watchlistWriter.upsertAll(List.of(resolved), 1);
+
+            verify(stockRepository, never()).markWatchlistRemoved(any());
+        }
+
+        @Test
+        @DisplayName("failedGroupCount=0 — markWatchlistRemoved 정상 호출")
+        void upsertAll_noGroupFailed_callsMarkWatchlistRemoved() {
+            ResolvedStock resolved = new ResolvedStock("000660", "SK하이닉스", Market.KOSPI, null);
+            Stock removedStock = stockWith("005930", Market.KOSPI, "삼성전자", null, true, null, 2L);
+            when(stockRepository.findAllBySymbolIn(any())).thenReturn(List.of(removedStock));
+
+            watchlistWriter.upsertAll(List.of(resolved), 0);
+
+            verify(stockRepository).markWatchlistRemoved(Set.of(2L));
+        }
+
+        @Test
+        @DisplayName("failedGroupCount=3 (전체 실패) — markWatchlistRemoved 미호출")
+        void upsertAll_allGroupsFailed_skipsMarkWatchlistRemoved() {
+            ResolvedStock resolved = new ResolvedStock("000660", "SK하이닉스", Market.KOSPI, null);
+            Stock removedStock = stockWith("005930", Market.KOSPI, "삼성전자", null, true, null, 2L);
+            when(stockRepository.findAllBySymbolIn(any())).thenReturn(List.of(removedStock));
+
+            watchlistWriter.upsertAll(List.of(resolved), 3);
+
+            verify(stockRepository, never()).markWatchlistRemoved(any());
         }
     }
 
@@ -101,7 +142,7 @@ class WatchlistWriterTest {
             when(stockRepository.findAllBySymbolIn(any())).thenReturn(List.of());
 
             // Act
-            watchlistWriter.upsertAll(List.of(resolved));
+            watchlistWriter.upsertAll(List.of(resolved), 0);
 
             // Assert
             ArgumentCaptor<Stock> captor = ArgumentCaptor.forClass(Stock.class);
@@ -124,7 +165,7 @@ class WatchlistWriterTest {
             when(stockRepository.findAllBySymbolIn(any())).thenReturn(List.of());
 
             // Act
-            watchlistWriter.upsertAll(List.of(resolved));
+            watchlistWriter.upsertAll(List.of(resolved), 0);
 
             // Assert
             ArgumentCaptor<Stock> captor = ArgumentCaptor.forClass(Stock.class);
@@ -144,7 +185,7 @@ class WatchlistWriterTest {
             when(stockRepository.findAllBySymbolIn(any())).thenReturn(List.of(existing));
 
             // Act
-            watchlistWriter.upsertAll(List.of(resolved));
+            watchlistWriter.upsertAll(List.of(resolved), 0);
 
             // Assert
             assertThat(existing.getNameKo()).isEqualTo("삼성전자 (신)");
@@ -161,7 +202,7 @@ class WatchlistWriterTest {
             when(stockRepository.findAllBySymbolIn(any())).thenReturn(List.of(existing));
 
             // Act
-            watchlistWriter.upsertAll(List.of(resolved));
+            watchlistWriter.upsertAll(List.of(resolved), 0);
 
             // Assert
             assertThat(existing.getNameEn()).isEqualTo("Samsung Electronics New");
@@ -177,7 +218,7 @@ class WatchlistWriterTest {
             when(stockRepository.findAllBySymbolIn(any())).thenReturn(List.of(existing));
 
             // Act
-            watchlistWriter.upsertAll(List.of(resolved));
+            watchlistWriter.upsertAll(List.of(resolved), 0);
 
             // Assert
             assertThat(existing.isActive()).isTrue();
@@ -193,7 +234,7 @@ class WatchlistWriterTest {
             when(stockRepository.findAllBySymbolIn(any())).thenReturn(List.of(existing));
 
             // Act
-            watchlistWriter.upsertAll(List.of(resolved));
+            watchlistWriter.upsertAll(List.of(resolved), 0);
 
             // Assert
             assertThat(existing.getNameKo()).isEqualTo("삼성전자 (신)");
@@ -210,7 +251,7 @@ class WatchlistWriterTest {
             when(stockRepository.findAllBySymbolIn(any())).thenReturn(List.of(existing));
 
             // Act
-            watchlistWriter.upsertAll(List.of(resolved));
+            watchlistWriter.upsertAll(List.of(resolved), 0);
 
             // Assert
             verify(stockRepository, never()).save(any());
@@ -225,7 +266,7 @@ class WatchlistWriterTest {
             when(stockRepository.findAllBySymbolIn(any())).thenReturn(List.of(removedStock));
 
             // Act
-            watchlistWriter.upsertAll(List.of(resolved));
+            watchlistWriter.upsertAll(List.of(resolved), 0);
 
             // Assert
             verify(stockRepository).markWatchlistRemoved(Set.of(2L));
@@ -247,7 +288,7 @@ class WatchlistWriterTest {
 
             // Act
             watchlistWriter.upsertAll(
-                    List.of(new ResolvedStock("005930", "삼성전자", Market.KOSPI, null)));
+                    List.of(new ResolvedStock("005930", "삼성전자", Market.KOSPI, null)), 0);
 
             // Assert
             assertThat(existing.getWatchlistRemovedAt()).isNull();
@@ -263,7 +304,7 @@ class WatchlistWriterTest {
 
             // Act
             watchlistWriter.upsertAll(
-                    List.of(new ResolvedStock("005930", "삼성전자", Market.KOSPI, null)));
+                    List.of(new ResolvedStock("005930", "삼성전자", Market.KOSPI, null)), 0);
 
             // Assert
             verify(stockRepository, never()).markWatchlistRemoved(any());
@@ -279,7 +320,7 @@ class WatchlistWriterTest {
             when(stockRepository.findAllBySymbolIn(any())).thenReturn(List.of(existingNyse));
 
             // Act
-            watchlistWriter.upsertAll(List.of(resolved));
+            watchlistWriter.upsertAll(List.of(resolved), 0);
 
             // Assert
             verify(stockRepository).markWatchlistRemoved(Set.of(10L));
@@ -296,7 +337,7 @@ class WatchlistWriterTest {
             when(stockRepository.findAllBySymbolIn(any())).thenReturn(List.of(existing));
 
             // Act
-            watchlistWriter.upsertAll(List.of(resolved));
+            watchlistWriter.upsertAll(List.of(resolved), 0);
 
             // Assert
             assertThat(existing.getNameEn()).isEqualTo("Samsung Electronics");
@@ -312,7 +353,7 @@ class WatchlistWriterTest {
             when(stockRepository.findAllBySymbolIn(any())).thenReturn(List.of());
 
             // Act
-            watchlistWriter.upsertAll(List.of(s1, s2));
+            watchlistWriter.upsertAll(List.of(s1, s2), 0);
 
             // Assert
             verify(stockRepository).findAllBySymbolIn(any());
