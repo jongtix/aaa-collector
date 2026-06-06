@@ -2,29 +2,26 @@ package com.aaa.collector.watchlist;
 
 import com.aaa.collector.stock.Stock;
 import com.aaa.collector.stock.StockRepository;
-import com.aaa.collector.stock.enums.AssetType;
-import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
 
-/** 관심종목 데이터를 {@code stocks} 테이블에 upsert하는 서비스. */
 @Slf4j
 @Service
 @RequiredArgsConstructor
 public class WatchlistWriter {
 
     private final StockRepository stockRepository;
+    private final WatchlistEntryWriter entryWriter;
 
     /** 수집된 종목 목록을 {@code stocks} 테이블에 upsert한다. */
-    @Transactional
     public void upsertAll(List<ResolvedStock> stocks) {
         if (stocks.isEmpty()) {
             return;
@@ -33,25 +30,34 @@ public class WatchlistWriter {
         Map<String, Stock> existingByKey = loadExisting(stocks);
         Counter counter = new Counter();
         Set<Long> touchedIds = new HashSet<>();
-        List<Stock> toInsert = new ArrayList<>();
+        Set<String> failedKeys = new HashSet<>();
 
         for (ResolvedStock resolved : stocks) {
-            processEntry(resolved, existingByKey, counter, touchedIds, toInsert);
+            String key = resolved.symbol() + ":" + resolved.market().name();
+            try {
+                Long touchedId = entryWriter.upsertOne(resolved, existingByKey, counter);
+                if (touchedId != null) {
+                    touchedIds.add(touchedId);
+                }
+            } catch (Exception e) {
+                // ADR-022 결정 3: 실패 종목은 DB를 건드리지 않음 — skip 후 다음 동기화 주기에 재시도
+                log.warn(
+                        "종목 upsert 실패, skip — symbol={}, market={}",
+                        resolved.symbol(),
+                        resolved.market(),
+                        e);
+                failedKeys.add(key);
+            }
         }
 
-        if (!toInsert.isEmpty()) {
-            stockRepository.saveAll(toInsert);
-        }
+        // 실패 종목의 기존 DB ID도 touched 처리 → watchlist_removed_at 오인 마킹 방지
+        failedKeys.stream()
+                .map(existingByKey::get)
+                .filter(Objects::nonNull)
+                .map(Stock::getId)
+                .forEach(touchedIds::add);
 
-        Set<Long> removedIds =
-                existingByKey.values().stream()
-                        .map(Stock::getId)
-                        .filter(id -> !touchedIds.contains(id))
-                        .collect(Collectors.toSet());
-        if (!removedIds.isEmpty()) {
-            stockRepository.markWatchlistRemoved(removedIds);
-            counter.removed += removedIds.size();
-        }
+        markRemoved(existingByKey, touchedIds, counter);
 
         log.info(
                 "관심종목 동기화 완료 — inserted={}, updated={}, removed={}, unchanged={}",
@@ -71,46 +77,20 @@ public class WatchlistWriter {
                                 Function.identity()));
     }
 
-    private void processEntry(
-            ResolvedStock resolved,
-            Map<String, Stock> existingByKey,
-            Counter counter,
-            Set<Long> touchedIds,
-            List<Stock> toInsert) {
-        Stock existing = existingByKey.get(resolved.symbol() + ":" + resolved.market().name());
-        if (existing == null) {
-            toInsert.add(buildStock(resolved));
-            counter.inserted++;
-        } else {
-            touchedIds.add(existing.getId());
-            updateIfNeeded(existing, resolved, counter);
+    private void markRemoved(
+            Map<String, Stock> existingByKey, Set<Long> touchedIds, Counter counter) {
+        Set<Long> removedIds =
+                existingByKey.values().stream()
+                        .map(Stock::getId)
+                        .filter(id -> !touchedIds.contains(id))
+                        .collect(Collectors.toSet());
+        if (!removedIds.isEmpty()) {
+            stockRepository.markWatchlistRemoved(removedIds);
+            counter.removed += removedIds.size();
         }
     }
 
-    private Stock buildStock(ResolvedStock resolved) {
-        StockInfo info = resolved.stockInfo();
-        return Stock.builder()
-                .symbol(resolved.symbol())
-                .nameKo(resolved.nameKo())
-                .nameEn(info != null ? info.nameEn() : null)
-                .market(resolved.market())
-                .assetType(info != null ? info.assetType() : AssetType.STOCK)
-                .listedDate(info != null ? info.listedDate() : null)
-                .active(true)
-                .build();
-    }
-
-    private void updateIfNeeded(Stock existing, ResolvedStock resolved, Counter counter) {
-        StockInfo info = resolved.stockInfo();
-        String nameEn = info != null ? info.nameEn() : null;
-        if (existing.updateNames(resolved.nameKo(), nameEn)) {
-            counter.updated++;
-        } else {
-            counter.unchanged++;
-        }
-    }
-
-    private static final class Counter {
+    static final class Counter {
         int inserted;
         int updated;
         int removed;

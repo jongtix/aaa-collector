@@ -15,12 +15,12 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Set;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
-import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.test.util.ReflectionTestUtils;
@@ -29,7 +29,13 @@ import org.springframework.test.util.ReflectionTestUtils;
 class WatchlistWriterTest {
 
     @Mock private StockRepository stockRepository;
-    @InjectMocks private WatchlistWriter watchlistWriter;
+    private WatchlistWriter watchlistWriter;
+
+    @BeforeEach
+    void setUp() {
+        WatchlistEntryWriter entryWriter = new WatchlistEntryWriter(stockRepository);
+        watchlistWriter = new WatchlistWriter(stockRepository, entryWriter);
+    }
 
     private static Stock stockWith(
             String symbol, Market market, String nameKo, String nameEn, boolean active) {
@@ -73,12 +79,12 @@ class WatchlistWriterTest {
     class EmptyInput {
 
         @Test
-        @DisplayName("빈 목록 — findAllBySymbolIn 미호출, saveAll 미호출")
+        @DisplayName("빈 목록 — findAllBySymbolIn 미호출, save 미호출")
         void upsertAll_emptyList_noRepositoryCalls() {
             watchlistWriter.upsertAll(List.of());
 
             verify(stockRepository, never()).findAllBySymbolIn(anyCollection());
-            verify(stockRepository, never()).saveAll(any());
+            verify(stockRepository, never()).save(any());
         }
     }
 
@@ -87,7 +93,7 @@ class WatchlistWriterTest {
     class StockProcessing {
 
         @Test
-        @DisplayName("신규 종목 + StockInfo 있음 — assetType, nameEn, listedDate 채워서 saveAll")
+        @DisplayName("신규 종목 + StockInfo 있음 — assetType, nameEn, listedDate 채워서 save")
         void upsertAll_newStockWithStockInfo_savesWithFullFields() {
             // Arrange
             StockInfo info = new StockInfo(AssetType.ETF, "Samsung ETF", LocalDate.of(2020, 1, 15));
@@ -98,27 +104,20 @@ class WatchlistWriterTest {
             watchlistWriter.upsertAll(List.of(resolved));
 
             // Assert
-            @SuppressWarnings("unchecked")
-            ArgumentCaptor<List<Stock>> captor = ArgumentCaptor.forClass(List.class);
-            verify(stockRepository).saveAll(captor.capture());
-            assertThat(captor.getValue())
-                    .hasSize(1)
-                    .first()
-                    .satisfies(
-                            saved -> {
-                                assertThat(saved.getSymbol()).isEqualTo("005930");
-                                assertThat(saved.getNameKo()).isEqualTo("삼성전자");
-                                assertThat(saved.getNameEn()).isEqualTo("Samsung ETF");
-                                assertThat(saved.getMarket()).isEqualTo(Market.KOSPI);
-                                assertThat(saved.getAssetType()).isEqualTo(AssetType.ETF);
-                                assertThat(saved.getListedDate())
-                                        .isEqualTo(LocalDate.of(2020, 1, 15));
-                                assertThat(saved.isActive()).isTrue();
-                            });
+            ArgumentCaptor<Stock> captor = ArgumentCaptor.forClass(Stock.class);
+            verify(stockRepository).save(captor.capture());
+            Stock saved = captor.getValue();
+            assertThat(saved.getSymbol()).isEqualTo("005930");
+            assertThat(saved.getNameKo()).isEqualTo("삼성전자");
+            assertThat(saved.getNameEn()).isEqualTo("Samsung ETF");
+            assertThat(saved.getMarket()).isEqualTo(Market.KOSPI);
+            assertThat(saved.getAssetType()).isEqualTo(AssetType.ETF);
+            assertThat(saved.getListedDate()).isEqualTo(LocalDate.of(2020, 1, 15));
+            assertThat(saved.isActive()).isTrue();
         }
 
         @Test
-        @DisplayName("신규 종목 + StockInfo 없음 — assetType=STOCK, nameEn/listedDate=null로 saveAll")
+        @DisplayName("신규 종목 + StockInfo 없음 — assetType=STOCK, nameEn/listedDate=null로 save")
         void upsertAll_newStockWithoutStockInfo_savesWithDefaults() {
             // Arrange
             ResolvedStock resolved = new ResolvedStock("005930", "삼성전자", Market.KOSPI, null);
@@ -128,18 +127,12 @@ class WatchlistWriterTest {
             watchlistWriter.upsertAll(List.of(resolved));
 
             // Assert
-            @SuppressWarnings("unchecked")
-            ArgumentCaptor<List<Stock>> captor = ArgumentCaptor.forClass(List.class);
-            verify(stockRepository).saveAll(captor.capture());
-            assertThat(captor.getValue())
-                    .hasSize(1)
-                    .first()
-                    .satisfies(
-                            saved -> {
-                                assertThat(saved.getAssetType()).isEqualTo(AssetType.STOCK);
-                                assertThat(saved.getNameEn()).isNull();
-                                assertThat(saved.getListedDate()).isNull();
-                            });
+            ArgumentCaptor<Stock> captor = ArgumentCaptor.forClass(Stock.class);
+            verify(stockRepository).save(captor.capture());
+            Stock saved = captor.getValue();
+            assertThat(saved.getAssetType()).isEqualTo(AssetType.STOCK);
+            assertThat(saved.getNameEn()).isNull();
+            assertThat(saved.getListedDate()).isNull();
         }
 
         @Test
@@ -155,7 +148,7 @@ class WatchlistWriterTest {
 
             // Assert
             assertThat(existing.getNameKo()).isEqualTo("삼성전자 (신)");
-            verify(stockRepository, never()).saveAll(any());
+            verify(stockRepository, never()).save(any());
         }
 
         @Test
@@ -172,7 +165,7 @@ class WatchlistWriterTest {
 
             // Assert
             assertThat(existing.getNameEn()).isEqualTo("Samsung Electronics New");
-            verify(stockRepository, never()).saveAll(any());
+            verify(stockRepository, never()).save(any());
         }
 
         @Test
@@ -188,7 +181,7 @@ class WatchlistWriterTest {
 
             // Assert
             assertThat(existing.isActive()).isTrue();
-            verify(stockRepository, never()).saveAll(any());
+            verify(stockRepository, never()).save(any());
         }
 
         @Test
@@ -205,7 +198,7 @@ class WatchlistWriterTest {
             // Assert
             assertThat(existing.getNameKo()).isEqualTo("삼성전자 (신)");
             assertThat(existing.isActive()).isTrue();
-            verify(stockRepository, never()).saveAll(any());
+            verify(stockRepository, never()).save(any());
         }
 
         @Test
@@ -220,7 +213,7 @@ class WatchlistWriterTest {
             watchlistWriter.upsertAll(List.of(resolved));
 
             // Assert
-            verify(stockRepository, never()).saveAll(any());
+            verify(stockRepository, never()).save(any());
         }
 
         @Test
@@ -307,7 +300,7 @@ class WatchlistWriterTest {
 
             // Assert
             assertThat(existing.getNameEn()).isEqualTo("Samsung Electronics");
-            verify(stockRepository, never()).saveAll(any());
+            verify(stockRepository, never()).save(any());
         }
 
         @Test
