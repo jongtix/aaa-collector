@@ -23,4 +23,7 @@ public interface StockRepository extends JpaRepository<Stock, Long> {
     @Query(
             "UPDATE Stock s SET s.watchlistRemovedAt = CURRENT_TIMESTAMP WHERE s.id IN :ids AND s.watchlistRemovedAt IS NULL")
     void markWatchlistRemoved(@Param("ids") Set<Long> ids);
+
+    @Query("SELECT s FROM Stock s WHERE s.watchlistRemovedAt IS NULL")
+    List<Stock> findAllActive();
 }

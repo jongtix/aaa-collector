@@ -1,8 +1,14 @@
 package com.aaa.collector.watchlist;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyList;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
 
 import com.aaa.collector.stock.Stock;
+import com.aaa.collector.stock.StockListCacheRepository;
 import com.aaa.collector.stock.StockRepository;
 import com.aaa.collector.stock.enums.AssetType;
 import com.aaa.collector.stock.enums.Market;
@@ -36,6 +42,8 @@ class WatchlistWriterIntegrationTest {
     @MockitoBean
     @SuppressWarnings("unused")
     private StringRedisTemplate redisTemplate;
+
+    @MockitoBean private StockListCacheRepository stockListCacheRepository;
 
     @Autowired private WatchlistWriter watchlistWriter;
     @Autowired private StockRepository stockRepository;
@@ -125,6 +133,33 @@ class WatchlistWriterIntegrationTest {
             // Assert
             Stock result = stockRepository.findById(nyse.getId()).orElseThrow();
             assertThat(result.getWatchlistRemovedAt()).isNotNull();
+        }
+    }
+
+    @Nested
+    @DisplayName("캐시 갱신 — failedGroupCount 조건 검증")
+    class CacheUpdate {
+
+        @Test
+        @DisplayName("failedGroupCount=0 — stockListCacheRepository.save() 1회 호출")
+        void upsertAll_noGroupFailed_cacheIsSaved() {
+            watchlistWriter.upsertAll(
+                    List.of(new ResolvedStock("005930", "삼성전자", Market.KOSPI, null)), 0);
+            em.flush();
+            em.clear();
+
+            verify(stockListCacheRepository, times(1)).save(anyList());
+        }
+
+        @Test
+        @DisplayName("failedGroupCount>0 — stockListCacheRepository.save() 미호출")
+        void upsertAll_groupFailed_cacheIsNotSaved() {
+            watchlistWriter.upsertAll(
+                    List.of(new ResolvedStock("005930", "삼성전자", Market.KOSPI, null)), 1);
+            em.flush();
+            em.clear();
+
+            verify(stockListCacheRepository, never()).save(any());
         }
     }
 }

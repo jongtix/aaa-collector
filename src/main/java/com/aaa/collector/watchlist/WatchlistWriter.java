@@ -1,6 +1,8 @@
 package com.aaa.collector.watchlist;
 
+import com.aaa.collector.stock.CachedStock;
 import com.aaa.collector.stock.Stock;
+import com.aaa.collector.stock.StockListCacheRepository;
 import com.aaa.collector.stock.StockRepository;
 import java.util.HashSet;
 import java.util.List;
@@ -21,8 +23,10 @@ public class WatchlistWriter {
 
     private final StockRepository stockRepository;
     private final WatchlistEntryWriter entryWriter;
+    private final StockListCacheRepository stockListCacheRepository;
 
     /** 수집된 종목 목록을 {@code stocks} 테이블에 upsert한다. */
+    @SuppressWarnings("PMD.AvoidCatchingGenericException") // 캐시 갱신 예외를 포착해 sync 계속 진행
     public void upsertAll(List<ResolvedStock> stocks, int failedGroupCount) {
         if (stocks.isEmpty()) {
             return;
@@ -70,6 +74,17 @@ public class WatchlistWriter {
                 counter.updated,
                 counter.removed,
                 counter.unchanged);
+
+        // @MX:NOTE: [AUTO] 캐시 갱신 조건(failedGroupCount==0)이 markRemoved와 동일
+        if (failedGroupCount == 0) {
+            try {
+                List<CachedStock> cached =
+                        stockRepository.findAllActive().stream().map(CachedStock::from).toList();
+                stockListCacheRepository.save(cached);
+            } catch (Exception e) {
+                log.warn("관심종목 캐시 갱신 실패 — sync 계속 진행", e);
+            }
+        }
     }
 
     private Map<String, Stock> loadExisting(List<ResolvedStock> stocks) {
