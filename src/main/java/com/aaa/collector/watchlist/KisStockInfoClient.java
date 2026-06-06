@@ -6,8 +6,6 @@ import com.aaa.collector.stock.enums.Market;
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
 import lombok.RequiredArgsConstructor;
-import org.springframework.retry.annotation.Backoff;
-import org.springframework.retry.annotation.Retryable;
 import org.springframework.stereotype.Component;
 
 /** KIS 종목 기본정보 API 클라이언트. */
@@ -23,18 +21,13 @@ public class KisStockInfoClient {
     /**
      * 시장에 따라 국내/해외 종목 기본정보 API를 호출하여 {@link StockInfo}를 반환한다.
      *
-     * <p>재시도 대상: {@link IllegalStateException}(KIS API 비즈니스 오류)만 포함. {@link
-     * RestClientException}(네트워크/HTTP 오류)은 종목 단위 skip이 전체 재시도보다 낫다고 판단하여 제외 — 실패 시 호출자({@code
-     * WatchlistSyncService})에서 null로 처리됨.
+     * <p>재시도 없음. 비즈니스 오류({@link com.aaa.collector.kis.KisApiBusinessException}) 및 네트워크 오류는 즉시 전파되며
+     * 호출자({@code WatchlistSyncService})에서 null로 처리된다.
      *
      * @param symbol 종목코드
      * @param market 시장
      * @return 종목 기본정보
      */
-    @Retryable(
-            retryFor = {IllegalStateException.class},
-            maxAttempts = 3,
-            backoff = @Backoff(delay = 500, multiplier = 2))
     public StockInfo fetchStockInfo(String symbol, Market market) {
         return switch (market) {
             case KOSPI, KOSDAQ -> fetchDomesticInfo(symbol, market);

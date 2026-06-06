@@ -8,6 +8,7 @@ import static com.github.tomakehurst.wiremock.core.WireMockConfiguration.wireMoc
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import com.aaa.collector.kis.KisApiBusinessException;
 import com.aaa.collector.kis.KisApiExecutor;
 import com.aaa.collector.kis.token.KisAccountCredential;
 import com.aaa.collector.kis.token.KisProperties;
@@ -208,8 +209,8 @@ class KisStockInfoClientTest {
         }
 
         @Test
-        @DisplayName("API 오류 응답 (rt_cd != 0) — IllegalStateException 발생")
-        void fetchStockInfo_errorResponse_throwsException() {
+        @DisplayName("API 오류 응답 (rt_cd != 0) — KisApiBusinessException 발생")
+        void fetchStockInfo_errorResponse_throwsKisApiBusinessException() {
             wireMockServer.stubFor(
                     get(urlPathEqualTo(DOMESTIC_PATH))
                             .willReturn(
@@ -226,7 +227,9 @@ class KisStockInfoClientTest {
                                                     """)));
 
             assertThatThrownBy(() -> kisStockInfoClient.fetchStockInfo("005930", Market.KOSPI))
-                    .isInstanceOf(IllegalStateException.class);
+                    .isInstanceOf(KisApiBusinessException.class)
+                    .hasMessageContaining("rt_cd=1")
+                    .hasMessageContaining("msg_cd=EGW00201");
         }
 
         @Test

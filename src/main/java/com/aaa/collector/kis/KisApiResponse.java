@@ -17,12 +17,10 @@ public interface KisApiResponse {
 
     String msg1();
 
-    /** {@code rt_cd}가 {@code "0"}이 아니면 {@link IllegalStateException}을 던진다. */
+    /** {@code rt_cd}가 {@code "0"}이 아니면 {@link KisApiBusinessException}을 던진다. */
     default void validateRtCd() {
         if (!"0".equals(rtCd())) {
-            throw new IllegalStateException(
-                    "KIS API 오류 응답 — rt_cd=%s, msg_cd=%s, msg1=%s"
-                            .formatted(rtCd(), msgCd(), msg1()));
+            throw new KisApiBusinessException(rtCd(), msgCd(), msg1());
         }
     }
 }

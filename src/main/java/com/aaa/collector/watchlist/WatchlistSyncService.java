@@ -1,5 +1,6 @@
 package com.aaa.collector.watchlist;
 
+import com.aaa.collector.kis.KisApiBusinessException;
 import com.aaa.collector.kis.KisRateLimiter;
 import com.aaa.collector.stock.enums.AssetType;
 import com.aaa.collector.stock.enums.Market;
@@ -126,7 +127,7 @@ public class WatchlistSyncService {
             Thread.currentThread().interrupt();
             log.warn("rate limit 대기 중 인터럽트 — symbol={}", stock.jongCode());
             return null;
-        } catch (IllegalStateException | RestClientException ex) {
+        } catch (KisApiBusinessException | IllegalStateException | RestClientException ex) {
             log.warn(
                     "종목 기본정보 조회 실패 — symbol={}, market={}: {}",
                     stock.jongCode(),
