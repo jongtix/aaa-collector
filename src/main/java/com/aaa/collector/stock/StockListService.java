@@ -49,11 +49,13 @@ public class StockListService {
     private List<CachedStock> fetchFromDbAndWarmUp() {
         List<CachedStock> stocks =
                 stockRepository.findAllActive().stream().map(CachedStock::from).toList();
-        if (!stocks.isEmpty()) {
-            cacheRepository.save(stocks);
-            log.debug("캐시 미스 — DB {}건 조회, 캐시 워밍업 완료", stocks.size());
-        } else {
+        if (stocks.isEmpty()) {
             log.debug("캐시 미스 — DB 빈 목록, 캐시 워밍업 건너뜀");
+        } else {
+            cacheRepository.save(stocks);
+            if (log.isDebugEnabled()) {
+                log.debug("캐시 미스 — DB {}건 조회, 캐시 워밍업 완료", stocks.size());
+            }
         }
         return stocks;
     }

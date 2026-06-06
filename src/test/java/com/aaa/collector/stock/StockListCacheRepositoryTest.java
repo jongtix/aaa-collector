@@ -51,7 +51,7 @@ class StockListCacheRepositoryTest {
 
     @Nested
     @DisplayName("save — 직렬화 후 Redis에 저장")
-    class Save {
+    class SaveTests {
 
         @Test
         @DisplayName("정상 목록 — TTL 없이 opsForValue().set(key, json) 호출")
@@ -131,7 +131,7 @@ class StockListCacheRepositoryTest {
             // Assert
             assertThat(result).isPresent();
             assertThat(result.get()).hasSize(1);
-            assertThat(result.get().get(0).symbol()).isEqualTo("005930");
+            assertThat(result.get().getFirst().symbol()).isEqualTo("005930");
         }
 
         @Test

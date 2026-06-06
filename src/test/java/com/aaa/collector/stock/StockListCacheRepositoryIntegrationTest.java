@@ -4,8 +4,10 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import com.aaa.collector.stock.enums.AssetType;
 import com.aaa.collector.stock.enums.Market;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.PropertyNamingStrategies;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
+import java.nio.charset.StandardCharsets;
 import java.time.LocalDate;
 import java.util.List;
 import java.util.Optional;
@@ -43,7 +45,7 @@ class StockListCacheRepositoryIntegrationTest {
         StringRedisTemplate redisTemplate = new StringRedisTemplate(connectionFactory);
         redisTemplate.afterPropertiesSet();
 
-        var objectMapper =
+        ObjectMapper objectMapper =
                 new Jackson2ObjectMapperBuilder()
                         .propertyNamingStrategy(PropertyNamingStrategies.SNAKE_CASE)
                         .timeZone("Asia/Seoul")
@@ -86,7 +88,7 @@ class StockListCacheRepositoryIntegrationTest {
         // Assert
         assertThat(result).isPresent();
         assertThat(result.get()).hasSize(2);
-        assertThat(result.get().get(0).symbol()).isEqualTo("005930");
+        assertThat(result.get().getFirst().symbol()).isEqualTo("005930");
         assertThat(result.get().get(1).market()).isEqualTo(Market.NASDAQ);
     }
 
@@ -135,7 +137,10 @@ class StockListCacheRepositoryIntegrationTest {
 
         // Assert — TTL이 없으면 getExpire 결과가 -1 (영구)
         Long ttl =
-                connectionFactory.getConnection().keyCommands().pTtl("cache:stock:list".getBytes());
+                connectionFactory
+                        .getConnection()
+                        .keyCommands()
+                        .pTtl("cache:stock:list".getBytes(StandardCharsets.UTF_8));
         assertThat(ttl).isEqualTo(-1L);
     }
 
@@ -167,6 +172,6 @@ class StockListCacheRepositoryIntegrationTest {
         // Assert
         assertThat(result).isPresent();
         assertThat(result.get()).hasSize(2);
-        assertThat(result.get().get(0).symbol()).isEqualTo("AAPL");
+        assertThat(result.get().getFirst().symbol()).isEqualTo("AAPL");
     }
 }

@@ -83,7 +83,7 @@ class StockListServiceTest {
 
             // Assert
             assertThat(result).hasSize(1);
-            assertThat(result.get(0).symbol()).isEqualTo("005930");
+            assertThat(result.getFirst().symbol()).isEqualTo("005930");
             verify(cacheRepository).save(anyList());
         }
 
