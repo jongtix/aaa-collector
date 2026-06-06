@@ -84,11 +84,11 @@ public class Stock extends BaseEntity {
     }
 
     /**
-     * 관심종목 동기화 시 변경 가능한 필드를 갱신한다.
+     * 관심종목 동기화 시 이름 갱신, 재활성화, 제거 시각 초기화를 수행한다.
      *
      * @return 하나 이상의 필드가 실제로 변경된 경우 {@code true}
      */
-    public boolean updateNames(String nameKo, String nameEn) {
+    public boolean syncFromWatchlist(String nameKo, String nameEn) {
         boolean changed = false;
 
         if (nameKo != null && !Objects.equals(nameKo, this.nameKo)) {

@@ -57,7 +57,7 @@ class WatchlistEntryWriter {
             Stock existing, ResolvedStock resolved, WatchlistWriter.Counter counter) {
         StockInfo info = resolved.stockInfo();
         String nameEn = info != null ? info.nameEn() : null;
-        if (existing.updateNames(resolved.nameKo(), nameEn)) {
+        if (existing.syncFromWatchlist(resolved.nameKo(), nameEn)) {
             counter.updated++;
         } else {
             counter.unchanged++;
