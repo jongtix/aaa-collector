@@ -26,7 +26,7 @@ public class KisWatchlistClient {
 
     /** 관심 그룹 목록을 조회한다. */
     @Retryable(
-            retryFor = {IllegalStateException.class, RestClientException.class},
+            retryFor = {RestClientException.class},
             maxAttempts = 3,
             backoff = @Backoff(delay = 500, multiplier = 2))
     public List<KisGroupListResponse.Group> fetchGroups() {
@@ -51,7 +51,7 @@ public class KisWatchlistClient {
      * @param groupCode {@link KisGroupListResponse.Group#interGrpCode()} 값
      */
     @Retryable(
-            retryFor = {IllegalStateException.class, RestClientException.class},
+            retryFor = {RestClientException.class},
             maxAttempts = 3,
             backoff = @Backoff(delay = 500, multiplier = 2))
     public List<KisStockListByGroupResponse.Stock> fetchStocksByGroup(String groupCode) {

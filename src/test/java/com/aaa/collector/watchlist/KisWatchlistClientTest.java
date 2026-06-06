@@ -9,6 +9,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.when;
 
+import com.aaa.collector.kis.KisApiBusinessException;
 import com.aaa.collector.kis.KisApiExecutor;
 import com.aaa.collector.kis.token.KisAccountCredential;
 import com.aaa.collector.kis.token.KisProperties;
@@ -127,8 +128,8 @@ class KisWatchlistClientTest {
         }
 
         @Test
-        @DisplayName("rt_cd != '0' 응답 — IllegalStateException 발생 (validateRtCd 동작 검증)")
-        void fetchGroups_errorRtCd_throwsIllegalStateException() {
+        @DisplayName("rt_cd != '0' 응답 — KisApiBusinessException 발생 (validateRtCd 동작 검증)")
+        void fetchGroups_errorRtCd_throwsKisApiBusinessException() {
             wireMockServer.stubFor(
                     get(urlPathEqualTo(GROUP_LIST_PATH))
                             .willReturn(
@@ -146,7 +147,7 @@ class KisWatchlistClientTest {
                                                     """)));
 
             assertThatThrownBy(kisWatchlistClient::fetchGroups)
-                    .isInstanceOf(IllegalStateException.class)
+                    .isInstanceOf(KisApiBusinessException.class)
                     .hasMessageContaining("rt_cd=1")
                     .hasMessageContaining("msg_cd=EGW00123");
         }
@@ -242,8 +243,8 @@ class KisWatchlistClientTest {
         }
 
         @Test
-        @DisplayName("rt_cd != '0' 응답 — IllegalStateException 발생 (validateRtCd 동작 검증)")
-        void fetchStocksByGroup_errorRtCd_throwsIllegalStateException() {
+        @DisplayName("rt_cd != '0' 응답 — KisApiBusinessException 발생 (validateRtCd 동작 검증)")
+        void fetchStocksByGroup_errorRtCd_throwsKisApiBusinessException() {
             wireMockServer.stubFor(
                     get(urlPathEqualTo(STOCK_LIST_PATH))
                             .willReturn(
@@ -261,7 +262,7 @@ class KisWatchlistClientTest {
                                                     """)));
 
             assertThatThrownBy(() -> kisWatchlistClient.fetchStocksByGroup("001"))
-                    .isInstanceOf(IllegalStateException.class)
+                    .isInstanceOf(KisApiBusinessException.class)
                     .hasMessageContaining("rt_cd=1")
                     .hasMessageContaining("msg_cd=EGW00456");
         }
