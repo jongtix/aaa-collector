@@ -1,6 +1,7 @@
 package com.aaa.collector.stock;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -87,7 +88,7 @@ class StockListServiceTest {
         }
 
         @Test
-        @DisplayName("캐시 미스 + DB 빈 목록 — 빈 목록 반환, 캐시 워밍업 호출")
+        @DisplayName("캐시 미스 + DB 빈 목록 — 빈 목록 반환, 캐시 워밍업 미호출")
         void findActiveStocks_whenCacheMissAndDbEmpty_returnsEmptyAndSavesCache() {
             // Arrange
             when(cacheRepository.findAll()).thenReturn(Optional.empty());
@@ -98,7 +99,7 @@ class StockListServiceTest {
 
             // Assert
             assertThat(result).isEmpty();
-            verify(cacheRepository).save(List.of());
+            verify(cacheRepository, never()).save(any());
         }
     }
 }

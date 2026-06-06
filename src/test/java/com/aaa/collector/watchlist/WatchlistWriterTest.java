@@ -9,7 +9,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.aaa.collector.stock.Stock;
-import com.aaa.collector.stock.StockListCacheRepository;
+import com.aaa.collector.stock.StockListService;
 import com.aaa.collector.stock.StockRepository;
 import com.aaa.collector.stock.enums.AssetType;
 import com.aaa.collector.stock.enums.Market;
@@ -31,16 +31,15 @@ import org.springframework.test.util.ReflectionTestUtils;
 class WatchlistWriterTest {
 
     @Mock private StockRepository stockRepository;
-    @Mock private StockListCacheRepository stockListCacheRepository;
+    @Mock private StockListService stockListService;
     private WatchlistWriter watchlistWriter;
 
     @BeforeEach
     void setUp() {
         WatchlistEntryWriter entryWriter = new WatchlistEntryWriter(stockRepository);
-        watchlistWriter =
-                new WatchlistWriter(stockRepository, entryWriter, stockListCacheRepository);
-        // 캐시 갱신 경로(findAllActive)는 이 테스트의 관심 범위 밖이므로 lenient 스텁 처리
-        lenient().when(stockRepository.findAllActive()).thenReturn(List.of());
+        watchlistWriter = new WatchlistWriter(stockRepository, entryWriter, stockListService);
+        // 캐시 갱신 경로(refreshCache)는 이 테스트의 관심 범위 밖이므로 lenient 스텁 처리
+        lenient().doNothing().when(stockListService).refreshCache();
     }
 
     private static Stock stockWith(

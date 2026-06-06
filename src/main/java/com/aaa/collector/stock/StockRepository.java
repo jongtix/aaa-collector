@@ -24,6 +24,12 @@ public interface StockRepository extends JpaRepository<Stock, Long> {
             "UPDATE Stock s SET s.watchlistRemovedAt = CURRENT_TIMESTAMP WHERE s.id IN :ids AND s.watchlistRemovedAt IS NULL")
     void markWatchlistRemoved(@Param("ids") Set<Long> ids);
 
+    /**
+     * 관심 목록에서 제거되지 않은 종목을 조회한다.
+     *
+     * <p>"활성"의 기준: {@code watchlistRemovedAt IS NULL}. {@code active} 불리언 필드는 사용하지 않는다.
+     * watchlistRemovedAt이 null인 종목은 가장 최근 sync에서 제거 대상으로 마킹되지 않은 종목이다.
+     */
     @Query("SELECT s FROM Stock s WHERE s.watchlistRemovedAt IS NULL")
     List<Stock> findAllActive();
 }
