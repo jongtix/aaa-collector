@@ -2,7 +2,6 @@ package com.aaa.collector.watchlist;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
@@ -418,19 +417,30 @@ class WatchlistSyncServiceTest {
                     new KisGroupListResponse.Group("001", "그룹1", "1", "1");
             KisGroupListResponse.Group group2 =
                     new KisGroupListResponse.Group("002", "그룹2", "1", "2");
-            KisStockListByGroupResponse.Stock item =
+            // 두 그룹 모두 stub — thenAnswer(any())로 단일 stub 사용해 strict stub 미사용 예외 방지
+            // (가상 스레드 스케줄러가 어떤 순서로 실행하든 interrupt된 그룹의 fetchStocksByGroup은 호출되지 않음)
+            KisStockListByGroupResponse.Stock item1 =
                     new KisStockListByGroupResponse.Stock("J", "005930", "KRX", "삼성전자");
+            KisStockListByGroupResponse.Stock item2 =
+                    new KisStockListByGroupResponse.Stock("J", "000660", "KRX", "SK하이닉스");
             when(kisWatchlistClient.fetchGroups()).thenReturn(List.of(group1, group2));
+            when(kisWatchlistClient.fetchStocksByGroup(any()))
+                    .thenAnswer(
+                            inv ->
+                                    "001".equals(inv.getArgument(0))
+                                            ? List.of(item1)
+                                            : List.of(item2));
+            // 1회차 consume → InterruptedException(한 그룹 skip), 2회차 → doNothing(나머지 그룹 성공)
             doThrow(new InterruptedException()).doNothing().when(kisRateLimiter).consume();
-            when(kisWatchlistClient.fetchStocksByGroup("002")).thenReturn(List.of(item));
 
             // Act
             watchlistSyncService.sync();
 
-            // Assert: 인터럽트가 발생해도 sync 전체가 중단되지 않고 upsertAll까지 도달한다
-            // Virtual Thread 동시 실행 특성상 어떤 그룹이 InterruptedException을 받을지 비결정적이므로
-            // 특정 종목 수는 검증하지 않는다 (그룹 skip → 종목 수 시나리오는 StockCollection 중첩 클래스가 담당)
-            verify(watchlistWriter).upsertAll(any(), anyInt());
+            // Assert: 두 그룹 중 하나는 skip, 나머지 하나는 정상 처리 → 정확히 1종목
+            ArgumentCaptor<List<ResolvedStock>> captor = ArgumentCaptor.captor();
+            verify(watchlistWriter).upsertAll(captor.capture(), eq(1));
+            assertThat(captor.getValue()).hasSize(1);
+            assertThat(captor.getValue().getFirst().symbol()).isIn("005930", "000660");
         }
     }
 }
