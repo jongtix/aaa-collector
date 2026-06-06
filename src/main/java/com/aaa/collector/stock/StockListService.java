@@ -33,11 +33,19 @@ public class StockListService {
         return cacheRepository.findAll().orElseGet(this::fetchFromDbAndWarmUp);
     }
 
-    /** sync 완료 후 외부에서 캐시를 강제 갱신할 때 사용한다. */
+    /**
+     * sync 완료 후 캐시를 강제 갱신한다.
+     *
+     * <p>호출자는 {@code WatchlistWriter}(단일 writer)로 한정한다. 배치 소비자(1-7)는 이 메서드를 직접 호출하지 않는다 — 다중
+     * writer는 last-writer-wins 경쟁을 유발한다. 읽기는 {@link #findActiveStocks()}를 사용한다.
+     */
     public void refreshCache() {
         fetchFromDbAndWarmUp();
     }
 
+    // @MX:WARN: [AUTO] 클래스 레벨 @Transactional(readOnly=true) 포함 메서드 — JPA 쓰기 추가 금지
+    // @MX:REASON: readOnly=true 트랜잭션 내 JPA 쓰기는 FlushMode.MANUAL로 조용히 무시되거나
+    //             read-only 커넥션에서 런타임 오류 발생 (드라이버 의존적)
     private List<CachedStock> fetchFromDbAndWarmUp() {
         List<CachedStock> stocks =
                 stockRepository.findAllActive().stream().map(CachedStock::from).toList();

@@ -42,7 +42,7 @@ public class StockListCacheRepository {
      */
     // @MX:NOTE: [AUTO] TTL 미설정 의도: sync 성공 시에만 갱신
     @SuppressWarnings("PMD.AvoidCatchingGenericException") // 직렬화/Redis 예외 전부 포착해 sync 계속 진행
-    public void save(List<CachedStock> stocks) {
+    void save(List<CachedStock> stocks) {
         try {
             String json = objectMapper.writeValueAsString(stocks);
             redisTemplate.opsForValue().set(CACHE_KEY, json);
@@ -84,7 +84,7 @@ public class StockListCacheRepository {
      *
      * <p>주로 테스트에서 캐시를 초기화할 때 사용한다.
      */
-    public void delete() {
+    void delete() {
         redisTemplate.delete(CACHE_KEY);
     }
 }

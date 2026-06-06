@@ -4,7 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import com.aaa.collector.stock.enums.AssetType;
 import com.aaa.collector.stock.enums.Market;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.PropertyNamingStrategies;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import java.time.LocalDate;
 import java.util.List;
@@ -16,6 +16,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.data.redis.connection.RedisStandaloneConfiguration;
 import org.springframework.data.redis.connection.lettuce.LettuceConnectionFactory;
 import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.http.converter.json.Jackson2ObjectMapperBuilder;
 import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
@@ -42,9 +43,13 @@ class StockListCacheRepositoryIntegrationTest {
         StringRedisTemplate redisTemplate = new StringRedisTemplate(connectionFactory);
         redisTemplate.afterPropertiesSet();
 
-        repository =
-                new StockListCacheRepository(
-                        redisTemplate, new ObjectMapper().registerModule(new JavaTimeModule()));
+        var objectMapper =
+                new Jackson2ObjectMapperBuilder()
+                        .propertyNamingStrategy(PropertyNamingStrategies.SNAKE_CASE)
+                        .timeZone("Asia/Seoul")
+                        .modulesToInstall(new JavaTimeModule())
+                        .build();
+        repository = new StockListCacheRepository(redisTemplate, objectMapper);
     }
 
     @AfterEach

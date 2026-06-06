@@ -5,11 +5,14 @@ import static org.assertj.core.api.Assertions.assertThatNoException;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.aaa.collector.stock.enums.AssetType;
 import com.aaa.collector.stock.enums.Market;
+import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import java.time.LocalDate;
@@ -70,8 +73,8 @@ class StockListCacheRepositoryTest {
         }
 
         @Test
-        @DisplayName("직렬화 예외 — warn 로그만 남기고 예외 전파 안 함")
-        void save_serializationException_doesNotPropagate() {
+        @DisplayName("Redis 오류 — warn 로그만 남기고 예외 전파 안 함 (캐시 저장 실패)")
+        void save_redisError_doesNotPropagate() {
             // Arrange
             stubOpsForValue();
             doThrow(new RuntimeException("set failed")).when(valueOps).set(any(), any());
@@ -82,6 +85,20 @@ class StockListCacheRepositoryTest {
 
             // Act & Assert
             assertThatNoException().isThrownBy(() -> repository.save(stocks));
+        }
+
+        @Test
+        @DisplayName("JSON 직렬화 예외 — warn 로그만 남기고 예외 전파 안 함, Redis 쓰기 미호출")
+        void save_jsonSerializationException_doesNotPropagate() throws Exception {
+            // Arrange
+            ObjectMapper mockMapper = mock(ObjectMapper.class);
+            when(mockMapper.writeValueAsString(any()))
+                    .thenThrow(new JsonProcessingException("test") {});
+            StockListCacheRepository repo = new StockListCacheRepository(redisTemplate, mockMapper);
+
+            // Act & Assert
+            assertThatNoException().isThrownBy(() -> repo.save(List.of()));
+            verify(redisTemplate, never()).opsForValue();
         }
     }
 
