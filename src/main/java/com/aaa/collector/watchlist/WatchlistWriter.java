@@ -11,6 +11,7 @@ import java.util.function.Function;
 import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.dao.DataAccessException;
 import org.springframework.stereotype.Service;
 
 @Slf4j
@@ -39,7 +40,7 @@ public class WatchlistWriter {
                 if (touchedId != null) {
                     touchedIds.add(touchedId);
                 }
-            } catch (Exception e) {
+            } catch (DataAccessException e) {
                 // ADR-022 결정 3: 실패 종목은 DB를 건드리지 않음 — skip 후 다음 동기화 주기에 재시도
                 log.warn(
                         "종목 upsert 실패, skip — symbol={}, market={}",
