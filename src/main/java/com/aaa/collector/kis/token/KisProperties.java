@@ -17,7 +17,7 @@ public record KisProperties(
         String baseUrl, String userId, List<KisAccountCredential> accounts, RateLimit rateLimit) {
 
     /** KIS API rate limit 설정. */
-    public record RateLimit(int capacity, int refillPerSecond) {}
+    public record RateLimit(int capacity, int refillPerSecond, int maxConcurrency) {}
 
     public KisProperties {
         List<String> errors = new ArrayList<>();
@@ -42,6 +42,11 @@ public record KisProperties(
                 errors.add(
                         "kis.rate-limit.refill-per-second must be positive, got: "
                                 + rateLimit.refillPerSecond());
+            }
+            if (rateLimit.maxConcurrency() <= 0) {
+                errors.add(
+                        "kis.rate-limit.max-concurrency must be positive, got: "
+                                + rateLimit.maxConcurrency());
             }
         }
 

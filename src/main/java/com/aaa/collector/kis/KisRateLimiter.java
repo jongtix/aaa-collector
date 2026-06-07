@@ -4,11 +4,13 @@ import com.aaa.collector.kis.token.KisProperties;
 import io.github.bucket4j.Bandwidth;
 import io.github.bucket4j.Bucket;
 import java.time.Duration;
+import java.util.concurrent.Semaphore;
 
 /** KIS API 호출 빈도를 제한하는 rate limiter. */
 public class KisRateLimiter {
 
     private final Bucket bucket;
+    private final Semaphore semaphore;
 
     public KisRateLimiter(KisProperties.RateLimit config) {
         this.bucket =
@@ -24,14 +26,23 @@ public class KisRateLimiter {
                                                 config.refillPerSecond(), Duration.ofSeconds(1))
                                         .build())
                         .build();
+        this.semaphore = new Semaphore(config.maxConcurrency());
     }
 
     /**
-     * 토큰 1개를 소비한다. 토큰이 없으면 채워질 때까지 블로킹한다.
+     * 토큰 1개를 소비한 후 세마포어를 획득한다. 토큰이 없으면 채워질 때까지, 세마포어가 없으면 반환될 때까지 블로킹한다.
+     *
+     * <p>순서: bucket token 먼저, 그 다음 semaphore.acquire() — 세마포어 대기 중 토큰이 낭비되지 않도록 보장.
      *
      * @throws InterruptedException 대기 중 스레드가 인터럽트된 경우
      */
     public void consume() throws InterruptedException {
         bucket.asBlocking().consume(1);
+        semaphore.acquire();
+    }
+
+    /** 세마포어를 반환한다. API 호출 완료 후 반드시 finally 블록에서 호출해야 한다. */
+    public void release() {
+        semaphore.release();
     }
 }

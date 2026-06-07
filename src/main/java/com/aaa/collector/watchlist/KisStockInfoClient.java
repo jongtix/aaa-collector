@@ -101,6 +101,10 @@ public class KisStockInfoClient {
         if (yyyymmdd == null || yyyymmdd.isBlank()) {
             return null;
         }
+        // KIS "날짜 없음" 특수값: 모든 자리가 '0' (e.g. "00000000")
+        if (yyyymmdd.chars().allMatch(c -> c == '0')) {
+            return null;
+        }
         return LocalDate.parse(yyyymmdd, DateTimeFormatter.BASIC_ISO_DATE);
     }
 }

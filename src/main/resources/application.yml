@@ -69,8 +69,9 @@ kis:
   base-url: ${KIS_BASE_URL}
   user-id: ${KIS_USER_ID}
   rate-limit:
-    capacity: 20           # KIS API TPS 상한 (ADR-023)
+    capacity: 15           # KIS API TPS 상한 (ADR-023)
     refill-per-second: 20
+    max-concurrency: 10    # 동시 in-flight HTTP 요청 상한 (SPEC-COLLECTOR-WLSYNC-005)
   accounts:
     - alias: isa
       account-number: ${KIS_ACCT_ISA_NUMBER}

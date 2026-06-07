@@ -4,6 +4,7 @@ import com.aaa.collector.kis.KisApiBusinessException;
 import com.aaa.collector.kis.KisRateLimiter;
 import com.aaa.collector.stock.enums.AssetType;
 import com.aaa.collector.stock.enums.Market;
+import java.time.format.DateTimeParseException;
 import java.util.Collection;
 import java.util.List;
 import java.util.Map;
@@ -131,10 +132,20 @@ public class WatchlistSyncService {
         }
         try {
             kisRateLimiter.consume();
-            return kisStockInfoClient.fetchStockInfo(stock.jongCode(), market);
         } catch (InterruptedException ex) {
             Thread.currentThread().interrupt();
             log.warn("rate limit 대기 중 인터럽트 — symbol={}", stock.jongCode());
+            return null;
+        }
+        // 세마포어 획득 완료 — 반드시 finally에서 반환해야 함
+        try {
+            return kisStockInfoClient.fetchStockInfo(stock.jongCode(), market);
+        } catch (DateTimeParseException ex) {
+            log.warn(
+                    "날짜 파싱 실패로 종목 skip — symbol={}, market={}: {}",
+                    stock.jongCode(),
+                    market,
+                    ex.getMessage());
             return null;
         } catch (KisApiBusinessException | IllegalStateException | RestClientException ex) {
             log.warn(
@@ -143,6 +154,8 @@ public class WatchlistSyncService {
                     market,
                     ex.getMessage());
             return null;
+        } finally {
+            kisRateLimiter.release();
         }
     }
 }
