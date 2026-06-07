@@ -5,16 +5,19 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.aaa.collector.kis.KisRateLimiter;
+import com.aaa.collector.stock.StockAssetTypeClassifier;
 import com.aaa.collector.stock.enums.AssetType;
 import com.aaa.collector.stock.enums.Market;
 import java.time.format.DateTimeParseException;
 import java.util.List;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
@@ -32,7 +35,17 @@ class WatchlistSyncServiceTest {
     @Mock private KisWatchlistClient kisWatchlistClient;
     @Mock private KisStockInfoClient kisStockInfoClient;
     @Mock private WatchlistWriter watchlistWriter;
+    @Mock private StockAssetTypeClassifier stockAssetTypeClassifier;
     @InjectMocks private WatchlistSyncService watchlistSyncService;
+
+    @BeforeEach
+    void setUpClassifier() {
+        // StockAssetTypeClassifier 실제 구현과 동일하게 동작하도록 lenient 스텁 설정
+        StockAssetTypeClassifier real = new StockAssetTypeClassifier();
+        lenient()
+                .when(stockAssetTypeClassifier.classify(any(), any()))
+                .thenAnswer(inv -> real.classify(inv.getArgument(0), inv.getArgument(1)));
+    }
 
     @Nested
     @DisplayName("sync — 그룹 목록")

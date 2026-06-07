@@ -3,6 +3,7 @@ package com.aaa.collector;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.aaa.collector.stock.StockRepository;
+import com.aaa.collector.stock.grade.StockGradeRepository;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -24,6 +25,10 @@ class AaaCollectorApplicationTests {
     @MockitoBean
     @SuppressWarnings("unused")
     private StockRepository stockRepository;
+
+    @MockitoBean
+    @SuppressWarnings("unused")
+    private StockGradeRepository stockGradeRepository;
 
     @Test
     void contextLoads() {

@@ -2,12 +2,14 @@ package com.aaa.collector.watchlist;
 
 import com.aaa.collector.kis.KisApiBusinessException;
 import com.aaa.collector.kis.KisRateLimiter;
+import com.aaa.collector.stock.StockAssetTypeClassifier;
 import com.aaa.collector.stock.enums.AssetType;
 import com.aaa.collector.stock.enums.Market;
 import java.time.format.DateTimeParseException;
 import java.util.Collection;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
@@ -22,12 +24,14 @@ import org.springframework.web.client.RestClientException;
 @Slf4j
 @Service
 @RequiredArgsConstructor
+@SuppressWarnings("PMD.CouplingBetweenObjects") // 동기화 오케스트레이터 특성상 다수 협력 객체 의존 불가피
 public class WatchlistSyncService {
 
     private final KisRateLimiter kisRateLimiter;
     private final KisWatchlistClient kisWatchlistClient;
     private final KisStockInfoClient kisStockInfoClient;
     private final WatchlistWriter watchlistWriter;
+    private final StockAssetTypeClassifier stockAssetTypeClassifier;
 
     /** KIS 관심종목 전체를 조회하여 {@code stocks} 테이블에 upsert한다. */
     public void sync() {
@@ -123,12 +127,10 @@ public class WatchlistSyncService {
     }
 
     private StockInfo fetchStockInfo(KisStockListByGroupResponse.Stock stock, Market market) {
-        // TODO: 아래 분류 규칙을 StockAssetTypeClassifier 컴포넌트로 추출 — 종목 등급(A/B/C/F) 작업 시 함께 처리
-        if (market == Market.KRX || market == Market.US) {
-            return new StockInfo(AssetType.INDEX, null, null);
-        }
-        if (market == Market.KOSPI && stock.jongCode().startsWith("M")) {
-            return new StockInfo(AssetType.COMMODITY, null, null);
+        Optional<AssetType> staticAssetType =
+                stockAssetTypeClassifier.classify(market, stock.jongCode());
+        if (staticAssetType.isPresent()) {
+            return new StockInfo(staticAssetType.get(), null, null);
         }
         try {
             kisRateLimiter.consume();

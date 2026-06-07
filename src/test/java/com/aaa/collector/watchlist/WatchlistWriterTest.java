@@ -13,6 +13,7 @@ import com.aaa.collector.stock.StockListService;
 import com.aaa.collector.stock.StockRepository;
 import com.aaa.collector.stock.enums.AssetType;
 import com.aaa.collector.stock.enums.Market;
+import com.aaa.collector.stock.grade.GradeClassificationService;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
@@ -32,14 +33,18 @@ class WatchlistWriterTest {
 
     @Mock private StockRepository stockRepository;
     @Mock private StockListService stockListService;
+    @Mock private GradeClassificationService gradeClassificationService;
     private WatchlistWriter watchlistWriter;
 
     @BeforeEach
     void setUp() {
         WatchlistEntryWriter entryWriter = new WatchlistEntryWriter(stockRepository);
-        watchlistWriter = new WatchlistWriter(stockRepository, entryWriter, stockListService);
+        watchlistWriter =
+                new WatchlistWriter(
+                        stockRepository, entryWriter, stockListService, gradeClassificationService);
         // 캐시 갱신 경로(refreshCache)는 이 테스트의 관심 범위 밖이므로 lenient 스텁 처리
         lenient().doNothing().when(stockListService).refreshCache();
+        lenient().doNothing().when(gradeClassificationService).classify();
     }
 
     private static Stock stockWith(

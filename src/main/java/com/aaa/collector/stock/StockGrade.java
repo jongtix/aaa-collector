@@ -12,11 +12,13 @@ import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
 import jakarta.persistence.Table;
 import jakarta.persistence.UniqueConstraint;
-import java.time.LocalDateTime;
+import java.time.ZonedDateTime;
 import lombok.AccessLevel;
 import lombok.Builder;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
+import org.hibernate.annotations.TimeZoneStorage;
+import org.hibernate.annotations.TimeZoneStorageType;
 
 /** 종목 등급 (A/B/C/F). 종목당 현재 등급 1건 유지, 변경 시 UPDATE. */
 @Entity
@@ -39,15 +41,30 @@ public class StockGrade extends BaseEntity {
     private final Stock stock;
 
     @Column(name = "grade", length = 1)
-    private final String grade;
+    private String grade;
 
     @Column(name = "graded_at")
-    private final LocalDateTime gradedAt;
+    @TimeZoneStorage(TimeZoneStorageType.NORMALIZE_UTC)
+    private ZonedDateTime gradedAt;
 
     @Builder
-    private StockGrade(Stock stock, String grade, LocalDateTime gradedAt) {
+    private StockGrade(Stock stock, String grade, ZonedDateTime gradedAt) {
         super();
         this.stock = stock;
+        this.grade = grade;
+        this.gradedAt = gradedAt;
+    }
+
+    /**
+     * 등급과 등급 산정 시각을 갱신한다.
+     *
+     * <p>{@code grade}와 {@code gradedAt}만 변경되며, 다른 필드는 변경되지 않는다 (REQ-011).
+     *
+     * @param grade 새 등급 (A/B/C/F)
+     * @param gradedAt 등급 산정 시각 (KST)
+     */
+    // @MX:NOTE: [AUTO] grade, gradedAt 두 필드만 변경 — stock, id, createdAt 등 나머지 필드는 불변 (REQ-011)
+    public void updateGrade(String grade, ZonedDateTime gradedAt) {
         this.grade = grade;
         this.gradedAt = gradedAt;
     }
