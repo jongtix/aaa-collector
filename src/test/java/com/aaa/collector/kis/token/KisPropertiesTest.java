@@ -13,7 +13,7 @@ class KisPropertiesTest {
     private static final List<KisAccountCredential> DUMMY_ACCOUNTS =
             List.of(new KisAccountCredential("test", "12345678", "appkey", "appsecret"));
     private static final KisProperties.RateLimit DUMMY_RATE_LIMIT =
-            new KisProperties.RateLimit(20, 20);
+            new KisProperties.RateLimit(20, 20, 10);
 
     @Test
     @DisplayName("baseUrl이 https://로 시작하면 정상 생성된다")
@@ -237,7 +237,7 @@ class KisPropertiesTest {
                                         "https://openapi.koreainvestment.com",
                                         "user",
                                         DUMMY_ACCOUNTS,
-                                        new KisProperties.RateLimit(0, 20)))
+                                        new KisProperties.RateLimit(0, 20, 10)))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("rate-limit.capacity");
     }
@@ -251,7 +251,7 @@ class KisPropertiesTest {
                                         "https://openapi.koreainvestment.com",
                                         "user",
                                         DUMMY_ACCOUNTS,
-                                        new KisProperties.RateLimit(20, 0)))
+                                        new KisProperties.RateLimit(20, 0, 10)))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("rate-limit.refill-per-second");
     }

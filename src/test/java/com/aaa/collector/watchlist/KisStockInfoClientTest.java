@@ -283,4 +283,39 @@ class KisStockInfoClientTest {
                     .isEqualTo(AssetType.ETN);
         }
     }
+
+    @Nested
+    @DisplayName("parseDate — KIS 특수값 처리")
+    class ParseDate {
+
+        @Test
+        @DisplayName("00000000 — null 반환, 예외 없음")
+        void fetchStockInfo_lstgDtAllZeros_returnsNullDate() {
+            stubOverseas("AAPL", "512", "01", "", "Apple Inc", "00000000");
+
+            StockInfo info = kisStockInfoClient.fetchStockInfo("AAPL", Market.NASDAQ);
+
+            assertThat(info.listedDate()).isNull();
+        }
+
+        @Test
+        @DisplayName("null — null 반환")
+        void fetchStockInfo_lstgDtNull_returnsNullDate() {
+            stubOverseas("AAPL", "512", "01", "", "Apple Inc", "");
+
+            StockInfo info = kisStockInfoClient.fetchStockInfo("AAPL", Market.NASDAQ);
+
+            assertThat(info.listedDate()).isNull();
+        }
+
+        @Test
+        @DisplayName("유효 날짜 20240115 — LocalDate(2024,1,15) 반환")
+        void fetchStockInfo_lstgDtValid_returnsLocalDate() {
+            stubOverseas("AAPL", "512", "01", "", "Apple Inc", "20240115");
+
+            StockInfo info = kisStockInfoClient.fetchStockInfo("AAPL", Market.NASDAQ);
+
+            assertThat(info.listedDate()).isEqualTo(LocalDate.of(2024, 1, 15));
+        }
+    }
 }

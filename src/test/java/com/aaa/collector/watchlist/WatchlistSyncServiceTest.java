@@ -13,6 +13,7 @@ import static org.mockito.Mockito.when;
 import com.aaa.collector.kis.KisRateLimiter;
 import com.aaa.collector.stock.enums.AssetType;
 import com.aaa.collector.stock.enums.Market;
+import java.time.format.DateTimeParseException;
 import java.util.List;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -409,6 +410,27 @@ class WatchlistSyncServiceTest {
         }
 
         @Test
+        @DisplayName("종목 consume 후 release가 호출된다")
+        void sync_stockFetch_releaseCalledAfterConsume() throws InterruptedException {
+            // Arrange
+            KisGroupListResponse.Group group =
+                    new KisGroupListResponse.Group("001", "그룹1", "1", "1");
+            KisStockListByGroupResponse.Stock item =
+                    new KisStockListByGroupResponse.Stock("FS", "AAPL", "NAS", "Apple");
+            when(kisWatchlistClient.fetchGroups()).thenReturn(List.of(group));
+            when(kisWatchlistClient.fetchStocksByGroup("001")).thenReturn(List.of(item));
+            when(kisStockInfoClient.fetchStockInfo(any(), any()))
+                    .thenReturn(new StockInfo(AssetType.STOCK, "Apple", null));
+
+            // Act
+            watchlistSyncService.sync();
+
+            // Assert: consume과 release가 각 1회씩 (그룹fetch 1 + stockInfo 1 = 2 consume, stockInfo 1
+            // release)
+            verify(kisRateLimiter, times(1)).release();
+        }
+
+        @Test
         @DisplayName("consume InterruptedException — 해당 그룹 skip, 나머지 그룹 정상 처리")
         void sync_consumeThrowsInterruptedException_affectedGroupSkipped()
                 throws InterruptedException {
@@ -441,6 +463,42 @@ class WatchlistSyncServiceTest {
             verify(watchlistWriter).upsertAll(captor.capture(), eq(1));
             assertThat(captor.getValue()).hasSize(1);
             assertThat(captor.getValue().getFirst().symbol()).isIn("005930", "000660");
+        }
+    }
+
+    @Nested
+    @DisplayName("날짜 파싱 실패 처리")
+    class DateParsing {
+
+        @Test
+        @DisplayName("fetchStockInfo에서 DateTimeParseException — 해당 종목 null, 나머지 계속")
+        void sync_fetchStockInfoThrowsDateTimeParseException_stockSkippedRestContinues()
+                throws InterruptedException {
+            // Arrange
+            KisGroupListResponse.Group group =
+                    new KisGroupListResponse.Group("001", "그룹1", "2", "1");
+            KisStockListByGroupResponse.Stock stock1 =
+                    new KisStockListByGroupResponse.Stock("FS", "AAPL", "NAS", "Apple");
+            KisStockListByGroupResponse.Stock stock2 =
+                    new KisStockListByGroupResponse.Stock("FS", "MSFT", "NAS", "Microsoft");
+            when(kisWatchlistClient.fetchGroups()).thenReturn(List.of(group));
+            when(kisWatchlistClient.fetchStocksByGroup("001")).thenReturn(List.of(stock1, stock2));
+            when(kisStockInfoClient.fetchStockInfo(eq("AAPL"), any()))
+                    .thenThrow(new DateTimeParseException("invalid", "99999999", 0));
+            when(kisStockInfoClient.fetchStockInfo(eq("MSFT"), any()))
+                    .thenReturn(new StockInfo(AssetType.STOCK, "Microsoft", null));
+
+            // Act
+            watchlistSyncService.sync();
+
+            // Assert: AAPL → null stockInfo, MSFT → 정상. 두 종목 모두 upsertAll에 전달됨.
+            ArgumentCaptor<List<ResolvedStock>> captor = ArgumentCaptor.captor();
+            verify(watchlistWriter).upsertAll(captor.capture(), eq(0));
+            assertThat(captor.getValue()).hasSize(2);
+            assertThat(captor.getValue())
+                    .anyMatch(r -> "MSFT".equals(r.symbol()) && r.stockInfo() != null);
+            assertThat(captor.getValue())
+                    .anyMatch(r -> "AAPL".equals(r.symbol()) && r.stockInfo() == null);
         }
     }
 }

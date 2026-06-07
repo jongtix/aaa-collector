@@ -14,7 +14,7 @@ class KisConfigTest {
     private static final List<KisAccountCredential> DUMMY_ACCOUNTS =
             List.of(new KisAccountCredential("test", "12345678", "appkey", "appsecret"));
     private static final KisProperties.RateLimit DUMMY_RATE_LIMIT =
-            new KisProperties.RateLimit(20, 20);
+            new KisProperties.RateLimit(20, 20, 10);
 
     private final KisConfig kisConfig = new KisConfig();
 
