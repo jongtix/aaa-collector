@@ -45,6 +45,7 @@ class KisWebSocketSessionManagerIncrementalTest {
     private KisWebSocketSessionManager manager;
 
     @BeforeEach
+    @SuppressWarnings("PMD.SignatureDeclareThrowsException")
     void setUp() throws Exception {
         List<KisAccountCredential> accounts = buildAccounts(SESSION_COUNT);
         when(kisProperties.accounts()).thenReturn(accounts);
@@ -97,7 +98,7 @@ class KisWebSocketSessionManagerIncrementalTest {
             for (KisWebSocketSession session : mockSessions) {
                 totalSubscribeCalls +=
                         org.mockito.Mockito.mockingDetails(session).getInvocations().stream()
-                                .filter(inv -> inv.getMethod().getName().equals("subscribe"))
+                                .filter(inv -> "subscribe".equals(inv.getMethod().getName()))
                                 .mapToInt(inv -> 1)
                                 .sum();
             }
@@ -140,7 +141,7 @@ class KisWebSocketSessionManagerIncrementalTest {
             for (KisWebSocketSession session : mockSessions) {
                 totalUnsubscribeCalls +=
                         org.mockito.Mockito.mockingDetails(session).getInvocations().stream()
-                                .filter(inv -> inv.getMethod().getName().equals("unsubscribe"))
+                                .filter(inv -> "unsubscribe".equals(inv.getMethod().getName()))
                                 .mapToInt(inv -> 1)
                                 .sum();
             }
@@ -184,7 +185,9 @@ class KisWebSocketSessionManagerIncrementalTest {
 
             // Assert — 100종목 × 2 trId = 200회 subscribe 호출
             int total = 0;
-            for (int count : counts) total += count;
+            for (int count : counts) {
+                total += count;
+            }
             org.assertj.core.api.Assertions.assertThat(total).isEqualTo(200);
         }
     }

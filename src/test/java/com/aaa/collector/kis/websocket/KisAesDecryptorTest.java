@@ -21,6 +21,7 @@ class KisAesDecryptorTest {
     private static final String TEST_IV = "1234567890123456";
 
     /** 테스트 벡터 생성 헬퍼: AES-256-CBC로 평문을 암호화하여 Base64 문자열 반환. */
+    @SuppressWarnings("PMD.SignatureDeclareThrowsException")
     private static String encryptForTest(String plaintext, String key, String iv) throws Exception {
         Cipher cipher = Cipher.getInstance("AES/CBC/PKCS5Padding");
         SecretKeySpec keySpec = new SecretKeySpec(key.getBytes(StandardCharsets.UTF_8), "AES");

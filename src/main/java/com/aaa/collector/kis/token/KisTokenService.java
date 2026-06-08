@@ -34,6 +34,7 @@ import org.springframework.stereotype.Service;
  */
 @Slf4j
 @Service
+@SuppressWarnings({"PMD.GodClass", "PMD.AvoidCatchingGenericException"})
 public class KisTokenService {
 
     private static final int MAX_ATTEMPTS = 3;

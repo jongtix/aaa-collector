@@ -52,6 +52,7 @@ class KisWebSocketSessionTest {
     private KisWebSocketSession session;
 
     @BeforeEach
+    @SuppressWarnings("PMD.SignatureDeclareThrowsException")
     void setUp() throws Exception {
         when(webSocketClient.execute(any(), any(WebSocketHttpHeaders.class), any(URI.class)))
                 .thenReturn(handshakeFuture);
@@ -249,7 +250,7 @@ class KisWebSocketSessionTest {
             // Assert
             ArgumentCaptor<Long> delayCaptor = ArgumentCaptor.forClass(Long.class);
             verify(sleeper, times(2)).sleep(delayCaptor.capture());
-            assertThat(delayCaptor.getAllValues().get(0))
+            assertThat(delayCaptor.getAllValues().getFirst())
                     .isEqualTo(ExponentialBackoff.delay(0, 1000).toMillis()); // 1000ms
             assertThat(delayCaptor.getAllValues().get(1))
                     .isEqualTo(ExponentialBackoff.delay(1, 1000).toMillis()); // 2000ms

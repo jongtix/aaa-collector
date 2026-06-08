@@ -36,6 +36,18 @@ public class KisWebSocketMessageHandler extends TextWebSocketHandler {
     /** 국내 실시간 데이터 trId 목록. */
     private static final Set<String> DOMESTIC_TR_IDS = Set.of("H0STCNT0", "H0STASP0");
 
+    /** Type A 메시지 최대 분리 파트 수. */
+    private static final int TYPE_A_SPLIT_LIMIT = 4;
+
+    /** Type A 메시지 암호화 플래그 (암호화). */
+    private static final String ENCRYPT_FLAG = "1";
+
+    /** Type B 성공 결과 코드. */
+    private static final String RT_CD_SUCCESS = "0";
+
+    /** KIS PINGPONG 트랜잭션 ID. */
+    private static final String TR_ID_PINGPONG = "PINGPONG";
+
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
 
     /** 세션 식별자 (안전 모드 alias로 사용). */
@@ -67,6 +79,7 @@ public class KisWebSocketMessageHandler extends TextWebSocketHandler {
             String alias,
             KisTickPublisher tickPublisher,
             SafeModeManager webSocketSafeModeManager) {
+        super();
         this.alias = alias;
         this.tickPublisher = tickPublisher;
         this.webSocketSafeModeManager = webSocketSafeModeManager;
@@ -125,6 +138,7 @@ public class KisWebSocketMessageHandler extends TextWebSocketHandler {
     // ──────────────────────────────────────────────────────────────────
 
     @Override
+    @SuppressWarnings("PMD.AvoidLiteralsInIfCondition")
     protected void handleTextMessage(WebSocketSession session, TextMessage message) {
         String raw = message.getPayload();
         if (raw.isEmpty()) {
@@ -132,9 +146,9 @@ public class KisWebSocketMessageHandler extends TextWebSocketHandler {
         }
 
         char first = raw.charAt(0);
-        if (first == '0' || first == '1') {
+        if (first == '0' || first == '1') { // '0'=비암호화, '1'=암호화 Type A 식별자
             handleTypeA(session, raw);
-        } else if (first == '{') {
+        } else if (first == '{') { // JSON 시작: Type B 제어 메시지
             handleTypeB(session, raw);
         } else {
             log.warn("[{}] 알 수 없는 메시지 형식: {}", alias, raw.substring(0, Math.min(50, raw.length())));
@@ -153,10 +167,11 @@ public class KisWebSocketMessageHandler extends TextWebSocketHandler {
      * @param session WebSocket 세션
      * @param raw 원본 메시지
      */
+    @SuppressWarnings("PMD.UnusedFormalParameter")
     private void handleTypeA(WebSocketSession session, String raw) {
-        // 최대 4개 부분으로 분리: [encryptFlag, trId, count, dataPayload]
-        String[] parts = raw.split("\\|", 4);
-        if (parts.length < 4) {
+        // 최대 TYPE_A_SPLIT_LIMIT개 부분으로 분리: [encryptFlag, trId, count, dataPayload]
+        String[] parts = raw.split("\\|", TYPE_A_SPLIT_LIMIT);
+        if (parts.length < TYPE_A_SPLIT_LIMIT) {
             log.warn(
                     "[{}] Type A 메시지 형식 오류: {}",
                     alias,
@@ -170,7 +185,7 @@ public class KisWebSocketMessageHandler extends TextWebSocketHandler {
 
         // 암호화된 경우 AES 복호화
         String decryptedData;
-        if ("1".equals(encryptFlag)) {
+        if (ENCRYPT_FLAG.equals(encryptFlag)) {
             AesKey aesKey = aesKeys.get(trId);
             if (aesKey == null) {
                 log.warn("[{}] AES 키 없음 (trId={}), 메시지 무시", alias, trId);
@@ -217,6 +232,7 @@ public class KisWebSocketMessageHandler extends TextWebSocketHandler {
      *
      * <p>PINGPONG, 구독 성공(rt_cd=0), 구독 실패(rt_cd≠0), UNSUB 응답을 처리한다.
      */
+    @SuppressWarnings("PMD.AvoidCatchingGenericException")
     private void handleTypeB(WebSocketSession session, String raw) {
         try {
             JsonNode root = OBJECT_MAPPER.readTree(raw);
@@ -225,13 +241,13 @@ public class KisWebSocketMessageHandler extends TextWebSocketHandler {
 
             // PINGPONG: header.tr_id = "PINGPONG", body 없음
             String trId = header.path("tr_id").asText();
-            if ("PINGPONG".equals(trId) && body.isMissingNode()) {
+            if (TR_ID_PINGPONG.equals(trId) && body.isMissingNode()) {
                 handlePingPong(session, raw);
                 return;
             }
 
             // body가 없는 PINGPONG 변형 처리
-            if ("PINGPONG".equals(trId)) {
+            if (TR_ID_PINGPONG.equals(trId)) {
                 handlePingPong(session, raw);
                 return;
             }
@@ -239,7 +255,7 @@ public class KisWebSocketMessageHandler extends TextWebSocketHandler {
             String rtCd = body.path("rt_cd").asText();
             String msg1 = body.path("msg1").asText();
 
-            if ("0".equals(rtCd)) {
+            if (RT_CD_SUCCESS.equals(rtCd)) {
                 // 구독 성공 또는 UNSUB 확인
                 if (msg1.startsWith(UNSUB_PREFIX)) {
                     log.info("[{}] 구독 해제 확인: trId={}, msg={}", alias, trId, msg1);
@@ -275,6 +291,7 @@ public class KisWebSocketMessageHandler extends TextWebSocketHandler {
     }
 
     /** PINGPONG 메시지에 PongMessage로 응답. */
+    @SuppressWarnings("PMD.AvoidCatchingGenericException")
     private static void handlePingPong(WebSocketSession session, String raw) {
         try {
             session.sendMessage(

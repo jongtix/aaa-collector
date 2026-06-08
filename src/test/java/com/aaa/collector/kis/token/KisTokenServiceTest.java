@@ -712,7 +712,7 @@ class KisTokenServiceTest {
                         safeModeManager,
                         millis -> {},
                         FIXED_CLOCK,
-                        key -> new java.util.concurrent.locks.ReentrantLock());
+                        key -> new ReentrantLock());
 
         when(kisTokenClient.requestApprovalKey(credential))
                 .thenReturn(new KisApprovalKeyResponse("approval-key-test"));
@@ -751,7 +751,7 @@ class KisTokenServiceTest {
                         safeModeManager,
                         millis -> {},
                         FIXED_CLOCK,
-                        key -> new java.util.concurrent.locks.ReentrantLock());
+                        key -> new ReentrantLock());
 
         when(kisTokenClient.requestApprovalKey(credential))
                 .thenReturn(new KisApprovalKeyResponse("approval-key-test"));

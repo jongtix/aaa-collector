@@ -50,6 +50,7 @@ class KisWebSocketMessageHandlerTest {
     // ──────────────────────────────────────────────────────────────────
 
     /** 주어진 평문을 AES-256-CBC로 암호화하여 Base64 문자열 반환. */
+    @SuppressWarnings("PMD.SignatureDeclareThrowsException")
     private static String encrypt(String plaintext) throws Exception {
         Cipher cipher = Cipher.getInstance("AES/CBC/PKCS5Padding");
         cipher.init(
@@ -184,6 +185,7 @@ class KisWebSocketMessageHandlerTest {
     @DisplayName("Type B — 구독 실패 응답 (rt_cd≠0)")
     class TypeBSubscribeFailure {
 
+        @SuppressWarnings("PMD.FinalFieldCouldBeStatic")
         private final String failureJson =
                 """
                 {
@@ -198,8 +200,9 @@ class KisWebSocketMessageHandlerTest {
         @Test
         @DisplayName("4회 실패 — 안전 모드 미진입")
         void fourFailures_doesNotEnterSafeMode() {
+            TextMessage message = new TextMessage(failureJson);
             for (int i = 0; i < 4; i++) {
-                handler.handleTextMessage(session, new TextMessage(failureJson));
+                handler.handleTextMessage(session, message);
             }
 
             verify(webSocketSafeModeManager, never()).enter(any(), any());
@@ -208,8 +211,9 @@ class KisWebSocketMessageHandlerTest {
         @Test
         @DisplayName("5회 실패 — 안전 모드 진입")
         void fiveFailures_entersSafeMode() {
+            TextMessage message = new TextMessage(failureJson);
             for (int i = 0; i < 5; i++) {
-                handler.handleTextMessage(session, new TextMessage(failureJson));
+                handler.handleTextMessage(session, message);
             }
 
             verify(webSocketSafeModeManager, times(1)).enter(any(), any());
@@ -242,7 +246,8 @@ class KisWebSocketMessageHandlerTest {
         @DisplayName("콜백 미등록 시 afterConnectionClosed 예외 없이 완료")
         void afterConnectionClosedWithDefaultCallbackDoesNotThrow() throws Exception {
             // Act & Assert — 기본 no-op 콜백이므로 예외 없이 완료돼야 한다
-            handler.afterConnectionClosed(session, CloseStatus.GOING_AWAY);
+            org.junit.jupiter.api.Assertions.assertDoesNotThrow(
+                    () -> handler.afterConnectionClosed(session, CloseStatus.GOING_AWAY));
         }
     }
 

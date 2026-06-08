@@ -108,6 +108,7 @@ public class KisWebSocketSessionManager {
      *
      * <p>연결 실패 시 approval_key 강제 재발급 후 1회 재시도한다 (REQ-WS-042).
      */
+    @SuppressWarnings("PMD.AvoidCatchingGenericException")
     public void openAll() {
         log.info("전 계좌 WebSocket 세션 연결 시작 — 계좌 수: {}", kisProperties.accounts().size());
 
@@ -157,6 +158,7 @@ public class KisWebSocketSessionManager {
      *
      * <p>각 세션의 {@link KisWebSocketSession#close()}를 호출하고, sessions 및 subscriptionOwner 맵을 비운다.
      */
+    @SuppressWarnings("PMD.AvoidCatchingGenericException")
     public void closeAll() {
         log.info("전 계좌 WebSocket 세션 종료 시작");
         sessions.values()
@@ -186,6 +188,7 @@ public class KisWebSocketSessionManager {
      * @param trKey 종목 코드
      * @return 할당 성공 시 {@code true}, 실패 시 {@code false}
      */
+    @SuppressWarnings("PMD.AvoidCatchingGenericException")
     public boolean assignSubscription(String trId, String trKey) {
         List<KisWebSocketSession> available =
                 sessions.values().stream()
@@ -205,9 +208,11 @@ public class KisWebSocketSessionManager {
             target.subscribe(trId, trKey);
             // trId:trKey 복합 키로 저장 — 동일 종목의 체결·호가 구독을 독립적으로 추적
             subscriptionOwner.put(trId + ":" + trKey, target.getAlias());
-            log.debug("구독 할당: trId={}, trKey={} → alias={}", trId, trKey, target.getAlias());
+            if (log.isDebugEnabled()) {
+                log.debug("구독 할당: trId={}, trKey={} → alias={}", trId, trKey, target.getAlias());
+            }
             return true;
-        } catch (Exception e) {
+        } catch (Exception e) { // NOSONAR: subscribe()는 다양한 예외를 발생시킬 수 있음
             log.error("구독 할당 중 오류: trId={}, trKey={}", trId, trKey, e);
             return false;
         }
@@ -221,6 +226,7 @@ public class KisWebSocketSessionManager {
      * @param trId 트랜잭션 ID
      * @param trKey 종목 코드
      */
+    @SuppressWarnings("PMD.AvoidCatchingGenericException")
     public void unassignSubscription(String trId, String trKey) {
         // trId:trKey 복합 키로 소유자 조회
         String ownerAlias = subscriptionOwner.remove(trId + ":" + trKey);
@@ -238,7 +244,7 @@ public class KisWebSocketSessionManager {
         try {
             ownerSession.unsubscribe(trId, trKey);
             log.debug("구독 해제: trId={}, trKey={} ← alias={}", trId, trKey, ownerAlias);
-        } catch (Exception e) {
+        } catch (Exception e) { // NOSONAR: unsubscribe()는 다양한 예외를 발생시킬 수 있음
             log.error("구독 해제 중 오류: trId={}, trKey={}", trId, trKey, e);
         }
     }
@@ -304,6 +310,7 @@ public class KisWebSocketSessionManager {
      * @return 유효한 승인키
      * @throws RuntimeException 재시도 후에도 실패한 경우
      */
+    @SuppressWarnings("PMD.AvoidCatchingGenericException")
     private String getApprovalKeyWithRetry(String alias) {
         try {
             return kisTokenService.getValidApprovalKey(alias);

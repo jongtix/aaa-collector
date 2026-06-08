@@ -44,6 +44,9 @@ public class KisWebSocketSession {
     /** ConcurrentWebSocketSessionDecorator 버퍼 크기 (64KB). */
     private static final int BUFFER_SIZE_LIMIT = 64 * 1024;
 
+    /** "trId|trKey" 구독 키 분리 시 예상 파트 수. */
+    private static final int SUBSCRIPTION_KEY_PARTS = 2;
+
     private final String alias;
     private final String approvalKey;
     private final WebSocketClient webSocketClient;
@@ -54,9 +57,11 @@ public class KisWebSocketSession {
     private final Clock clock;
 
     /** 원시 WebSocketSession (연결 해제 시 null). */
+    @SuppressWarnings("PMD.AvoidUsingVolatile")
     private volatile WebSocketSession rawSession;
 
     /** 스레드 안전 전송을 위한 데코레이터 래퍼. */
+    @SuppressWarnings("PMD.AvoidUsingVolatile")
     private volatile ConcurrentWebSocketSessionDecorator session;
 
     /** 현재 활성 구독 키 집합 (trId + "|" + trKey). */
@@ -69,9 +74,11 @@ public class KisWebSocketSession {
     private final AtomicInteger reconnectAttempt = new AtomicInteger(0);
 
     /** {@code true}이면 정상 종료로 인한 disconnect — 재연결 차단. */
-    private volatile boolean closed = false;
+    @SuppressWarnings("PMD.AvoidUsingVolatile")
+    private volatile boolean closed;
 
     /** WebSocket 연결 URL (재연결 시 재사용). */
+    @SuppressWarnings("PMD.AvoidUsingVolatile")
     private volatile String wsUrl;
 
     public KisWebSocketSession(
@@ -104,6 +111,7 @@ public class KisWebSocketSession {
      *
      * @param url KIS WebSocket 엔드포인트 URL
      */
+    @SuppressWarnings({"PMD.AvoidCatchingGenericException", "PMD.AvoidThrowingRawExceptionTypes"})
     public void connect(String url) {
         this.wsUrl = url;
         try {
@@ -158,7 +166,7 @@ public class KisWebSocketSession {
     public void unsubscribeAll() {
         for (String key : activeSubscriptions) {
             String[] parts = key.split("\\|", 2);
-            if (parts.length == 2) {
+            if (parts.length == SUBSCRIPTION_KEY_PARTS) {
                 String json = buildSubscribeJson(parts[0], parts[1], "2");
                 sendMessage(json);
                 log.debug("[{}] 전체 해제 — trId={}, trKey={}", alias, parts[0], parts[1]);
@@ -172,6 +180,7 @@ public class KisWebSocketSession {
      *
      * <p>재연결 차단 플래그를 설정하고, 모든 구독 해제 후 WebSocket 연결을 닫는다.
      */
+    @SuppressWarnings("PMD.AvoidCatchingGenericException")
     public void close() {
         closed = true;
         try {
@@ -271,6 +280,11 @@ public class KisWebSocketSession {
             return;
         }
 
+        reconnectInternal(attempt);
+    }
+
+    @SuppressWarnings("PMD.AvoidCatchingGenericException")
+    private void reconnectInternal(int attempt) {
         try {
             connect(wsUrl);
             log.warn("[{}] 재연결 성공 (attempt={}) — 데이터 갭 발생 가능 (REQ-WS-026)", alias, attempt);
@@ -314,7 +328,8 @@ public class KisWebSocketSession {
     }
 
     /** 세션에 TextMessage를 전송한다. */
-    @SuppressWarnings("PMD.AvoidCatchingGenericException")
+    // target은 외부에서 주입된 세션 참조이므로 여기서 close하지 않는다.
+    @SuppressWarnings({"PMD.AvoidCatchingGenericException", "PMD.CloseResource"})
     private void sendMessage(String json) {
         try {
             WebSocketSession target = (session != null) ? session : rawSession;

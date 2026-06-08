@@ -8,6 +8,7 @@ import java.util.List;
  * <p>의존성 역전 원칙(DIP)을 적용하여 {@code kis.websocket} 패키지가 {@code stock} 패키지에 직접 의존하지 않도록 한다. 구현체는 {@code
  * stock.grade} 패키지에 위치한다.
  */
+@FunctionalInterface
 public interface DomesticSymbolProvider {
 
     /**

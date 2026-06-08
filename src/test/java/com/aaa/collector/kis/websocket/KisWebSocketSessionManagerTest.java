@@ -37,6 +37,7 @@ class KisWebSocketSessionManagerTest {
 
     private static final int SESSION_COUNT = 5;
     private static final int MAX_SUBSCRIPTIONS_PER_SESSION = 40;
+    private static final int SAFE_MODE_SESSION_INDEX = 2;
 
     @Mock private KisProperties kisProperties;
     @Mock private KisTokenService kisTokenService;
@@ -54,6 +55,7 @@ class KisWebSocketSessionManagerTest {
     private KisWebSocketSessionManager manager;
 
     @BeforeEach
+    @SuppressWarnings("PMD.SignatureDeclareThrowsException")
     void setUp() throws Exception {
         // 5개 계좌 설정
         List<KisAccountCredential> accounts = buildAccounts(SESSION_COUNT);
@@ -99,6 +101,10 @@ class KisWebSocketSessionManagerTest {
 
         @Test
         @DisplayName("100 심볼 × 2 trId = 200 구독 → 세션당 40개 균등 분배 (REQ-WS-004)")
+        @SuppressWarnings({
+            "PMD.AvoidCatchingGenericException",
+            "PMD.AvoidThrowingRawExceptionTypes"
+        })
         void shouldDistribute200SubscriptionsEvenly() {
             // Arrange — 각 세션이 실제 카운터처럼 동작하도록 설정
             int[] counts = new int[SESSION_COUNT];
@@ -130,7 +136,8 @@ class KisWebSocketSessionManagerTest {
             }
 
             // Assert — 각 세션 40개, 분산 ≤ 1
-            int min = Integer.MAX_VALUE, max = Integer.MIN_VALUE;
+            int min = Integer.MAX_VALUE;
+            int max = Integer.MIN_VALUE;
             for (int count : counts) {
                 min = Math.min(min, count);
                 max = Math.max(max, count);
@@ -138,7 +145,9 @@ class KisWebSocketSessionManagerTest {
             assertThat(max - min).isLessThanOrEqualTo(1);
             // 총합 200
             int total = 0;
-            for (int count : counts) total += count;
+            for (int count : counts) {
+                total += count;
+            }
             assertThat(total).isEqualTo(200);
         }
     }
@@ -155,9 +164,9 @@ class KisWebSocketSessionManagerTest {
         @DisplayName("session-0이 40개로 포화 → session-1부터 할당 (REQ-WS-007)")
         void shouldSkipSaturatedSession() throws Exception {
             // Arrange — session-0 포화
-            when(mockSessions.get(0).getSubscriptionCount())
+            when(mockSessions.getFirst().getSubscriptionCount())
                     .thenReturn(MAX_SUBSCRIPTIONS_PER_SESSION);
-            when(mockSessions.get(0).isInSafeMode()).thenReturn(false);
+            when(mockSessions.getFirst().isInSafeMode()).thenReturn(false);
             // session-1..4 사용 가능
             for (int i = 1; i < SESSION_COUNT; i++) {
                 when(mockSessions.get(i).getSubscriptionCount()).thenReturn(0);
@@ -169,7 +178,7 @@ class KisWebSocketSessionManagerTest {
 
             // Assert — 성공, session-0에는 subscribe 호출 없음
             assertThat(result).isTrue();
-            verify(mockSessions.get(0), never()).subscribe(anyString(), anyString());
+            verify(mockSessions.getFirst(), never()).subscribe(anyString(), anyString());
         }
     }
 
@@ -185,11 +194,11 @@ class KisWebSocketSessionManagerTest {
         @DisplayName("session-2가 안전 모드 → session-2에는 구독 할당 없음 (REQ-WS-008)")
         void shouldNotRouteToSafeModeSession() throws Exception {
             // Arrange — session-2만 안전 모드
-            when(mockSessions.get(2).isInSafeMode()).thenReturn(true);
+            when(mockSessions.get(SAFE_MODE_SESSION_INDEX).isInSafeMode()).thenReturn(true);
 
             // 나머지 세션 사용 가능
             for (int i = 0; i < SESSION_COUNT; i++) {
-                if (i != 2) {
+                if (i != SAFE_MODE_SESSION_INDEX) {
                     when(mockSessions.get(i).isInSafeMode()).thenReturn(false);
                     when(mockSessions.get(i).getSubscriptionCount()).thenReturn(0);
                 }
@@ -201,7 +210,8 @@ class KisWebSocketSessionManagerTest {
             }
 
             // Assert — session-2에는 구독 없음
-            verify(mockSessions.get(2), never()).subscribe(anyString(), anyString());
+            verify(mockSessions.get(SAFE_MODE_SESSION_INDEX), never())
+                    .subscribe(anyString(), anyString());
         }
     }
 
@@ -240,7 +250,7 @@ class KisWebSocketSessionManagerTest {
         @DisplayName("session-0 안전 모드여도 나머지 세션은 정상 구독 (REQ-WS-023)")
         void shouldContinueWithRemainingSessionsWhenOneInSafeMode() throws Exception {
             // Arrange
-            when(mockSessions.get(0).isInSafeMode()).thenReturn(true);
+            when(mockSessions.getFirst().isInSafeMode()).thenReturn(true);
             for (int i = 1; i < SESSION_COUNT; i++) {
                 when(mockSessions.get(i).isInSafeMode()).thenReturn(false);
                 when(mockSessions.get(i).getSubscriptionCount()).thenReturn(0);
@@ -251,7 +261,7 @@ class KisWebSocketSessionManagerTest {
 
             // Assert
             assertThat(result).isTrue();
-            verify(mockSessions.get(0), never()).subscribe(anyString(), anyString());
+            verify(mockSessions.getFirst(), never()).subscribe(anyString(), anyString());
         }
     }
 
@@ -370,9 +380,9 @@ class KisWebSocketSessionManagerTest {
         @DisplayName("symbol을 session-1에 구독 → unassign 시 session-1의 unsubscribe 호출")
         void shouldRouteUnassignToCorrectSession() throws Exception {
             // Arrange — session-0 포화, session-1 사용 가능
-            when(mockSessions.get(0).getSubscriptionCount())
+            when(mockSessions.getFirst().getSubscriptionCount())
                     .thenReturn(MAX_SUBSCRIPTIONS_PER_SESSION);
-            when(mockSessions.get(0).isInSafeMode()).thenReturn(false);
+            when(mockSessions.getFirst().isInSafeMode()).thenReturn(false);
             when(mockSessions.get(1).getSubscriptionCount()).thenReturn(0);
             when(mockSessions.get(1).isInSafeMode()).thenReturn(false);
             // 나머지 사용 가능
@@ -387,7 +397,7 @@ class KisWebSocketSessionManagerTest {
             manager.unassignSubscription("H0STCNT0", "005930");
 
             // Assert — 005930이 할당된 세션(session-1)에만 unsubscribe 호출
-            verify(mockSessions.get(0), never()).unsubscribe(anyString(), anyString());
+            verify(mockSessions.getFirst(), never()).unsubscribe(anyString(), anyString());
             verify(mockSessions.get(1), times(1)).unsubscribe("H0STCNT0", "005930");
         }
     }
