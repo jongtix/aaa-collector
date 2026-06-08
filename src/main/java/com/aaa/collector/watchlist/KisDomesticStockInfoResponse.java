@@ -16,5 +16,9 @@ public record KisDomesticStockInfoResponse(String rtCd, String msgCd, String msg
             String sctyGrpIdCd,
             String prdtEngName,
             String sctsMketLstgDt,
-            String kosdaqMketLstgDt) {}
+            String kosdaqMketLstgDt,
+            // ETF-specific fields (may be blank for non-ETF stocks)
+            String etfTrgtNmixBstpCode, // underlying index code (e.g., "069500")
+            String etfChasErngRtDbnb, // leverage ratio (e.g., "2.00", "-1.00" for inverse)
+            String etfNascTpCd) {} // ETF type code for inverse/hedged detection
 }

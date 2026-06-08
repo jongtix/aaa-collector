@@ -16,5 +16,8 @@ public record KisOverseasStockInfoResponse(String rtCd, String msgCd, String msg
             String ovrsStckDvsnCd,
             String ovrsStckEtfRiskDrtpCd,
             String prdtEngName,
-            String lstgDt) {}
+            String lstgDt,
+            // ETF-specific fields for overseas ETFs
+            String ovrsEtfTrgtNmixCd, // underlying index code
+            String ovrsEtfChasErngRtDbnb) {} // leverage ratio
 }

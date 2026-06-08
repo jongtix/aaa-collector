@@ -3,8 +3,11 @@ package com.aaa.collector.watchlist;
 import com.aaa.collector.kis.KisApiExecutor;
 import com.aaa.collector.stock.enums.AssetType;
 import com.aaa.collector.stock.enums.Market;
+import com.aaa.collector.stock.etf.EtfMetaInfo;
+import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
+import java.util.Locale;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
@@ -48,9 +51,15 @@ public class KisStockInfoClient {
                         KisDomesticStockInfoResponse.class);
 
         KisDomesticStockInfoResponse.Output out = response.output();
+        AssetType assetType = resolveAssetTypeDomestic(out.sctyGrpIdCd());
         String rawDate = market == Market.KOSPI ? out.sctsMketLstgDt() : out.kosdaqMketLstgDt();
-        return new StockInfo(
-                resolveAssetTypeDomestic(out.sctyGrpIdCd()), out.prdtEngName(), parseDate(rawDate));
+
+        EtfMetaInfo etfMetaInfo = null;
+        if (assetType == AssetType.ETF) {
+            etfMetaInfo = extractDomesticEtfMeta(out);
+        }
+
+        return new StockInfo(assetType, out.prdtEngName(), parseDate(rawDate), etfMetaInfo);
     }
 
     private StockInfo fetchOverseasInfo(String symbol, Market market) {
@@ -73,10 +82,92 @@ public class KisStockInfoClient {
                         KisOverseasStockInfoResponse.class);
 
         KisOverseasStockInfoResponse.Output out = response.output();
-        return new StockInfo(
-                resolveAssetTypeOverseas(out.ovrsStckDvsnCd(), out.ovrsStckEtfRiskDrtpCd()),
-                out.prdtEngName(),
-                parseDate(out.lstgDt()));
+        AssetType assetType =
+                resolveAssetTypeOverseas(out.ovrsStckDvsnCd(), out.ovrsStckEtfRiskDrtpCd());
+
+        EtfMetaInfo etfMetaInfo = null;
+        if (assetType == AssetType.ETF) {
+            etfMetaInfo = extractOverseasEtfMeta(out);
+        }
+
+        return new StockInfo(assetType, out.prdtEngName(), parseDate(out.lstgDt()), etfMetaInfo);
+    }
+
+    // @MX:WARN: [AUTO] ETF attribute derivation from undocumented KIS fields
+    // @MX:REASON: etf_nasc_tp_cd and etf_chas_erng_rt_dbnb are not in official KIS docs;
+    //             inverse/leveraged/hedged detection may misclassify if KIS changes field
+    // semantics.
+    private EtfMetaInfo extractDomesticEtfMeta(KisDomesticStockInfoResponse.Output out) {
+        // Determine leverage and inverse from tracking ratio field
+        // Negative value indicates inverse; absolute value is the leverage multiplier
+        int leverage = 1;
+        boolean inverse = false;
+        String erngRt = out.etfChasErngRtDbnb();
+        if (erngRt != null && !erngRt.isBlank()) {
+            try {
+                BigDecimal ratio = new BigDecimal(erngRt.trim());
+                if (ratio.signum() < 0) {
+                    inverse = true;
+                }
+                leverage = ratio.abs().intValue();
+                if (leverage == 0) {
+                    leverage = 1;
+                }
+            } catch (NumberFormatException ignored) {
+                // fallback: leverage=1, inverse=false
+            }
+        }
+
+        // Determine hedged from ETF type code
+        // @MX:NOTE: [AUTO] etf_nasc_tp_cd values are empirically observed, not documented by KIS
+        boolean hedged = isHedged(out.etfNascTpCd());
+
+        return new EtfMetaInfo(
+                blankToNull(out.etfTrgtNmixBstpCode()),
+                leverage,
+                inverse,
+                hedged,
+                false); // tr_stop is set separately via market data
+    }
+
+    private EtfMetaInfo extractOverseasEtfMeta(KisOverseasStockInfoResponse.Output out) {
+        int leverage = 1;
+        boolean inverse = false;
+        String erngRt = out.ovrsEtfChasErngRtDbnb();
+        if (erngRt != null && !erngRt.isBlank()) {
+            try {
+                BigDecimal ratio = new BigDecimal(erngRt.trim());
+                if (ratio.signum() < 0) {
+                    inverse = true;
+                }
+                leverage = ratio.abs().intValue();
+                if (leverage == 0) {
+                    leverage = 1;
+                }
+            } catch (NumberFormatException ignored) {
+                // fallback: leverage=1, inverse=false
+            }
+        }
+
+        return new EtfMetaInfo(
+                blankToNull(out.ovrsEtfTrgtNmixCd()),
+                leverage,
+                inverse,
+                false, // overseas ETFs: hedged not tracked
+                false);
+    }
+
+    private boolean isHedged(String etfNascTpCd) {
+        // Empirically observed: type codes containing "H" suffix indicate currency-hedged variants
+        if (etfNascTpCd == null || etfNascTpCd.isBlank()) {
+            return false;
+        }
+        String code = etfNascTpCd.trim().toUpperCase(Locale.ROOT);
+        return code.endsWith("H") || code.contains("HEDGE");
+    }
+
+    private String blankToNull(String value) {
+        return (value == null || value.isBlank()) ? null : value.trim();
     }
 
     private AssetType resolveAssetTypeDomestic(String sctyGrpIdCd) {
