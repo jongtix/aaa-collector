@@ -2,6 +2,7 @@ package com.aaa.collector.kis.token;
 
 import com.aaa.collector.common.retry.ExponentialBackoff;
 import com.aaa.collector.common.retry.Sleeper;
+import com.aaa.collector.common.safemode.SafeModeManager;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.LocalDateTime;
@@ -20,6 +21,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.locks.Lock;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Service;
 
 /**
@@ -32,6 +34,7 @@ import org.springframework.stereotype.Service;
  */
 @Slf4j
 @Service
+@SuppressWarnings({"PMD.GodClass", "PMD.AvoidCatchingGenericException"})
 public class KisTokenService {
 
     private static final int MAX_ATTEMPTS = 3;
@@ -53,7 +56,7 @@ public class KisTokenService {
             KisProperties kisProperties,
             KisTokenClient kisTokenClient,
             KisTokenRepository kisTokenRepository,
-            SafeModeManager safeModeManager,
+            @Qualifier("tokenSafeModeManager") SafeModeManager safeModeManager,
             Sleeper sleeper,
             Clock clock,
             LockFactory lockFactory) {
@@ -252,6 +255,101 @@ public class KisTokenService {
             Thread.currentThread().interrupt();
             throw new KisTokenIssueException(alias, ie);
         }
+    }
+
+    /**
+     * 전체 계좌에 대해 병렬로 WebSocket 승인키를 발급한다.
+     *
+     * <p>Virtual Thread executor를 사용하며, 개별 계좌 발급 실패는 경고 로그 후 다음 계좌로 진행한다(부분 실패 허용). 인터럽트 수신 시 인터럽트
+     * 플래그를 복원하고 남은 결과 수집을 즉시 중단한다.
+     */
+    public void issueAllApprovalKeys() {
+        log.info("전 계좌 승인키 발급 시작 — 계좌 수: {}", kisProperties.accounts().size());
+
+        try (ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor()) {
+            List<Future<Void>> futures = new ArrayList<>();
+
+            for (KisAccountCredential credential : kisProperties.accounts()) {
+                futures.add(
+                        executor.submit(
+                                () -> {
+                                    try {
+                                        KisApprovalKeyResponse response =
+                                                kisTokenClient.requestApprovalKey(credential);
+                                        kisTokenRepository.saveApprovalKey(
+                                                credential.alias(), response.approvalKey());
+                                        log.info("[{}] 승인키 발급 성공", credential.alias());
+                                    } catch (Exception e) {
+                                        log.warn("[{}] 승인키 발급 실패", credential.alias(), e);
+                                    }
+                                    return null;
+                                }));
+            }
+
+            boolean interrupted = false;
+
+            for (Future<Void> future : futures) {
+                try {
+                    future.get();
+                } catch (ExecutionException e) {
+                    log.error(
+                            "[승인키 발급 실패] 예상치 못한 예외: {}",
+                            e.getCause().getClass().getName(),
+                            e.getCause());
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    interrupted = true;
+                    break;
+                }
+            }
+
+            if (interrupted) {
+                log.warn("승인키 발급 중 인터럽트 수신 — 남은 계좌 결과 수집 중단");
+            } else {
+                log.info("전 계좌 승인키 발급 완료");
+            }
+        }
+    }
+
+    /**
+     * WebSocket 승인키를 강제 재발급하고 반환한다 (REQ-WS-042).
+     *
+     * <p>Redis 캐시를 무시하고 KIS API {@code /oauth2/Approval}를 즉시 호출한다. WebSocket handshake 실패(401 등) 시
+     * {@link com.aaa.collector.kis.websocket.KisWebSocketSessionManager}에서 호출된다.
+     *
+     * @param alias 계정 식별자
+     * @return 새로 발급된 WebSocket 승인키 문자열
+     * @throws IllegalArgumentException 등록되지 않은 alias인 경우
+     */
+    public String reissueApprovalKey(String alias) {
+        KisAccountCredential credential = findCredential(alias);
+        KisApprovalKeyResponse response = kisTokenClient.requestApprovalKey(credential);
+        kisTokenRepository.saveApprovalKey(alias, response.approvalKey());
+        log.info("[{}] approval_key 강제 재발급 완료", alias);
+        return response.approvalKey();
+    }
+
+    /**
+     * 유효한 WebSocket 승인키를 반환하는 Lazy 갱신 진입점.
+     *
+     * <p>Redis에 승인키가 존재하면 그대로 반환한다. 존재하지 않으면 {@link KisTokenClient#requestApprovalKey}를 호출하여 새 승인키를
+     * 발급하고 저장한 뒤 반환한다.
+     *
+     * @param alias 계정 식별자
+     * @return 유효한 WebSocket 승인키 문자열
+     * @throws IllegalArgumentException 등록되지 않은 alias인 경우
+     */
+    public String getValidApprovalKey(String alias) {
+        return kisTokenRepository
+                .findApprovalKey(alias)
+                .orElseGet(
+                        () -> {
+                            KisAccountCredential credential = findCredential(alias);
+                            KisApprovalKeyResponse response =
+                                    kisTokenClient.requestApprovalKey(credential);
+                            kisTokenRepository.saveApprovalKey(alias, response.approvalKey());
+                            return response.approvalKey();
+                        });
     }
 
     /**

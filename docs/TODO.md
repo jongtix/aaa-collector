@@ -78,12 +78,12 @@
 - [x] Redis 캐싱: `cache:stock:list`, `cache:grade:{종목코드}`
 
 ### 1-6. KIS WebSocket 실시간 수집
-- [ ] 국내 체결 (`H0STCNT0`), 호가 (`H0STASP0`) 구독
-- [ ] 해외 체결, 호가(Level 1), VIX 선물 실시간 구독
-- [ ] 5세션 × 41건 = 205건 구독 상한 관리
-- [ ] 틱 → Redis Streams (`stream:tick:domestic/overseas`) 발행 (`symbol` 필드 포함, MAXLEN으로 메모리 제어)
-- [ ] WebSocket 재연결 로직 + 안전 모드 진입 기준 구현
-- [ ] Trace ID Redis Streams 헤더 전파
+- [x] 국내 체결 (`H0STCNT0`), 호가 (`H0STASP0`) 구독
+- [ ] 해외 체결, 호가(Level 1), VIX 선물 실시간 구독 ← Phase 2 구현 예정 (현재 스텁)
+- [x] 5세션 × 40건 = 200건 구독 상한 관리
+- [x] 틱 → Redis Streams (`stream:tick:domestic/overseas`) 발행 (`symbol` 필드 포함, MAXLEN으로 메모리 제어)
+- [x] WebSocket 재연결 로직 + 안전 모드 진입 기준 구현
+- [x] Trace ID Redis Streams 헤더 전파
 
 ### 1-7. KIS REST 배치 수집
 - [ ] 국내 배치: OHLCV 일봉, 투자자별 매매동향, 공매도, 신용잔고, 재무제표, 업종지수, 금리, 증시자금, 배당/증자, 투자의견, 뉴스 제목

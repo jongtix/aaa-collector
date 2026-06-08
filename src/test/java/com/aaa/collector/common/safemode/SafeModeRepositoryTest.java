@@ -1,4 +1,4 @@
-package com.aaa.collector.kis.token;
+package com.aaa.collector.common.safemode;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.verify;
@@ -24,7 +24,7 @@ class SafeModeRepositoryTest {
 
     @BeforeEach
     void setUp() {
-        repository = new SafeModeRepository(redisTemplate);
+        repository = new SafeModeRepository(redisTemplate, "safe_mode:collector:token:");
     }
 
     private void stubOpsForValue() {
@@ -33,7 +33,7 @@ class SafeModeRepositoryTest {
 
     @Test
     @DisplayName(
-            "setSafeMode(true) — opsForValue().set(key, \"ON\") 호출, key 패턴이 safe_mode:collector:token:{alias}")
+            "setSafeMode(true) — opsForValue().set(key, \"ON\") 호출, key 패턴이 {keyPrefix}{alias}")
     void setSafeMode_whenTrue_callsSetWithOnValue() {
         stubOpsForValue();
         String alias = "test-alias";
@@ -88,5 +88,21 @@ class SafeModeRepositoryTest {
         boolean result = repository.isSafeMode(alias);
 
         assertThat(result).isFalse();
+    }
+
+    @Test
+    @DisplayName("ws 프리픽스 — 다른 keyPrefix를 사용하면 다른 키 패턴으로 저장된다")
+    void setSafeMode_withWsPrefix_usesWsKeyPattern() {
+        // Arrange
+        SafeModeRepository wsRepository =
+                new SafeModeRepository(redisTemplate, "safe_mode:collector:ws:");
+        when(redisTemplate.opsForValue()).thenReturn(valueOps);
+        String alias = "test-alias";
+
+        // Act
+        wsRepository.setSafeMode(alias, true);
+
+        // Assert
+        verify(valueOps).set("safe_mode:collector:ws:" + alias, "ON");
     }
 }
