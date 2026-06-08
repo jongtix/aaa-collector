@@ -1,11 +1,15 @@
 package com.aaa.collector.stock.etf;
 
 import com.aaa.collector.stock.DailyOhlcvRepository;
-import com.aaa.collector.stock.GradeCacheRepository;
 import com.aaa.collector.stock.Stock;
-import com.aaa.collector.stock.StockGradeRepository;
+import com.aaa.collector.stock.StockGrade;
 import com.aaa.collector.stock.enums.AssetType;
+import com.aaa.collector.stock.grade.Grade;
+import com.aaa.collector.stock.grade.GradeCacheRepository;
+import com.aaa.collector.stock.grade.StockGradeRepository;
 import java.time.LocalDateTime;
+import java.time.ZoneId;
+import java.time.ZonedDateTime;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
@@ -32,9 +36,10 @@ import org.springframework.transaction.annotation.Transactional;
 public class EtfRepresentativeService {
 
     static final int MIN_TRADING_DAYS = 20;
-    static final String GRADE_REPRESENTATIVE = "A";
-    static final String GRADE_NON_REPRESENTATIVE = "C";
-    static final String GRADE_F = "F";
+    static final Grade GRADE_REPRESENTATIVE = Grade.A;
+    static final Grade GRADE_NON_REPRESENTATIVE = Grade.C;
+
+    private static final ZoneId KST = ZoneId.of("Asia/Seoul");
 
     private final EtfMetadataRepository etfMetadataRepository;
     private final StockGradeRepository stockGradeRepository;
@@ -47,9 +52,6 @@ public class EtfRepresentativeService {
      *
      * <p>1. etf_metadata 전체 조회 (stock JOIN) 2. group_key 기준 메모리 groupBy 3. 그룹별 후보 필터 → ADTV 계산 → 대표
      * 선정 → 변경 분 반영
-     *
-     * <p>@Transactional(readOnly=false): 그룹별 처리는 개별 saveHistory/upsertGrade가 각자 트랜잭션을 가지므로 최외곽은
-     * readOnly로 두어도 되나, 메서드 전체를 하나의 트랜잭션으로 묶어 일관성을 높인다.
      */
     @Transactional
     public void recalculate() {
@@ -66,11 +68,9 @@ public class EtfRepresentativeService {
                     missingMeta);
         }
 
-        // Group by group_key (market:index:leverage:direction:hedged)
         Map<String, List<EtfMetadata>> groups = groupByKey(allMetadata);
         log.info("ETF groups: {}", groups.size());
 
-        // Collect all candidate stock IDs for batch ADTV query
         List<Long> allCandidateIds = collectAllCandidateIds(groups);
         Map<Long, Double> adtvMap = fetchAdtvMap(allCandidateIds);
 
@@ -125,7 +125,6 @@ public class EtfRepresentativeService {
 
     private void processGroup(
             String groupKey, List<EtfMetadata> groupMetadata, Map<Long, Double> adtvMap) {
-        // Step 1: Filter candidates
         List<EtfMetadata> candidates = filterCandidates(groupKey, groupMetadata);
 
         if (candidates.isEmpty()) {
@@ -133,24 +132,17 @@ public class EtfRepresentativeService {
             return;
         }
 
-        // Step 2: Sort by ADTV desc → listedDate asc → symbol asc (tie-breaker)
         candidates.sort(buildComparator(adtvMap));
 
-        // Step 3: Select representative (index 0) and demote rest
         EtfMetadata representative = candidates.getFirst();
         Stock representativeStock = representative.getStock();
 
-        // Step 4: Update grades for non-representatives
         for (int i = 1; i < candidates.size(); i++) {
             Stock stock = candidates.get(i).getStock();
-            upsertGradeIfChanged(stock, GRADE_NON_REPRESENTATIVE);
+            upsertGrade(stock, GRADE_NON_REPRESENTATIVE);
         }
 
-        // Step 5: Ensure representative grade is not C (keep A if already A, but do not demote)
-        // Representative keeps its current grade unless it was previously C (then restore to A)
-        upsertRepresentativeGradeIfNeeded(representativeStock);
-
-        // Step 6: Record history if representative changed
+        upsertGrade(representativeStock, GRADE_REPRESENTATIVE);
         recordHistoryIfChanged(groupKey, representativeStock);
     }
 
@@ -162,17 +154,14 @@ public class EtfRepresentativeService {
 
     private boolean isExcluded(String groupKey, EtfMetadata meta) {
         Stock stock = meta.getStock();
-        // REQ-ETFALG-005: tr_stop
         if (meta.isTrStop()) {
             logExclusion(stock.getSymbol(), groupKey, "tr_stop=true");
             return true;
         }
-        // REQ-ETFALG-005: watchlist_removed_at
         if (stock.getWatchlistRemovedAt() != null) {
             logExclusion(stock.getSymbol(), groupKey, "watchlist_removed_at is set");
             return true;
         }
-        // REQ-ETFALG-006: < 20 valid trading days
         long tradingDays = dailyOhlcvRepository.countByStockId(stock.getId());
         if (tradingDays < MIN_TRADING_DAYS) {
             if (log.isDebugEnabled()) {
@@ -195,35 +184,27 @@ public class EtfRepresentativeService {
     }
 
     private Comparator<EtfMetadata> buildComparator(Map<Long, Double> adtvMap) {
-        return Comparator
-                // ADTV descending (higher is better)
-                .<EtfMetadata, Double>comparing(
+        return Comparator.<EtfMetadata, Double>comparing(
                         m -> adtvMap.getOrDefault(m.getStock().getId(), 0.0),
                         Comparator.reverseOrder())
-                // Listed date ascending (earlier listed wins)
                 .thenComparing(
                         m -> m.getStock().getListedDate(),
                         Comparator.nullsLast(Comparator.naturalOrder()))
-                // Symbol ascending (lexicographically earlier wins)
                 .thenComparing(m -> m.getStock().getSymbol());
     }
 
-    private void upsertGradeIfChanged(Stock stock, String newGrade) {
-        stockGradeRepository.upsertGrade(stock.getId(), newGrade, LocalDateTime.now());
-        gradeCacheRepository.set(stock.getSymbol(), newGrade);
-        if (log.isDebugEnabled()) {
-            log.debug("Grade updated — symbol={}, grade={}", stock.getSymbol(), newGrade);
+    private void upsertGrade(Stock stock, Grade grade) {
+        ZonedDateTime now = ZonedDateTime.now(KST);
+        Optional<StockGrade> existing = stockGradeRepository.findByStock(stock);
+        if (existing.isPresent()) {
+            existing.get().updateGrade(grade.name(), now);
+        } else {
+            stockGradeRepository.save(
+                    StockGrade.builder().stock(stock).grade(grade.name()).gradedAt(now).build());
         }
-    }
-
-    private void upsertRepresentativeGradeIfNeeded(Stock stock) {
-        // Representative should be A grade; if previously demoted to C, restore.
-        // We always upsert A for the representative to ensure correctness.
-        stockGradeRepository.upsertGrade(stock.getId(), GRADE_REPRESENTATIVE, LocalDateTime.now());
-        // Cache update is best-effort; representative keeps A regardless of cache failure.
-        gradeCacheRepository.set(stock.getSymbol(), GRADE_REPRESENTATIVE);
+        gradeCacheRepository.save(stock.getSymbol(), grade, now);
         if (log.isDebugEnabled()) {
-            log.debug("Representative grade ensured — symbol={}, grade=A", stock.getSymbol());
+            log.debug("Grade upserted — symbol={}, grade={}", stock.getSymbol(), grade);
         }
     }
 
@@ -233,7 +214,7 @@ public class EtfRepresentativeService {
 
         boolean changed =
                 latest.map(h -> !h.getStock().getId().equals(newRepresentative.getId()))
-                        .orElse(true); // no history yet → first selection is always recorded
+                        .orElse(true);
 
         if (changed) {
             Stock prevStock = latest.map(EtfRepresentativeHistory::getStock).orElse(null);

@@ -5,20 +5,25 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.aaa.collector.stock.DailyOhlcvRepository;
-import com.aaa.collector.stock.GradeCacheRepository;
 import com.aaa.collector.stock.Stock;
-import com.aaa.collector.stock.StockGradeRepository;
+import com.aaa.collector.stock.StockGrade;
 import com.aaa.collector.stock.enums.AssetType;
 import com.aaa.collector.stock.enums.Market;
+import com.aaa.collector.stock.grade.Grade;
+import com.aaa.collector.stock.grade.GradeCacheRepository;
+import com.aaa.collector.stock.grade.StockGradeRepository;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.ZonedDateTime;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Optional;
@@ -53,6 +58,8 @@ class EtfRepresentativeServiceTest {
                         dailyOhlcvRepository,
                         historyRepository,
                         gradeCacheRepository);
+        // findByStock returns empty by default — service will call save() for new grades
+        lenient().when(stockGradeRepository.findByStock(any())).thenReturn(Optional.empty());
     }
 
     // --- Fixture helpers ---
@@ -123,13 +130,16 @@ class EtfRepresentativeServiceTest {
             service.recalculate();
 
             // Assert: E1 gets A grade
-            verify(stockGradeRepository).upsertGrade(eq(1L), eq("A"), any(LocalDateTime.class));
+            verify(stockGradeRepository)
+                    .save(argThat(sg -> sg.getStock() == e1 && "A".equals(sg.getGrade())));
             // Assert: E2 and E3 get C grade
-            verify(stockGradeRepository).upsertGrade(eq(2L), eq("C"), any(LocalDateTime.class));
-            verify(stockGradeRepository).upsertGrade(eq(3L), eq("C"), any(LocalDateTime.class));
+            verify(stockGradeRepository)
+                    .save(argThat(sg -> sg.getStock() == e2 && "C".equals(sg.getGrade())));
+            verify(stockGradeRepository)
+                    .save(argThat(sg -> sg.getStock() == e3 && "C".equals(sg.getGrade())));
             // Assert: cache updated for E2 and E3 (history insert verified in Scenario 3)
-            verify(gradeCacheRepository).set(eq("E2"), eq("C"));
-            verify(gradeCacheRepository).set(eq("E3"), eq("C"));
+            verify(gradeCacheRepository).save(eq("E2"), eq(Grade.C), any(ZonedDateTime.class));
+            verify(gradeCacheRepository).save(eq("E3"), eq(Grade.C), any(ZonedDateTime.class));
         }
     }
 
@@ -171,11 +181,13 @@ class EtfRepresentativeServiceTest {
             service.recalculate();
 
             // Assert: E2 is representative (A grade)
-            verify(stockGradeRepository).upsertGrade(eq(2L), eq("A"), any(LocalDateTime.class));
+            verify(stockGradeRepository)
+                    .save(argThat(sg -> sg.getStock() == e2 && "A".equals(sg.getGrade())));
             // Assert: E3 demoted to C
-            verify(stockGradeRepository).upsertGrade(eq(3L), eq("C"), any(LocalDateTime.class));
+            verify(stockGradeRepository)
+                    .save(argThat(sg -> sg.getStock() == e3 && "C".equals(sg.getGrade())));
             // Assert: E1 grade NOT touched (excluded from candidacy)
-            verify(stockGradeRepository, never()).upsertGrade(eq(1L), anyString(), any());
+            verify(stockGradeRepository, never()).save(argThat(sg -> sg.getStock() == e1));
         }
     }
 
@@ -285,10 +297,11 @@ class EtfRepresentativeServiceTest {
             service.recalculate();
 
             // Assert: E1 gets A (sole representative)
-            verify(stockGradeRepository).upsertGrade(eq(1L), eq("A"), any(LocalDateTime.class));
+            verify(stockGradeRepository)
+                    .save(argThat(sg -> sg.getStock() == e1 && "A".equals(sg.getGrade())));
             // Assert: E2 grade NOT changed (excluded from candidacy)
-            verify(stockGradeRepository, never()).upsertGrade(eq(2L), anyString(), any());
-            verify(gradeCacheRepository, never()).set(eq("E2"), anyString());
+            verify(stockGradeRepository, never()).save(argThat(sg -> sg.getStock() == e2));
+            verify(gradeCacheRepository, never()).save(eq("E2"), any(Grade.class), any());
         }
     }
 
@@ -318,8 +331,10 @@ class EtfRepresentativeServiceTest {
             service.recalculate();
 
             // Assert: E1 is representative
-            verify(stockGradeRepository).upsertGrade(eq(1L), eq("A"), any(LocalDateTime.class));
-            verify(stockGradeRepository).upsertGrade(eq(2L), eq("C"), any(LocalDateTime.class));
+            verify(stockGradeRepository)
+                    .save(argThat(sg -> sg.getStock() == e1 && "A".equals(sg.getGrade())));
+            verify(stockGradeRepository)
+                    .save(argThat(sg -> sg.getStock() == e2 && "C".equals(sg.getGrade())));
         }
 
         @Test
@@ -344,8 +359,10 @@ class EtfRepresentativeServiceTest {
             service.recalculate();
 
             // Assert: AA500 wins (lexicographically earlier)
-            verify(stockGradeRepository).upsertGrade(eq(1L), eq("A"), any(LocalDateTime.class));
-            verify(stockGradeRepository).upsertGrade(eq(2L), eq("C"), any(LocalDateTime.class));
+            verify(stockGradeRepository)
+                    .save(argThat(sg -> sg.getStock() == ea && "A".equals(sg.getGrade())));
+            verify(stockGradeRepository)
+                    .save(argThat(sg -> sg.getStock() == eb && "C".equals(sg.getGrade())));
         }
     }
 
@@ -357,19 +374,15 @@ class EtfRepresentativeServiceTest {
         @DisplayName("etf_metadata 없는 ETF는 대표 선정 제외 — 등급 변경 없음")
         void recalculate_noMetadata_stockExcludedAndGradeUnchanged() {
             // Arrange: findAllWithStock returns only stocks WITH metadata.
-            // A stock without etf_metadata will simply not appear in the list.
-            // So if there are 0 metadata rows, 0 candidates, 0 changes.
             when(etfMetadataRepository.findAllWithStock()).thenReturn(List.of());
-            // Note: findAdtvByStockIds is not called when there are no metadata rows,
-            // so we do not stub it here.
 
             // Act
             service.recalculate();
 
             // Assert: no grade changes
-            verify(stockGradeRepository, never()).upsertGrade(anyLong(), anyString(), any());
+            verify(stockGradeRepository, never()).save(any(StockGrade.class));
             verify(historyRepository, never()).save(any());
-            verify(gradeCacheRepository, never()).set(anyString(), anyString());
+            verify(gradeCacheRepository, never()).save(anyString(), any(Grade.class), any());
         }
     }
 
@@ -394,11 +407,11 @@ class EtfRepresentativeServiceTest {
             // Act
             service.recalculate();
 
-            // Assert: E1 gets A, no C demotion
+            // Assert: E1 gets A exactly once, never C
             verify(stockGradeRepository, times(1))
-                    .upsertGrade(eq(1L), eq("A"), any(LocalDateTime.class));
+                    .save(argThat(sg -> sg.getStock() == e1 && "A".equals(sg.getGrade())));
             verify(stockGradeRepository, never())
-                    .upsertGrade(eq(1L), eq("C"), any(LocalDateTime.class));
+                    .save(argThat(sg -> sg.getStock() == e1 && "C".equals(sg.getGrade())));
         }
 
         @Test
@@ -426,8 +439,9 @@ class EtfRepresentativeServiceTest {
             service.recalculate();
 
             // Assert: E2 is representative, E1 not touched
-            verify(stockGradeRepository).upsertGrade(eq(2L), eq("A"), any(LocalDateTime.class));
-            verify(stockGradeRepository, never()).upsertGrade(eq(1L), anyString(), any());
+            verify(stockGradeRepository)
+                    .save(argThat(sg -> sg.getStock() == e2 && "A".equals(sg.getGrade())));
+            verify(stockGradeRepository, never()).save(argThat(sg -> sg.getStock() == e1));
         }
     }
 }

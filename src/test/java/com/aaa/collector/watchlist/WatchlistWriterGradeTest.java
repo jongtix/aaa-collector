@@ -9,6 +9,7 @@ import static org.mockito.Mockito.when;
 import com.aaa.collector.stock.StockListService;
 import com.aaa.collector.stock.StockRepository;
 import com.aaa.collector.stock.enums.Market;
+import com.aaa.collector.stock.etf.EtfMetadataWriter;
 import com.aaa.collector.stock.grade.GradeClassificationService;
 import java.util.List;
 import org.junit.jupiter.api.BeforeEach;
@@ -31,12 +32,14 @@ class WatchlistWriterGradeTest {
     @Mock private StockRepository stockRepository;
     @Mock private StockListService stockListService;
     @Mock private GradeClassificationService gradeClassificationService;
+    @Mock private EtfMetadataWriter etfMetadataWriter;
 
     private WatchlistWriter watchlistWriter;
 
     @BeforeEach
     void setUp() {
-        WatchlistEntryWriter entryWriter = new WatchlistEntryWriter(stockRepository);
+        WatchlistEntryWriter entryWriter =
+                new WatchlistEntryWriter(stockRepository, etfMetadataWriter);
         watchlistWriter =
                 new WatchlistWriter(
                         stockRepository, entryWriter, stockListService, gradeClassificationService);
