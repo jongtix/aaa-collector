@@ -3,6 +3,8 @@ package com.aaa.collector.kis.websocket;
 import com.aaa.collector.common.retry.ExponentialBackoff;
 import com.aaa.collector.common.retry.Sleeper;
 import com.aaa.collector.common.safemode.SafeModeManager;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import java.net.URI;
 import java.time.Clock;
 import java.time.ZonedDateTime;
@@ -33,6 +35,8 @@ public class KisWebSocketSession {
 
     /** 재연결 기본 지연 (밀리초). */
     private static final long BASE_RECONNECT_DELAY_MS = 1_000L;
+
+    private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
 
     /** ConcurrentWebSocketSessionDecorator 전송 타임아웃 (밀리초). */
     private static final int SEND_TIME_LIMIT_MS = 10_000;
@@ -182,6 +186,20 @@ public class KisWebSocketSession {
     }
 
     /**
+     * 연결 끊김 이벤트를 처리한다 (Spring lifecycle 연동용).
+     *
+     * <p>{@link KisWebSocketMessageHandler#afterConnectionClosed}에서 호출된다. 별도 Virtual Thread를 생성하여
+     * 비동기 실행함으로써 Spring WebSocket 이벤트 스레드를 블로킹하지 않는다 (MA-04, REQ-WS-020).
+     *
+     * <p>테스트에서는 {@link #handleDisconnect(ZonedDateTime)}를 직접 호출하여 동기적으로 검증한다.
+     */
+    public void handleDisconnect() {
+        Thread.ofVirtual()
+                .name("ws-reconnect-" + alias)
+                .start(() -> handleDisconnect(ZonedDateTime.now(clock)));
+    }
+
+    /**
      * 연결 끊김 이벤트를 처리한다.
      *
      * <p>정상 종료 또는 장외 시간이면 재연결하지 않는다. 장중이면 ExponentialBackoff를 적용하여 재연결을 시도하고, 5회 연속 실패 시 안전 모드에
@@ -268,12 +286,31 @@ public class KisWebSocketSession {
     }
 
     /** KIS SUBSCRIBE/UNSUBSCRIBE JSON 메시지를 생성한다. */
+    @SuppressWarnings("PMD.AvoidCatchingGenericException")
     private String buildSubscribeJson(String trId, String trKey, String trType) {
-        return String.format(
-                "{\"header\":{\"approval_key\":\"%s\",\"custtype\":\"P\","
-                        + "\"tr_type\":\"%s\",\"content-type\":\"utf-8\"},"
-                        + "\"body\":{\"input\":{\"tr_id\":\"%s\",\"tr_key\":\"%s\"}}}",
-                approvalKey, trType, trId, trKey);
+        try {
+            ObjectNode header =
+                    OBJECT_MAPPER
+                            .createObjectNode()
+                            .put("approval_key", approvalKey)
+                            .put("custtype", "P")
+                            .put("tr_type", trType)
+                            .put("content-type", "utf-8");
+
+            ObjectNode input =
+                    OBJECT_MAPPER.createObjectNode().put("tr_id", trId).put("tr_key", trKey);
+
+            ObjectNode body = OBJECT_MAPPER.createObjectNode().set("input", input);
+
+            return OBJECT_MAPPER
+                    .createObjectNode()
+                    .<ObjectNode>set("header", header)
+                    .set("body", body)
+                    .toString();
+        } catch (Exception e) {
+            throw new IllegalArgumentException(
+                    "SUBSCRIBE JSON 생성 실패: trId=" + trId + ", trKey=" + trKey, e);
+        }
     }
 
     /** 세션에 TextMessage를 전송한다. */

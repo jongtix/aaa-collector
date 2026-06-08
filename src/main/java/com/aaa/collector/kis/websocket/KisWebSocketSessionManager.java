@@ -106,7 +106,7 @@ public class KisWebSocketSessionManager {
     /**
      * 모든 계좌에 대해 WebSocket 세션을 열고 연결한다 (REQ-WS-050).
      *
-     * <p>승인키 발급 실패(401 등)는 1회 재시도한다 (REQ-WS-042).
+     * <p>연결 실패 시 approval_key 강제 재발급 후 1회 재시도한다 (REQ-WS-042).
      */
     public void openAll() {
         log.info("전 계좌 WebSocket 세션 연결 시작 — 계좌 수: {}", kisProperties.accounts().size());
@@ -114,17 +114,42 @@ public class KisWebSocketSessionManager {
         for (KisAccountCredential credential : kisProperties.accounts()) {
             String alias = credential.alias();
             try {
-                String approvalKey = getApprovalKeyWithRetry(alias);
-                KisWebSocketSession session = sessionFactory.create(alias, approvalKey);
-                session.connect(KIS_WS_URL);
-                sessions.put(alias, session);
-                log.info("[{}] WebSocket 세션 연결 성공", alias);
+                connectWithApprovalKeyRetry(alias);
             } catch (Exception e) {
                 log.error("[{}] WebSocket 세션 연결 실패", alias, e);
             }
         }
 
         log.info("전 계좌 WebSocket 세션 연결 완료 — 연결된 세션: {}", sessions.size());
+    }
+
+    /**
+     * 승인키를 조회·연결하고, 실패 시 승인키를 강제 재발급하여 1회 재시도한다 (REQ-WS-042).
+     *
+     * <p>실패 원인이 HTTP 401이든 일시 오류든 관계없이 재발급 후 재시도함으로써 인증 오류를 확실히 복구한다.
+     *
+     * @param alias 계좌 식별자
+     * @throws Exception 재시도 후에도 연결 실패 시
+     */
+    @SuppressWarnings({"PMD.SignatureDeclareThrowsException", "PMD.AvoidCatchingGenericException"})
+    private void connectWithApprovalKeyRetry(String alias) throws Exception {
+        try {
+            String approvalKey = getApprovalKeyWithRetry(alias);
+            KisWebSocketSession session = sessionFactory.create(alias, approvalKey);
+            session.connect(KIS_WS_URL);
+            sessions.put(alias, session);
+            log.info("[{}] WebSocket 세션 연결 성공", alias);
+        } catch (Exception e) {
+            log.warn(
+                    "[{}] WebSocket 연결 실패 — approval_key 강제 재발급 후 재시도 (REQ-WS-042): {}",
+                    alias,
+                    e.getMessage());
+            String freshKey = kisTokenService.reissueApprovalKey(alias);
+            KisWebSocketSession session = sessionFactory.create(alias, freshKey);
+            session.connect(KIS_WS_URL);
+            sessions.put(alias, session);
+            log.info("[{}] approval_key 재발급 후 WebSocket 세션 연결 성공", alias);
+        }
     }
 
     /**
@@ -221,7 +246,8 @@ public class KisWebSocketSessionManager {
     /**
      * 국내 심볼 목록을 구독한다.
      *
-     * <p>각 심볼에 대해 체결(H0STCNT0)과 호가(H0STASP0) 2개 구독을 할당한다. 할당 실패 시 해당 심볼부터 나머지를 건너뛴다.
+     * <p>각 심볼에 대해 체결(H0STCNT0)과 호가(H0STASP0) 2개 구독을 할당한다. 세션 용량 초과로 할당에 실패하면 이후 모든 심볼도 실패하므로 루프를
+     * 중단한다. 부분 구독(CNT 성공 + ASP 실패)은 동일 세션 풀을 공유하므로 실제로 발생하지 않는다.
      *
      * @param domesticSymbols 구독할 국내 종목 코드 목록
      */
@@ -230,7 +256,11 @@ public class KisWebSocketSessionManager {
             boolean cnt = assignSubscription("H0STCNT0", symbol);
             boolean asp = assignSubscription("H0STASP0", symbol);
             if (!cnt || !asp) {
-                log.error("심볼 구독 실패 — 용량 초과: symbol={}", symbol);
+                log.warn(
+                        "심볼 구독 실패 (cnt={}, asp={}) — 세션 용량 초과, 이후 종목 스킵: symbol={}",
+                        cnt,
+                        asp,
+                        symbol);
                 break;
             }
         }
@@ -287,14 +317,18 @@ public class KisWebSocketSessionManager {
     private KisWebSocketSession createDefaultSession(String alias, String approvalKey) {
         KisWebSocketMessageHandler handler =
                 new KisWebSocketMessageHandler(alias, tickPublisher, webSocketSafeModeManager);
-        return new KisWebSocketSession(
-                alias,
-                approvalKey,
-                new StandardWebSocketClient(),
-                handler,
-                marketSchedule,
-                webSocketSafeModeManager,
-                sleeper,
-                clock);
+        KisWebSocketSession session =
+                new KisWebSocketSession(
+                        alias,
+                        approvalKey,
+                        new StandardWebSocketClient(),
+                        handler,
+                        marketSchedule,
+                        webSocketSafeModeManager,
+                        sleeper,
+                        clock);
+        // afterConnectionClosed → session.handleDisconnect() 경로 연결 (CR-01 fix, REQ-WS-020)
+        handler.setDisconnectCallback(session::handleDisconnect);
+        return session;
     }
 }
