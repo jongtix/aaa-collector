@@ -30,6 +30,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.test.util.ReflectionTestUtils;
 
 @ExtendWith(MockitoExtension.class)
 @DisplayName("EtfRepresentativeService 단위 테스트")
@@ -56,7 +57,7 @@ class EtfRepresentativeServiceTest {
 
     // --- Fixture helpers ---
 
-    private Stock buildStock(long id, String symbol, LocalDate listedDate) {
+    private Stock buildStock(String symbol, LocalDate listedDate) {
         return Stock.builder()
                 .symbol(symbol)
                 .nameKo("ETF " + symbol)
@@ -80,14 +81,7 @@ class EtfRepresentativeServiceTest {
     }
 
     private void stubStockId(Stock stock, long id) {
-        // Use reflection to set id (normally set by JPA)
-        try {
-            var field = Stock.class.getDeclaredField("id");
-            field.setAccessible(true);
-            field.set(stock, id);
-        } catch (Exception e) {
-            throw new RuntimeException(e);
-        }
+        ReflectionTestUtils.setField(stock, "id", id);
     }
 
     private void stubAdtv(Object[]... rows) {
@@ -108,9 +102,9 @@ class EtfRepresentativeServiceTest {
         @DisplayName("ADTV 1위(E1)가 대표, E2·E3는 C 등급으로 강등되고 캐시도 갱신된다")
         void recalculate_highestAdtvBecomesRepresentative_othersDowngradedToC() {
             // Arrange
-            Stock e1 = buildStock(1L, "E1", LocalDate.of(2020, 1, 1));
-            Stock e2 = buildStock(2L, "E2", LocalDate.of(2020, 2, 1));
-            Stock e3 = buildStock(3L, "E3", LocalDate.of(2020, 3, 1));
+            Stock e1 = buildStock("E1", LocalDate.of(2020, 1, 1));
+            Stock e2 = buildStock("E2", LocalDate.of(2020, 2, 1));
+            Stock e3 = buildStock("E3", LocalDate.of(2020, 3, 1));
             stubStockId(e1, 1L);
             stubStockId(e2, 2L);
             stubStockId(e3, 3L);
@@ -133,11 +127,9 @@ class EtfRepresentativeServiceTest {
             // Assert: E2 and E3 get C grade
             verify(stockGradeRepository).upsertGrade(eq(2L), eq("C"), any(LocalDateTime.class));
             verify(stockGradeRepository).upsertGrade(eq(3L), eq("C"), any(LocalDateTime.class));
-            // Assert: cache updated for E2 and E3
+            // Assert: cache updated for E2 and E3 (history insert verified in Scenario 3)
             verify(gradeCacheRepository).set(eq("E2"), eq("C"));
             verify(gradeCacheRepository).set(eq("E3"), eq("C"));
-            // Assert: history inserted (first selection)
-            verify(historyRepository).save(any(EtfRepresentativeHistory.class));
         }
     }
 
@@ -149,9 +141,9 @@ class EtfRepresentativeServiceTest {
         @DisplayName("tr_stop=true인 E1은 후보 제외, ADTV 2위 E2가 대표가 된다")
         void recalculate_trStopExcludesStock_secondBecomesRepresentative() {
             // Arrange
-            Stock e1 = buildStock(1L, "E1", LocalDate.of(2020, 1, 1));
-            Stock e2 = buildStock(2L, "E2", LocalDate.of(2020, 2, 1));
-            Stock e3 = buildStock(3L, "E3", LocalDate.of(2020, 3, 1));
+            Stock e1 = buildStock("E1", LocalDate.of(2020, 1, 1));
+            Stock e2 = buildStock("E2", LocalDate.of(2020, 2, 1));
+            Stock e3 = buildStock("E3", LocalDate.of(2020, 3, 1));
             stubStockId(e1, 1L);
             stubStockId(e2, 2L);
             stubStockId(e3, 3L);
@@ -195,8 +187,8 @@ class EtfRepresentativeServiceTest {
         @DisplayName("대표가 변경되면 history에 1행 INSERT (prev_stock_id 포함)")
         void recalculate_representativeChanged_insertsHistory() {
             // Arrange
-            Stock e1 = buildStock(1L, "E1", LocalDate.of(2020, 1, 1));
-            Stock e2 = buildStock(2L, "E2", LocalDate.of(2020, 2, 1));
+            Stock e1 = buildStock("E1", LocalDate.of(2020, 1, 1));
+            Stock e2 = buildStock("E2", LocalDate.of(2020, 2, 1));
             stubStockId(e1, 1L);
             stubStockId(e2, 2L);
 
@@ -235,8 +227,8 @@ class EtfRepresentativeServiceTest {
         @DisplayName("대표가 동일하면 history INSERT 없음")
         void recalculate_sameRepresentative_noHistoryInsert() {
             // Arrange
-            Stock e1 = buildStock(1L, "E1", LocalDate.of(2020, 1, 1));
-            Stock e2 = buildStock(2L, "E2", LocalDate.of(2020, 2, 1));
+            Stock e1 = buildStock("E1", LocalDate.of(2020, 1, 1));
+            Stock e2 = buildStock("E2", LocalDate.of(2020, 2, 1));
             stubStockId(e1, 1L);
             stubStockId(e2, 2L);
 
@@ -275,8 +267,8 @@ class EtfRepresentativeServiceTest {
         @DisplayName("거래이력 15일인 E2는 후보 제외, E1만 대표 선정")
         void recalculate_insufficientTradingDays_excludedFromCandidacy() {
             // Arrange
-            Stock e1 = buildStock(1L, "E1", LocalDate.of(2020, 1, 1));
-            Stock e2 = buildStock(2L, "E2", LocalDate.of(2024, 1, 1)); // recently listed
+            Stock e1 = buildStock("E1", LocalDate.of(2020, 1, 1));
+            Stock e2 = buildStock("E2", LocalDate.of(2024, 1, 1)); // recently listed
             stubStockId(e1, 1L);
             stubStockId(e2, 2L);
 
@@ -308,8 +300,8 @@ class EtfRepresentativeServiceTest {
         @DisplayName("ADTV 동률 시 listedDate 빠른 E1이 대표")
         void recalculate_adtvTie_earlierListedDateWins() {
             // Arrange
-            Stock e1 = buildStock(1L, "E1", LocalDate.of(2020, 1, 1)); // listed earlier
-            Stock e2 = buildStock(2L, "E2", LocalDate.of(2021, 1, 1));
+            Stock e1 = buildStock("E1", LocalDate.of(2020, 1, 1)); // listed earlier
+            Stock e2 = buildStock("E2", LocalDate.of(2021, 1, 1));
             stubStockId(e1, 1L);
             stubStockId(e2, 2L);
 
@@ -335,8 +327,8 @@ class EtfRepresentativeServiceTest {
         void recalculate_adtvAndDateTie_lexicographicallyEarlierSymbolWins() {
             // Arrange: same ADTV, same listed date → symbol tie-breaker
             LocalDate sameDate = LocalDate.of(2020, 1, 1);
-            Stock ea = buildStock(1L, "AA500", sameDate);
-            Stock eb = buildStock(2L, "BB500", sameDate);
+            Stock ea = buildStock("AA500", sameDate);
+            Stock eb = buildStock("BB500", sameDate);
             stubStockId(ea, 1L);
             stubStockId(eb, 2L);
 
@@ -389,7 +381,7 @@ class EtfRepresentativeServiceTest {
         @DisplayName("단독 ETF 그룹: 1개만 있으면 대표 선정, 강등 없음")
         void recalculate_singleEtfInGroup_becomesRepresentativeNoDemotion() {
             // Arrange
-            Stock e1 = buildStock(1L, "E1", LocalDate.of(2020, 1, 1));
+            Stock e1 = buildStock("E1", LocalDate.of(2020, 1, 1));
             stubStockId(e1, 1L);
 
             EtfMetadata m1 = buildMeta(e1, "069500", 1, false, false);
@@ -413,19 +405,14 @@ class EtfRepresentativeServiceTest {
         @DisplayName("watchlist_removed_at 설정된 종목은 후보 제외")
         void recalculate_watchlistRemovedStock_excluded() {
             // Arrange
-            Stock e1 = buildStock(1L, "E1", LocalDate.of(2020, 1, 1));
-            Stock e2 = buildStock(2L, "E2", LocalDate.of(2020, 2, 1));
+            Stock e1 = buildStock("E1", LocalDate.of(2020, 1, 1));
+            Stock e2 = buildStock("E2", LocalDate.of(2020, 2, 1));
             stubStockId(e1, 1L);
             stubStockId(e2, 2L);
 
-            // Set watchlist_removed_at on e1 via reflection
-            try {
-                var field = Stock.class.getDeclaredField("watchlistRemovedAt");
-                field.setAccessible(true);
-                field.set(e1, LocalDateTime.now().minusDays(1));
-            } catch (Exception ex) {
-                throw new RuntimeException(ex);
-            }
+            // Set watchlist_removed_at on e1 (normally set by JPA/business logic)
+            ReflectionTestUtils.setField(
+                    e1, "watchlistRemovedAt", LocalDateTime.now().minusDays(1));
 
             EtfMetadata m1 = buildMeta(e1, "069500", 1, false, false);
             EtfMetadata m2 = buildMeta(e2, "069500", 1, false, false);

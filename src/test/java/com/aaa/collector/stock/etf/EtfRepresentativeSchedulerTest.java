@@ -5,13 +5,13 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 
 import java.lang.reflect.Method;
-import java.util.concurrent.atomic.AtomicBoolean;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
+import org.mockito.Mockito;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.scheduling.annotation.Scheduled;
 
@@ -48,12 +48,9 @@ class EtfRepresentativeSchedulerTest {
 
         @Test
         @DisplayName("이전 실행 중이면 recalculate()를 호출하지 않는다")
-        void recalculateWeekly_concurrentInvocation_skipsRecalculate() throws Exception {
-            // Arrange: force running=true to simulate an in-progress run
-            var field = EtfRepresentativeScheduler.class.getDeclaredField("running");
-            field.setAccessible(true);
-            AtomicBoolean running = (AtomicBoolean) field.get(scheduler);
-            running.set(true);
+        void recalculateWeekly_concurrentInvocation_skipsRecalculate() {
+            // Arrange: force running=true to simulate an in-progress run (package-private field)
+            scheduler.running.set(true);
 
             // Act
             scheduler.recalculateWeekly();
@@ -62,25 +59,22 @@ class EtfRepresentativeSchedulerTest {
             verify(etfRepresentativeService, never()).recalculate();
 
             // Cleanup
-            running.set(false);
+            scheduler.running.set(false);
         }
 
         @Test
         @DisplayName("예외 발생 후에도 running 플래그가 false로 복원된다")
-        void recalculateWeekly_exceptionDuringRun_resetsRunningFlag() throws Exception {
+        void recalculateWeekly_exceptionDuringRun_resetsRunningFlag() {
             // Arrange
-            org.mockito.Mockito.doThrow(new RuntimeException("simulated failure"))
+            Mockito.doThrow(new RuntimeException("simulated failure"))
                     .when(etfRepresentativeService)
                     .recalculate();
 
             // Act
             scheduler.recalculateWeekly();
 
-            // Assert: running flag reset to false after exception
-            var field = EtfRepresentativeScheduler.class.getDeclaredField("running");
-            field.setAccessible(true);
-            AtomicBoolean running = (AtomicBoolean) field.get(scheduler);
-            assertThat(running.get()).isFalse();
+            // Assert: running flag reset to false after exception (package-private field)
+            assertThat(scheduler.running.get()).isFalse();
         }
     }
 }

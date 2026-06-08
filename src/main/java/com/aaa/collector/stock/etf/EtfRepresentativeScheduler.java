@@ -17,7 +17,8 @@ import org.springframework.stereotype.Component;
 public class EtfRepresentativeScheduler {
 
     private final EtfRepresentativeService etfRepresentativeService;
-    private final AtomicBoolean running = new AtomicBoolean(false);
+    // package-private: allows same-package tests to access without reflection
+    final AtomicBoolean running = new AtomicBoolean(false);
 
     /** 매주 월요일 07:50 KST (REQ-ETFSCHED-001). */
     @Scheduled(cron = "0 50 7 * * MON", zone = "Asia/Seoul")
