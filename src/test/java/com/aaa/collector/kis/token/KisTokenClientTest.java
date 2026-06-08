@@ -130,4 +130,57 @@ class KisTokenClientTest {
         assertThatThrownBy(() -> kisTokenClient.requestToken(credential))
                 .isInstanceOf(RestClientException.class);
     }
+
+    @Test
+    @DisplayName("requestApprovalKey — 정상 응답 시 KisApprovalKeyResponse.approvalKey가 올바르게 매핑된다")
+    void requestApprovalKey_withValidResponse_mapsApprovalKey() {
+        // Arrange
+        wireMockServer.stubFor(
+                post(urlEqualTo("/oauth2/Approval"))
+                        .willReturn(
+                                aResponse()
+                                        .withStatus(200)
+                                        .withHeader("Content-Type", "application/json")
+                                        .withBody(
+                                                """
+                                                {
+                                                    "approval_key": "test-approval-key-abc123"
+                                                }
+                                                """)));
+
+        // Act
+        KisApprovalKeyResponse response = kisTokenClient.requestApprovalKey(credential);
+
+        // Assert
+        assertThat(response.approvalKey()).isEqualTo("test-approval-key-abc123");
+
+        wireMockServer.verify(
+                postRequestedFor(urlEqualTo("/oauth2/Approval"))
+                        .withHeader("Content-Type", containing("application/json"))
+                        .withRequestBody(
+                                matchingJsonPath("$.grant_type", equalTo("client_credentials")))
+                        .withRequestBody(matchingJsonPath("$.appkey", equalTo("test-app-key")))
+                        .withRequestBody(
+                                matchingJsonPath("$.secretkey", equalTo("test-app-secret"))));
+    }
+
+    @Test
+    @DisplayName("requestApprovalKey — HTTP 5xx 응답 시 RestClientException이 발생한다")
+    void requestApprovalKey_with5xxResponse_throwsRestClientException() {
+        wireMockServer.stubFor(
+                post(urlEqualTo("/oauth2/Approval"))
+                        .willReturn(
+                                aResponse()
+                                        .withStatus(500)
+                                        .withHeader("Content-Type", "application/json")
+                                        .withBody(
+                                                """
+                                                {
+                                                    "error": "Internal Server Error"
+                                                }
+                                                """)));
+
+        assertThatThrownBy(() -> kisTokenClient.requestApprovalKey(credential))
+                .isInstanceOf(RestClientException.class);
+    }
 }

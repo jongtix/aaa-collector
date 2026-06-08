@@ -12,6 +12,7 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.aaa.collector.common.safemode.SafeModeManager;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.LocalDateTime;
@@ -687,6 +688,132 @@ class KisTokenServiceTest {
 
         // Assert: issueAll이 예외 없이 정상 종료됨 (스레드가 살아있지 않아야 함)
         assertThat(issueAllThread.isAlive()).isFalse();
+    }
+
+    // ── issueAllApprovalKeys ──────────────────────────────────────────────────
+
+    @Test
+    @DisplayName("issueAllApprovalKeys — 전 계좌에 대해 requestApprovalKey가 계좌 수만큼 호출된다")
+    void issueAllApprovalKeys_callsRequestApprovalKeyForEachAccount() {
+        // Arrange
+        KisAccountCredential secondCredential =
+                new KisAccountCredential("stock", "87654321", "stock-app-key", "stock-app-secret");
+        KisProperties multiAccountProperties =
+                new KisProperties(
+                        "https://localhost",
+                        "testUser",
+                        List.of(credential, secondCredential),
+                        new KisProperties.RateLimit(20, 20, 10));
+        KisTokenService multiAccountService =
+                new KisTokenService(
+                        multiAccountProperties,
+                        kisTokenClient,
+                        kisTokenRepository,
+                        safeModeManager,
+                        millis -> {},
+                        FIXED_CLOCK,
+                        key -> new java.util.concurrent.locks.ReentrantLock());
+
+        when(kisTokenClient.requestApprovalKey(credential))
+                .thenReturn(new KisApprovalKeyResponse("approval-key-test"));
+        when(kisTokenClient.requestApprovalKey(secondCredential))
+                .thenReturn(new KisApprovalKeyResponse("approval-key-stock"));
+
+        // Act
+        multiAccountService.issueAllApprovalKeys();
+
+        // Assert
+        verify(kisTokenClient, timeout(5000).times(1)).requestApprovalKey(credential);
+        verify(kisTokenClient, timeout(5000).times(1)).requestApprovalKey(secondCredential);
+        verify(kisTokenRepository, timeout(5000).times(1))
+                .saveApprovalKey("test", "approval-key-test");
+        verify(kisTokenRepository, timeout(5000).times(1))
+                .saveApprovalKey("stock", "approval-key-stock");
+    }
+
+    @Test
+    @DisplayName("issueAllApprovalKeys — 일부 계좌 실패 시 다른 계좌는 정상 처리되고 예외 없이 완료된다")
+    void issueAllApprovalKeys_oneAccountFails_otherAccountSucceeds() {
+        // Arrange
+        KisAccountCredential accountB =
+                new KisAccountCredential("stock", "87654321", "stock-app-key", "stock-app-secret");
+        KisProperties multiAccountProperties =
+                new KisProperties(
+                        "https://localhost",
+                        "testUser",
+                        List.of(credential, accountB),
+                        new KisProperties.RateLimit(20, 20, 10));
+        KisTokenService multiAccountService =
+                new KisTokenService(
+                        multiAccountProperties,
+                        kisTokenClient,
+                        kisTokenRepository,
+                        safeModeManager,
+                        millis -> {},
+                        FIXED_CLOCK,
+                        key -> new java.util.concurrent.locks.ReentrantLock());
+
+        when(kisTokenClient.requestApprovalKey(credential))
+                .thenReturn(new KisApprovalKeyResponse("approval-key-test"));
+        when(kisTokenClient.requestApprovalKey(accountB))
+                .thenThrow(new RuntimeException("B 승인키 발급 실패"));
+
+        // Act: 예외 없이 완료되어야 함
+        multiAccountService.issueAllApprovalKeys();
+
+        // Assert: A는 성공적으로 저장, B는 실패 후 경고 로그 (saveApprovalKey 미호출)
+        verify(kisTokenRepository, timeout(5000).times(1))
+                .saveApprovalKey("test", "approval-key-test");
+        verify(kisTokenRepository, timeout(5000).times(0)).saveApprovalKey(eq("stock"), any());
+    }
+
+    // ── getValidApprovalKey ───────────────────────────────────────────────────
+
+    @Test
+    @DisplayName("getValidApprovalKey 캐시 히트 — Repository에서 승인키 반환, KisTokenClient 호출 안 함")
+    void getValidApprovalKey_cacheHit_returnsApprovalKeyWithoutCallingClient() {
+        // Arrange
+        String cachedKey = "cached-approval-key";
+        when(kisTokenRepository.findApprovalKey("test")).thenReturn(Optional.of(cachedKey));
+
+        // Act
+        String result = kisTokenService.getValidApprovalKey("test");
+
+        // Assert
+        assertThat(result).isEqualTo(cachedKey);
+        verify(kisTokenClient, never()).requestApprovalKey(any());
+    }
+
+    @Test
+    @DisplayName("getValidApprovalKey 캐시 미스 — requestApprovalKey 호출 후 저장하고 반환")
+    void getValidApprovalKey_cacheMiss_issuesAndSavesAndReturnsNewKey() {
+        // Arrange
+        String newKey = "new-approval-key";
+        when(kisTokenRepository.findApprovalKey("test")).thenReturn(Optional.empty());
+        when(kisTokenClient.requestApprovalKey(credential))
+                .thenReturn(new KisApprovalKeyResponse(newKey));
+
+        // Act
+        String result = kisTokenService.getValidApprovalKey("test");
+
+        // Assert
+        assertThat(result).isEqualTo(newKey);
+        verify(kisTokenClient).requestApprovalKey(credential);
+        verify(kisTokenRepository).saveApprovalKey("test", newKey);
+    }
+
+    @Test
+    @DisplayName("getValidApprovalKey 미등록 alias — IllegalArgumentException 발생")
+    void getValidApprovalKey_unknownAlias_throwsIllegalArgumentException() {
+        // Arrange
+        when(kisTokenRepository.findApprovalKey("unknown")).thenReturn(Optional.empty());
+
+        // Act & Assert
+        assertThatThrownBy(() -> kisTokenService.getValidApprovalKey("unknown"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("unknown");
+
+        verify(kisTokenClient, never()).requestApprovalKey(any());
     }
 
     // ── Helper ────────────────────────────────────────────────────────────────

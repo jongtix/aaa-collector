@@ -1,30 +1,28 @@
-package com.aaa.collector.kis.token;
+package com.aaa.collector.common.safemode;
 
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.redis.core.StringRedisTemplate;
-import org.springframework.stereotype.Repository;
 
 /**
- * KIS 토큰 안전 모드 상태를 Redis에 저장/조회하는 레포지토리.
+ * 안전 모드 상태를 Redis에 저장/조회하는 레포지토리.
  *
  * <p>Redis Key 설계:
  *
  * <ul>
- *   <li>안전 모드: {@code safe_mode:collector:token:{alias}} — {@code "ON"} or {@code "OFF"}, TTL 없음
+ *   <li>안전 모드: {@code {keyPrefix}{alias}} — {@code "ON"} or {@code "OFF"}, TTL 없음
  * </ul>
  *
- * <p>TODO: WebSocket 모듈 구현 시 이 클래스와 {@link SafeModeManager}를 {@code common.safemode} 패키지로 이동하여 범용
- * 안전 모드 관리자로 확장한다. (TECHSPEC 1.3절 격리 단위 참조)
+ * <p>키 프리픽스는 생성자 주입으로 결정되어, 토큰(safe_mode:collector:token:)과 WebSocket(safe_mode:collector:ws:) 등 서로
+ * 다른 컨텍스트에서 동일한 클래스를 재사용할 수 있다.
  */
-@Repository
 @RequiredArgsConstructor
 public class SafeModeRepository {
 
-    private static final String SAFE_MODE_KEY_PREFIX = "safe_mode:collector:token:";
     private static final String SAFE_MODE_ON = "ON";
     private static final String SAFE_MODE_OFF = "OFF";
 
     private final StringRedisTemplate redisTemplate;
+    private final String keyPrefix;
 
     /**
      * 안전 모드 상태를 Redis에 설정한다. TTL 없이 영구 저장된다.
@@ -47,6 +45,6 @@ public class SafeModeRepository {
     }
 
     private String safeModeKey(String alias) {
-        return SAFE_MODE_KEY_PREFIX + alias;
+        return keyPrefix + alias;
     }
 }

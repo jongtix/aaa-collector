@@ -18,14 +18,15 @@ public class KisTokenScheduler {
     private final KisTokenService kisTokenService;
 
     /**
-     * 전 계좌 토큰을 일괄 재발급한다.
+     * 전 계좌 토큰 및 WebSocket 승인키를 일괄 재발급한다.
      *
-     * <p>장 시작 전(08:30 KST)에 실행되어, 장중 API 호출 시 유효한 토큰이 준비되도록 한다.
+     * <p>장 시작 전(08:30 KST)에 실행되어, 장중 API 호출 시 유효한 토큰과 승인키가 준비되도록 한다.
      */
     @Scheduled(cron = "0 30 8 * * MON-FRI", zone = "Asia/Seoul")
     public void refreshTokens() {
         log.info("스케줄 토큰 갱신 시작");
         kisTokenService.issueAll();
+        kisTokenService.issueAllApprovalKeys();
         log.info("스케줄 토큰 갱신 완료");
     }
 }

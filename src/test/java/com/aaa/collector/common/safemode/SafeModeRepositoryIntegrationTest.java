@@ -1,4 +1,4 @@
-package com.aaa.collector.kis.token;
+package com.aaa.collector.common.safemode;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -35,7 +35,7 @@ class SafeModeRepositoryIntegrationTest {
         StringRedisTemplate redisTemplate = new StringRedisTemplate(connectionFactory);
         redisTemplate.afterPropertiesSet();
 
-        repository = new SafeModeRepository(redisTemplate);
+        repository = new SafeModeRepository(redisTemplate, "safe_mode:collector:token:");
     }
 
     @AfterEach

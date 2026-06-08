@@ -1,4 +1,4 @@
-package com.aaa.collector.kis.token;
+package com.aaa.collector.common.safemode;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.verify;
