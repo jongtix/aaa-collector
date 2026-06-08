@@ -132,6 +132,7 @@ class StockGradePersistServiceTest {
 
         @Test
         @DisplayName("stockGradeRepository.save() 예외 시 gradeCacheRepository 미호출")
+        @SuppressWarnings("PMD.AvoidCatchingGenericException") // 테스트에서 예외 전파 경로를 검증하기 위한 catch
         void persistSingle_repoException_cacheNotCalled() {
             // Arrange
             Stock stock = buildStock("005930");

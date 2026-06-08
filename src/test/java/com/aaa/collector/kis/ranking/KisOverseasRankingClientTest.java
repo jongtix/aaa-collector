@@ -87,10 +87,12 @@ class KisOverseasRankingClientTest {
     }
 
     private String rankingBody(String... symbols) {
-        StringBuilder sb = new StringBuilder();
+        StringBuilder sb = new StringBuilder(200);
         sb.append("{\"rt_cd\":\"0\",\"msg_cd\":\"MCA00000\",\"msg1\":\"조회되었습니다.\",\"output2\":[");
         for (int i = 0; i < symbols.length; i++) {
-            if (i > 0) sb.append(",");
+            if (i > 0) {
+                sb.append(',');
+            }
             sb.append("{\"symb\":\"")
                     .append(symbols[i])
                     .append("\",\"rank\":\"")

@@ -94,7 +94,7 @@ class StockGradeRepositoryTest {
 
     @Nested
     @DisplayName("save — 등급 저장")
-    class Save {
+    class SaveGrade {
 
         @Test
         @DisplayName("신규 등급 저장 — ID 할당됨")

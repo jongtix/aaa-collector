@@ -111,7 +111,7 @@ class KisDomesticRankingClientTest {
             List<KisDomesticRankingResponse.RankedStock> result = client.fetchRanking();
 
             assertThat(result).hasSize(2);
-            assertThat(result.get(0).mkscShrnIscd()).isEqualTo("005930");
+            assertThat(result.getFirst().mkscShrnIscd()).isEqualTo("005930");
             assertThat(result.get(1).mkscShrnIscd()).isEqualTo("000660");
         }
 
@@ -153,7 +153,7 @@ class KisDomesticRankingClientTest {
 
             List<KisDomesticRankingResponse.RankedStock> result = client.fetchRanking();
 
-            assertThat(result.get(0).dataRank()).isEqualTo("1");
+            assertThat(result.getFirst().dataRank()).isEqualTo("1");
         }
     }
 }

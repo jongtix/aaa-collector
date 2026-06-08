@@ -6,6 +6,7 @@ import com.aaa.collector.stock.enums.AssetType;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import org.junit.jupiter.api.DisplayName;
@@ -168,6 +169,12 @@ class GradeClassifierTest {
 
         @Test
         @DisplayName("N개 Virtual Thread 동시 호출 결과 == 순차 호출 결과")
+        @SuppressWarnings({
+            "PMD.AvoidSynchronizedStatement", // 동시성 테스트 특성상 synchronized 불가피
+            "PMD.AvoidCatchingGenericException", // Future.get()의
+            // ExecutionException/InterruptedException 포착
+            "PMD.AvoidThrowingRawExceptionTypes" // 테스트 실패 전파용
+        })
         void classify_concurrentCalls_deterministicResults() throws InterruptedException {
             // Arrange
             List<GradeInput> inputs =
@@ -190,7 +197,7 @@ class GradeClassifierTest {
             }
 
             // Act — Virtual Thread로 동시 실행
-            try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
+            try (ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor()) {
                 List<Future<?>> futures = new ArrayList<>();
                 for (int t = 0; t < threadCount; t++) {
                     final int idx = t;

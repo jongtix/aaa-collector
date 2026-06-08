@@ -6,10 +6,8 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-import com.aaa.collector.stock.Stock;
 import com.aaa.collector.stock.StockListService;
 import com.aaa.collector.stock.StockRepository;
-import com.aaa.collector.stock.enums.AssetType;
 import com.aaa.collector.stock.enums.Market;
 import com.aaa.collector.stock.grade.GradeClassificationService;
 import java.util.List;
@@ -20,7 +18,6 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.test.util.ReflectionTestUtils;
 
 /**
  * WatchlistWriter + GradeClassificationService 트리거 연결 테스트 (시나리오 1).
@@ -49,18 +46,6 @@ class WatchlistWriterGradeTest {
 
     private static ResolvedStock resolvedKospi(String symbol) {
         return new ResolvedStock(symbol, "테스트종목", Market.KOSPI, null);
-    }
-
-    private static Stock existingStock(String symbol, long id) {
-        Stock s =
-                Stock.builder()
-                        .symbol(symbol)
-                        .nameKo("테스트종목")
-                        .market(Market.KOSPI)
-                        .assetType(AssetType.STOCK)
-                        .build();
-        ReflectionTestUtils.setField(s, "id", id);
-        return s;
     }
 
     @Nested

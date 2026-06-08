@@ -30,7 +30,7 @@ class AdtvPercentileCalculatorTest {
         void calculate_singleStock_returnsEmptyMap() {
             Map<String, Double> result =
                     calculator.calculate(
-                            List.of(new AdtvPercentileCalculator.RankEntry("005930", 1000000.0)));
+                            List.of(new AdtvPercentileCalculator.RankEntry("005930", 1_000_000.0)));
             assertThat(result).isEmpty();
         }
 
@@ -40,8 +40,8 @@ class AdtvPercentileCalculatorTest {
             List<AdtvPercentileCalculator.RankEntry> entries =
                     List.of(
                             new AdtvPercentileCalculator.RankEntry(
-                                    "005930", 2000000.0), // 1위 (거래금액 높음)
-                            new AdtvPercentileCalculator.RankEntry("000660", 1000000.0) // 2위
+                                    "005930", 2_000_000.0), // 1위 (거래금액 높음)
+                            new AdtvPercentileCalculator.RankEntry("000660", 1_000_000.0) // 2위
                             );
 
             Map<String, Double> result = calculator.calculate(entries);
@@ -73,7 +73,7 @@ class AdtvPercentileCalculatorTest {
             List<AdtvPercentileCalculator.RankEntry> entries =
                     List.of(
                             new AdtvPercentileCalculator.RankEntry("LOW", 100.0),
-                            new AdtvPercentileCalculator.RankEntry("HIGH", 10000.0),
+                            new AdtvPercentileCalculator.RankEntry("HIGH", 10_000.0),
                             new AdtvPercentileCalculator.RankEntry("MID", 5000.0));
 
             Map<String, Double> result = calculator.calculate(entries);

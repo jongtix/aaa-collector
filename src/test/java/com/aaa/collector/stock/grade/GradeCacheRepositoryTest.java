@@ -16,6 +16,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.data.redis.core.StringRedisTemplate;
@@ -44,7 +45,7 @@ class GradeCacheRepositoryTest {
 
     @Nested
     @DisplayName("save — Redis에 등급 저장")
-    class Save {
+    class SaveGrade {
 
         @Test
         @DisplayName("정상 저장 — cache:grade:{symbol} 키로 TTL 없이 set 호출")
@@ -69,7 +70,7 @@ class GradeCacheRepositoryTest {
             // Arrange
             stubOpsForValue();
             ZonedDateTime gradedAt = ZonedDateTime.of(2026, 6, 7, 9, 0, 0, 0, KST);
-            var captor = org.mockito.ArgumentCaptor.forClass(String.class);
+            ArgumentCaptor<String> captor = ArgumentCaptor.forClass(String.class);
 
             // Act
             repository.save("000660", Grade.B, gradedAt);
@@ -85,7 +86,7 @@ class GradeCacheRepositoryTest {
             // Arrange
             stubOpsForValue();
             ZonedDateTime gradedAt = ZonedDateTime.of(2026, 6, 7, 9, 0, 0, 0, KST);
-            var captor = org.mockito.ArgumentCaptor.forClass(String.class);
+            ArgumentCaptor<String> captor = ArgumentCaptor.forClass(String.class);
 
             // Act
             repository.save("035420", Grade.C, gradedAt);
@@ -120,7 +121,7 @@ class GradeCacheRepositoryTest {
                                 new com.fasterxml.jackson.core.JsonProcessingException(
                                         "직렬화 실패") {});
             } catch (com.fasterxml.jackson.core.JsonProcessingException e) {
-                throw new RuntimeException(e);
+                throw new AssertionError("Test setup failed: could not configure mock mapper", e);
             }
             GradeCacheRepository failingRepo =
                     new GradeCacheRepository(redisTemplate, failingMapper);
