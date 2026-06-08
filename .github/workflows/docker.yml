@@ -21,7 +21,7 @@ jobs:
     steps:
       # 1차 checkout: 태그 조회용 (workflow_run의 HEAD는 릴리즈 커밋 이전 시점)
       - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           fetch-depth: 0
 
@@ -44,7 +44,7 @@ jobs:
       # gradle.properties 버전이 업데이트된 소스로 Docker 이미지를 빌드한다
       - name: Checkout release commit
         if: ${{ steps.tag.outputs.valid == 'true' }}
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           ref: ${{ steps.tag.outputs.tag }}
 
