@@ -40,4 +40,36 @@
         <Class name="com.aaa.collector.watchlist.KisStockListByGroupResponse"/>
         <Bug pattern="EI_EXPOSE_REP,EI_EXPOSE_REP2"/>
     </Match>
+
+    <!--
+        EI_EXPOSE_REP2: Spring DI 생성자 주입 패턴 (kis.token과 동일).
+        WebSocketClient, MessageHandler 등 싱글톤/세션 객체를 final 필드에 저장하는 표준 패턴.
+    -->
+    <Match>
+        <Package name="com.aaa.collector.kis.websocket"/>
+        <Bug pattern="EI_EXPOSE_REP2"/>
+    </Match>
+
+    <!--
+        CIPHER_INTEGRITY / PADDING_ORACLE: KIS Open API 프로토콜 강제 사양.
+        KIS WebSocket은 AES-256-CBC + PKCS5Padding을 서버가 지정하므로 알고리즘 변경 불가.
+        외부 네트워크에서 수신한 암호문을 신뢰 채널(KIS 서버 직접 연결)에서만 처리함.
+    -->
+    <Match>
+        <Class name="com.aaa.collector.kis.websocket.KisAesDecryptor"/>
+        <Bug pattern="CIPHER_INTEGRITY,PADDING_ORACLE"/>
+    </Match>
+
+    <!--
+        테스트 암호화 헬퍼(encryptForTest, encrypt): KIS 프로토콜 테스트 벡터 생성 목적.
+        프로덕션 코드가 아니며, 고정 IV(STATIC_IV)도 테스트 재현성을 위한 의도적 설계.
+    -->
+    <Match>
+        <Class name="com.aaa.collector.kis.websocket.KisAesDecryptorTest"/>
+        <Bug pattern="CIPHER_INTEGRITY,PADDING_ORACLE,STATIC_IV"/>
+    </Match>
+    <Match>
+        <Class name="com.aaa.collector.kis.websocket.KisWebSocketMessageHandlerTest"/>
+        <Bug pattern="CIPHER_INTEGRITY,PADDING_ORACLE,STATIC_IV"/>
+    </Match>
 </FindBugsFilter>

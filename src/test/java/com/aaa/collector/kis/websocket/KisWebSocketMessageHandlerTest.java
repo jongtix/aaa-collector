@@ -185,8 +185,7 @@ class KisWebSocketMessageHandlerTest {
     @DisplayName("Type B — 구독 실패 응답 (rt_cd≠0)")
     class TypeBSubscribeFailure {
 
-        @SuppressWarnings("PMD.FinalFieldCouldBeStatic")
-        private final String failureJson =
+        private static final String FAILURE_JSON =
                 """
                 {
                   "header": {"tr_id": "H0STCNT0", "tr_key": "005930"},
@@ -200,7 +199,7 @@ class KisWebSocketMessageHandlerTest {
         @Test
         @DisplayName("4회 실패 — 안전 모드 미진입")
         void fourFailures_doesNotEnterSafeMode() {
-            TextMessage message = new TextMessage(failureJson);
+            TextMessage message = new TextMessage(FAILURE_JSON);
             for (int i = 0; i < 4; i++) {
                 handler.handleTextMessage(session, message);
             }
@@ -211,7 +210,7 @@ class KisWebSocketMessageHandlerTest {
         @Test
         @DisplayName("5회 실패 — 안전 모드 진입")
         void fiveFailures_entersSafeMode() {
-            TextMessage message = new TextMessage(failureJson);
+            TextMessage message = new TextMessage(FAILURE_JSON);
             for (int i = 0; i < 5; i++) {
                 handler.handleTextMessage(session, message);
             }
