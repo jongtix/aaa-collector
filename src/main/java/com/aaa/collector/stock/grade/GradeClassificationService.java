@@ -5,7 +5,6 @@ import com.aaa.collector.kis.ranking.KisDomesticRankingResponse;
 import com.aaa.collector.kis.ranking.KisOverseasRankingClient;
 import com.aaa.collector.kis.ranking.KisOverseasRankingResponse;
 import com.aaa.collector.stock.Stock;
-import com.aaa.collector.stock.StockGrade;
 import com.aaa.collector.stock.StockRepository;
 import com.aaa.collector.stock.enums.Market;
 import java.time.LocalDate;
@@ -14,12 +13,10 @@ import java.time.ZonedDateTime;
 import java.time.temporal.ChronoUnit;
 import java.util.List;
 import java.util.Map;
-import java.util.Optional;
 import java.util.Set;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
 
 /**
  * 종목 등급 분류 오케스트레이터.
@@ -37,7 +34,6 @@ import org.springframework.transaction.annotation.Transactional;
 @Slf4j
 @Service
 @RequiredArgsConstructor
-@SuppressWarnings("PMD.CouplingBetweenObjects") // 오케스트레이터 특성상 다수 협력 객체 의존 불가피
 public class GradeClassificationService {
 
     private static final ZoneId KST = ZoneId.of("Asia/Seoul");
@@ -52,8 +48,7 @@ public class GradeClassificationService {
     private final KisOverseasRankingClient overseasRankingClient;
     private final AdtvPercentileCalculator percentileCalculator;
     private final GradeClassifier gradeClassifier;
-    private final StockGradeRepository stockGradeRepository;
-    private final GradeCacheRepository gradeCacheRepository;
+    private final StockGradePersistService stockGradePersistService;
 
     /**
      * 모든 활성 종목의 등급을 분류한다.
@@ -61,8 +56,7 @@ public class GradeClassificationService {
      * <p>개별 종목 분류 실패 시 해당 종목을 skip하고 나머지를 계속 처리한다 (REQ-009/010).
      */
     // @MX:NOTE: [AUTO] WatchlistWriter(failedGroupCount==0) 단일 호출 진입점. 개별 종목 실패는 warn 후 계속
-    // 처리(REQ-009/010)
-    @Transactional
+    // 처리(REQ-009/010). @Transactional 없음 — KIS API 호출과 DB 트랜잭션 분리(CR-002).
     @SuppressWarnings({
         "PMD.AvoidCatchingGenericException", // 종목별 실패 포착해 나머지 계속 처리
         "PMD.AvoidInstantiatingObjectsInLoops" // GradeInput은 종목별 불변 값 객체로 루프 내 생성 불가피
@@ -91,7 +85,7 @@ public class GradeClassificationService {
                                 listedYears,
                                 percentile);
                 Grade grade = gradeClassifier.classify(input);
-                persist(stock, grade, gradedAt);
+                stockGradePersistService.persistSingle(stock, grade, gradedAt);
             } catch (Exception e) {
                 log.warn(
                         "종목 등급 분류 실패 — symbol={}, market={}: {}",
@@ -115,6 +109,7 @@ public class GradeClassificationService {
                                 r ->
                                         new AdtvPercentileCalculator.RankEntry(
                                                 r.mkscShrnIscd(), parseRankAsValue(r.dataRank())))
+                        .filter(e -> e.rankValue() > 0.0) // CR-004: 파싱 실패(0.0) 항목 제외
                         .toList();
         return percentileCalculator.calculate(entries);
     }
@@ -154,24 +149,6 @@ public class GradeClassificationService {
             throw new IllegalStateException("listedDate가 null — symbol=" + stock.getSymbol());
         }
         return ChronoUnit.DAYS.between(listedDate, LocalDate.now(KST)) / 365.25;
-    }
-
-    private void persist(Stock stock, Grade grade, ZonedDateTime gradedAt) {
-        Optional<StockGrade> existing = stockGradeRepository.findByStock(stock);
-        StockGrade stockGrade;
-        if (existing.isPresent()) {
-            stockGrade = existing.get();
-            stockGrade.updateGrade(grade.name(), gradedAt);
-        } else {
-            stockGrade =
-                    StockGrade.builder()
-                            .stock(stock)
-                            .grade(grade.name())
-                            .gradedAt(gradedAt)
-                            .build();
-        }
-        stockGradeRepository.save(stockGrade);
-        gradeCacheRepository.save(stock.getSymbol(), grade, gradedAt);
     }
 
     /** 순위 문자열을 double로 변환. 파싱 실패 시 큰 값(하위) 반환. */

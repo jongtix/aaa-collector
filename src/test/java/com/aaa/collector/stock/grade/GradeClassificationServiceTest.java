@@ -1,6 +1,5 @@
 package com.aaa.collector.stock.grade;
 
-import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.eq;
@@ -12,7 +11,6 @@ import static org.mockito.Mockito.when;
 import com.aaa.collector.kis.ranking.KisDomesticRankingClient;
 import com.aaa.collector.kis.ranking.KisOverseasRankingClient;
 import com.aaa.collector.stock.Stock;
-import com.aaa.collector.stock.StockGrade;
 import com.aaa.collector.stock.StockRepository;
 import com.aaa.collector.stock.enums.AssetType;
 import com.aaa.collector.stock.enums.Market;
@@ -20,7 +18,6 @@ import java.time.LocalDate;
 import java.time.ZonedDateTime;
 import java.util.List;
 import java.util.Map;
-import java.util.Optional;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -40,8 +37,7 @@ class GradeClassificationServiceTest {
     @Mock private KisOverseasRankingClient overseasRankingClient;
     @Mock private AdtvPercentileCalculator percentileCalculator;
     @Mock private GradeClassifier gradeClassifier;
-    @Mock private StockGradeRepository stockGradeRepository;
-    @Mock private GradeCacheRepository gradeCacheRepository;
+    @Mock private StockGradePersistService stockGradePersistService;
 
     @InjectMocks private GradeClassificationService service;
 
@@ -65,8 +61,6 @@ class GradeClassificationServiceTest {
         lenient().when(overseasRankingClient.fetchRanking()).thenReturn(List.of());
         lenient().when(percentileCalculator.calculate(anyList())).thenReturn(Map.of());
         lenient().when(gradeClassifier.classify(any())).thenReturn(Grade.C);
-        lenient().when(stockGradeRepository.findByStock(any())).thenReturn(Optional.empty());
-        lenient().when(stockGradeRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
     }
 
     @Nested
@@ -124,31 +118,30 @@ class GradeClassificationServiceTest {
     }
 
     @Nested
-    @DisplayName("시나리오 9 — 등급 산정 후 이중 영속화")
-    class DualPersistence {
+    @DisplayName("시나리오 9 — 등급 산정 후 영속화 위임")
+    class PersistenceDelegation {
 
         @Test
-        @DisplayName("등급 산정 후 stockGradeRepository와 gradeCacheRepository 모두 호출")
-        void classify_gradeAssigned_persistsToRepoAndCache() {
+        @DisplayName("등급 산정 후 StockGradePersistService.persistSingle() 호출")
+        void classify_gradeAssigned_delegatesToPersistService() {
             Stock stock = buildStock("005930", Market.KOSPI, LocalDate.of(2010, 1, 1));
             when(stockRepository.findAllActive()).thenReturn(List.of(stock));
             when(gradeClassifier.classify(any())).thenReturn(Grade.A);
-            when(stockGradeRepository.findByStock(stock)).thenReturn(Optional.empty());
 
             service.classify();
 
-            verify(stockGradeRepository).save(any(StockGrade.class));
-            verify(gradeCacheRepository).save(eq("005930"), eq(Grade.A), any(ZonedDateTime.class));
+            verify(stockGradePersistService)
+                    .persistSingle(eq(stock), eq(Grade.A), any(ZonedDateTime.class));
         }
     }
 
     @Nested
-    @DisplayName("시나리오 5 — 분류 실패 시 이전 등급 유지")
+    @DisplayName("시나리오 5/6 — 분류 실패 격리")
     class FailureHandling {
 
         @Test
-        @DisplayName("기존 등급 있는 종목 분류 실패 — 기존 등급 유지, 다른 종목 계속 처리")
-        void classify_failureWithExistingGrade_keepsPreviousGrade() {
+        @DisplayName("한 종목 분류 실패 — 나머지 종목 persistSingle() 계속 호출")
+        void classify_failureOnOneStock_continuesOthers() {
             Stock fail = buildStock("FAIL", Market.KOSPI, LocalDate.of(2010, 1, 1));
             Stock ok = buildStock("OK", Market.KOSPI, LocalDate.of(2010, 1, 1));
             when(stockRepository.findAllActive()).thenReturn(List.of(fail, ok));
@@ -158,48 +151,20 @@ class GradeClassificationServiceTest {
 
             service.classify();
 
-            // "OK" 종목은 정상 처리
-            verify(stockGradeRepository).save(any(StockGrade.class));
+            // "OK" 종목은 정상 처리 — persistSingle 1회 호출
+            verify(stockGradePersistService).persistSingle(eq(ok), eq(Grade.B), any());
         }
 
         @Test
-        @DisplayName("시나리오 6: 기존 등급 없는 종목 분류 실패 — insert 없음, skip")
-        void classify_failureWithNoExistingGrade_skipsInsert() {
+        @DisplayName("시나리오 6: 분류 실패 종목 — persistSingle 호출 없음")
+        void classify_failureStock_noPersistCall() {
             Stock stock = buildStock("005930", Market.KOSPI, LocalDate.of(2010, 1, 1));
             when(stockRepository.findAllActive()).thenReturn(List.of(stock));
             when(gradeClassifier.classify(any())).thenThrow(new RuntimeException("분류 실패"));
-            // stockGradeRepository.findByStock이 never 호출되거나 빈 Optional 반환 — BeforeEach에서 설정됨
 
             service.classify();
 
-            verify(stockGradeRepository, never()).save(any());
-            verify(gradeCacheRepository, never()).save(any(), any(), any());
-        }
-    }
-
-    @Nested
-    @DisplayName("upsert 로직 — 기존 등급 존재 시 updateGrade()")
-    class UpsertLogic {
-
-        @Test
-        @DisplayName("기존 StockGrade 존재 — updateGrade()로 갱신, save() 호출")
-        void classify_existingGrade_callsUpdateGrade() {
-            Stock stock = buildStock("005930", Market.KOSPI, LocalDate.of(2010, 1, 1));
-            when(stockRepository.findAllActive()).thenReturn(List.of(stock));
-            when(gradeClassifier.classify(any())).thenReturn(Grade.A);
-
-            StockGrade existing =
-                    StockGrade.builder()
-                            .stock(stock)
-                            .grade("C")
-                            .gradedAt(ZonedDateTime.now())
-                            .build();
-            when(stockGradeRepository.findByStock(stock)).thenReturn(Optional.of(existing));
-
-            service.classify();
-
-            assertThat(existing.getGrade()).isEqualTo("A");
-            verify(stockGradeRepository).save(existing);
+            verify(stockGradePersistService, never()).persistSingle(any(), any(), any());
         }
     }
 }
