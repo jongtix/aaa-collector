@@ -27,6 +27,7 @@ dependencies {
     implementation(libs.spring.boot.starter.actuator)     // 헬스체크 엔드포인트
     implementation(libs.spring.boot.starter.data.jpa)     // JPA + Hibernate
     implementation(libs.spring.boot.starter.data.redis)   // Redis 연동
+    implementation(libs.spring.boot.starter.websocket)    // KIS WebSocket 클라이언트 (StandardWebSocketClient)
     implementation(libs.spring.retry)                      // @Retryable 재시도
     implementation(libs.bucket4j)                          // KIS API TPS 20 rate limiting
     runtimeOnly(libs.mysql.connector)                     // MySQL JDBC 드라이버
