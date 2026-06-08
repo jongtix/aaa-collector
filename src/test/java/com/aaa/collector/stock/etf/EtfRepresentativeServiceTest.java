@@ -131,12 +131,12 @@ class EtfRepresentativeServiceTest {
 
             // Assert: E1 gets A grade
             verify(stockGradeRepository)
-                    .save(argThat(sg -> sg.getStock() == e1 && "A".equals(sg.getGrade())));
+                    .save(argThat(sg -> e1.equals(sg.getStock()) && "A".equals(sg.getGrade())));
             // Assert: E2 and E3 get C grade
             verify(stockGradeRepository)
-                    .save(argThat(sg -> sg.getStock() == e2 && "C".equals(sg.getGrade())));
+                    .save(argThat(sg -> e2.equals(sg.getStock()) && "C".equals(sg.getGrade())));
             verify(stockGradeRepository)
-                    .save(argThat(sg -> sg.getStock() == e3 && "C".equals(sg.getGrade())));
+                    .save(argThat(sg -> e3.equals(sg.getStock()) && "C".equals(sg.getGrade())));
             // Assert: cache updated for E2 and E3 (history insert verified in Scenario 3)
             verify(gradeCacheRepository).save(eq("E2"), eq(Grade.C), any(ZonedDateTime.class));
             verify(gradeCacheRepository).save(eq("E3"), eq(Grade.C), any(ZonedDateTime.class));
@@ -182,12 +182,12 @@ class EtfRepresentativeServiceTest {
 
             // Assert: E2 is representative (A grade)
             verify(stockGradeRepository)
-                    .save(argThat(sg -> sg.getStock() == e2 && "A".equals(sg.getGrade())));
+                    .save(argThat(sg -> e2.equals(sg.getStock()) && "A".equals(sg.getGrade())));
             // Assert: E3 demoted to C
             verify(stockGradeRepository)
-                    .save(argThat(sg -> sg.getStock() == e3 && "C".equals(sg.getGrade())));
+                    .save(argThat(sg -> e3.equals(sg.getStock()) && "C".equals(sg.getGrade())));
             // Assert: E1 grade NOT touched (excluded from candidacy)
-            verify(stockGradeRepository, never()).save(argThat(sg -> sg.getStock() == e1));
+            verify(stockGradeRepository, never()).save(argThat(sg -> e1.equals(sg.getStock())));
         }
     }
 
@@ -298,9 +298,9 @@ class EtfRepresentativeServiceTest {
 
             // Assert: E1 gets A (sole representative)
             verify(stockGradeRepository)
-                    .save(argThat(sg -> sg.getStock() == e1 && "A".equals(sg.getGrade())));
+                    .save(argThat(sg -> e1.equals(sg.getStock()) && "A".equals(sg.getGrade())));
             // Assert: E2 grade NOT changed (excluded from candidacy)
-            verify(stockGradeRepository, never()).save(argThat(sg -> sg.getStock() == e2));
+            verify(stockGradeRepository, never()).save(argThat(sg -> e2.equals(sg.getStock())));
             verify(gradeCacheRepository, never()).save(eq("E2"), any(Grade.class), any());
         }
     }
@@ -332,9 +332,9 @@ class EtfRepresentativeServiceTest {
 
             // Assert: E1 is representative
             verify(stockGradeRepository)
-                    .save(argThat(sg -> sg.getStock() == e1 && "A".equals(sg.getGrade())));
+                    .save(argThat(sg -> e1.equals(sg.getStock()) && "A".equals(sg.getGrade())));
             verify(stockGradeRepository)
-                    .save(argThat(sg -> sg.getStock() == e2 && "C".equals(sg.getGrade())));
+                    .save(argThat(sg -> e2.equals(sg.getStock()) && "C".equals(sg.getGrade())));
         }
 
         @Test
@@ -360,9 +360,9 @@ class EtfRepresentativeServiceTest {
 
             // Assert: AA500 wins (lexicographically earlier)
             verify(stockGradeRepository)
-                    .save(argThat(sg -> sg.getStock() == ea && "A".equals(sg.getGrade())));
+                    .save(argThat(sg -> ea.equals(sg.getStock()) && "A".equals(sg.getGrade())));
             verify(stockGradeRepository)
-                    .save(argThat(sg -> sg.getStock() == eb && "C".equals(sg.getGrade())));
+                    .save(argThat(sg -> eb.equals(sg.getStock()) && "C".equals(sg.getGrade())));
         }
     }
 
@@ -409,9 +409,9 @@ class EtfRepresentativeServiceTest {
 
             // Assert: E1 gets A exactly once, never C
             verify(stockGradeRepository, times(1))
-                    .save(argThat(sg -> sg.getStock() == e1 && "A".equals(sg.getGrade())));
+                    .save(argThat(sg -> e1.equals(sg.getStock()) && "A".equals(sg.getGrade())));
             verify(stockGradeRepository, never())
-                    .save(argThat(sg -> sg.getStock() == e1 && "C".equals(sg.getGrade())));
+                    .save(argThat(sg -> e1.equals(sg.getStock()) && "C".equals(sg.getGrade())));
         }
 
         @Test
@@ -440,8 +440,8 @@ class EtfRepresentativeServiceTest {
 
             // Assert: E2 is representative, E1 not touched
             verify(stockGradeRepository)
-                    .save(argThat(sg -> sg.getStock() == e2 && "A".equals(sg.getGrade())));
-            verify(stockGradeRepository, never()).save(argThat(sg -> sg.getStock() == e1));
+                    .save(argThat(sg -> e2.equals(sg.getStock()) && "A".equals(sg.getGrade())));
+            verify(stockGradeRepository, never()).save(argThat(sg -> e1.equals(sg.getStock())));
         }
     }
 }
