@@ -2,6 +2,8 @@ package com.aaa.collector.kis.websocket;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
@@ -260,6 +262,58 @@ class KisWebSocketSessionManagerTest {
     @Nested
     @DisplayName("승인키 재발급 (REQ-WS-042)")
     class ApprovalKeyReissue {
+
+        @Test
+        @DisplayName("connect() 실패 → reissueApprovalKey 호출 후 재연결 성공 (REQ-WS-042)")
+        void shouldReissueApprovalKeyOnConnectFailure() throws Exception {
+            // Arrange
+            KisProperties singleAccountProps = mock(KisProperties.class);
+            List<KisAccountCredential> singleAccount =
+                    List.of(
+                            new KisAccountCredential(
+                                    "single",
+                                    "1234560-01",
+                                    "APPKEY0ABCDEF1234567890",
+                                    "SECRET0ABCDEF1234567890ABCDEF1234567890ABCDEF1234567890ABCDEF1234567890"));
+            when(singleAccountProps.accounts()).thenReturn(singleAccount);
+
+            KisTokenService reissueTokenService = mock(KisTokenService.class);
+            when(reissueTokenService.getValidApprovalKey("single")).thenReturn("old-key");
+            when(reissueTokenService.reissueApprovalKey("single")).thenReturn("new-key");
+
+            // 첫 번째 세션: connect() 실패
+            KisWebSocketSession failSession = mock(KisWebSocketSession.class);
+            when(failSession.getAlias()).thenReturn("single");
+            doThrow(new RuntimeException("WebSocket 연결 실패")).when(failSession).connect(anyString());
+
+            // 두 번째 세션: connect() 성공
+            KisWebSocketSession successSession = mock(KisWebSocketSession.class);
+            when(successSession.getAlias()).thenReturn("single");
+
+            // 팩토리: "old-key"이면 failSession, "new-key"이면 successSession 반환
+            KisWebSocketSessionFactory reissueFactory = mock(KisWebSocketSessionFactory.class);
+            when(reissueFactory.create(eq("single"), eq("old-key"))).thenReturn(failSession);
+            when(reissueFactory.create(eq("single"), eq("new-key"))).thenReturn(successSession);
+
+            KisWebSocketSessionManager reissueManager =
+                    new KisWebSocketSessionManager(
+                            singleAccountProps,
+                            reissueTokenService,
+                            tickPublisher,
+                            webSocketSafeModeManager,
+                            marketSchedule,
+                            sleeper,
+                            clock,
+                            reissueFactory);
+
+            // Act
+            reissueManager.openAll();
+
+            // Assert — reissueApprovalKey 호출 후 successSession으로 재연결
+            verify(reissueTokenService).reissueApprovalKey("single");
+            verify(failSession).connect(anyString());
+            verify(successSession).connect(anyString());
+        }
 
         @Test
         @DisplayName("getValidApprovalKey 1회 실패 후 2회에 성공 → openAll() 성공")

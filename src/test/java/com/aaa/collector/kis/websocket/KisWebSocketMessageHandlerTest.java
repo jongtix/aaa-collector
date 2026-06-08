@@ -2,6 +2,7 @@ package com.aaa.collector.kis.websocket;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -20,6 +21,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.web.socket.CloseStatus;
 import org.springframework.web.socket.PongMessage;
 import org.springframework.web.socket.TextMessage;
 import org.springframework.web.socket.WebSocketSession;
@@ -211,6 +213,36 @@ class KisWebSocketMessageHandlerTest {
             }
 
             verify(webSocketSafeModeManager, times(1)).enter(any(), any());
+        }
+    }
+
+    // ──────────────────────────────────────────────────────────────────
+    // disconnect 콜백 (CR-01, REQ-WS-020)
+    // ──────────────────────────────────────────────────────────────────
+
+    @Nested
+    @DisplayName("disconnect 콜백 — afterConnectionClosed (CR-01)")
+    class DisconnectCallback {
+
+        @Test
+        @DisplayName("afterConnectionClosed 호출 시 등록된 콜백 실행")
+        void afterConnectionClosedTriggersCallback() throws Exception {
+            // Arrange
+            Runnable callback = mock(Runnable.class);
+            handler.setDisconnectCallback(callback);
+
+            // Act
+            handler.afterConnectionClosed(session, CloseStatus.NORMAL);
+
+            // Assert
+            verify(callback).run();
+        }
+
+        @Test
+        @DisplayName("콜백 미등록 시 afterConnectionClosed 예외 없이 완료")
+        void afterConnectionClosedWithDefaultCallbackDoesNotThrow() throws Exception {
+            // Act & Assert — 기본 no-op 콜백이므로 예외 없이 완료돼야 한다
+            handler.afterConnectionClosed(session, CloseStatus.GOING_AWAY);
         }
     }
 

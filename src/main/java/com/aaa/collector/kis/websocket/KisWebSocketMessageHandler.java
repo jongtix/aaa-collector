@@ -11,6 +11,7 @@ import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.web.socket.CloseStatus;
 import org.springframework.web.socket.PongMessage;
 import org.springframework.web.socket.TextMessage;
 import org.springframework.web.socket.WebSocketSession;
@@ -54,6 +55,14 @@ public class KisWebSocketMessageHandler extends TextWebSocketHandler {
     /** 연속 구독 실패 횟수 (REQ-WS-016). */
     private final AtomicInteger subscriptionFailureCount = new AtomicInteger(0);
 
+    /**
+     * 세션 연결 끊김 시 호출되는 콜백. {@link KisWebSocketSession#handleDisconnect()}로 연결된다.
+     *
+     * <p>기본값은 no-op. {@link #setDisconnectCallback(Runnable)}으로 주입한다.
+     */
+    @SuppressWarnings("PMD.AvoidUsingVolatile")
+    private volatile Runnable disconnectCallback = () -> {};
+
     public KisWebSocketMessageHandler(
             String alias,
             KisTickPublisher tickPublisher,
@@ -64,8 +73,32 @@ public class KisWebSocketMessageHandler extends TextWebSocketHandler {
     }
 
     // ──────────────────────────────────────────────────────────────────
-    // 공개 메서드 (테스트용)
+    // 공개 메서드 (라이프사이클 + 테스트용)
     // ──────────────────────────────────────────────────────────────────
+
+    /**
+     * 연결 끊김 콜백을 등록한다.
+     *
+     * <p>{@link KisWebSocketSessionManager#createDefaultSession}에서 세션 생성 직후 호출되어 {@link
+     * KisWebSocketSession#handleDisconnect()}로 연결된다. Spring의 {@link
+     * #afterConnectionClosed(WebSocketSession, CloseStatus)} 이벤트가 발생하면 이 콜백이 실행된다 (REQ-WS-020).
+     *
+     * @param callback 연결 끊김 시 실행할 콜백
+     */
+    public void setDisconnectCallback(Runnable callback) {
+        this.disconnectCallback = callback;
+    }
+
+    @Override
+    @SuppressWarnings("PMD.AvoidCatchingGenericException")
+    public void afterConnectionClosed(WebSocketSession session, CloseStatus status) {
+        log.info("[{}] WebSocket 연결 끊김 — status={}", alias, status);
+        try {
+            disconnectCallback.run();
+        } catch (Exception e) {
+            log.error("[{}] disconnect 콜백 처리 중 오류 — 재연결 시도 실패", alias, e);
+        }
+    }
 
     /**
      * AES 키를 등록한다. 구독 성공 응답(Type B rt_cd=0) 처리 또는 테스트에서 직접 호출한다.

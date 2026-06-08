@@ -311,6 +311,24 @@ public class KisTokenService {
     }
 
     /**
+     * WebSocket 승인키를 강제 재발급하고 반환한다 (REQ-WS-042).
+     *
+     * <p>Redis 캐시를 무시하고 KIS API {@code /oauth2/Approval}를 즉시 호출한다. WebSocket handshake 실패(401 등) 시
+     * {@link com.aaa.collector.kis.websocket.KisWebSocketSessionManager}에서 호출된다.
+     *
+     * @param alias 계정 식별자
+     * @return 새로 발급된 WebSocket 승인키 문자열
+     * @throws IllegalArgumentException 등록되지 않은 alias인 경우
+     */
+    public String reissueApprovalKey(String alias) {
+        KisAccountCredential credential = findCredential(alias);
+        KisApprovalKeyResponse response = kisTokenClient.requestApprovalKey(credential);
+        kisTokenRepository.saveApprovalKey(alias, response.approvalKey());
+        log.info("[{}] approval_key 강제 재발급 완료", alias);
+        return response.approvalKey();
+    }
+
+    /**
      * 유효한 WebSocket 승인키를 반환하는 Lazy 갱신 진입점.
      *
      * <p>Redis에 승인키가 존재하면 그대로 반환한다. 존재하지 않으면 {@link KisTokenClient#requestApprovalKey}를 호출하여 새 승인키를
