@@ -500,5 +500,26 @@ class WatchlistSyncServiceTest {
             assertThat(captor.getValue())
                     .anyMatch(r -> "AAPL".equals(r.symbol()) && r.stockInfo() == null);
         }
+
+        @Test
+        @DisplayName("DateTimeParseException 발생 시 finally 블록 release 보장")
+        void sync_fetchStockInfoThrowsDateTimeParseException_releaseCalledInFinally()
+                throws InterruptedException {
+            // Arrange: 단일 종목에서 DateTimeParseException 발생
+            KisGroupListResponse.Group group =
+                    new KisGroupListResponse.Group("001", "그룹1", "2", "1");
+            KisStockListByGroupResponse.Stock stock =
+                    new KisStockListByGroupResponse.Stock("FS", "AAPL", "NAS", "Apple");
+            when(kisWatchlistClient.fetchGroups()).thenReturn(List.of(group));
+            when(kisWatchlistClient.fetchStocksByGroup("001")).thenReturn(List.of(stock));
+            when(kisStockInfoClient.fetchStockInfo(any(), any()))
+                    .thenThrow(new DateTimeParseException("invalid", "99999999", 0));
+
+            // Act
+            watchlistSyncService.sync();
+
+            // Assert: DateTimeParseException catch 경로에서도 finally 블록 release() 호출 보장
+            verify(kisRateLimiter, times(1)).release();
+        }
     }
 }

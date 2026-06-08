@@ -93,14 +93,15 @@ class KisRateLimiterTest {
     class CapacitySetting {
 
         @Test
-        @DisplayName("capacity=15 설정 — 버킷 capacity 15로 설정됨")
-        void constructor_capacity15_bucketHas15Tokens() {
-            KisProperties.RateLimit config = new KisProperties.RateLimit(15, 20, 10);
+        @DisplayName("capacity=15 설정 — 리필 없이 15토큰 즉시 소비 가능")
+        void constructor_capacity15_fifteenTokensAvailableWithoutRefill() {
+            // Arrange: refillPerSecond=1로 리필 매우 느리게 설정.
+            // capacity<15이면 부족한 토큰마다 ~1초 대기 발생 → 500ms 이내 완료 불가.
+            KisProperties.RateLimit config = new KisProperties.RateLimit(15, 1, 20);
             KisRateLimiter limiter = new KisRateLimiter(config);
 
-            // assertThatCode verifies that 15 consecutive consume()+release() complete without
-            // exception.
-            // A lower capacity (e.g. 5) would cause the loop to block, resulting in test timeout.
+            // Act & Assert: 15번 consume+release가 500ms 이내 완료 → 모두 초기 토큰에서 소비됨
+            long start = System.currentTimeMillis();
             assertThatCode(
                             () -> {
                                 for (int i = 0; i < 15; i++) {
@@ -109,6 +110,9 @@ class KisRateLimiterTest {
                                 }
                             })
                     .doesNotThrowAnyException();
+            assertThat(System.currentTimeMillis() - start)
+                    .as("capacity=15이므로 리필 대기 없이 15토큰 즉시 소비")
+                    .isLessThan(500L);
         }
     }
 
