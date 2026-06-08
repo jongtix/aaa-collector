@@ -17,7 +17,8 @@ import org.slf4j.MDC;
  */
 @SuppressWarnings({
     "PMD.TestClassWithoutTestCases", // ArchUnit은 @ArchTest로 규칙을 선언하며 @Test 메서드를 사용하지 않음
-    "PMD.FieldNamingConventions" // ArchUnit @ArchTest 필드는 규칙 가독성을 위해 camelCase 관례 사용
+    "PMD.FieldNamingConventions", // ArchUnit @ArchTest 필드는 규칙 가독성을 위해 camelCase 관례 사용
+    "PMD.UseUtilityClass" // ArchUnit 테스트 클래스는 static @ArchTest 필드만 가지므로 private 생성자 불필요
 })
 @AnalyzeClasses(
         packages = "com.aaa.collector",

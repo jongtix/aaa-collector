@@ -55,7 +55,6 @@ class KisWebSocketSessionManagerTest {
     private KisWebSocketSessionManager manager;
 
     @BeforeEach
-    @SuppressWarnings("PMD.SignatureDeclareThrowsException")
     void setUp() throws Exception {
         // 5개 계좌 설정
         List<KisAccountCredential> accounts = buildAccounts(SESSION_COUNT);

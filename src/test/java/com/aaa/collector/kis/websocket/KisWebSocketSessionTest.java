@@ -52,7 +52,6 @@ class KisWebSocketSessionTest {
     private KisWebSocketSession session;
 
     @BeforeEach
-    @SuppressWarnings("PMD.SignatureDeclareThrowsException")
     void setUp() throws Exception {
         when(webSocketClient.execute(any(), any(WebSocketHttpHeaders.class), any(URI.class)))
                 .thenReturn(handshakeFuture);

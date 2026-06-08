@@ -11,7 +11,6 @@ import org.springframework.scheduling.annotation.EnableScheduling;
 @ConfigurationPropertiesScan
 @EnableScheduling
 @EnableRetry
-@SuppressWarnings("PMD.UseUtilityClass")
 public class AaaCollectorApplication {
 
     public static void main(String[] args) {

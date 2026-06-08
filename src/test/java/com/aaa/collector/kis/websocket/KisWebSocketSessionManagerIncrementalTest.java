@@ -45,7 +45,6 @@ class KisWebSocketSessionManagerIncrementalTest {
     private KisWebSocketSessionManager manager;
 
     @BeforeEach
-    @SuppressWarnings("PMD.SignatureDeclareThrowsException")
     void setUp() throws Exception {
         List<KisAccountCredential> accounts = buildAccounts(SESSION_COUNT);
         when(kisProperties.accounts()).thenReturn(accounts);
