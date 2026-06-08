@@ -34,11 +34,13 @@ class WatchlistWriterTest {
     @Mock private StockRepository stockRepository;
     @Mock private StockListService stockListService;
     @Mock private GradeClassificationService gradeClassificationService;
+    @Mock private com.aaa.collector.stock.etf.EtfMetadataWriter etfMetadataWriter;
     private WatchlistWriter watchlistWriter;
 
     @BeforeEach
     void setUp() {
-        WatchlistEntryWriter entryWriter = new WatchlistEntryWriter(stockRepository);
+        WatchlistEntryWriter entryWriter =
+                new WatchlistEntryWriter(stockRepository, etfMetadataWriter);
         watchlistWriter =
                 new WatchlistWriter(
                         stockRepository, entryWriter, stockListService, gradeClassificationService);
