@@ -34,7 +34,7 @@ import org.springframework.stereotype.Service;
  */
 @Slf4j
 @Service
-@SuppressWarnings({"PMD.GodClass", "PMD.AvoidCatchingGenericException"})
+@SuppressWarnings("PMD.AvoidCatchingGenericException")
 public class KisTokenService {
 
     private static final int MAX_ATTEMPTS = 3;
@@ -80,68 +80,6 @@ public class KisTokenService {
             locks.put(account.alias(), lockFactory.create(account.alias()));
         }
         return Map.copyOf(locks);
-    }
-
-    /**
-     * 전체 계좌에 대해 병렬로 토큰을 발급한다.
-     *
-     * <p>Virtual Thread executor를 사용하며, {@link Future#get()}으로 각 계좌의 결과를 순차적으로 수집한다. 개별 계좌 발급
-     * 실패({@link ExecutionException})는 경고 로그 후 다음 계좌로 진행하며, 다른 계좌에 영향을 주지 않는다.
-     *
-     * <p>인터럽트({@link InterruptedException}) 수신 시 인터럽트 플래그를 복원하고 남은 결과 수집을 즉시 중단한다.
-     */
-    public void issueAll() {
-        log.info("전 계좌 토큰 발급 시작 — 계좌 수: {}", kisProperties.accounts().size());
-
-        try (ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor()) {
-            List<Future<Void>> futures = new ArrayList<>();
-
-            for (KisAccountCredential credential : kisProperties.accounts()) {
-                futures.add(
-                        executor.submit(
-                                () -> {
-                                    issueOne(credential);
-                                    return null;
-                                }));
-            }
-
-            int failureCount = 0;
-            boolean interrupted = false;
-
-            for (Future<Void> future : futures) {
-                try {
-                    future.get();
-                } catch (ExecutionException e) {
-                    failureCount++;
-                    switch (e.getCause()) {
-                        case KisApiResponseException ex ->
-                                log.error("[토큰 발급 실패] KIS API 응답 검증 오류", ex);
-                        case KisTokenIssueException ex -> log.warn("[토큰 발급 실패] 재시도 소진 후 최종 실패", ex);
-                        default ->
-                                log.error(
-                                        "[토큰 발급 실패] 예상치 못한 예외: {}",
-                                        e.getCause().getClass().getName(),
-                                        e.getCause());
-                    }
-                } catch (InterruptedException e) {
-                    // 인터럽트 플래그 복원 → try-with-resources의 close() 진입 시
-                    // ThreadPerTaskExecutor.close()가 플래그를 감지하여 자동으로
-                    // shutdownNow() (= 모든 Virtual Thread에 interrupt() 전파) 수행.
-                    // 명시적 shutdownNow() 호출 불필요. (JDK 21 ThreadPerTaskExecutor 소스 참조)
-                    Thread.currentThread().interrupt();
-                    interrupted = true;
-                    break;
-                }
-            }
-
-            if (interrupted) {
-                log.warn("토큰 발급 중 인터럽트 수신 — 남은 계좌 결과 수집 중단");
-            } else if (failureCount > 0) {
-                log.warn("전 계좌 토큰 발급 부분 실패 — 실패 {}건", failureCount);
-            } else {
-                log.info("전 계좌 토큰 발급 완료");
-            }
-        }
     }
 
     /**

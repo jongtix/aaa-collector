@@ -19,9 +19,10 @@
 - [x] 컨테이너 `healthcheck` 설정 (`/actuator/health`)
 
 ### 1-2. KIS API 토큰 관리
-- [x] 앱키 5개 독립 토큰 발급 및 Redis 저장 구현
-- [x] 스케줄 갱신: 평일(월~금) 08:30 KST `@Scheduled` cron으로 일괄 발급
-- [x] Lazy 갱신: `getValidToken()` 메커니즘 구현 완료 (401 트리거 연동은 1-6/1-7에서 완료)
+- [x] Approval Key (WebSocket용): 앱키 5개 독립 발급 및 Redis 저장 구현
+- [x] Approval Key 스케줄 갱신: 평일(월~금) 08:30 KST `@Scheduled` cron으로 일괄 발급
+- [x] Access Token Lazy 발급: `getValidToken()` 메커니즘 구현 완료 (REST API 최초 호출 시점에만 발급)
+- [x] Access Token 401 방어: API 호출 시 401 수신 → 즉시 재발급 후 재시도 (401 트리거 연동은 1-6/1-7에서 완료)
 - [x] 갱신 실패 처리: 최대 3회 재시도 → 실패 시 안전 모드 진입 + 로그 기록
 
 ### 1-3. CI/CD 파이프라인

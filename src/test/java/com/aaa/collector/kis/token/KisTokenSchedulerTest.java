@@ -20,11 +20,10 @@ class KisTokenSchedulerTest {
     @InjectMocks private KisTokenScheduler kisTokenScheduler;
 
     @Test
-    @DisplayName("refreshTokens 호출 시 kisTokenService.issueAll()과 issueAllApprovalKeys()가 실행된다")
-    void refreshTokens_callsIssueAllAndIssueAllApprovalKeys() {
+    @DisplayName("refreshTokens 호출 시 issueAllApprovalKeys()가 1회 실행된다")
+    void refreshTokens_callsOnlyIssueAllApprovalKeys() {
         kisTokenScheduler.refreshTokens();
 
-        verify(kisTokenService).issueAll();
         verify(kisTokenService).issueAllApprovalKeys();
     }
 
