@@ -438,9 +438,8 @@ class WatchlistSyncServiceTest {
             // Act
             watchlistSyncService.sync();
 
-            // Assert: consume과 release가 각 1회씩 (그룹fetch 1 + stockInfo 1 = 2 consume, stockInfo 1
-            // release)
-            verify(kisRateLimiter, times(1)).release();
+            // Assert: 그룹fetch 1 + stockInfo 1 = 2 consume, release도 각각 2회
+            verify(kisRateLimiter, times(2)).release();
         }
 
         @Test
@@ -531,8 +530,8 @@ class WatchlistSyncServiceTest {
             // Act
             watchlistSyncService.sync();
 
-            // Assert: DateTimeParseException catch 경로에서도 finally 블록 release() 호출 보장
-            verify(kisRateLimiter, times(1)).release();
+            // Assert: 그룹fetch release 1 + stockInfo finally release 1 = 총 2회
+            verify(kisRateLimiter, times(2)).release();
         }
     }
 }

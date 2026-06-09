@@ -78,7 +78,12 @@ public class WatchlistSyncService {
                                 failedGroupCount.incrementAndGet();
                                 return List.<KisStockListByGroupResponse.Stock>of();
                             }
-                            return kisWatchlistClient.fetchStocksByGroup(group.interGrpCode());
+                            // 세마포어 획득 완료 — 반드시 finally에서 반환해야 한다
+                            try {
+                                return kisWatchlistClient.fetchStocksByGroup(group.interGrpCode());
+                            } finally {
+                                kisRateLimiter.release();
+                            }
                         },
                         executor)
                 .exceptionally(
