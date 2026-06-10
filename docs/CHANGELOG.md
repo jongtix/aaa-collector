@@ -18,7 +18,7 @@
 - **ETF 메타데이터 수집** (REQ-ETFMETA-002): `WatchlistSyncService.resolveOne()` 통합
   - `KisDomesticStockInfoResponse`, `KisOverseasStockInfoResponse`: ETF 관련 필드 추가 (`etf_chas_erng_rt_dbnb`, `etf_type_cd`, `tr_stop_yn` 등)
   - `EtfMetaInfo` DTO: leverage/inverse/hedged/tr_stop 파생 (미문서화 KIS 필드 기반 — `@MX:WARN`)
-  - `EtfMetadataWriter`: `REQUIRES_NEW` 독립 트랜잭션 upsert
+  - `EtfMetadataWriter`: `REQUIRED` 트랜잭션 모드 (부모 트랜잭션과 동일 커넥션 공유로 자기 잠금 해소)
 
 ### Changed
 

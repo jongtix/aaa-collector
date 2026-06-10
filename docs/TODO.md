@@ -70,6 +70,7 @@
 - [x] KIS API → DB 동기화 구현 — 1일 2회(07:30, 15:45 KST)
   - KIS API: `intstock_grouplist`(관심종목 그룹조회) → `intstock_stocklist_by_group`(관심종목 그룹별 종목조회) 순차 호출
   - 동기화 실패 시 직전 DB 목록 유지 + 로그 기록
+  - ETF 메타데이터 수집: `EtfMetadataWriter` REQUIRED 트랜잭션 모드로 부모와 동일 커넥션 공유 (자기 잠금 해소)
 - [x] 종목 등급 자동 분류 로직 (A/B/C/F) — TECHSPEC 6.5절 기준, 동기화 직후 실행
 - [x] 중복 ETF 대표 선정 알고리즘 구현 — ADTV(20거래일) → 상장일 빠른 순 → 종목코드 오름차순 (SPEC-ETF-001)
   - 그룹화 키: `(거래소, 기초지수 코드, 배수, 방향, 환헤지 여부)` 5튜플 — 기초지수 코드(`etf_trgt_nmix_bstp_code`) 세분화 여부를 샘플 API 호출로 먼저 검증
