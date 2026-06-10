@@ -1,8 +1,10 @@
 package com.aaa.collector.watchlist;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyCollection;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -13,6 +15,7 @@ import com.aaa.collector.stock.StockListService;
 import com.aaa.collector.stock.StockRepository;
 import com.aaa.collector.stock.enums.AssetType;
 import com.aaa.collector.stock.enums.Market;
+import com.aaa.collector.stock.etf.EtfMetaInfo;
 import com.aaa.collector.stock.grade.GradeClassificationService;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -26,6 +29,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.test.util.ReflectionTestUtils;
 
 @ExtendWith(MockitoExtension.class)
@@ -366,6 +370,67 @@ class WatchlistWriterTest {
 
             // Assert
             verify(stockRepository).findAllBySymbolIn(any());
+        }
+    }
+
+    @Nested
+    @DisplayName("ETF 메타 저장 실패 — stock도 함께 롤백(skip)")
+    class EtfMetadataSaveFailure {
+
+        /**
+         * REQUIRED 전파 변경 후 동작 검증: etfMetadataWriter.upsert 예외는 upsertOne 트랜잭션 전체를 롤백시키고,
+         * WatchlistWriter.upsertAll이 DataAccessException을 잡아 해당 종목을 skip한다 (ADR-022 결정 3). 단위
+         * 테스트에서는 트랜잭션 프록시가 없으므로 DataIntegrityViolationException이 upsertOne을 통해 upsertAll까지 전파되고
+         * catch 블록에서 처리됨을 확인한다.
+         */
+        @Test
+        @DisplayName("etfMetadataWriter.upsert 예외 — upsertAll이 DataAccessException을 잡아 해당 종목 skip")
+        void upsertAll_etfMetaSaveFails_stockIsSkipped() {
+            // Arrange
+            EtfMetaInfo etfMeta = new EtfMetaInfo("069500", 1, false, false, false);
+            StockInfo etfInfo =
+                    new StockInfo(AssetType.ETF, "KODEX 200", LocalDate.of(2002, 10, 14), etfMeta);
+            ResolvedStock etfStock =
+                    new ResolvedStock("069500", "KODEX 200", Market.KOSPI, etfInfo);
+            when(stockRepository.findAllBySymbolIn(any())).thenReturn(List.of());
+            when(stockRepository.save(any()))
+                    .thenAnswer(
+                            inv -> {
+                                Stock s = inv.getArgument(0);
+                                ReflectionTestUtils.setField(s, "id", 99L);
+                                return s;
+                            });
+            doThrow(new DataIntegrityViolationException("fk_etf_metadata_stock violated"))
+                    .when(etfMetadataWriter)
+                    .upsert(any(), any());
+
+            // Act & Assert: DataIntegrityViolationException이 upsertAll 밖으로 전파되지 않음
+            assertThatCode(() -> watchlistWriter.upsertAll(List.of(etfStock), 0))
+                    .doesNotThrowAnyException();
+        }
+
+        @Test
+        @DisplayName("ETF 메타 저장 실패 종목 — markWatchlistRemoved 오인 마킹 방지")
+        void upsertAll_etfMetaSaveFails_failedStockNotMarkedRemoved() {
+            // Arrange: 기존 DB에 ETF 종목(id=5) 있음. ETF 메타 저장 실패 → skip.
+            // skip된 종목의 ID는 touchedIds에 추가되어 markWatchlistRemoved 대상에서 제외된다.
+            EtfMetaInfo etfMeta = new EtfMetaInfo("069500", 1, false, false, false);
+            StockInfo etfInfo =
+                    new StockInfo(AssetType.ETF, "KODEX 200", LocalDate.of(2002, 10, 14), etfMeta);
+            Stock existingEtf =
+                    stockWith("069500", Market.KOSPI, "KODEX 200", "KODEX 200", true, null, 5L);
+            ResolvedStock etfStock =
+                    new ResolvedStock("069500", "KODEX 200", Market.KOSPI, etfInfo);
+            when(stockRepository.findAllBySymbolIn(any())).thenReturn(List.of(existingEtf));
+            doThrow(new DataIntegrityViolationException("fk_etf_metadata_stock violated"))
+                    .when(etfMetadataWriter)
+                    .upsert(any(), any());
+
+            // Act
+            watchlistWriter.upsertAll(List.of(etfStock), 0);
+
+            // Assert: 실패 종목(id=5)이 markWatchlistRemoved 대상이 되어서는 안 됨
+            verify(stockRepository, never()).markWatchlistRemoved(any());
         }
     }
 }
