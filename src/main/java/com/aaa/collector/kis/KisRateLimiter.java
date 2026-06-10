@@ -3,6 +3,7 @@ package com.aaa.collector.kis;
 import com.aaa.collector.kis.token.KisProperties;
 import io.github.bucket4j.Bandwidth;
 import io.github.bucket4j.Bucket;
+import io.github.bucket4j.TimeMeter;
 import java.time.Duration;
 import java.util.concurrent.Semaphore;
 
@@ -13,21 +14,39 @@ public class KisRateLimiter {
     private final Semaphore semaphore;
 
     public KisRateLimiter(KisProperties.RateLimit config) {
+        this(config, TimeMeter.SYSTEM_MILLISECONDS);
+    }
+
+    // @MX:NOTE: [AUTO] 테스트용 생성자 — TimeMeter 주입으로 가상 시간 테스트 가능 (bucket4j 공식 패턴)
+    KisRateLimiter(KisProperties.RateLimit config, TimeMeter timeMeter) {
         this.bucket =
                 Bucket.builder()
                         .addLimit(
                                 Bandwidth.builder()
                                         .capacity(config.capacity())
-                                        // refillGreedy: 경과 시간에 비례해 즉시 충전 (버스트 허용).
-                                        // KIS API는 rate limit 초과 시 429 대신 500을 반환하며,
-                                        // 실측 결과 25개 동시 버스트도 대부분 허용됨 → fixed-window 방식으로 판단.
+                                        // refillGreedy: 1초를 refillPerSecond 등분하여 토큰을 연속·분산 충전.
+                                        // 예) refillGreedy(10, 1초) → 100ms마다 1개 추가 → 순간 버스트 적음.
+                                        // refillIntervally는 1초 경계에서 전체 토큰을 일괄 충전하므로
+                                        // 버스트가 오히려 크다 — greedy가 버스트 억제에 올바른 선택.
+                                        //
+                                        // 임의 1초 최대 처리량 = capacity + refillPerSecond.
+                                        // capacity=5, refill=10 → 최대 15 TPS < KIS 한도 20 (25% 마진).
+                                        // capacity는 순간 버스트 여유(GC/지터 대응)이므로 작게 유지.
+                                        //
                                         // 멀티 인스턴스 전환 시 Redis ProxyManager로 교체 예정 (ADR-023).
                                         .refillGreedy(
                                                 config.refillPerSecond(), Duration.ofSeconds(1))
                                         .build())
+                        .withCustomTimePrecision(timeMeter)
                         .build();
         // fair=true: FIFO 순서 보장 — 218개 가상 스레드 경합 시 starvation 방지
         this.semaphore = new Semaphore(config.maxConcurrency(), true);
+    }
+
+    /** 테스트 전용 — 버킷 내부 상태 검증용. 프로덕션 코드에서 직접 사용 금지. */
+    // @MX:TODO: 프로덕션 코드에서 이 메서드를 직접 호출하지 않도록 주의
+    Bucket getBucket() {
+        return bucket;
     }
 
     /**

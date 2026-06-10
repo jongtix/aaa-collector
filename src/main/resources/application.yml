@@ -69,8 +69,13 @@ kis:
   base-url: ${KIS_BASE_URL}
   user-id: ${KIS_USER_ID}
   rate-limit:
-    capacity: 15           # KIS API TPS 상한 (ADR-023)
-    refill-per-second: 20
+    # refillGreedy 사용: 토큰을 연속·분산 충전하여 순간 버스트를 억제.
+    # 임의 1초 최대 처리량 = capacity + refill-per-second.
+    # capacity=5, refill=10 → 최대 15 TPS: KIS 한도 20 대비 25% 안전 마진 (ADR-023).
+    # capacity=5: GC 스톱·지터 등 일시 지연에 대한 버스트 여유 최소값.
+    # 218종목 처리 시 약 22초 소요 (일 2회 배치 → 허용 범위).
+    capacity: 5            # 초기 버스트 여유 (GC/지터 대응 최솟값)
+    refill-per-second: 10  # capacity+refill=15 TPS < KIS 한도 20 (25% 마진)
     max-concurrency: 10    # 동시 in-flight HTTP 요청 상한 (SPEC-COLLECTOR-WLSYNC-005)
   accounts:
     - alias: isa
