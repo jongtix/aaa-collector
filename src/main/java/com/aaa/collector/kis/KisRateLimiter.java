@@ -30,7 +30,7 @@ public class KisRateLimiter {
                                         // 버스트가 오히려 크다 — greedy가 버스트 억제에 올바른 선택.
                                         //
                                         // 임의 1초 최대 처리량 = capacity + refillPerSecond.
-                                        // capacity=5, refill=10 → 최대 15 TPS < KIS 한도 20 (25% 마진).
+                                        // capacity=3, refill=15 → peak 18 TPS / 지속 15 TPS.
                                         // capacity는 순간 버스트 여유(GC/지터 대응)이므로 작게 유지.
                                         //
                                         // 멀티 인스턴스 전환 시 Redis ProxyManager로 교체 예정 (ADR-023).

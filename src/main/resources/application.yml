@@ -69,15 +69,16 @@ kis:
   base-url: ${KIS_BASE_URL}
   user-id: ${KIS_USER_ID}
   rate-limit:
-    # refillGreedy 사용: 토큰을 연속·분산 충전하여 순간 버스트를 억제.
-    # 임의 1초 최대 처리량 = capacity + refill-per-second.
-    # capacity=2, refill=8 → 최대 10 TPS.
-    # capacity=5/refill=10(15 TPS)에서도 2026-06-10 15:45 동기화에서
-    # EGW00201(초당 거래건수 초과) 15건이 관측되어, KIS 실한도가 ADR-023의
-    # 20 TPS 가정보다 낮다고 판단해 추가 하향 (실측 기반 보수적 조정).
-    # 219종목 처리 시 약 27초 소요 (일 2회 배치 → 허용 범위).
-    capacity: 2            # 초기 버스트 최소화 (GC/지터 대응 여유 최소)
-    refill-per-second: 8   # capacity+refill=10 TPS (실측상 15 TPS도 초과하여 추가 하향)
+    # refillGreedy: 토큰을 연속·분산 충전하여 순간 버스트를 억제.
+    # 1초 최대 처리량 = capacity + refill-per-second / 지속 처리량 = refill-per-second.
+    # KIS REST 한도는 앱키별(per-key) ~20 TPS (프로브 실측 + 문서, 2026-06-10).
+    # 이전 cap2/refill8(10 TPS)은 EGW00201을 전부 "한도초과"로 오판해 과도하게 낮춘 값이었다.
+    # 실제 EGW00201엔 비-소진성(간헐) 성분이 있어 어떤 설정에서도 일부 발생하며,
+    # 재시도(limiter 재경유)로 흡수한다 — 0을 목표로 과보수하지 말 것.
+    # 한도 ~20 대비 ~10% 마진으로 상향(peak 18). 상향 후 EGW00201 발생률 관측해 재튜닝(git이 튜닝 채널).
+    # 219종목 처리 시 약 15초 소요 (일 2회 배치 → 허용 범위).
+    capacity: 3            # 버스트 헤드룸 최소화 (GC/지터 대응)
+    refill-per-second: 15  # 지속 15 TPS, peak 18 (한도 ~20 대비 마진)
     max-concurrency: 10    # 동시 in-flight HTTP 요청 상한 (SPEC-COLLECTOR-WLSYNC-005)
   accounts:
     - alias: isa
