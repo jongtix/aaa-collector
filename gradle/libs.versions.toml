@@ -9,6 +9,7 @@ archunit = "1.4.2"
 wiremock = "3.10.6"
 findsecbugs = "1.14.0"
 bucket4j = "8.10.1"
+jacoco = "0.8.13"
 
 [libraries]
 # Spring Boot (버전은 spring-dependency-management가 관리)

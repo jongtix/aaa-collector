@@ -1,5 +1,6 @@
 plugins {
     java
+    jacoco
     alias(libs.plugins.spring.boot)
     alias(libs.plugins.dependency.management)
     alias(libs.plugins.spotless)
@@ -15,6 +16,87 @@ java {
     toolchain {
         languageVersion = JavaLanguageVersion.of(21)
     }
+}
+
+// --- JaCoCo 버전 고정 (libs.versions.toml 단일 소스) ---
+jacoco {
+    toolVersion = libs.versions.jacoco.get()
+}
+
+// --- 커버리지 제외 목록 (단일 소스 — jacocoTestReport와 jacocoTestCoverageVerification 양쪽에 동일 적용) ---
+// SPEC-COLLECTOR-JACOCO-001 §1.4: 소스 전수 정독 후 손작성 실행문·분기·throw가 0건임을 검증한 17개만 열거
+val coverageExclusions = listOf(
+    // 메인 클래스 (1): SpringApplication.run 단일 라인
+    "com/aaa/collector/AaaCollectorApplication.class",
+    // @Configuration 빈 와이어링만 (7): if/for/while/switch/throw/삼항 0건
+    "com/aaa/collector/kis/KisConfig.class",
+    "com/aaa/collector/kis/token/KisTokenConfig.class",
+    "com/aaa/collector/common/retry/RetryConfig.class",
+    "com/aaa/collector/common/safemode/SafeModeConfig.class",
+    "com/aaa/collector/common/config/ClockConfig.class",
+    "com/aaa/collector/common/config/JpaConfig.class",
+    "com/aaa/collector/common/health/RedisHealthConfig.class",
+    // 순수 DTO/record (9): canonical 생성자·accessor만, 손작성 compact 생성자/메서드 없음
+    "com/aaa/collector/watchlist/KisDomesticStockInfoResponse.class",
+    "com/aaa/collector/watchlist/KisDomesticStockInfoResponse\$Output.class",
+    "com/aaa/collector/watchlist/KisOverseasStockInfoResponse.class",
+    "com/aaa/collector/watchlist/KisOverseasStockInfoResponse\$Output.class",
+    "com/aaa/collector/kis/token/KisApprovalKeyResponse.class",
+    "com/aaa/collector/watchlist/ResolvedStock.class",
+    "com/aaa/collector/watchlist/ResolveResult.class",
+    "com/aaa/collector/watchlist/ResolveResult\$Success.class",
+    "com/aaa/collector/watchlist/ResolveResult\$Skipped.class",
+    "com/aaa/collector/kis/websocket/ParsedTick.class",
+    "com/aaa/collector/kis/websocket/AesKey.class",
+    "com/aaa/collector/stock/grade/GradeInput.class",
+    "com/aaa/collector/stock/daily/CollectionResult.class"
+)
+
+// --- JaCoCo 커버리지 게이트 (BUNDLE LINE ≥ 85% 즉시 강제 — REQ-JACOCO-010/011/012) ---
+// minimum은 Gradle property로 오버라이드 가능 (예: -PjacocoMinimum=0.99, 기본값 영구 0.85)
+val jacocoMinimum = (findProperty("jacocoMinimum") as String?)?.toBigDecimal() ?: "0.85".toBigDecimal()
+
+tasks.jacocoTestCoverageVerification {
+    dependsOn(tasks.jacocoTestReport)
+    violationRules {
+        rule {
+            element = "BUNDLE"
+            limit {
+                counter = "LINE"
+                value = "COVEREDRATIO"
+                minimum = jacocoMinimum
+            }
+        }
+    }
+    classDirectories.setFrom(
+        files(classDirectories.files.map { dir ->
+            fileTree(dir) { exclude(coverageExclusions) }
+        })
+    )
+}
+
+// check가 jacocoTestCoverageVerification을 의존 — Gradle 기본은 자동 연결하지 않으므로 명시 배선 필수
+// (REQ-JACOCO-011: 배선 누락 시 게이트가 조용히 무력화됨)
+tasks.check {
+    dependsOn(tasks.jacocoTestCoverageVerification)
+}
+
+// --- JaCoCo 리포트 ---
+tasks.jacocoTestReport {
+    dependsOn(tasks.test)
+    reports {
+        xml.required.set(true)
+        html.required.set(true)
+    }
+    classDirectories.setFrom(
+        files(classDirectories.files.map { dir ->
+            fileTree(dir) { exclude(coverageExclusions) }
+        })
+    )
+}
+
+tasks.test {
+    finalizedBy(tasks.jacocoTestReport)
 }
 
 repositories {
