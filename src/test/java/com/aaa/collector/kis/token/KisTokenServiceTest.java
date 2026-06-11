@@ -19,6 +19,7 @@ import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.TimeUnit;
@@ -164,6 +165,36 @@ class KisTokenServiceTest {
 
         // Assert
         assertThat(sleeperCallCount.get()).isEqualTo(2);
+    }
+
+    @Test
+    @DisplayName("AC-9.3: issueOne 재시도 백오프 — baseDelay=1000ms (delay(0)=1000ms, delay(1)=2000ms)")
+    void issueOne_backoffDelays_baseDelay1000ms() throws InterruptedException {
+        // Arrange
+        List<Long> capturedDelays = new ArrayList<>();
+        KisTokenService serviceWithCapturingSleeper =
+                new KisTokenService(
+                        kisProperties,
+                        kisTokenClient,
+                        kisTokenRepository,
+                        safeModeManager,
+                        capturedDelays::add,
+                        FIXED_CLOCK,
+                        key -> new ReentrantLock());
+
+        when(kisTokenClient.requestToken(credential))
+                .thenThrow(new RuntimeException("persistent error"));
+
+        // Act
+        try {
+            serviceWithCapturingSleeper.issueOne(credential);
+        } catch (KisTokenIssueException ignored) {
+        }
+
+        // Assert: delay(0,1000)=1000ms, delay(1,1000)=2000ms
+        assertThat(capturedDelays).hasSize(2);
+        assertThat(capturedDelays.getFirst()).isEqualTo(1000L);
+        assertThat(capturedDelays.get(1)).isEqualTo(2000L);
     }
 
     @Test

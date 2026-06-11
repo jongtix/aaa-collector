@@ -1,6 +1,6 @@
 package com.aaa.collector.kis.batch;
 
-import com.aaa.collector.common.retry.ExponentialBackoff;
+import com.aaa.collector.common.retry.RetryExecutor;
 import com.aaa.collector.common.retry.Sleeper;
 import com.aaa.collector.kis.KisApiExecutor;
 import com.aaa.collector.kis.KisApiResponse;
@@ -10,6 +10,7 @@ import com.aaa.collector.kis.KisRateLimiterRegistry;
 import com.aaa.collector.kis.token.KisAccountCredential;
 import java.net.URI;
 import java.util.function.Function;
+import java.util.function.Predicate;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
@@ -69,52 +70,34 @@ public class BatchRestExecutor {
         String alias = credential.alias();
         KisRateLimiter limiter = kisRateLimiterRegistry.forAlias(alias);
 
-        for (int attempt = 0; attempt <= MAX_RETRIES; attempt++) {
-            try {
-                limiter.consume();
-                try {
-                    T response =
-                            kisApiExecutor.executeGet(
-                                    credential, uriCustomizer, trId, responseType);
-                    return BatchResult.success(response);
-                } finally {
-                    limiter.release();
-                }
-            } catch (KisRateLimitException e) {
-                log.warn(
-                        "[{}] EGW00201 rate-limit — symbol={}, attempt={}/{}",
-                        alias,
-                        symbol,
-                        attempt + 1,
-                        MAX_RETRIES + 1);
-                if (attempt < MAX_RETRIES) {
-                    applyBackoff(alias, symbol, attempt);
-                } else {
-                    log.warn(
-                            "[{}] EGW00201 재시도 소진({}) — symbol={} skip",
-                            alias,
-                            MAX_RETRIES,
-                            symbol);
-                    return BatchResult.skip(symbol);
-                }
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-                log.warn("[{}] 인터럽트 — symbol={} skip", alias, symbol);
-                return BatchResult.skip(symbol);
-            }
-        }
+        // RetryExecutor: EGW00201(KisRateLimitException)만 retryable, 영구 오류는 즉시 전파
+        // R2: consume/release는 RetryExecutor 실행 람다 내부에 위치 — 매 시도 rate limiter 재경유 보장
+        Predicate<RuntimeException> retryable = ex -> ex instanceof KisRateLimitException;
+        RetryExecutor retryExecutor =
+                new RetryExecutor(MAX_RETRIES + 1, BACKOFF_BASE_DELAY_MS, sleeper, retryable);
 
-        // unreachable — 루프는 항상 return 또는 throw로 종료됨
-        return BatchResult.skip(symbol);
-    }
-
-    private void applyBackoff(String alias, String symbol, int attempt) {
-        long delayMs = ExponentialBackoff.delay(attempt, BACKOFF_BASE_DELAY_MS).toMillis();
         try {
-            sleeper.sleep(delayMs);
+            return retryExecutor.execute(
+                    () -> {
+                        limiter.consume();
+                        try {
+                            T response =
+                                    kisApiExecutor.executeGet(
+                                            credential, uriCustomizer, trId, responseType);
+                            return BatchResult.success(response);
+                        } finally {
+                            limiter.release();
+                        }
+                    });
+        } catch (KisRateLimitException e) {
+            // 소진 후 마지막 EGW00201 전파 → skip으로 변환
+            log.warn("[{}] EGW00201 재시도 소진({}) — symbol={} skip", alias, MAX_RETRIES, symbol);
+            return BatchResult.skip(symbol);
         } catch (InterruptedException ie) {
+            // MA-2: 인터럽트 수신 시 플래그 복원 후 skip으로 변환 (REQ-RETRY-017 — 전파 아님)
             Thread.currentThread().interrupt();
-            log.debug("[{}] 백오프 인터럽트 — symbol={}", alias, symbol);
+            log.warn("[{}] 인터럽트 — symbol={} skip", alias, symbol);
+            return BatchResult.skip(symbol);
         }
     }
 }

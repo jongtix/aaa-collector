@@ -1,6 +1,6 @@
 package com.aaa.collector.kis.token;
 
-import com.aaa.collector.common.retry.ExponentialBackoff;
+import com.aaa.collector.common.retry.RetryExecutor;
 import com.aaa.collector.common.retry.Sleeper;
 import com.aaa.collector.common.safemode.SafeModeManager;
 import java.time.Clock;
@@ -126,26 +126,29 @@ public class KisTokenService {
         }
     }
 
-    @SuppressWarnings("PMD.AvoidCatchingGenericException") // 모든 예외를 재시도 대상으로 포착
     private String issueWithRetry(KisAccountCredential credential, String alias) {
-        Exception lastException = null;
-
-        for (int attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
-            try {
-                return requestAndSaveToken(credential, alias);
-            } catch (KisApiResponseException ex) {
-                throw ex; // 응답 검증 실패는 재시도 불필요 — 즉시 전파
-            } catch (Exception ex) {
-                lastException = ex;
-                log.warn("[{}] 토큰 발급 실패 — attempt={}/{}", alias, attempt + 1, MAX_ATTEMPTS, ex);
-                if (attempt < MAX_ATTEMPTS - 1) {
-                    sleepBeforeRetry(alias, attempt);
-                }
-            }
+        // 토큰 발급 재시도 정책: KisApiResponseException은 permanent(즉시 전파), 그 외는 retryable.
+        // (기존 수동 loop: catch(Exception) + KisApiResponseException 즉시 전파 동작 보존)
+        try {
+            return new RetryExecutor(
+                            MAX_ATTEMPTS,
+                            BASE_DELAY_MS,
+                            sleeper,
+                            ex -> !(ex instanceof KisApiResponseException))
+                    .execute(() -> requestAndSaveToken(credential, alias));
+        } catch (KisApiResponseException ex) {
+            // permanent 예외 — RetryExecutor가 즉시 전파, 여기서 재전파
+            throw ex;
+        } catch (InterruptedException ie) {
+            // 인터럽트 — 플래그 복원 후 KisTokenIssueException으로 변환
+            Thread.currentThread().interrupt();
+            throw new KisTokenIssueException(alias, ie);
+        } catch (Exception ex) {
+            // 소진 후 마지막 retryable 예외 — SafeMode 진입 후 KisTokenIssueException으로 변환
+            log.warn("[{}] 토큰 발급 재시도 소진 — SafeMode 진입", alias, ex);
+            safeModeManager.enter(alias, ex);
+            throw new KisTokenIssueException(alias, ex);
         }
-
-        safeModeManager.enter(alias, lastException);
-        throw new KisTokenIssueException(alias, lastException);
     }
 
     private String requestAndSaveToken(KisAccountCredential credential, String alias) {
@@ -185,15 +188,6 @@ public class KisTokenService {
             return Duration.ofHours(1);
         }
         return ttl;
-    }
-
-    private void sleepBeforeRetry(String alias, int attempt) {
-        try {
-            sleeper.sleep(ExponentialBackoff.delay(attempt, BASE_DELAY_MS).toMillis());
-        } catch (InterruptedException ie) {
-            Thread.currentThread().interrupt();
-            throw new KisTokenIssueException(alias, ie);
-        }
     }
 
     /**

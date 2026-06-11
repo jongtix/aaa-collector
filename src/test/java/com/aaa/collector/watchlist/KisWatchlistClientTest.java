@@ -68,7 +68,8 @@ class KisWatchlistClientTest {
 
         KisApiExecutor kisApiExecutor =
                 new KisApiExecutor(restClient, kisProperties, kisTokenService);
-        kisWatchlistClient = new KisWatchlistClient(kisApiExecutor, kisProperties);
+        // no-op Sleeper: 실제 sleep 없이 테스트 (RetryExecutor 마이그레이션 이후)
+        kisWatchlistClient = new KisWatchlistClient(kisApiExecutor, kisProperties, millis -> {});
 
         // 대부분의 테스트에서 공통으로 필요한 stubbing — lenient로 미사용 시 오류 방지
         Mockito.lenient().when(kisProperties.accounts()).thenReturn(List.of(credential));

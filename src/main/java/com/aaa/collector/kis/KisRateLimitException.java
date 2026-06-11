@@ -8,7 +8,9 @@ package com.aaa.collector.kis;
  *
  * @see KisApiExecutor
  */
-// @MX:NOTE: [AUTO] EGW00201 식별 전용 예외 — 멀티키 경로에서만 throw, 단일키 경로에서는 throw 안 함
+// @MX:NOTE: [AUTO] EGW00201 식별 전용 예외 — 멀티키 경로에서 throw. 단일키 경로(3-arg executeGet)도
+//           멀티키 경로(4-arg executeGet)로 위임하므로 KisRateLimitException을 던진다(SPEC-COLLECTOR-RETRY-001 갭
+// 정정).
 // @MX:SPEC: SPEC-COLLECTOR-BATCH-001
 public class KisRateLimitException extends RuntimeException {
 
