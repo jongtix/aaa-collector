@@ -15,8 +15,8 @@ public class WatchlistSyncScheduler {
     private final WatchlistSyncService watchlistSyncService;
     private final AtomicBoolean running = new AtomicBoolean(false);
 
-    /** 매일 07:30 KST — 장 시작 전 관심종목 동기화. */
-    @Scheduled(cron = "0 30 7 * * *", zone = "Asia/Seoul")
+    /** 매일 08:20 KST — 장 시작 전 관심종목 동기화 (SPEC-COLLECTOR-WLSYNC-006 REQ-WLSYNC-111). */
+    @Scheduled(cron = "0 20 8 * * *", zone = "Asia/Seoul")
     @SuppressWarnings("PMD.AvoidCatchingGenericException")
     public void syncMorning() {
         if (!running.compareAndSet(false, true)) {

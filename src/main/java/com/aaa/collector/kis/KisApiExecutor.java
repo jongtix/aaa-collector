@@ -43,9 +43,11 @@ public class KisApiExecutor {
      * @param responseType 응답 역직렬화 대상 클래스
      * @return 검증 완료된 응답 객체
      */
-    // @MX:ANCHOR: [AUTO] 단일키(isa) 경로 진입점 — SPEC-COLLECTOR-TOKEN-001 제약, 변경 시 WLSYNC-005 영향
-    // @MX:REASON: 기존 단일키 경로 보존 (SPEC-COLLECTOR-TOKEN-001 / SPEC-COLLECTOR-WLSYNC-005)
-    // @MX:SPEC: SPEC-COLLECTOR-TOKEN-001
+    // @MX:ANCHOR: [AUTO] 단일키(isa) 경로 진입점 — ①단계(관심종목 그룹/종목 목록)만 사용, ②단계는 WLSYNC-006으로 멀티키 전환됨
+    // @MX:REASON: SPEC-COLLECTOR-WLSYNC-006 이후 ②단계(KisStockInfoClient)는 더 이상 단일키 경로를 쓰지 않음.
+    //             메서드 자체는 ①단계(KisWatchlistClient) 단일키 호출이 계속 사용하므로 보존(SPEC-COLLECTOR-TOKEN-001 제약
+    // 유지)
+    // @MX:SPEC: SPEC-COLLECTOR-WLSYNC-006
     public <T extends KisApiResponse> T executeGet(
             Function<UriBuilder, URI> uriCustomizer, String trId, Class<T> responseType) {
 

@@ -635,6 +635,98 @@ class KisTokenServiceTest {
         verify(kisTokenRepository, timeout(5000).times(0)).saveApprovalKey(eq("stock"), any());
     }
 
+    // ── issueAllTokens ────────────────────────────────────────────────────────
+
+    @Test
+    @DisplayName("issueAllTokens — 전 계좌에 대해 requestToken이 계좌 수만큼 호출된다 (AC-1)")
+    void issueAllTokens_callsRequestTokenForEachAccount() {
+        // Arrange
+        KisAccountCredential secondCredential =
+                new KisAccountCredential("stock", "87654321", "stock-app-key", "stock-app-secret");
+        KisProperties multiAccountProperties =
+                new KisProperties(
+                        "https://localhost",
+                        "testUser",
+                        List.of(credential, secondCredential),
+                        new KisProperties.RateLimit(20, 20, 10));
+        KisTokenService multiAccountService =
+                new KisTokenService(
+                        multiAccountProperties,
+                        kisTokenClient,
+                        kisTokenRepository,
+                        safeModeManager,
+                        millis -> {},
+                        FIXED_CLOCK,
+                        key -> new ReentrantLock());
+
+        when(kisTokenRepository.findToken(any())).thenReturn(Optional.empty());
+        when(kisTokenClient.requestToken(credential))
+                .thenReturn(tokenResponse("token-test", LocalDateTime.of(2026, 3, 19, 9, 0)));
+        when(kisTokenClient.requestToken(secondCredential))
+                .thenReturn(tokenResponse("token-stock", LocalDateTime.of(2026, 3, 19, 9, 0)));
+        when(safeModeManager.isActive(any())).thenReturn(false);
+
+        // Act
+        multiAccountService.issueAllTokens();
+
+        // Assert
+        verify(kisTokenClient, timeout(5000).times(1)).requestToken(credential);
+        verify(kisTokenClient, timeout(5000).times(1)).requestToken(secondCredential);
+        verify(kisTokenRepository, timeout(5000)).saveToken(eq("test"), eq("token-test"), any());
+        verify(kisTokenRepository, timeout(5000)).saveToken(eq("stock"), eq("token-stock"), any());
+    }
+
+    @Test
+    @DisplayName("issueAllTokens — 일부 계좌 발급 실패 시 다른 계좌는 정상 처리되고 예외 없이 완료된다 (AC-2)")
+    void issueAllTokens_oneAccountFails_otherAccountSucceedsWithoutException() {
+        // Arrange
+        KisAccountCredential failingCredential =
+                new KisAccountCredential("stock", "87654321", "stock-app-key", "stock-app-secret");
+        KisProperties multiAccountProperties =
+                new KisProperties(
+                        "https://localhost",
+                        "testUser",
+                        List.of(credential, failingCredential),
+                        new KisProperties.RateLimit(20, 20, 10));
+        KisTokenService multiAccountService =
+                new KisTokenService(
+                        multiAccountProperties,
+                        kisTokenClient,
+                        kisTokenRepository,
+                        safeModeManager,
+                        millis -> {},
+                        FIXED_CLOCK,
+                        key -> new ReentrantLock());
+
+        when(kisTokenRepository.findToken(any())).thenReturn(Optional.empty());
+        when(kisTokenClient.requestToken(credential))
+                .thenReturn(tokenResponse("token-test", LocalDateTime.of(2026, 3, 19, 9, 0)));
+        when(kisTokenClient.requestToken(failingCredential))
+                .thenThrow(new RuntimeException("persistent error"));
+
+        // Act: 예외 없이 완료되어야 함 (부분 실패 허용)
+        multiAccountService.issueAllTokens();
+
+        // Assert: test 계좌는 성공 저장, stock 계좌는 재시도 소진 후 SafeMode 기록
+        verify(kisTokenRepository, timeout(5000)).saveToken(eq("test"), eq("token-test"), any());
+        verify(kisTokenRepository, timeout(5000).times(0)).saveToken(eq("stock"), any(), any());
+        verify(safeModeManager, timeout(5000)).enter(eq("stock"), any());
+    }
+
+    @Test
+    @DisplayName("issueAllTokens — 이미 캐시된 토큰이 있으면 추가 발급 없이 통과한다 (AC-3 캐시 히트)")
+    void issueAllTokens_cachedToken_noAdditionalIssuance() {
+        // Arrange
+        when(kisTokenRepository.findToken("test")).thenReturn(Optional.of("cached-token"));
+
+        // Act
+        kisTokenService.issueAllTokens();
+
+        // Assert: issueAllTokens → issueOne → findToken(DCL 재확인) 캐시 히트 경로
+        //   issueOne은 락 획득 직후 findToken을 재확인하여 캐시가 있으면 requestToken을 호출하지 않는다.
+        verify(kisTokenClient, timeout(5000).times(0)).requestToken(any());
+    }
+
     // ── getValidApprovalKey ───────────────────────────────────────────────────
 
     @Test

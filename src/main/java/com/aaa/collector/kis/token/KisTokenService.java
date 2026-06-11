@@ -20,6 +20,7 @@ import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.locks.Lock;
+import java.util.function.Consumer;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Service;
@@ -196,13 +197,50 @@ public class KisTokenService {
     }
 
     /**
+     * 전체 계좌에 대해 병렬로 REST access_token을 사전(eager) 발급한다 (REQ-WLSYNC-100,101,103).
+     *
+     * <p>{@link #issueAllApprovalKeys()}와 동형 패턴이다. Virtual Thread executor로 5계좌를 병렬 제출하며, 각 작업은
+     * {@link #issueOne(KisAccountCredential)}을 호출한다(계좌별 Lock + 3회 재시도 + 최종 실패 시 {@link
+     * SafeModeManager#enter} 자동 호출). 개별 계좌 발급 실패는 작업 내부에서 흡수(경고 로그)하여 한 계좌 실패가 다른 계좌를 막지 않는다(부분 실패
+     * 허용, 전체 미실패). 인터럽트 수신 시 인터럽트 플래그를 복원하고 남은 결과 수집을 즉시 중단한다.
+     *
+     * <p>발급/재시도/SafeMode 기록 로직은 모두 {@link #issueOne(KisAccountCredential)}에 위임하며 이 메서드는 병렬 오케스트레이션만
+     * 담당한다(SPEC-COLLECTOR-TOKEN-001 REQ-TOKEN-002 supersede — §1.4).
+     */
+    // @MX:ANCHOR: [AUTO] REST access_token 5계좌 병렬 사전발급 진입점 — 토큰 스케줄러가 호출
+    // @MX:REASON: SPEC-COLLECTOR-WLSYNC-006 REQ-WLSYNC-100,101,103 — eager 사전발급으로 ②단계 멀티키 소비처 토큰 준비
+    // @MX:SPEC: SPEC-COLLECTOR-WLSYNC-006
+    public void issueAllTokens() {
+        runForAllAccounts("access_token 사전발급", this::issueOne);
+    }
+
+    /**
      * 전체 계좌에 대해 병렬로 WebSocket 승인키를 발급한다.
      *
      * <p>Virtual Thread executor를 사용하며, 개별 계좌 발급 실패는 경고 로그 후 다음 계좌로 진행한다(부분 실패 허용). 인터럽트 수신 시 인터럽트
      * 플래그를 복원하고 남은 결과 수집을 즉시 중단한다.
      */
     public void issueAllApprovalKeys() {
-        log.info("전 계좌 승인키 발급 시작 — 계좌 수: {}", kisProperties.accounts().size());
+        runForAllAccounts(
+                "승인키 발급",
+                credential -> {
+                    KisApprovalKeyResponse response = kisTokenClient.requestApprovalKey(credential);
+                    kisTokenRepository.saveApprovalKey(credential.alias(), response.approvalKey());
+                });
+    }
+
+    /**
+     * 전체 계좌에 대해 {@code task}를 Virtual Thread executor로 병렬 수행한다.
+     *
+     * <p>{@link #issueAllTokens()}와 {@link #issueAllApprovalKeys()}가 공유하는 병렬 오케스트레이션 골격이다. 개별 계좌 작업
+     * 실패는 흡수(경고 로그)하여 한 계좌 실패가 다른 계좌를 막지 않는다(부분 실패 허용, 전체 미실패). 인터럽트 수신 시 인터럽트 플래그를 복원하고 남은 결과 수집을
+     * 즉시 중단한다.
+     *
+     * @param label 로깅용 작업 이름
+     * @param task 계좌별로 수행할 작업
+     */
+    private void runForAllAccounts(String label, Consumer<KisAccountCredential> task) {
+        log.info("전 계좌 {} 시작 — 계좌 수: {}", label, kisProperties.accounts().size());
 
         try (ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor()) {
             List<Future<Void>> futures = new ArrayList<>();
@@ -212,13 +250,10 @@ public class KisTokenService {
                         executor.submit(
                                 () -> {
                                     try {
-                                        KisApprovalKeyResponse response =
-                                                kisTokenClient.requestApprovalKey(credential);
-                                        kisTokenRepository.saveApprovalKey(
-                                                credential.alias(), response.approvalKey());
-                                        log.info("[{}] 승인키 발급 성공", credential.alias());
+                                        task.accept(credential);
+                                        log.info("[{}] {} 성공", credential.alias(), label);
                                     } catch (Exception e) {
-                                        log.warn("[{}] 승인키 발급 실패", credential.alias(), e);
+                                        log.warn("[{}] {} 실패", credential.alias(), label, e);
                                     }
                                     return null;
                                 }));
@@ -231,7 +266,8 @@ public class KisTokenService {
                     future.get();
                 } catch (ExecutionException e) {
                     log.error(
-                            "[승인키 발급 실패] 예상치 못한 예외: {}",
+                            "[{} 실패] 예상치 못한 예외: {}",
+                            label,
                             e.getCause().getClass().getName(),
                             e.getCause());
                 } catch (InterruptedException e) {
@@ -242,9 +278,9 @@ public class KisTokenService {
             }
 
             if (interrupted) {
-                log.warn("승인키 발급 중 인터럽트 수신 — 남은 계좌 결과 수집 중단");
+                log.warn("{} 중 인터럽트 수신 — 남은 계좌 결과 수집 중단", label);
             } else {
-                log.info("전 계좌 승인키 발급 완료");
+                log.info("전 계좌 {} 완료", label);
             }
         }
     }

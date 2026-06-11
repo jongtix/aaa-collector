@@ -8,8 +8,13 @@ import static com.github.tomakehurst.wiremock.core.WireMockConfiguration.wireMoc
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import com.aaa.collector.common.retry.Sleeper;
 import com.aaa.collector.kis.KisApiBusinessException;
 import com.aaa.collector.kis.KisApiExecutor;
+import com.aaa.collector.kis.KisApiResponse;
+import com.aaa.collector.kis.KisRateLimiterRegistry;
+import com.aaa.collector.kis.batch.BatchRestExecutor;
+import com.aaa.collector.kis.batch.BatchResult;
 import com.aaa.collector.kis.token.KisAccountCredential;
 import com.aaa.collector.kis.token.KisProperties;
 import com.aaa.collector.kis.token.KisTokenService;
@@ -18,8 +23,10 @@ import com.aaa.collector.stock.enums.Market;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.PropertyNamingStrategies;
 import com.github.tomakehurst.wiremock.WireMockServer;
+import java.net.URI;
 import java.time.LocalDate;
 import java.util.List;
+import java.util.function.Function;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -31,6 +38,7 @@ import org.mockito.Mockito;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.http.converter.json.MappingJackson2HttpMessageConverter;
 import org.springframework.web.client.RestClient;
+import org.springframework.web.util.UriBuilder;
 
 @ExtendWith(MockitoExtension.class)
 class KisStockInfoClientTest {
@@ -39,11 +47,26 @@ class KisStockInfoClientTest {
             "/uapi/domestic-stock/v1/quotations/search-stock-info";
     private static final String OVERSEAS_PATH = "/uapi/overseas-price/v1/quotations/search-info";
 
-    private WireMockServer wireMockServer;
-    private KisStockInfoClient kisStockInfoClient;
-
     @Mock private KisTokenService kisTokenService;
     @Mock private KisProperties kisProperties;
+
+    private WireMockServer wireMockServer;
+    private KisStockInfoClient kisStockInfoClient;
+    private KisAccountCredential credential;
+    private BatchRestExecutor batchRestExecutor;
+
+    /** 멀티키 경로로 BatchRestExecutor를 경유하여 fetch하는 fetcher (서비스가 ②단계에서 백킹하는 형태와 동일). */
+    private KisStockInfoClient.StockInfoFetcher fetcherFor(
+            BatchRestExecutor batchRestExecutor, String symbol) {
+        return new KisStockInfoClient.StockInfoFetcher() {
+            @Override
+            public <T extends KisApiResponse> BatchResult<T> fetch(
+                    Function<UriBuilder, URI> uriCustomizer, String trId, Class<T> responseType) {
+                return batchRestExecutor.execute(
+                        credential, uriCustomizer, trId, responseType, symbol);
+            }
+        };
+    }
 
     @BeforeEach
     void setUp() {
@@ -63,12 +86,22 @@ class KisStockInfoClientTest {
                                 })
                         .build();
 
-        KisAccountCredential credential =
+        credential =
                 new KisAccountCredential("test", "12345678", "test-app-key", "test-app-secret");
 
         KisApiExecutor kisApiExecutor =
                 new KisApiExecutor(restClient, kisProperties, kisTokenService);
-        kisStockInfoClient = new KisStockInfoClient(kisApiExecutor);
+        kisStockInfoClient = new KisStockInfoClient(new StockInfoParser());
+
+        KisProperties realProperties =
+                new KisProperties(
+                        "https://localhost",
+                        "testUser",
+                        List.of(credential),
+                        new KisProperties.RateLimit(100, 100, 50));
+        KisRateLimiterRegistry registry = new KisRateLimiterRegistry(realProperties);
+        Sleeper noopSleeper = millis -> {};
+        batchRestExecutor = new BatchRestExecutor(kisApiExecutor, registry, noopSleeper);
 
         Mockito.lenient().when(kisProperties.accounts()).thenReturn(List.of(credential));
         Mockito.lenient().when(kisTokenService.getValidToken("test")).thenReturn("test-token");
@@ -77,6 +110,11 @@ class KisStockInfoClientTest {
     @AfterEach
     void tearDown() {
         wireMockServer.stop();
+    }
+
+    private StockInfo fetch(String symbol, Market market) {
+        return kisStockInfoClient.fetchStockInfo(
+                symbol, market, fetcherFor(batchRestExecutor, symbol));
     }
 
     private void stubDomestic(
@@ -153,7 +191,7 @@ class KisStockInfoClientTest {
         void fetchStockInfo_kospiStock_returnsStock() {
             stubDomestic("005930", "ST", "20750101", "", "Samsung Electronics");
 
-            StockInfo info = kisStockInfoClient.fetchStockInfo("005930", Market.KOSPI);
+            StockInfo info = fetch("005930", Market.KOSPI);
 
             assertThat(info.assetType()).isEqualTo(AssetType.STOCK);
             assertThat(info.nameEn()).isEqualTo("Samsung Electronics");
@@ -165,8 +203,7 @@ class KisStockInfoClientTest {
         void fetchStockInfo_kospiEtf_returnsEtf() {
             stubDomestic("069500", "EF", "20020414", "", "KODEX 200 ETF");
 
-            assertThat(kisStockInfoClient.fetchStockInfo("069500", Market.KOSPI).assetType())
-                    .isEqualTo(AssetType.ETF);
+            assertThat(fetch("069500", Market.KOSPI).assetType()).isEqualTo(AssetType.ETF);
         }
 
         @Test
@@ -174,8 +211,7 @@ class KisStockInfoClientTest {
         void fetchStockInfo_kospiEtfFe_returnsEtf() {
             stubDomestic("069660", "FE", "20030101", "", "KODEX ETF");
 
-            assertThat(kisStockInfoClient.fetchStockInfo("069660", Market.KOSPI).assetType())
-                    .isEqualTo(AssetType.ETF);
+            assertThat(fetch("069660", Market.KOSPI).assetType()).isEqualTo(AssetType.ETF);
         }
 
         @Test
@@ -183,8 +219,7 @@ class KisStockInfoClientTest {
         void fetchStockInfo_kospiEtn_returnsEtn() {
             stubDomestic("Q530067", "EN", "20200101", "", "Samsung Gold ETN");
 
-            assertThat(kisStockInfoClient.fetchStockInfo("Q530067", Market.KOSPI).assetType())
-                    .isEqualTo(AssetType.ETN);
+            assertThat(fetch("Q530067", Market.KOSPI).assetType()).isEqualTo(AssetType.ETN);
         }
 
         @Test
@@ -192,7 +227,7 @@ class KisStockInfoClientTest {
         void fetchStockInfo_kosdaqStock_usesKosdaqDate() {
             stubDomestic("035420", "ST", "", "20020610", "NAVER Corp");
 
-            StockInfo info = kisStockInfoClient.fetchStockInfo("035420", Market.KOSDAQ);
+            StockInfo info = fetch("035420", Market.KOSDAQ);
 
             assertThat(info.assetType()).isEqualTo(AssetType.STOCK);
             assertThat(info.nameEn()).isEqualTo("NAVER Corp");
@@ -204,8 +239,7 @@ class KisStockInfoClientTest {
         void fetchStockInfo_emptyListedDate_returnsNullDate() {
             stubDomestic("005930", "ST", "", "", "Samsung");
 
-            assertThat(kisStockInfoClient.fetchStockInfo("005930", Market.KOSPI).listedDate())
-                    .isNull();
+            assertThat(fetch("005930", Market.KOSPI).listedDate()).isNull();
         }
 
         @Test
@@ -226,7 +260,7 @@ class KisStockInfoClientTest {
                                                     }
                                                     """)));
 
-            assertThatThrownBy(() -> kisStockInfoClient.fetchStockInfo("005930", Market.KOSPI))
+            assertThatThrownBy(() -> fetch("005930", Market.KOSPI))
                     .isInstanceOf(KisApiBusinessException.class)
                     .hasMessageContaining("rt_cd=1")
                     .hasMessageContaining("msg_cd=EGW00201");
@@ -235,8 +269,24 @@ class KisStockInfoClientTest {
         @Test
         @DisplayName("지원하지 않는 시장 (KRX) — IllegalArgumentException 발생")
         void fetchStockInfo_unsupportedMarket_throwsIllegalArgumentException() {
-            assertThatThrownBy(() -> kisStockInfoClient.fetchStockInfo("KRX001", Market.KRX))
+            assertThatThrownBy(() -> fetch("KRX001", Market.KRX))
                     .isInstanceOf(IllegalArgumentException.class);
+        }
+
+        @Test
+        @DisplayName("EGW00201 재시도 소진으로 BatchResult.skip — null 반환 (graceful skip, AC-9)")
+        void fetchStockInfo_batchResultSkip_returnsNull() {
+            wireMockServer.stubFor(
+                    get(urlPathEqualTo(DOMESTIC_PATH))
+                            .willReturn(
+                                    aResponse()
+                                            .withStatus(500)
+                                            .withHeader("Content-Type", "application/json")
+                                            .withBody("{\"msg_cd\":\"EGW00201\"}")));
+
+            StockInfo info = fetch("005930", Market.KOSPI);
+
+            assertThat(info).isNull();
         }
     }
 
@@ -249,7 +299,7 @@ class KisStockInfoClientTest {
         void fetchStockInfo_nasdaqStock_returnsStock() {
             stubOverseas("AAPL", "512", "01", "", "Apple Inc", "19801212");
 
-            StockInfo info = kisStockInfoClient.fetchStockInfo("AAPL", Market.NASDAQ);
+            StockInfo info = fetch("AAPL", Market.NASDAQ);
 
             assertThat(info.assetType()).isEqualTo(AssetType.STOCK);
             assertThat(info.nameEn()).isEqualTo("Apple Inc");
@@ -261,8 +311,7 @@ class KisStockInfoClientTest {
         void fetchStockInfo_nyseEtf_returnsEtf() {
             stubOverseas("SPY", "513", "03", "001", "SPDR S&P 500 ETF", "19930122");
 
-            assertThat(kisStockInfoClient.fetchStockInfo("SPY", Market.NYSE).assetType())
-                    .isEqualTo(AssetType.ETF);
+            assertThat(fetch("SPY", Market.NYSE).assetType()).isEqualTo(AssetType.ETF);
         }
 
         @Test
@@ -270,8 +319,7 @@ class KisStockInfoClientTest {
         void fetchStockInfo_amexEtn_returnsEtn() {
             stubOverseas("ARKK", "529", "03", "002", "ARK Innovation ETN", "20141031");
 
-            assertThat(kisStockInfoClient.fetchStockInfo("ARKK", Market.AMEX).assetType())
-                    .isEqualTo(AssetType.ETN);
+            assertThat(fetch("ARKK", Market.AMEX).assetType()).isEqualTo(AssetType.ETN);
         }
 
         @Test
@@ -279,8 +327,7 @@ class KisStockInfoClientTest {
         void fetchStockInfo_vixEtn_returnsEtn() {
             stubOverseas("UVXY", "512", "03", "006", "VIX ETN", "20110101");
 
-            assertThat(kisStockInfoClient.fetchStockInfo("UVXY", Market.NASDAQ).assetType())
-                    .isEqualTo(AssetType.ETN);
+            assertThat(fetch("UVXY", Market.NASDAQ).assetType()).isEqualTo(AssetType.ETN);
         }
     }
 
@@ -293,7 +340,7 @@ class KisStockInfoClientTest {
         void fetchStockInfo_lstgDtAllZeros_returnsNullDate() {
             stubOverseas("AAPL", "512", "01", "", "Apple Inc", "00000000");
 
-            StockInfo info = kisStockInfoClient.fetchStockInfo("AAPL", Market.NASDAQ);
+            StockInfo info = fetch("AAPL", Market.NASDAQ);
 
             assertThat(info.listedDate()).isNull();
         }
@@ -303,7 +350,7 @@ class KisStockInfoClientTest {
         void fetchStockInfo_lstgDtNull_returnsNullDate() {
             stubOverseas("AAPL", "512", "01", "", "Apple Inc", "");
 
-            StockInfo info = kisStockInfoClient.fetchStockInfo("AAPL", Market.NASDAQ);
+            StockInfo info = fetch("AAPL", Market.NASDAQ);
 
             assertThat(info.listedDate()).isNull();
         }
@@ -313,7 +360,7 @@ class KisStockInfoClientTest {
         void fetchStockInfo_lstgDtValid_returnsLocalDate() {
             stubOverseas("AAPL", "512", "01", "", "Apple Inc", "20240115");
 
-            StockInfo info = kisStockInfoClient.fetchStockInfo("AAPL", Market.NASDAQ);
+            StockInfo info = fetch("AAPL", Market.NASDAQ);
 
             assertThat(info.listedDate()).isEqualTo(LocalDate.of(2024, 1, 15));
         }
