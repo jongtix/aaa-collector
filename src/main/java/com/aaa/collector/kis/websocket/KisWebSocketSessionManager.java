@@ -318,13 +318,13 @@ public class KisWebSocketSessionManager {
         try {
             return kisTokenService.getValidApprovalKey(alias);
         } catch (Exception e) {
-            // 승인키 조회 실패 시 throwable을 통째로 로깅하지 않음 — requestApprovalKey 경로의
-            // RestClientResponseException에 appkey/appsecret이 포함될 수 있음 (Constraint 1)
+            // 승인키는 자격증명 인접 경로다. requestApprovalKey는 appkey/secretkey를 요청 body에 싣고
+            // 발생 예외(RestClientResponseException 등)의 message는 응답 본문이라 자격증명을 담지 않으나,
+            // 확실성을 위해 예외 message/스택을 로깅하지 않고 예외 타입만 기록한다.
             log.warn(
-                    "[{}] 승인키 조회 실패 — 1회 재시도 (REQ-WS-042): exceptionType={}, message={}",
+                    "[{}] 승인키 조회 실패 — 1회 재시도 (REQ-WS-042): exceptionType={}",
                     alias,
-                    e.getClass().getSimpleName(),
-                    e.getMessage());
+                    e.getClass().getSimpleName());
             return kisTokenService.getValidApprovalKey(alias);
         }
     }
