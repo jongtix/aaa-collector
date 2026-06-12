@@ -140,10 +140,13 @@ public class StockInfoParser {
         if (yyyymmdd == null || yyyymmdd.isBlank()) {
             return null;
         }
-        // KIS "날짜 없음" 특수값: 모든 자리가 '0' (e.g. "00000000")
-        if (yyyymmdd.chars().allMatch(c -> c == '0')) {
+        // KIS "날짜 없음" sentinel 처리. 문서 형식은 YYYYMMDD지만, 상장일 미상 종목(예: 일부 해외주식
+        // JPM·GS)에는 공백+구분자 템플릿("    /  /")이나 전부 '0'("00000000")이 반환된다.
+        // 구분자·공백을 제거해 숫자만 남긴 뒤, 비어있거나 전부 '0'이면 상장일 없음으로 간주한다.
+        String digits = yyyymmdd.replaceAll("\\D", "");
+        if (digits.isEmpty() || digits.chars().allMatch(c -> c == '0')) {
             return null;
         }
-        return LocalDate.parse(yyyymmdd, DateTimeFormatter.BASIC_ISO_DATE);
+        return LocalDate.parse(digits, DateTimeFormatter.BASIC_ISO_DATE);
     }
 }

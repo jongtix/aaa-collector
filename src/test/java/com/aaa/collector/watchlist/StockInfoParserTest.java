@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import com.aaa.collector.stock.enums.AssetType;
 import com.aaa.collector.stock.enums.Market;
+import java.time.LocalDate;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
@@ -157,6 +158,50 @@ class StockInfoParserTest {
                     parser.parseOverseas(overseasOut("03", "001", "ETF", "20100201", "NDX", "0"));
 
             assertThat(info.etfMetaInfo().leverage()).isEqualTo(1);
+        }
+    }
+
+    @Nested
+    @DisplayName("parseDate — 상장일 파싱 (KIS '날짜 없음' sentinel 처리)")
+    class DateParsing {
+
+        @Test
+        @DisplayName("해외 정상 상장일 (YYYYMMDD) — 정확히 파싱")
+        void overseasValidDate() {
+            StockInfo info =
+                    parser.parseOverseas(overseasOut("01", "000", "Apple", "19801212", "", ""));
+
+            assertThat(info.listedDate()).isEqualTo(LocalDate.of(1980, 12, 12));
+        }
+
+        @Test
+        @DisplayName("해외 상장일 슬래시 템플릿 '    /  /' — listedDate=null, 종목은 유지 (JPM·GS 케이스)")
+        void overseasBlankSlashTemplate() {
+            StockInfo info =
+                    parser.parseOverseas(overseasOut("01", "000", "JPMorgan", "    /  /", "", ""));
+
+            assertThat(info.listedDate()).isNull();
+            assertThat(info.assetType()).isEqualTo(AssetType.STOCK);
+            assertThat(info.nameEn()).isEqualTo("JPMorgan");
+        }
+
+        @Test
+        @DisplayName("해외 상장일 전부 0 (00000000) — listedDate=null")
+        void overseasAllZeros() {
+            StockInfo info =
+                    parser.parseOverseas(overseasOut("01", "000", "X", "00000000", "", ""));
+
+            assertThat(info.listedDate()).isNull();
+        }
+
+        @Test
+        @DisplayName("국내 상장일 정상 — 정확히 파싱")
+        void domesticValidDate() {
+            StockInfo info =
+                    parser.parseDomestic(
+                            domesticOut("ST", "Samsung", "19750611", "", "", ""), Market.KOSPI);
+
+            assertThat(info.listedDate()).isEqualTo(LocalDate.of(1975, 6, 11));
         }
     }
 }
