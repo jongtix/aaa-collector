@@ -104,10 +104,14 @@ public class RetryExecutor {
             throw ex;
         }
         // retryable 예외 — 로깅 후 백오프
+        // 비밀정보 포함 여부는 isRetryable predicate 주입부(callsite)에서 판단함
+        // 배치 경로: KisRateLimitException만 retryable, 메시지 = "EGW00201 rate-limit 오류 — tr_id=..." (비밀
+        // 없음)
         log.warn(
-                "[RetryExecutor] retryable 예외 — attempt={}/{}, exception={}",
+                "[RetryExecutor] retryable 예외 — attempt={}/{}, exceptionType={}, message={}",
                 attempt + 1,
                 maxAttempts,
+                ex.getClass().getSimpleName(),
                 ex.getMessage());
         applyBackoff(attempt);
         return ex;

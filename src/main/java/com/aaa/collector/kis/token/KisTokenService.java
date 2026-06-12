@@ -259,11 +259,14 @@ public class KisTokenService {
                 try {
                     future.get();
                 } catch (ExecutionException e) {
+                    // Future 작업 내부에서 Exception을 잡으므로 여기 도달하면 예상치 못한 오류임
+                    // 작업 내부에서 이미 alias별 로그를 남겼으므로 여기서는 label + 타입만 기록
+                    Throwable cause = e.getCause();
                     log.error(
-                            "[{} 실패] 예상치 못한 예외: {}",
+                            "[{}] 예상치 못한 미처리 예외 (Future에서 전파됨): exceptionType={}",
                             label,
-                            e.getCause().getClass().getName(),
-                            e.getCause());
+                            cause != null ? cause.getClass().getName() : "null",
+                            cause);
                 } catch (InterruptedException e) {
                     Thread.currentThread().interrupt();
                     interrupted = true;

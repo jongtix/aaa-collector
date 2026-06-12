@@ -112,7 +112,8 @@ public class DomesticDailyOhlcvCollectionService {
                     fetchBatch(credential, symbol, fromDate, toDate);
 
             if (!batchResult.isSuccess()) {
-                log.warn("[domestic-daily] skip — symbol={}", symbol);
+                String reason = batchResult.getSkipReason().orElse("알 수 없음");
+                log.warn("[domestic-daily] skip (데이터 유실) — symbol={}, reason={}", symbol, reason);
                 skipped.incrementAndGet();
                 return;
             }
@@ -203,12 +204,28 @@ public class DomesticDailyOhlcvCollectionService {
                             || volume > VOLUME_MAX;
 
             if (invalid) {
-                log.warn("[domestic-daily] 검증 실패 — symbol={}, date={}", symbol, row.stckBsopDate());
+                log.warn(
+                        "[domestic-daily] 검증 실패 (데이터 유실) — symbol={}, date={}, close={}, open={}, high={}, low={}, volume={}",
+                        symbol,
+                        row.stckBsopDate(),
+                        row.stckClpr(),
+                        row.stckOprc(),
+                        row.stckHgpr(),
+                        row.stckLwpr(),
+                        row.acmlVol());
                 return false;
             }
             return true;
         } catch (NumberFormatException e) {
-            log.warn("[domestic-daily] 숫자 파싱 실패 — symbol={}, date={}", symbol, row.stckBsopDate());
+            log.warn(
+                    "[domestic-daily] 숫자 파싱 실패 (데이터 유실) — symbol={}, date={}, close={}, open={}, high={}, low={}, volume={}",
+                    symbol,
+                    row.stckBsopDate(),
+                    row.stckClpr(),
+                    row.stckOprc(),
+                    row.stckHgpr(),
+                    row.stckLwpr(),
+                    row.acmlVol());
             return false;
         }
     }

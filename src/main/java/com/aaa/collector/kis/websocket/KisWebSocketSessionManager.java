@@ -141,9 +141,12 @@ public class KisWebSocketSessionManager {
             sessions.put(alias, session);
             log.info("[{}] WebSocket 세션 연결 성공", alias);
         } catch (Exception e) {
+            // KisWebSocketSession.connect()는 RuntimeException("WebSocket 연결 실패: alias", cause)을
+            // 던짐 — WS handshake 오류이며 appkey/token을 포함하지 않으므로 throwable 로깅 안전
             log.warn(
-                    "[{}] WebSocket 연결 실패 — approval_key 강제 재발급 후 재시도 (REQ-WS-042): {}",
+                    "[{}] WebSocket 연결 실패 ({}) — approval_key 강제 재발급 후 재시도 (REQ-WS-042): {}",
                     alias,
+                    e.getClass().getSimpleName(),
                     e.getMessage());
             String freshKey = kisTokenService.reissueApprovalKey(alias);
             KisWebSocketSession session = sessionFactory.create(alias, freshKey);
@@ -315,7 +318,13 @@ public class KisWebSocketSessionManager {
         try {
             return kisTokenService.getValidApprovalKey(alias);
         } catch (Exception e) {
-            log.warn("[{}] 승인키 조회 실패 — 1회 재시도 (REQ-WS-042): {}", alias, e.getMessage());
+            // 승인키 조회 실패 시 throwable을 통째로 로깅하지 않음 — requestApprovalKey 경로의
+            // RestClientResponseException에 appkey/appsecret이 포함될 수 있음 (Constraint 1)
+            log.warn(
+                    "[{}] 승인키 조회 실패 — 1회 재시도 (REQ-WS-042): exceptionType={}, message={}",
+                    alias,
+                    e.getClass().getSimpleName(),
+                    e.getMessage());
             return kisTokenService.getValidApprovalKey(alias);
         }
     }

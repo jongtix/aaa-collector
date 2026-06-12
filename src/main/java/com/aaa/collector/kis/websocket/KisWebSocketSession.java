@@ -291,7 +291,14 @@ public class KisWebSocketSession {
             reconnectAttempt.set(0);
         } catch (Exception e) {
             int currentAttempt = reconnectAttempt.get();
-            log.warn("[{}] 재연결 실패 (attempt={}): {}", alias, attempt, e.getMessage());
+            // connect()는 RuntimeException("WebSocket 연결 실패: alias", cause)을 던짐 —
+            // WS handshake 오류이며 appkey/token을 포함하지 않으므로 throwable 로깅 안전
+            log.warn(
+                    "[{}] 재연결 실패 (attempt={}, exceptionType={}): {}",
+                    alias,
+                    attempt,
+                    e.getClass().getSimpleName(),
+                    e.getMessage());
             if (currentAttempt >= SAFE_MODE_RECONNECT_THRESHOLD) {
                 log.error("[{}] 재연결 {}회 연속 실패 — 안전 모드 진입 (REQ-WS-022)", alias, currentAttempt);
                 webSocketSafeModeManager.enter(alias, e);

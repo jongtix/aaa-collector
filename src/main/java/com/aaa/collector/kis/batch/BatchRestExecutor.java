@@ -92,12 +92,12 @@ public class BatchRestExecutor {
         } catch (KisRateLimitException e) {
             // 소진 후 마지막 EGW00201 전파 → skip으로 변환
             log.warn("[{}] EGW00201 재시도 소진({}) — symbol={} skip", alias, MAX_RETRIES, symbol);
-            return BatchResult.skip(symbol);
+            return BatchResult.skip(symbol, "EGW00201 재시도 소진");
         } catch (InterruptedException ie) {
             // MA-2: 인터럽트 수신 시 플래그 복원 후 skip으로 변환 (REQ-RETRY-017 — 전파 아님)
             Thread.currentThread().interrupt();
             log.warn("[{}] 인터럽트 — symbol={} skip", alias, symbol);
-            return BatchResult.skip(symbol);
+            return BatchResult.skip(symbol, "인터럽트");
         }
     }
 }

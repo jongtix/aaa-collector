@@ -188,7 +188,12 @@ public class KisWebSocketMessageHandler extends TextWebSocketHandler {
         if (ENCRYPT_FLAG.equals(encryptFlag)) {
             AesKey aesKey = aesKeys.get(trId);
             if (aesKey == null) {
-                log.warn("[{}] AES 키 없음 (trId={}), 메시지 무시", alias, trId);
+                // AES 키 없이 복호화 불가 → 틱 데이터 유실 (구독 성공 응답 수신 전 도착한 경우)
+                log.warn(
+                        "[{}] AES 키 없음 — 틱 데이터 유실 (데이터 유실) — trId={}, trKey(raw prefix)={}",
+                        alias,
+                        trId,
+                        dataPayload.substring(0, Math.min(20, dataPayload.length())));
                 return;
             }
             decryptedData = KisAesDecryptor.decrypt(dataPayload, aesKey.key(), aesKey.iv());
@@ -242,13 +247,13 @@ public class KisWebSocketMessageHandler extends TextWebSocketHandler {
             // PINGPONG: header.tr_id = "PINGPONG", body 없음
             String trId = header.path("tr_id").asText();
             if (TR_ID_PINGPONG.equals(trId) && body.isMissingNode()) {
-                handlePingPong(session, raw);
+                handlePingPong(session, raw, alias);
                 return;
             }
 
             // body가 없는 PINGPONG 변형 처리
             if (TR_ID_PINGPONG.equals(trId)) {
-                handlePingPong(session, raw);
+                handlePingPong(session, raw, alias);
                 return;
             }
 
@@ -292,13 +297,14 @@ public class KisWebSocketMessageHandler extends TextWebSocketHandler {
 
     /** PINGPONG 메시지에 PongMessage로 응답. */
     @SuppressWarnings("PMD.AvoidCatchingGenericException")
-    private static void handlePingPong(WebSocketSession session, String raw) {
+    private static void handlePingPong(WebSocketSession session, String raw, String sessionAlias) {
         try {
             session.sendMessage(
                     new PongMessage(ByteBuffer.wrap(raw.getBytes(StandardCharsets.UTF_8))));
-            log.debug("PINGPONG 응답 전송");
+            log.debug("[{}] PINGPONG 응답 전송", sessionAlias);
         } catch (Exception e) {
-            log.error("PINGPONG 응답 전송 실패", e);
+            // PINGPONG 전송 실패 = 하트비트 유실 — 세션 식별자를 포함해 식별 가능하게 기록
+            log.error("[{}] PINGPONG 응답 전송 실패 (하트비트 유실)", sessionAlias, e);
         }
     }
 }

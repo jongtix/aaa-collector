@@ -56,7 +56,13 @@ public class DailyCompletePublisher {
                     result.skipped());
         } catch (DataAccessException e) {
             // REQ-BATCH-043: 발행 실패는 수집 결과를 무효화하지 않음
-            log.warn("[domestic-daily] 완료 이벤트 발행 실패 — {}", e.getMessage());
+            // DataAccessException은 Redis 연결/타임아웃 오류이며 비밀정보를 포함하지 않음
+            log.warn(
+                    "[domestic-daily] 완료 이벤트 발행 실패 — attempted={}, succeeded={}, skipped={}",
+                    result.attempted(),
+                    result.succeeded(),
+                    result.skipped(),
+                    e);
         }
     }
 }

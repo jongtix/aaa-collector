@@ -68,7 +68,11 @@ public class HealthyKeySelector {
                         healthy.add(result);
                     }
                 } catch (ExecutionException e) {
-                    log.warn("[헬스 점검] 예상치 못한 예외", e.getCause());
+                    Throwable cause = e.getCause();
+                    log.warn(
+                            "[헬스 점검] 예상치 못한 미처리 예외 (Future에서 전파됨): exceptionType={}",
+                            cause != null ? cause.getClass().getSimpleName() : "null",
+                            cause);
                 } catch (InterruptedException e) {
                     Thread.currentThread().interrupt();
                     log.warn("헬스 점검 중 인터럽트 수신 — 남은 키 결과 수집 중단");

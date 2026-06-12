@@ -142,7 +142,12 @@ public class KisApiExecutor {
             JsonNode msgCd = node.get("msg_cd");
             return msgCd != null && EGW00201.equals(msgCd.asText());
         } catch (JsonProcessingException e) {
-            log.debug("EGW00201 판별 중 JSON 파싱 실패 — body={}", bodyText, e);
+            // 파싱 실패 시 false 반환 → 영구 오류 경로로 진행 (잘못된 retry-vs-permanent 판별 방지)
+            // bodyText는 KIS 서버 응답이므로 appkey/token을 포함하지 않음 — warn 수준 안전
+            log.warn(
+                    "EGW00201 판별 중 JSON 파싱 실패 — body={}, exceptionType={}",
+                    bodyText,
+                    e.getClass().getSimpleName());
             return false;
         }
     }

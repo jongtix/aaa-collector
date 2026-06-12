@@ -8,7 +8,7 @@ final class KisMarketResolver {
 
     private KisMarketResolver() {}
 
-    static Market resolve(String fidMrktClsCode, String exchCode) {
+    static Market resolve(String fidMrktClsCode, String exchCode, String symbol) {
         return switch (fidMrktClsCode) {
             case "J" -> Market.KOSPI;
             case "UN" -> Market.KOSDAQ;
@@ -20,12 +20,18 @@ final class KisMarketResolver {
                         case "NYS" -> Market.NYSE;
                         case "AMS" -> Market.AMEX;
                         default -> {
-                            log.warn("알 수 없는 해외 거래소 코드: {}", exchCode);
+                            log.warn(
+                                    "알 수 없는 해외 거래소 코드 — symbol={} 종목 드롭: exchCode={}",
+                                    symbol,
+                                    exchCode);
                             yield null;
                         }
                     };
             default -> {
-                log.warn("알 수 없는 시장 코드: {}", fidMrktClsCode);
+                log.warn(
+                        "알 수 없는 시장 코드 — symbol={} 종목 드롭: fidMrktClsCode={}",
+                        symbol,
+                        fidMrktClsCode);
                 yield null;
             }
         };

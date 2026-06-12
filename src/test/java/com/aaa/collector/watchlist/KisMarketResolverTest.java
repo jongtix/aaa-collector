@@ -17,25 +17,25 @@ class KisMarketResolverTest {
         @Test
         @DisplayName("J → KOSPI")
         void resolve_J_returnsKospi() {
-            assertThat(KisMarketResolver.resolve("J", "KRX")).isEqualTo(Market.KOSPI);
+            assertThat(KisMarketResolver.resolve("J", "KRX", "005930")).isEqualTo(Market.KOSPI);
         }
 
         @Test
         @DisplayName("UN → KOSDAQ")
         void resolve_UN_returnsKosdaq() {
-            assertThat(KisMarketResolver.resolve("UN", "KRX")).isEqualTo(Market.KOSDAQ);
+            assertThat(KisMarketResolver.resolve("UN", "KRX", "005930")).isEqualTo(Market.KOSDAQ);
         }
 
         @Test
         @DisplayName("U → KRX (한국 지수)")
         void resolve_U_returnsKrx() {
-            assertThat(KisMarketResolver.resolve("U", "KRX")).isEqualTo(Market.KRX);
+            assertThat(KisMarketResolver.resolve("U", "KRX", "005930")).isEqualTo(Market.KRX);
         }
 
         @Test
         @DisplayName("N → US (미국 지수)")
         void resolve_N_returnsUs() {
-            assertThat(KisMarketResolver.resolve("N", "KRX")).isEqualTo(Market.US);
+            assertThat(KisMarketResolver.resolve("N", "KRX", "005930")).isEqualTo(Market.US);
         }
     }
 
@@ -46,25 +46,25 @@ class KisMarketResolverTest {
         @Test
         @DisplayName("FS + NAS → NASDAQ")
         void resolve_FS_NAS_returnsNasdaq() {
-            assertThat(KisMarketResolver.resolve("FS", "NAS")).isEqualTo(Market.NASDAQ);
+            assertThat(KisMarketResolver.resolve("FS", "NAS", "AAPL")).isEqualTo(Market.NASDAQ);
         }
 
         @Test
         @DisplayName("FS + NYS → NYSE")
         void resolve_FS_NYS_returnsNyse() {
-            assertThat(KisMarketResolver.resolve("FS", "NYS")).isEqualTo(Market.NYSE);
+            assertThat(KisMarketResolver.resolve("FS", "NYS", "AAPL")).isEqualTo(Market.NYSE);
         }
 
         @Test
         @DisplayName("FS + AMS → AMEX")
         void resolve_FS_AMS_returnsAmex() {
-            assertThat(KisMarketResolver.resolve("FS", "AMS")).isEqualTo(Market.AMEX);
+            assertThat(KisMarketResolver.resolve("FS", "AMS", "AAPL")).isEqualTo(Market.AMEX);
         }
 
         @Test
         @DisplayName("FS + 알 수 없는 거래소 → null")
         void resolve_FS_unknownExch_returnsNull() {
-            assertThat(KisMarketResolver.resolve("FS", "TSE")).isNull();
+            assertThat(KisMarketResolver.resolve("FS", "TSE", "UNKNOWN")).isNull();
         }
     }
 
@@ -75,7 +75,7 @@ class KisMarketResolverTest {
         @Test
         @DisplayName("알 수 없는 시장 코드 → null")
         void resolve_unknown_returnsNull() {
-            assertThat(KisMarketResolver.resolve("Z", "UNK")).isNull();
+            assertThat(KisMarketResolver.resolve("Z", "UNK", "UNKNOWN")).isNull();
         }
     }
 }

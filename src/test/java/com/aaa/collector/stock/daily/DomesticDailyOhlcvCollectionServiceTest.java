@@ -169,7 +169,7 @@ class DomesticDailyOhlcvCollectionServiceTest {
                             anyString(),
                             eq(KisDailyOhlcvResponse.class),
                             eq("005930")))
-                    .thenReturn(BatchResult.skip("005930"));
+                    .thenReturn(BatchResult.skip("005930", "테스트 skip"));
 
             // Act
             CollectionResult result = service.collect(LocalDate.of(2026, 6, 5));
@@ -226,7 +226,7 @@ class DomesticDailyOhlcvCollectionServiceTest {
                             anyString(),
                             eq(KisDailyOhlcvResponse.class),
                             eq("000660")))
-                    .thenReturn(BatchResult.skip("000660"));
+                    .thenReturn(BatchResult.skip("000660", "테스트 skip"));
 
             // Act
             CollectionResult result = service.collect(LocalDate.of(2026, 6, 5));

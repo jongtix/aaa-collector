@@ -169,7 +169,9 @@ public class WatchlistSyncService {
 
     private ResolveResult resolveOne(
             KisStockListByGroupResponse.Stock stock, KisAccountCredential credential) {
-        Market market = KisMarketResolver.resolve(stock.fidMrktClsCode(), stock.exchCode());
+        Market market =
+                KisMarketResolver.resolve(
+                        stock.fidMrktClsCode(), stock.exchCode(), stock.jongCode());
         if (market == null) {
             return new ResolveResult.Skipped(
                     "알 수 없는 마켓: fid=" + stock.fidMrktClsCode() + ", exch=" + stock.exchCode());
