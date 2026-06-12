@@ -48,3 +48,6 @@ docs/review/
 
 # Spring Initializr
 HELP.md
+
+# MoAI local artifacts (hook-generated session state, etc.) — not tracked in service repo
+.moai/
