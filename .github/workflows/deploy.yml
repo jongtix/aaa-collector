@@ -85,6 +85,11 @@ jobs:
         # 컨테이너 헬스체크 통과까지 최대 3분 대기 (JVM cold start + healthcheck interval 포함)
         run: docker compose --project-directory "$AAA_INFRA_DIR" up -d --wait --wait-timeout 180 collector
 
+      - name: Prune dangling images
+        # 배포 성공 시에만 직전 latest 이미지(dangling) 정리. 롤백은 GHCR에서 다이제스트로 재-pull하므로 로컬 캐시와 무관.
+        if: success()
+        run: docker image prune -f
+
       - name: Rollback on failure
         id: rollback
         if: failure() && steps.prev.outputs.prev_digest != '' && steps.migration_check.outputs.has_migrations == 'false'
