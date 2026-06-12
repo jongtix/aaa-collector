@@ -91,7 +91,10 @@ public class WatchlistSyncService {
                                 kisRateLimiter.consume();
                             } catch (InterruptedException ex) {
                                 Thread.currentThread().interrupt();
-                                log.warn("rate limit 대기 중 인터럽트 — group={}", group.interGrpCode());
+                                log.warn(
+                                        "rate limit 대기 중 인터럽트 — group={}({})",
+                                        group.interGrpName(),
+                                        group.interGrpCode());
                                 failedGroupCount.incrementAndGet();
                                 return List.<KisStockListByGroupResponse.Stock>of();
                             }
@@ -106,7 +109,8 @@ public class WatchlistSyncService {
                 .exceptionally(
                         ex -> {
                             log.warn(
-                                    "그룹 {} 조회 실패, skip — {}",
+                                    "그룹 {}({}) 조회 실패, skip — {}",
+                                    group.interGrpName(),
                                     group.interGrpCode(),
                                     ex.getMessage());
                             failedGroupCount.incrementAndGet();
