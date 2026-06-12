@@ -1,5 +1,6 @@
 package com.aaa.collector.stock.grade;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.eq;
@@ -23,6 +24,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -165,6 +167,28 @@ class GradeClassificationServiceTest {
             service.classify();
 
             verify(stockGradePersistService, never()).persistSingle(any(), any(), any());
+        }
+    }
+
+    @Nested
+    @DisplayName("상장일 미상 — 장기 상장 fallback")
+    class MissingListedDateFallback {
+
+        @Test
+        @DisplayName("listedDate=null — skip 없이 분류, listedYears는 7년↑ fallback (JPM·GS 케이스)")
+        void classify_nullListedDate_treatedAsEstablished() {
+            Stock stock = buildStock("JPM", Market.NYSE, null);
+            when(stockRepository.findAllActive()).thenReturn(List.of(stock));
+            when(gradeClassifier.classify(any())).thenReturn(Grade.A);
+
+            service.classify();
+
+            // null listedDate가 예외로 skip되지 않고, 장기 상장(7년↑)으로 간주되어 분류됨
+            ArgumentCaptor<GradeInput> captor = ArgumentCaptor.forClass(GradeInput.class);
+            verify(gradeClassifier).classify(captor.capture());
+            assertThat(captor.getValue().listedYears()).isGreaterThanOrEqualTo(7.0);
+            verify(stockGradePersistService)
+                    .persistSingle(eq(stock), eq(Grade.A), any(ZonedDateTime.class));
         }
     }
 }
