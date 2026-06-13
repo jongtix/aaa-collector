@@ -12,25 +12,33 @@ import org.springframework.transaction.annotation.Transactional;
 /** 일봉 시세 리포지토리. */
 public interface DailyOhlcvRepository extends JpaRepository<DailyOhlcv, Long> {
 
+    // @MX:WARN: [AUTO] 권한 민감 네이티브 SQL — 반드시 INSERT IGNORE 유지 (ON DUPLICATE KEY UPDATE 금지)
+    // @MX:REASON: [AUTO] collector는 daily_ohlcv에 UPDATE 권한이 없어 ON DUPLICATE KEY UPDATE 사용 시 중복 충돌에서
+    // SQL 1142 발생 (ADR-025, SPEC-COLLECTOR-OHLCV-001)
     /**
-     * 일봉 1건을 멱등 삽입한다 (REQ-BATCH-031, -032).
+     * 일봉 1건을 멱등 삽입한다 (REQ-BATCH-031, -032, REQ-OHLCV1-001, -002, -020).
      *
-     * <p>{@code ON DUPLICATE KEY UPDATE id=id} 는 기존 행을 변경하지 않는 no-op upsert 패턴이다. Unique Key {@code
-     * uk_daily_ohlcv (stock_id, trade_date)} 충돌 시 행 수가 증가하지 않으며, UPDATE도 발생하지 않는다 (TECHSPEC 4절 시계열
-     * 규칙).
+     * <p>{@code INSERT IGNORE}는 Unique Key {@code uk_daily_ohlcv (stock_id, trade_date)} 충돌 시 해당 행을
+     * 무시하여 행 수가 증가하지 않으며 UPDATE를 발생시키지 않는다.
      *
-     * <p>네이티브 MySQL 쿼리 — H2 환경에서는 동작하지 않으므로 반드시 MySQL Testcontainer 기반 통합 테스트로 검증한다.
+     * <p>기존 {@code ON DUPLICATE KEY UPDATE id = id}는 no-op이라도 MySQL이 중복 충돌 시 UPDATE 경로를 밟아 SET 대상
+     * 컬럼의 UPDATE 권한을 검사하므로, UPDATE 권한이 없는 {@code collector} 사용자에게 SQL 1142({@code UPDATE command
+     * denied})를 유발했다(ADR-025 §맥락 1).
+     *
+     * <p>{@code INSERT IGNORE}는 UPDATE 권한을 요구하지 않아 {@code collector} 최소 권한 (SELECT, INSERT)을
+     * 유지한다(TECHSPEC §4 시계열 테이블 원칙).
+     *
+     * <p>네이티브 MySQL 쿼리 — H2 미동작, 반드시 MySQL Testcontainer 통합 테스트로 검증.
      */
     @Transactional
     @Modifying
     @Query(
             value =
                     """
-                    INSERT INTO daily_ohlcv
+                    INSERT IGNORE INTO daily_ohlcv
                         (stock_id, trade_date, open_price, high_price, low_price, close_price, volume, trading_value, created_at, updated_at)
                     VALUES
                         (:stockId, :tradeDate, :openPrice, :highPrice, :lowPrice, :closePrice, :volume, :tradingValue, NOW(), NOW())
-                    ON DUPLICATE KEY UPDATE id = id
                     """,
             nativeQuery = true)
     void insertIgnoreDuplicate(
