@@ -10,7 +10,6 @@ import com.aaa.collector.stock.StockListService;
 import com.aaa.collector.stock.StockRepository;
 import com.aaa.collector.stock.enums.Market;
 import com.aaa.collector.stock.etf.EtfMetadataWriter;
-import com.aaa.collector.stock.grade.GradeClassificationService;
 import java.util.List;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -21,17 +20,17 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 /**
- * WatchlistWriter + GradeClassificationService 트리거 연결 테스트 (시나리오 1).
+ * WatchlistWriter + refreshCache/markRemoved 동작 회귀 테스트 (시나리오 6).
  *
- * <p>WatchlistWriter의 기존 테스트(WatchlistWriterTest)와 중복 없이 등급 분류 트리거 동작만 검증한다.
+ * <p>SPEC-COLLECTOR-GRADE-002: classify()는 WatchlistWriter에서 제거됨 — 이 파일은 refreshCache 유지 회귀만 검증.
+ * classify 트리거 테스트는 WatchlistSyncServiceTest로 이전되었다(시나리오 1/2/3).
  */
 @ExtendWith(MockitoExtension.class)
-@DisplayName("WatchlistWriter — GradeClassificationService 트리거 (시나리오 1)")
+@DisplayName("WatchlistWriter — refreshCache 회귀 (시나리오 6, SPEC-COLLECTOR-GRADE-002)")
 class WatchlistWriterGradeTest {
 
     @Mock private StockRepository stockRepository;
     @Mock private StockListService stockListService;
-    @Mock private GradeClassificationService gradeClassificationService;
     @Mock private EtfMetadataWriter etfMetadataWriter;
 
     private WatchlistWriter watchlistWriter;
@@ -40,11 +39,8 @@ class WatchlistWriterGradeTest {
     void setUp() {
         WatchlistEntryWriter entryWriter =
                 new WatchlistEntryWriter(stockRepository, etfMetadataWriter);
-        watchlistWriter =
-                new WatchlistWriter(
-                        stockRepository, entryWriter, stockListService, gradeClassificationService);
+        watchlistWriter = new WatchlistWriter(stockRepository, entryWriter, stockListService);
         lenient().doNothing().when(stockListService).refreshCache();
-        lenient().doNothing().when(gradeClassificationService).classify();
     }
 
     private static ResolvedStock resolvedKospi(String symbol) {
@@ -52,51 +48,27 @@ class WatchlistWriterGradeTest {
     }
 
     @Nested
-    @DisplayName("시나리오 1 — sync 성공 후 classify() 트리거")
-    class GradeTrigger {
+    @DisplayName("시나리오 6 — failedGroupCount==0 시 refreshCache 회귀")
+    class RefreshCacheRegression {
 
         @Test
-        @DisplayName("failedGroupCount=0 — refreshCache() 후 classify() 정확히 1회 호출")
-        void upsertAll_noGroupFailed_callsClassifyOnce() {
+        @DisplayName("failedGroupCount=0 — refreshCache() 정확히 1회 호출")
+        void upsertAll_noGroupFailed_callsRefreshCacheOnce() {
             when(stockRepository.findAllBySymbolIn(any())).thenReturn(List.of());
 
             watchlistWriter.upsertAll(List.of(resolvedKospi("005930")), 0);
 
             verify(stockListService).refreshCache();
-            verify(gradeClassificationService).classify();
         }
 
         @Test
-        @DisplayName("failedGroupCount=1 — classify() 미호출")
-        void upsertAll_oneGroupFailed_doesNotCallClassify() {
+        @DisplayName("failedGroupCount=1 — refreshCache() 미호출")
+        void upsertAll_oneGroupFailed_doesNotCallRefreshCache() {
             when(stockRepository.findAllBySymbolIn(any())).thenReturn(List.of());
 
             watchlistWriter.upsertAll(List.of(resolvedKospi("005930")), 1);
 
-            verify(gradeClassificationService, never()).classify();
-        }
-
-        @Test
-        @DisplayName("failedGroupCount=3 — classify() 미호출")
-        void upsertAll_allGroupsFailed_doesNotCallClassify() {
-            when(stockRepository.findAllBySymbolIn(any())).thenReturn(List.of());
-
-            watchlistWriter.upsertAll(List.of(resolvedKospi("005930")), 3);
-
-            verify(gradeClassificationService, never()).classify();
-        }
-
-        @Test
-        @DisplayName("classify() 예외 발생 — sync 결과에 영향 없음 (try-catch 격리)")
-        void upsertAll_classifyThrows_doesNotAffectSyncResult() {
-            when(stockRepository.findAllBySymbolIn(any())).thenReturn(List.of());
-            org.mockito.Mockito.doThrow(new RuntimeException("등급 분류 실패"))
-                    .when(gradeClassificationService)
-                    .classify();
-
-            // Act & Assert — 예외 전파 없음
-            org.junit.jupiter.api.Assertions.assertDoesNotThrow(
-                    () -> watchlistWriter.upsertAll(List.of(resolvedKospi("005930")), 0));
+            verify(stockListService, never()).refreshCache();
         }
     }
 }

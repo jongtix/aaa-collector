@@ -1,6 +1,7 @@
 package com.aaa.collector.watchlist;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
@@ -20,6 +21,7 @@ import com.aaa.collector.kis.token.KisTokenIssueException;
 import com.aaa.collector.stock.StockAssetTypeClassifier;
 import com.aaa.collector.stock.enums.AssetType;
 import com.aaa.collector.stock.enums.Market;
+import com.aaa.collector.stock.grade.GradeClassificationService;
 import java.time.format.DateTimeParseException;
 import java.util.List;
 import java.util.Map;
@@ -47,6 +49,7 @@ class WatchlistSyncServiceTest {
     @Mock private StockAssetTypeClassifier stockAssetTypeClassifier;
     @Mock private HealthyKeySelector healthyKeySelector;
     @Mock private BatchRestExecutor batchRestExecutor;
+    @Mock private GradeClassificationService gradeClassificationService;
     @InjectMocks private WatchlistSyncService watchlistSyncService;
 
     private static final List<KisAccountCredential> FIVE_HEALTHY_KEYS =
@@ -607,6 +610,59 @@ class WatchlistSyncServiceTest {
             verify(watchlistWriter).upsertAll(captor.capture(), eq(1));
             assertThat(captor.getValue()).hasSize(1);
             assertThat(captor.getValue().getFirst().symbol()).isIn("005930", "000660");
+        }
+    }
+
+    @Nested
+    @DisplayName("시나리오 1/2/3 — classify 트리거 및 예외 격리 (SPEC-COLLECTOR-GRADE-002)")
+    class ClassifyTrigger {
+
+        @Test
+        @DisplayName("시나리오 1: failedGroupCount>=1 — sync 후 classify 정확히 1회 호출")
+        void sync_partialGroupFailure_classifyCalledOnce() {
+            // Arrange: 일부 그룹 실패(failedGroupCount=1)
+            KisGroupListResponse.Group group1 =
+                    new KisGroupListResponse.Group("001", "그룹1", "1", "1");
+            KisGroupListResponse.Group group2 =
+                    new KisGroupListResponse.Group("002", "그룹2", "1", "2");
+            KisStockListByGroupResponse.Stock item =
+                    new KisStockListByGroupResponse.Stock("J", "005930", "KRX", "삼성전자");
+            when(kisWatchlistClient.fetchGroups()).thenReturn(List.of(group1, group2));
+            when(kisWatchlistClient.fetchStocksByGroup("001"))
+                    .thenThrow(new RuntimeException("rate-limit"));
+            when(kisWatchlistClient.fetchStocksByGroup("002")).thenReturn(List.of(item));
+            when(kisStockInfoClient.fetchStockInfo(any(), any(), any()))
+                    .thenReturn(new StockInfo(null, null, null));
+
+            // Act
+            watchlistSyncService.sync();
+
+            // Assert: failedGroupCount=1이어도 classify 1회 호출
+            verify(gradeClassificationService).classify();
+        }
+
+        @Test
+        @DisplayName("시나리오 2: 전면 실패(빈 stocks, upsertAll early-return) — classify 여전히 호출")
+        void sync_totalGroupFailure_classifyStillCalled() {
+            // Arrange: 모든 그룹 조회 실패 → resolvedStocks 빈 목록 → upsertAll early-return
+            when(kisWatchlistClient.fetchGroups()).thenReturn(List.of());
+
+            // Act
+            watchlistSyncService.sync();
+
+            // Assert: early-return과 무관하게 classify 호출
+            verify(gradeClassificationService).classify();
+        }
+
+        @Test
+        @DisplayName("시나리오 3: classify 예외 — sync 미실패(예외 전파 없음)")
+        void sync_classifyThrows_syncDoesNotThrow() {
+            // Arrange
+            when(kisWatchlistClient.fetchGroups()).thenReturn(List.of());
+            doThrow(new RuntimeException("등급 분류 실패")).when(gradeClassificationService).classify();
+
+            // Act & Assert
+            assertThatCode(watchlistSyncService::sync).doesNotThrowAnyException();
         }
     }
 

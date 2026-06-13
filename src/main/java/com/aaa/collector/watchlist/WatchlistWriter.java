@@ -3,7 +3,6 @@ package com.aaa.collector.watchlist;
 import com.aaa.collector.stock.Stock;
 import com.aaa.collector.stock.StockListService;
 import com.aaa.collector.stock.StockRepository;
-import com.aaa.collector.stock.grade.GradeClassificationService;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
@@ -24,7 +23,6 @@ public class WatchlistWriter {
     private final StockRepository stockRepository;
     private final WatchlistEntryWriter entryWriter;
     private final StockListService stockListService;
-    private final GradeClassificationService gradeClassificationService;
 
     /** 수집된 종목 목록을 {@code stocks} 테이블에 upsert한다. */
     @SuppressWarnings("PMD.AvoidCatchingGenericException") // 캐시 갱신 예외를 포착해 sync 계속 진행
@@ -76,17 +74,13 @@ public class WatchlistWriter {
                 counter.removed,
                 counter.unchanged);
 
-        // @MX:NOTE: [AUTO] 캐시 갱신 조건(failedGroupCount==0)이 markRemoved와 동일
+        // @MX:NOTE: [AUTO] refreshCache 갱신 조건(failedGroupCount==0)이 markRemoved와 동일.
+        // classify는 SPEC-COLLECTOR-GRADE-002로 WatchlistSyncService.sync() 오케스트레이터로 이동.
         if (failedGroupCount == 0) {
             try {
                 stockListService.refreshCache();
             } catch (Exception e) {
                 log.warn("관심종목 캐시 갱신 실패 — sync 계속 진행", e);
-            }
-            try {
-                gradeClassificationService.classify();
-            } catch (Exception e) {
-                log.warn("종목 등급 분류 실패 — sync 결과에 영향 없음", e);
             }
         }
     }

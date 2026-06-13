@@ -16,7 +16,6 @@ import com.aaa.collector.stock.StockRepository;
 import com.aaa.collector.stock.enums.AssetType;
 import com.aaa.collector.stock.enums.Market;
 import com.aaa.collector.stock.etf.EtfMetaInfo;
-import com.aaa.collector.stock.grade.GradeClassificationService;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
@@ -37,7 +36,6 @@ class WatchlistWriterTest {
 
     @Mock private StockRepository stockRepository;
     @Mock private StockListService stockListService;
-    @Mock private GradeClassificationService gradeClassificationService;
     @Mock private com.aaa.collector.stock.etf.EtfMetadataWriter etfMetadataWriter;
     private WatchlistWriter watchlistWriter;
 
@@ -45,12 +43,9 @@ class WatchlistWriterTest {
     void setUp() {
         WatchlistEntryWriter entryWriter =
                 new WatchlistEntryWriter(stockRepository, etfMetadataWriter);
-        watchlistWriter =
-                new WatchlistWriter(
-                        stockRepository, entryWriter, stockListService, gradeClassificationService);
+        watchlistWriter = new WatchlistWriter(stockRepository, entryWriter, stockListService);
         // 캐시 갱신 경로(refreshCache)는 이 테스트의 관심 범위 밖이므로 lenient 스텁 처리
         lenient().doNothing().when(stockListService).refreshCache();
-        lenient().doNothing().when(gradeClassificationService).classify();
     }
 
     private static Stock stockWith(

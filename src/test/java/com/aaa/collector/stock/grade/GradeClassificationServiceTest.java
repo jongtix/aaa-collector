@@ -1,6 +1,7 @@
 package com.aaa.collector.stock.grade;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.eq;
@@ -10,7 +11,9 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.aaa.collector.kis.ranking.KisDomesticRankingClient;
+import com.aaa.collector.kis.ranking.KisDomesticRankingResponse;
 import com.aaa.collector.kis.ranking.KisOverseasRankingClient;
+import com.aaa.collector.kis.ranking.KisOverseasRankingResponse;
 import com.aaa.collector.stock.Stock;
 import com.aaa.collector.stock.StockRepository;
 import com.aaa.collector.stock.enums.AssetType;
@@ -58,9 +61,15 @@ class GradeClassificationServiceTest {
 
     @BeforeEach
     void setUpDefaults() {
-        // 기본: 빈 순위 응답, 빈 백분위 계산 (lenient — 일부 테스트에서 미사용)
-        lenient().when(domesticRankingClient.fetchRanking()).thenReturn(List.of());
-        lenient().when(overseasRankingClient.fetchRanking()).thenReturn(List.of());
+        // 기본: 비어있지 않은 순위 응답(withhold 미발동) + 빈 백분위 계산 (lenient — 일부 테스트에서 미사용)
+        // 분류 보류 시나리오(시나리오 4/5/7) 테스트는 각 테스트 내에서 빈/throw로 재스텁한다.
+        lenient()
+                .when(domesticRankingClient.fetchRanking())
+                .thenReturn(
+                        List.of(new KisDomesticRankingResponse.RankedStock("DUMMY", "1", "더미")));
+        lenient()
+                .when(overseasRankingClient.fetchRanking())
+                .thenReturn(List.of(new KisOverseasRankingResponse.RankedStock("DUMMY", "1")));
         lenient().when(percentileCalculator.calculate(anyList())).thenReturn(Map.of());
         lenient().when(gradeClassifier.classify(any())).thenReturn(Grade.C);
     }
@@ -167,6 +176,123 @@ class GradeClassificationServiceTest {
             service.classify();
 
             verify(stockGradePersistService, never()).persistSingle(any(), any(), any());
+        }
+    }
+
+    @Nested
+    @DisplayName("시나리오 4/5/7 — 순위 데이터 결손 분류 보류 (SPEC-COLLECTOR-GRADE-002 REQ-004)")
+    class RankingDeficitWithhold {
+
+        @Test
+        @DisplayName("시나리오 4: warm + KRX fetchRanking 빈 결과 — KRX 종목 persistSingle 미호출(보류)")
+        void classify_warmKrxRankingEmpty_krxStockNotPersisted() {
+            // Arrange: 이전 등급 행이 존재하는 warm 상태, KRX 순위 빈 결과
+            Stock krxStock = buildStock("005930", Market.KOSPI, LocalDate.of(2010, 1, 1));
+            when(stockRepository.findAllActive()).thenReturn(List.of(krxStock));
+            when(domesticRankingClient.fetchRanking()).thenReturn(List.of()); // 빈 결과 = 시장 결손
+
+            // Act
+            service.classify();
+
+            // Assert: persistSingle 미호출 — 이전 등급 유지(보류)
+            verify(stockGradePersistService, never()).persistSingle(any(), any(), any());
+        }
+
+        @Test
+        @DisplayName("시나리오 5: US fetchRanking throw + KRX 정상 — US 보류, KRX 정상 분류·영속화")
+        void classify_usRankingThrows_usWithheldKrxPersisted() {
+            // Arrange
+            Stock krxStock = buildStock("005930", Market.KOSPI, LocalDate.of(2010, 1, 1));
+            Stock usStock = buildStock("AAPL", Market.NYSE, LocalDate.of(1980, 1, 1));
+            when(stockRepository.findAllActive()).thenReturn(List.of(krxStock, usStock));
+
+            // KRX 순위 정상(비어있지 않음)
+            KisDomesticRankingResponse.RankedStock krxRanked =
+                    new KisDomesticRankingResponse.RankedStock("005930", "1", "삼성전자");
+            when(domesticRankingClient.fetchRanking()).thenReturn(List.of(krxRanked));
+            when(percentileCalculator.calculate(anyList())).thenReturn(Map.of("005930", 10.0));
+            // US 순위 throw
+            when(overseasRankingClient.fetchRanking()).thenThrow(new RuntimeException("US 순위 실패"));
+            when(gradeClassifier.classify(any())).thenReturn(Grade.A);
+
+            // Act
+            service.classify();
+
+            // Assert: KRX 종목은 분류·영속화, US 종목은 persistSingle 미호출
+            verify(stockGradePersistService).persistSingle(eq(krxStock), any(), any());
+            verify(stockGradePersistService, never()).persistSingle(eq(usStock), any(), any());
+        }
+
+        @Test
+        @DisplayName("시나리오 7: cold-start(0행) + KRX 순위 공백 — classify crash 없이 종료, persistSingle 미호출")
+        void classify_coldStartKrxRankingEmpty_noExceptionNoPersist() {
+            // Arrange: stock_grades 0행 cold-start, KRX 순위 공백
+            Stock krxStock = buildStock("005930", Market.KOSPI, LocalDate.of(2010, 1, 1));
+            when(stockRepository.findAllActive()).thenReturn(List.of(krxStock));
+            when(domesticRankingClient.fetchRanking()).thenReturn(List.of());
+
+            // Act & Assert: crash 없이 종료
+            assertThatCode(service::classify).doesNotThrowAnyException();
+            verify(stockGradePersistService, never()).persistSingle(any(), any(), any());
+        }
+
+        @Test
+        @DisplayName("시나리오 7 self-heal: 이후 순위 API 복구 시 persistSingle A/B로 호출")
+        void classify_afterRankingRecovery_persistSingleCalledWithGrade() {
+            // Arrange: 복구된 KRX 순위 데이터
+            Stock krxStock = buildStock("005930", Market.KOSPI, LocalDate.of(2010, 1, 1));
+            when(stockRepository.findAllActive()).thenReturn(List.of(krxStock));
+            KisDomesticRankingResponse.RankedStock ranked =
+                    new KisDomesticRankingResponse.RankedStock("005930", "1", "삼성전자");
+            when(domesticRankingClient.fetchRanking()).thenReturn(List.of(ranked));
+            when(percentileCalculator.calculate(anyList())).thenReturn(Map.of("005930", 5.0));
+            when(gradeClassifier.classify(any())).thenReturn(Grade.A);
+
+            // Act
+            service.classify();
+
+            // Assert: 순위 복구 후 A 등급으로 영속화(self-heal)
+            verify(stockGradePersistService).persistSingle(eq(krxStock), eq(Grade.A), any());
+        }
+
+        @Test
+        @DisplayName("Edge: 순위 정상 + 특정 종목만 순위권 밖 — 100.0 fallback(C) 정상 동작")
+        void classify_rankingNonEmptyButStockAbsent_fallbackCBehavior() {
+            // Arrange: 순위 데이터 존재하나 005930은 순위에 없음 → getOrDefault 100.0 → C
+            Stock krxStock = buildStock("005930", Market.KOSPI, LocalDate.of(2010, 1, 1));
+            when(stockRepository.findAllActive()).thenReturn(List.of(krxStock));
+            // 비어있지 않은 순위 데이터(다른 종목 존재)
+            KisDomesticRankingResponse.RankedStock otherRanked =
+                    new KisDomesticRankingResponse.RankedStock("000660", "1", "SK하이닉스");
+            when(domesticRankingClient.fetchRanking()).thenReturn(List.of(otherRanked));
+            when(percentileCalculator.calculate(anyList())).thenReturn(Map.of("000660", 5.0));
+            when(gradeClassifier.classify(any())).thenReturn(Grade.C);
+
+            // Act
+            service.classify();
+
+            // Assert: 분류 보류 아님 — persistSingle 정상 호출(C)
+            verify(stockGradePersistService).persistSingle(eq(krxStock), eq(Grade.C), any());
+        }
+
+        @Test
+        @DisplayName("Edge: KRX 종목만 존재, US 순위 빈 결과 — US 보류 판정 미발동(US 종목 없음)")
+        void classify_krxOnlyWithUsEmpty_noUsWithhold() {
+            // Arrange: KRX 종목만, US 순위는 빈 결과지만 US 종목이 없으므로 보류 판정 무관
+            Stock krxStock = buildStock("005930", Market.KOSPI, LocalDate.of(2010, 1, 1));
+            when(stockRepository.findAllActive()).thenReturn(List.of(krxStock));
+            KisDomesticRankingResponse.RankedStock ranked =
+                    new KisDomesticRankingResponse.RankedStock("005930", "1", "삼성전자");
+            when(domesticRankingClient.fetchRanking()).thenReturn(List.of(ranked));
+            when(percentileCalculator.calculate(anyList())).thenReturn(Map.of("005930", 10.0));
+            when(gradeClassifier.classify(any())).thenReturn(Grade.B);
+
+            // Act
+            service.classify();
+
+            // Assert: KRX 종목 정상 분류, US overseasRankingClient는 호출되지 않음
+            verify(stockGradePersistService).persistSingle(eq(krxStock), eq(Grade.B), any());
+            verify(overseasRankingClient, never()).fetchRanking();
         }
     }
 

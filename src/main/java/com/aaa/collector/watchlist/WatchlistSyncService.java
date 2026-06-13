@@ -11,6 +11,7 @@ import com.aaa.collector.kis.token.KisTokenIssueException;
 import com.aaa.collector.stock.StockAssetTypeClassifier;
 import com.aaa.collector.stock.enums.AssetType;
 import com.aaa.collector.stock.enums.Market;
+import com.aaa.collector.stock.grade.GradeClassificationService;
 import java.net.URI;
 import java.time.format.DateTimeParseException;
 import java.util.Collection;
@@ -39,7 +40,10 @@ import org.springframework.web.util.UriBuilder;
 @Slf4j
 @Service
 @RequiredArgsConstructor
-@SuppressWarnings("PMD.CouplingBetweenObjects") // 동기화 오케스트레이터 특성상 다수 협력 객체 의존 불가피
+@SuppressWarnings({
+    "PMD.CouplingBetweenObjects", // 동기화 오케스트레이터 특성상 다수 협력 객체 의존 불가피
+    "PMD.ExcessiveImports" // 오케스트레이터 역할상 다수 import 불가피 — 후속 SPEC에서 내부 로직 분리 예정
+})
 public class WatchlistSyncService {
 
     private final KisRateLimiter kisRateLimiter;
@@ -49,8 +53,10 @@ public class WatchlistSyncService {
     private final StockAssetTypeClassifier stockAssetTypeClassifier;
     private final HealthyKeySelector healthyKeySelector;
     private final BatchRestExecutor batchRestExecutor;
+    private final GradeClassificationService gradeClassificationService;
 
     /** KIS 관심종목 전체를 조회하여 {@code stocks} 테이블에 upsert한다. */
+    @SuppressWarnings("PMD.AvoidCatchingGenericException") // classify 예외를 포착해 sync 계속 진행
     public void sync() {
         List<KisGroupListResponse.Group> groups = kisWatchlistClient.fetchGroups();
         log.info("관심 그룹 조회 완료 — {}개 그룹", groups.size());
@@ -62,6 +68,14 @@ public class WatchlistSyncService {
 
         List<ResolvedStock> resolved = resolveStocks(rawStocks);
         watchlistWriter.upsertAll(resolved, failedGroupCount.get());
+
+        // @MX:NOTE: [AUTO] classify는 failedGroupCount와 무관하게 항상 실행.
+        // sync 부분 실패(rate-limit 등)와 등급 분류는 독립 — classify 실패 ≠ sync 실패(REQ-001/002).
+        try {
+            gradeClassificationService.classify();
+        } catch (Exception e) {
+            log.warn("종목 등급 분류 실패 — sync 결과에 영향 없음", e);
+        }
     }
 
     private List<KisStockListByGroupResponse.Stock> collectUniqueStocks(
