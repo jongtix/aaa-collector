@@ -28,7 +28,7 @@ import org.springframework.stereotype.Component;
 // @MX:ANCHOR: [AUTO] ②단계 헬스 키 필터 진입점 — 키별 병렬 1회 토큰 확보로 건강 키 집합 산출
 // @MX:REASON: SPEC-COLLECTOR-WLSYNC-006 REQ-WLSYNC-130~134 — 죽은 키 제외로 종목당 Lazy 재시도 폭주 차단, 병렬 비용
 // bound
-// @MX:SPEC: SPEC-COLLECTOR-WLSYNC-006
+// @MX:SPEC: SPEC-COLLECTOR-WLSYNC-006, SPEC-COLLECTOR-KEYDIST-001
 public class HealthyKeySelector {
 
     private final KisProperties kisProperties;

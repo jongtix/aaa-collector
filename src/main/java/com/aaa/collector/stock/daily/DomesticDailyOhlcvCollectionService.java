@@ -2,8 +2,8 @@ package com.aaa.collector.stock.daily;
 
 import com.aaa.collector.kis.batch.BatchRestExecutor;
 import com.aaa.collector.kis.batch.BatchResult;
+import com.aaa.collector.kis.batch.HealthyKeyRoundRobinDistributor;
 import com.aaa.collector.kis.token.KisAccountCredential;
-import com.aaa.collector.kis.token.KisProperties;
 import com.aaa.collector.kis.token.KisTokenIssueException;
 import com.aaa.collector.stock.DailyOhlcvRepository;
 import com.aaa.collector.stock.Stock;
@@ -12,6 +12,7 @@ import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -25,7 +26,11 @@ import org.springframework.stereotype.Service;
  * <p>활성 관심종목({@code watchlist_removed_at IS NULL})을 대상으로 KIS {@code FHKST03010100} API에서 최근 5거래일
  * 일봉을 수집하여 {@code daily_ohlcv}에 멱등 저장한다.
  *
- * <p>키 분산: 호출 순서에 따라 accounts() 목록을 라운드로빈으로 순환(단순 인덱스 나머지).
+ * <p>키 분산: {@link HealthyKeyRoundRobinDistributor}가 건강 키 집합을 산출하고, 결정적 라운드로빈으로 종목→키를 할당한다
+ * (SPEC-COLLECTOR-KEYDIST-001 REQ-KEYDIST-001,-002,-003,-010).
+ *
+ * <p>모든 키 죽음(REQ-KEYDIST-020, D3): distributor 반환이 빈 할당이면, per-stock 수집 호출 0회 보장, 전체 skip, ERROR 로그
+ * 1회 출력. 전체 키 폴백 없음.
  *
  * <p>실패 경로(REQ-BATCH-025): 특정 키의 token 발급 실패({@link KisTokenIssueException})는 해당 종목을 graceful
  * skip하고 skip 카운터에 집계한다. 영구 비즈니스 오류(인증·파라미터)는 전파한다(REQ-BATCH-024).
@@ -33,9 +38,10 @@ import org.springframework.stereotype.Service;
 @Slf4j
 @Service
 @RequiredArgsConstructor
-// @MX:ANCHOR: [AUTO] 국내 일봉 수집 진입점 — 5키 분산·검증·멱등 저장·skip 집계 담당
-// @MX:REASON: SPEC-COLLECTOR-BATCH-001 REQ-BATCH-030,-031,-032,-033,-025,-026
-// @MX:SPEC: SPEC-COLLECTOR-BATCH-001
+// @MX:ANCHOR: [AUTO] 국내 일봉 수집 진입점 — 건강 키 분산·검증·멱등 저장·skip 집계 담당
+// @MX:REASON: SPEC-COLLECTOR-BATCH-001 REQ-BATCH-030,-031,-032,-033,-025,-026,
+// SPEC-COLLECTOR-KEYDIST-001 REQ-KEYDIST-010,-020
+// @MX:SPEC: SPEC-COLLECTOR-BATCH-001, SPEC-COLLECTOR-KEYDIST-001
 public class DomesticDailyOhlcvCollectionService {
 
     /**
@@ -55,8 +61,8 @@ public class DomesticDailyOhlcvCollectionService {
 
     private final StockRepository stockRepository;
     private final DailyOhlcvRepository dailyOhlcvRepository;
-    private final KisProperties kisProperties;
     private final BatchRestExecutor batchRestExecutor;
+    private final HealthyKeyRoundRobinDistributor distributor;
 
     /**
      * 국내 일봉 수집을 실행하고 집계 결과를 반환한다.
@@ -66,32 +72,48 @@ public class DomesticDailyOhlcvCollectionService {
      */
     public CollectionResult collect(LocalDate today) {
         List<Stock> activeStocks = stockRepository.findAllActive();
-        List<KisAccountCredential> accounts = kisProperties.accounts();
 
-        if (activeStocks.isEmpty() || accounts.isEmpty()) {
-            log.info(
-                    "[domestic-daily] 수집 대상 없음 — activeStocks={}, keys={}",
-                    activeStocks.size(),
-                    accounts.size());
+        if (activeStocks.isEmpty()) {
+            log.info("[domestic-daily] 수집 대상 없음 — activeStocks=0");
             return new CollectionResult(0, 0, 0);
+        }
+
+        // REQ-KEYDIST-010: delegate stock→key assignment to distributor (healthy-key round-robin)
+        Map<KisAccountCredential, List<Stock>> allocation = distributor.distribute(activeStocks);
+
+        int total = activeStocks.size();
+
+        // REQ-KEYDIST-020, D3: empty allocation = all keys dead → skip-all + ERROR + no fallback
+        if (allocation.isEmpty()) {
+            log.error(
+                    "[domestic-daily] 모든 키 죽음 — per-stock 수집 0회, 전체 skip. attempted={}, succeeded=0, skipped={}",
+                    total,
+                    total);
+            return new CollectionResult(total, 0, total);
         }
 
         LocalDate fromDate = today.minusDays(LOOKBACK_CALENDAR_DAYS);
 
-        int total = activeStocks.size();
         AtomicInteger succeeded = new AtomicInteger();
         AtomicInteger skipped = new AtomicInteger();
 
         // Virtual Thread executor — each stock runs on its own VT, blocking in limiter.consume()
         // without tying up ForkJoinPool.commonPool() threads.
-        // Key assignment is done at submit time (single-threaded loop) for deterministic
-        // round-robin distribution: stock[i] → accounts.get(i % accounts.size()).
+        // Key assignment is determined by the distributor (healthy-key round-robin).
         try (ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor()) {
-            for (int i = 0; i < total; i++) {
-                Stock stock = activeStocks.get(i);
-                KisAccountCredential credential = accounts.get(i % accounts.size());
-                executor.submit(
-                        () -> collectStock(stock, credential, fromDate, today, succeeded, skipped));
+            for (Map.Entry<KisAccountCredential, List<Stock>> entry : allocation.entrySet()) {
+                KisAccountCredential credential = entry.getKey();
+                for (Stock stock : entry.getValue()) {
+                    executor.submit(
+                            () ->
+                                    collectStock(
+                                            stock,
+                                            credential,
+                                            fromDate,
+                                            today,
+                                            succeeded,
+                                            skipped));
+                }
             }
         } // close() blocks until all submitted tasks complete
 
