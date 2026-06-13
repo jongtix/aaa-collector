@@ -276,6 +276,92 @@ class GradeClassificationServiceTest {
         }
 
         @Test
+        @DisplayName(
+                "시나리오 8a: KRX fetchRanking 비어있지 않으나 모든 dataRank 파싱 불가 — KRX 종목 persistSingle 미호출(보류)")
+        void classify_krxAllEntriesUnparseable_krxWithheld() {
+            // Arrange: 비어있지 않은 KRX 응답이지만 dataRank가 모두 파싱 불가(" ", "abc")
+            Stock krxStock = buildStock("005930", Market.KOSPI, LocalDate.of(2010, 1, 1));
+            when(stockRepository.findAllActive()).thenReturn(List.of(krxStock));
+            when(domesticRankingClient.fetchRanking())
+                    .thenReturn(
+                            List.of(
+                                    new KisDomesticRankingResponse.RankedStock(
+                                            "005930", " ", "삼성전자"),
+                                    new KisDomesticRankingResponse.RankedStock(
+                                            "000660", "abc", "SK하이닉스")));
+
+            // Act
+            service.classify();
+
+            // Assert: 모든 항목 파싱 실패 → entries 공백 → 보류 → persistSingle 미호출
+            verify(stockGradePersistService, never()).persistSingle(any(), any(), any());
+        }
+
+        @Test
+        @DisplayName(
+                "시나리오 8b: US fetchRanking 비어있지 않으나 모든 rank 파싱 불가 — US 종목 persistSingle 미호출(보류)")
+        void classify_usAllEntriesUnparseable_usWithheld() {
+            // Arrange: 비어있지 않은 US 응답이지만 rank가 모두 파싱 불가
+            Stock usStock = buildStock("AAPL", Market.NYSE, LocalDate.of(1980, 1, 1));
+            when(stockRepository.findAllActive()).thenReturn(List.of(usStock));
+            when(overseasRankingClient.fetchRanking())
+                    .thenReturn(
+                            List.of(
+                                    new KisOverseasRankingResponse.RankedStock("AAPL", "N/A"),
+                                    new KisOverseasRankingResponse.RankedStock("MSFT", "???")));
+
+            // Act
+            service.classify();
+
+            // Assert: 모든 항목 파싱 실패 → entries 공백 → 보류 → persistSingle 미호출
+            verify(stockGradePersistService, never()).persistSingle(any(), any(), any());
+        }
+
+        @Test
+        @DisplayName("시나리오 8c: KRX 일부 파싱 가능 — 파싱 성공 항목으로 정상 분류")
+        void classify_krxPartiallyUnparseable_successEntryUsed() {
+            // Arrange: 일부는 파싱 불가, 일부는 파싱 가능 → 파싱 성공 항목으로 분류 진행
+            Stock krxStock = buildStock("005930", Market.KOSPI, LocalDate.of(2010, 1, 1));
+            when(stockRepository.findAllActive()).thenReturn(List.of(krxStock));
+            when(domesticRankingClient.fetchRanking())
+                    .thenReturn(
+                            List.of(
+                                    new KisDomesticRankingResponse.RankedStock(
+                                            "005930", "1", "삼성전자"),
+                                    new KisDomesticRankingResponse.RankedStock(
+                                            "000660", "abc", "SK하이닉스")));
+            when(percentileCalculator.calculate(anyList())).thenReturn(Map.of("005930", 5.0));
+            when(gradeClassifier.classify(any())).thenReturn(Grade.A);
+
+            // Act
+            service.classify();
+
+            // Assert: 파싱 성공 1건 → entries 비어있지 않음 → 정상 분류
+            verify(stockGradePersistService).persistSingle(eq(krxStock), eq(Grade.A), any());
+        }
+
+        @Test
+        @DisplayName("시나리오 8d: US 일부 파싱 가능 — 파싱 성공 항목으로 정상 분류")
+        void classify_usPartiallyUnparseable_successEntryUsed() {
+            // Arrange: 일부 파싱 불가, 일부 파싱 가능
+            Stock usStock = buildStock("AAPL", Market.NYSE, LocalDate.of(1980, 1, 1));
+            when(stockRepository.findAllActive()).thenReturn(List.of(usStock));
+            when(overseasRankingClient.fetchRanking())
+                    .thenReturn(
+                            List.of(
+                                    new KisOverseasRankingResponse.RankedStock("AAPL", "1"),
+                                    new KisOverseasRankingResponse.RankedStock("MSFT", "N/A")));
+            when(percentileCalculator.calculate(anyList())).thenReturn(Map.of("AAPL", 10.0));
+            when(gradeClassifier.classify(any())).thenReturn(Grade.A);
+
+            // Act
+            service.classify();
+
+            // Assert: 파싱 성공 1건 → entries 비어있지 않음 → 정상 분류
+            verify(stockGradePersistService).persistSingle(eq(usStock), eq(Grade.A), any());
+        }
+
+        @Test
         @DisplayName("Edge: KRX 종목만 존재, US 순위 빈 결과 — US 보류 판정 미발동(US 종목 없음)")
         void classify_krxOnlyWithUsEmpty_noUsWithhold() {
             // Arrange: KRX 종목만, US 순위는 빈 결과지만 US 종목이 없으므로 보류 판정 무관

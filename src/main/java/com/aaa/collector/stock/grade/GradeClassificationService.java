@@ -162,6 +162,11 @@ public class GradeClassificationService {
                                                 r.mkscShrnIscd(), parseRankAsValue(r.dataRank())))
                         .filter(e -> e.rankValue() > 0.0) // CR-004: 파싱 실패(0.0) 항목 제외
                         .toList();
+        if (entries.isEmpty()) {
+            // @MX:NOTE: [AUTO] 응답 공백 OR 사용 불가 데이터 — 전 종목 C 강등 방지를 위해 분류 보류(REQ-004)
+            log.warn("KRX 순위 데이터 사용 불가(전체 파싱 실패) — KRX 종목 분류 보류(REQ-004)");
+            return Optional.empty();
+        }
         return Optional.of(percentileCalculator.calculate(entries));
     }
 
@@ -196,7 +201,13 @@ public class GradeClassificationService {
                                 r ->
                                         new AdtvPercentileCalculator.RankEntry(
                                                 r.symb(), invertRank(r.rank(), ranked.size())))
+                        .filter(e -> e.rankValue() > 0.0) // 파싱 실패(0.0) 항목 제외 — KRX와 동일 처리
                         .toList();
+        if (entries.isEmpty()) {
+            // @MX:NOTE: [AUTO] 응답 공백 OR 사용 불가 데이터 — 전 종목 C 강등 방지를 위해 분류 보류(REQ-004)
+            log.warn("US 순위 데이터 사용 불가(전체 파싱 실패) — US 종목 분류 보류(REQ-004)");
+            return Optional.empty();
+        }
         return Optional.of(percentileCalculator.calculate(entries));
     }
 
