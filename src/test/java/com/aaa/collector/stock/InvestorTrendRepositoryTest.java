@@ -1,0 +1,145 @@
+package com.aaa.collector.stock;
+
+import static org.assertj.core.api.Assertions.assertThat;
+
+import com.aaa.collector.stock.enums.AssetType;
+import com.aaa.collector.stock.enums.Market;
+import java.time.LocalDate;
+import java.util.List;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Nested;
+import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
+import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.test.context.ActiveProfiles;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import org.testcontainers.containers.MySQLContainer;
+import org.testcontainers.junit.jupiter.Container;
+import org.testcontainers.junit.jupiter.Testcontainers;
+
+@SpringBootTest
+@ActiveProfiles({"test", "db-integration"})
+@Testcontainers
+@DisplayName("InvestorTrendRepository 통합 테스트 (멱등 upsert)")
+class InvestorTrendRepositoryTest {
+
+    @Container @ServiceConnection
+    static final MySQLContainer<?> MYSQL = new MySQLContainer<>("mysql:8.4");
+
+    @MockitoBean
+    @SuppressWarnings("unused")
+    private StringRedisTemplate redisTemplate;
+
+    @Autowired private InvestorTrendRepository investorTrendRepository;
+    @Autowired private StockRepository stockRepository;
+
+    private Stock savedStock(String symbol) {
+        return stockRepository.save(
+                Stock.builder()
+                        .symbol(symbol)
+                        .nameKo("테스트종목_" + symbol)
+                        .market(Market.KOSPI)
+                        .assetType(AssetType.STOCK)
+                        .listedDate(LocalDate.of(2015, 1, 1))
+                        .build());
+    }
+
+    private void insert(Stock stock, LocalDate date, long totalTradingValue) {
+        investorTrendRepository.insertIgnoreDuplicate(
+                InvestorTrend.builder()
+                        .stock(stock)
+                        .tradeDate(date)
+                        .foreignNetQty(1000L)
+                        .institutionNetQty(2000L)
+                        .individualNetQty(3000L)
+                        .foreignNetValue(10L)
+                        .institutionNetValue(20L)
+                        .individualNetValue(30L)
+                        .totalVolume(5_000_000L)
+                        .totalTradingValue(totalTradingValue)
+                        .build());
+    }
+
+    @Nested
+    @DisplayName("insertIgnoreDuplicate — 멱등 삽입 (REQ-BATCH2-021, -024, AC-8)")
+    class InsertIgnoreDuplicate {
+
+        @Test
+        @DisplayName("신규 행 삽입 — 1개 저장됨")
+        void newRow_insertsOne() {
+            Stock stock = savedStock("005930");
+
+            insert(stock, LocalDate.of(2026, 6, 5), 375_000_000_000L);
+
+            assertThat(investorTrendRepository.countByStockId(stock.getId())).isEqualTo(1L);
+        }
+
+        @Test
+        @DisplayName("동일 (stock_id, trade_date) 중복 삽입 — 행 수 불변, UPDATE 미발생")
+        void duplicate_rowCountUnchanged_noUpdate() {
+            // Arrange
+            Stock stock = savedStock("000660");
+            LocalDate date = LocalDate.of(2026, 6, 5);
+            long originalValue = 375_000_000_000L;
+            insert(stock, date, originalValue);
+
+            // Act — 동일 키, 다른 값으로 재삽입
+            insert(stock, date, 999_999_999_999L);
+
+            // Assert — 행 수 1 유지 + 최초 값 보존(UPDATE 미발생)
+            assertThat(investorTrendRepository.countByStockId(stock.getId())).isEqualTo(1L);
+            InvestorTrend saved = findByStock(stock.getId());
+            assertThat(saved.getTotalTradingValue()).isEqualTo(originalValue);
+        }
+
+        @Test
+        @DisplayName("서로 다른 거래일 — 각각 독립 삽입")
+        void differentDates_insertsDistinctRows() {
+            Stock stock = savedStock("035420");
+
+            insert(stock, LocalDate.of(2026, 6, 4), 1L);
+            insert(stock, LocalDate.of(2026, 6, 5), 2L);
+
+            assertThat(investorTrendRepository.countByStockId(stock.getId())).isEqualTo(2L);
+        }
+    }
+
+    @Nested
+    @DisplayName("동시성 — 5키 병렬 동일 키 동시 기록 (REQ-BATCH2-024, AC-3 S3-5)")
+    class Concurrency {
+
+        @Test
+        @DisplayName("동일 (stock_id, trade_date)를 5스레드 동시 기록 — 중복 미생성, 예외 미중단")
+        void fiveThreadsSameKey_noDuplicate_noException() throws InterruptedException {
+            // Arrange
+            Stock stock = savedStock("051910");
+            LocalDate date = LocalDate.of(2026, 6, 5);
+
+            // Act — 5개 Virtual Thread가 동일 키를 동시에 멱등 삽입
+            try (ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor()) {
+                for (int i = 0; i < 5; i++) {
+                    long value = (i + 1) * 1000L;
+                    executor.submit(() -> insert(stock, date, value));
+                }
+                executor.shutdown();
+                assertThat(executor.awaitTermination(30, TimeUnit.SECONDS)).isTrue();
+            }
+
+            // Assert — DB uk 제약 + ON DUPLICATE KEY 원자성으로 행 수 1 유지
+            assertThat(investorTrendRepository.countByStockId(stock.getId())).isEqualTo(1L);
+        }
+    }
+
+    private InvestorTrend findByStock(Long stockId) {
+        List<InvestorTrend> rows = investorTrendRepository.findAll();
+        return rows.stream()
+                .filter(r -> r.getStock().getId().equals(stockId))
+                .findFirst()
+                .orElseThrow();
+    }
+}

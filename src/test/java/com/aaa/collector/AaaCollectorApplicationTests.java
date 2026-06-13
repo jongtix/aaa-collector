@@ -2,7 +2,10 @@ package com.aaa.collector;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.aaa.collector.stock.CreditBalanceRepository;
 import com.aaa.collector.stock.DailyOhlcvRepository;
+import com.aaa.collector.stock.InvestorTrendRepository;
+import com.aaa.collector.stock.ShortSaleDomesticRepository;
 import com.aaa.collector.stock.StockRepository;
 import com.aaa.collector.stock.etf.EtfMetadataRepository;
 import com.aaa.collector.stock.etf.EtfRepresentativeHistoryRepository;
@@ -44,6 +47,18 @@ class AaaCollectorApplicationTests {
     @MockitoBean
     @SuppressWarnings("unused")
     private StockGradeRepository stockGradeRepository;
+
+    @MockitoBean
+    @SuppressWarnings("unused")
+    private InvestorTrendRepository investorTrendRepository;
+
+    @MockitoBean
+    @SuppressWarnings("unused")
+    private ShortSaleDomesticRepository shortSaleDomesticRepository;
+
+    @MockitoBean
+    @SuppressWarnings("unused")
+    private CreditBalanceRepository creditBalanceRepository;
 
     @Test
     void contextLoads() {
