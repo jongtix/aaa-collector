@@ -2,6 +2,7 @@ package com.aaa.collector.stock;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
+import java.util.Collection;
 import java.util.List;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;
@@ -70,4 +71,20 @@ public interface DailyOhlcvRepository extends JpaRepository<DailyOhlcv, Long> {
                     + "WHERE o.stock.id IN :stockIds "
                     + "GROUP BY o.stock.id")
     List<Object[]> findAdtvByStockIds(@Param("stockIds") List<Long> stockIds);
+
+    /**
+     * 불일치 탐지용 기존 행 일괄 조회 (REQ-OHLCV2-010 — 종목·날짜 배치 읽기).
+     *
+     * <p>한 종목의 응답 날짜 집합을 IN 절 단건 쿼리로 조회하여 N+1 read를 방지한다 (ADR-025 §한계 — 탐지 비용 최소화). 읽기 전용 — {@code
+     * INSERT IGNORE} 멱등 쿼리(OHLCV-001)와 독립적으로 존재한다.
+     *
+     * <p>
+     * <!-- @MX:NOTE: [AUTO] 불일치 탐지 배치 읽기 — N+1 방지용 IN 절 일괄 조회. -->
+     * <!-- @MX:REASON: ADR-025 §한계 — 종목당 14일 규모로 비용 미미하나 단건 조회는 누적 비용 문제. -->
+     */
+    @Query(
+            "SELECT o FROM DailyOhlcv o "
+                    + "WHERE o.stock.id = :stockId AND o.tradeDate IN :tradeDates")
+    List<DailyOhlcv> findByStockIdAndTradeDateIn(
+            @Param("stockId") Long stockId, @Param("tradeDates") Collection<LocalDate> tradeDates);
 }

@@ -64,6 +64,9 @@ public class DomesticDailyOhlcvCollectionService {
     private final BatchRestExecutor batchRestExecutor;
     private final HealthyKeyRoundRobinDistributor distributor;
 
+    /** 불일치 탐지 위임 — 동일 패키지 내 격리로 CouplingBetweenObjects 임계값 유지. */
+    private final MismatchDetector mismatchDetector;
+
     /**
      * 국내 일봉 수집을 실행하고 집계 결과를 반환한다.
      *
@@ -101,20 +104,20 @@ public class DomesticDailyOhlcvCollectionService {
         // without tying up ForkJoinPool.commonPool() threads.
         // Key assignment is determined by the distributor (healthy-key round-robin).
         try (ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor()) {
-            for (Map.Entry<KisAccountCredential, List<Stock>> entry : allocation.entrySet()) {
-                KisAccountCredential credential = entry.getKey();
-                for (Stock stock : entry.getValue()) {
-                    executor.submit(
-                            () ->
-                                    collectStock(
-                                            stock,
-                                            credential,
-                                            fromDate,
-                                            today,
-                                            succeeded,
-                                            skipped));
-                }
-            }
+            allocation.forEach(
+                    (credential, stocks) -> {
+                        for (Stock stock : stocks) {
+                            executor.submit(
+                                    () ->
+                                            collectStock(
+                                                    stock,
+                                                    credential,
+                                                    fromDate,
+                                                    today,
+                                                    succeeded,
+                                                    skipped));
+                        }
+                    });
         } // close() blocks until all submitted tasks complete
 
         return new CollectionResult(total, succeeded.get(), skipped.get());
@@ -167,7 +170,7 @@ public class DomesticDailyOhlcvCollectionService {
                                 .queryParam("FID_INPUT_DATE_1", from)
                                 .queryParam("FID_INPUT_DATE_2", to)
                                 .queryParam("FID_PERIOD_DIV_CODE", "D")
-                                .queryParam("FID_ORG_ADJ_PRC", "0")
+                                .queryParam("FID_ORG_ADJ_PRC", "1")
                                 .build(),
                 "FHKST03010100",
                 KisDailyOhlcvResponse.class,
@@ -178,16 +181,24 @@ public class DomesticDailyOhlcvCollectionService {
         List<KisDailyOhlcvResponse.DailyOhlcvRow> rows =
                 response.output2().stream().filter(row -> !"Y".equals(row.modYn())).toList();
 
-        for (KisDailyOhlcvResponse.DailyOhlcvRow row : rows) {
-            if (!isValid(symbol, row)) {
-                continue;
-            }
-            insertRow(stock, row);
+        List<KisDailyOhlcvResponse.DailyOhlcvRow> validRows =
+                rows.stream().filter(row -> isValid(symbol, row)).toList();
+
+        if (validRows.isEmpty()) {
+            return;
+        }
+
+        // REQ-OHLCV2-010,-011: 불일치 탐지 위임 (N+1 방지·BigDecimal compareTo·WARN 로그·행 수정 없음).
+        mismatchDetector.detectAndLog(stock.getId(), symbol, validRows, DATE_FMT);
+
+        for (KisDailyOhlcvResponse.DailyOhlcvRow row : validRows) {
+            LocalDate tradeDate = LocalDate.parse(row.stckBsopDate(), DATE_FMT);
+            insertRow(stock, row, tradeDate);
         }
     }
 
-    private void insertRow(Stock stock, KisDailyOhlcvResponse.DailyOhlcvRow row) {
-        LocalDate tradeDate = LocalDate.parse(row.stckBsopDate(), DateTimeFormatter.BASIC_ISO_DATE);
+    private void insertRow(
+            Stock stock, KisDailyOhlcvResponse.DailyOhlcvRow row, LocalDate tradeDate) {
         BigDecimal open = new BigDecimal(row.stckOprc());
         BigDecimal high = new BigDecimal(row.stckHgpr());
         BigDecimal low = new BigDecimal(row.stckLwpr());

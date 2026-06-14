@@ -329,6 +329,107 @@ class DailyOhlcvRepositoryTest {
         }
     }
 
+    @Nested
+    @DisplayName("findByStockIdAndTradeDateIn — 불일치 탐지 배치 읽기 (REQ-OHLCV2-010)")
+    class FindByStockIdAndTradeDateIn {
+
+        @Test
+        @DisplayName("저장된 행 조회 — 날짜 집합 내 행 반환됨")
+        void findByStockIdAndTradeDateIn_storedRows_returned() {
+            // Arrange
+            Stock stock = savedStock("005930");
+            LocalDate d1 = LocalDate.of(2026, 6, 4);
+            LocalDate d2 = LocalDate.of(2026, 6, 5);
+            dailyOhlcvRepository.insertIgnoreDuplicate(
+                    stock.getId(),
+                    d1,
+                    new BigDecimal("74000"),
+                    new BigDecimal("76000"),
+                    new BigDecimal("73000"),
+                    new BigDecimal("75000"),
+                    1_000_000L,
+                    75_000_000_000L);
+            dailyOhlcvRepository.insertIgnoreDuplicate(
+                    stock.getId(),
+                    d2,
+                    new BigDecimal("76000"),
+                    new BigDecimal("78000"),
+                    new BigDecimal("75000"),
+                    new BigDecimal("77000"),
+                    1_100_000L,
+                    84_700_000_000L);
+            dailyOhlcvRepository.flush();
+
+            // Act
+            List<DailyOhlcv> result =
+                    dailyOhlcvRepository.findByStockIdAndTradeDateIn(
+                            stock.getId(), List.of(d1, d2));
+
+            // Assert
+            assertThat(result).hasSize(2);
+            assertThat(result.stream().map(DailyOhlcv::getTradeDate))
+                    .containsExactlyInAnyOrder(d1, d2);
+        }
+
+        @Test
+        @DisplayName("날짜 범위 외 행 — 반환되지 않음")
+        void findByStockIdAndTradeDateIn_dateNotInSet_notReturned() {
+            // Arrange
+            Stock stock = savedStock("000660");
+            LocalDate stored = LocalDate.of(2026, 6, 5);
+            LocalDate queried = LocalDate.of(2026, 6, 4); // different date
+            dailyOhlcvRepository.insertIgnoreDuplicate(
+                    stock.getId(),
+                    stored,
+                    new BigDecimal("50000"),
+                    new BigDecimal("52000"),
+                    new BigDecimal("49000"),
+                    new BigDecimal("51000"),
+                    500_000L,
+                    25_500_000_000L);
+            dailyOhlcvRepository.flush();
+
+            // Act
+            List<DailyOhlcv> result =
+                    dailyOhlcvRepository.findByStockIdAndTradeDateIn(
+                            stock.getId(), List.of(queried));
+
+            // Assert
+            assertThat(result).isEmpty();
+        }
+
+        @Test
+        @DisplayName("BigDecimal scale 차이 — compareTo로 동일 취급 (75000 vs 75000.0000)")
+        void findByStockIdAndTradeDateIn_bigDecimalScaleRoundTrip() {
+            // Arrange — verify DB round-trip stores as DECIMAL(18,4) = 75000.0000
+            Stock stock = savedStock("035420");
+            LocalDate date = LocalDate.of(2026, 6, 5);
+            BigDecimal rawClose = new BigDecimal("75000"); // scale=0
+
+            dailyOhlcvRepository.insertIgnoreDuplicate(
+                    stock.getId(),
+                    date,
+                    new BigDecimal("74000"),
+                    new BigDecimal("76000"),
+                    new BigDecimal("73000"),
+                    rawClose,
+                    1_000_000L,
+                    75_000_000_000L);
+            dailyOhlcvRepository.flush();
+
+            // Act
+            List<DailyOhlcv> result =
+                    dailyOhlcvRepository.findByStockIdAndTradeDateIn(stock.getId(), List.of(date));
+            DailyOhlcv stored = result.getFirst();
+
+            // Assert: DB returns scale=4 (75000.0000); compareTo(rawClose) == 0, but equals() would
+            // fail
+            assertThat(stored.getClosePrice().compareTo(rawClose)).isEqualTo(0);
+            assertThat(stored.getClosePrice().scale())
+                    .isEqualTo(4); // DB round-trip confirms scale=4
+        }
+    }
+
     /**
      * UPDATE 권한 없는 제한 사용자로 멱등 삽입 — SQL 1142 회귀 방지 (REQ-OHLCV1-010, REQ-OHLCV1-030).
      *

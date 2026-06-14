@@ -23,18 +23,23 @@ import com.aaa.collector.stock.Stock;
 import com.aaa.collector.stock.StockRepository;
 import com.aaa.collector.stock.enums.AssetType;
 import com.aaa.collector.stock.enums.Market;
+import java.net.URI;
 import java.time.LocalDate;
 import java.util.List;
 import java.util.Map;
+import java.util.function.Function;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.slf4j.LoggerFactory;
+import org.springframework.web.util.UriBuilder;
+import org.springframework.web.util.UriComponentsBuilder;
 
 @ExtendWith(MockitoExtension.class)
 @DisplayName("DomesticDailyOhlcvCollectionService 단위 테스트")
@@ -55,6 +60,7 @@ class DomesticDailyOhlcvCollectionServiceTest {
     @Mock private DailyOhlcvRepository dailyOhlcvRepository;
     @Mock private BatchRestExecutor batchRestExecutor;
     @Mock private HealthyKeyRoundRobinDistributor distributor;
+    @Mock private MismatchDetector mismatchDetector;
 
     private DomesticDailyOhlcvCollectionService service;
 
@@ -62,7 +68,11 @@ class DomesticDailyOhlcvCollectionServiceTest {
     void setUp() {
         service =
                 new DomesticDailyOhlcvCollectionService(
-                        stockRepository, dailyOhlcvRepository, batchRestExecutor, distributor);
+                        stockRepository,
+                        dailyOhlcvRepository,
+                        batchRestExecutor,
+                        distributor,
+                        mismatchDetector);
     }
 
     /**
@@ -569,6 +579,119 @@ class DomesticDailyOhlcvCollectionServiceTest {
                             anyString(),
                             eq(KisDailyOhlcvResponse.class),
                             eq("000660"));
+        }
+    }
+
+    @Nested
+    @DisplayName("AC-1 — 원주가 파라미터 전송 (REQ-OHLCV2-001, -002)")
+    class RawPriceParameter {
+
+        @Test
+        @DisplayName("fetchBatch 호출 시 FID_ORG_ADJ_PRC=1(원주가)로 요청됨 — 0(수정주가) 아님")
+        @SuppressWarnings("unchecked")
+        void fetchBatch_sendsRawPriceParam() {
+            // Arrange
+            Stock stock = stockOf("005930");
+            when(stockRepository.findAllActive()).thenReturn(List.of(stock));
+            when(distributor.distribute(List.of(stock))).thenReturn(Map.of(ISA, List.of(stock)));
+
+            ArgumentCaptor<Function<UriBuilder, URI>> uriCaptor =
+                    ArgumentCaptor.forClass(Function.class);
+
+            KisDailyOhlcvResponse response = stubResponse(List.of(validRow("20260605")));
+            when(batchRestExecutor.execute(
+                            eq(ISA),
+                            uriCaptor.capture(),
+                            eq("FHKST03010100"),
+                            eq(KisDailyOhlcvResponse.class),
+                            eq("005930")))
+                    .thenReturn(BatchResult.success(response));
+
+            // Act
+            service.collect(LocalDate.of(2026, 6, 5));
+
+            // Assert: capture the URI builder function and verify the param
+            Function<UriBuilder, URI> capturedUriCustomizer = uriCaptor.getValue();
+            URI builtUri = capturedUriCustomizer.apply(UriComponentsBuilder.newInstance());
+            assertThat(builtUri.toString()).contains("FID_ORG_ADJ_PRC=1");
+            assertThat(builtUri.toString()).doesNotContain("FID_ORG_ADJ_PRC=0");
+        }
+    }
+
+    @Nested
+    @DisplayName("AC-2 / AC-3 — 불일치 탐지 위임 (REQ-OHLCV2-010, -011, -012, -020)")
+    class MismatchDetectionDelegation {
+
+        @Test
+        @DisplayName("유효 행 존재 시 — mismatchDetector.detectAndLog() 호출됨, insertIgnoreDuplicate 미수정")
+        void validRows_delegatesToMismatchDetector() {
+            // Arrange
+            Stock stock = stockOf("005930");
+            when(stockRepository.findAllActive()).thenReturn(List.of(stock));
+            when(distributor.distribute(List.of(stock))).thenReturn(Map.of(ISA, List.of(stock)));
+
+            KisDailyOhlcvResponse response = stubResponse(List.of(validRow("20260605")));
+            when(batchRestExecutor.execute(
+                            eq(ISA),
+                            any(),
+                            anyString(),
+                            eq(KisDailyOhlcvResponse.class),
+                            eq("005930")))
+                    .thenReturn(BatchResult.success(response));
+
+            // Act
+            CollectionResult result = service.collect(LocalDate.of(2026, 6, 5));
+
+            // Assert: mismatch detection delegated to MismatchDetector
+            verify(mismatchDetector, times(1)).detectAndLog(any(), eq("005930"), any(), any());
+
+            // No UPDATE/DELETE — insertIgnoreDuplicate is still the only write path (AC-4)
+            verify(dailyOhlcvRepository, times(1))
+                    .insertIgnoreDuplicate(
+                            any(),
+                            any(),
+                            any(),
+                            any(),
+                            any(),
+                            any(),
+                            any(Long.class),
+                            any(Long.class));
+
+            assertThat(result.succeeded()).isEqualTo(1);
+        }
+
+        @Test
+        @DisplayName("유효 행 없음 시 — mismatchDetector.detectAndLog() 미호출")
+        void noValidRows_mismatchDetectorNotCalled() {
+            // Arrange — only a modYn=Y row (filtered out before detectAndLog)
+            Stock stock = stockOf("005930");
+            when(stockRepository.findAllActive()).thenReturn(List.of(stock));
+            when(distributor.distribute(List.of(stock))).thenReturn(Map.of(ISA, List.of(stock)));
+
+            KisDailyOhlcvResponse.DailyOhlcvRow adjRow =
+                    new KisDailyOhlcvResponse.DailyOhlcvRow(
+                            "20260605",
+                            "75000",
+                            "74000",
+                            "76000",
+                            "73000",
+                            "1000000",
+                            "75000000000",
+                            "Y");
+            KisDailyOhlcvResponse response = stubResponse(List.of(adjRow));
+            when(batchRestExecutor.execute(
+                            eq(ISA),
+                            any(),
+                            anyString(),
+                            eq(KisDailyOhlcvResponse.class),
+                            eq("005930")))
+                    .thenReturn(BatchResult.success(response));
+
+            // Act
+            service.collect(LocalDate.of(2026, 6, 5));
+
+            // Assert: mismatch detector never called when no valid rows
+            verify(mismatchDetector, never()).detectAndLog(any(), any(), any(), any());
         }
     }
 }
