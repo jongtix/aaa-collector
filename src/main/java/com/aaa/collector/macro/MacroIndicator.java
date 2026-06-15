@@ -44,7 +44,7 @@ public class MacroIndicator extends BaseEntity {
     @Column(name = "trade_date")
     private final LocalDate tradeDate;
 
-    @Column(name = "value", precision = 18, scale = 8)
+    @Column(name = "value", precision = 24, scale = 8)
     private final BigDecimal value;
 
     @Builder
