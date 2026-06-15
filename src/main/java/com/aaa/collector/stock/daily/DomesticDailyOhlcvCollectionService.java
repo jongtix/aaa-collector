@@ -34,6 +34,9 @@ import org.springframework.stereotype.Service;
  *
  * <p>실패 경로(REQ-BATCH-025): 특정 키의 token 발급 실패({@link KisTokenIssueException})는 해당 종목을 graceful
  * skip하고 skip 카운터에 집계한다. 영구 비즈니스 오류(인증·파라미터)는 전파한다(REQ-BATCH-024).
+ *
+ * <p>수집 대상: {@code asset_type IN (STOCK, ETF)} — INDEX 제외(REQ-BATCH3-024). INDEX는 U 전용 API
+ * SectorIndexCollectionService가 담당한다.
  */
 @Slf4j
 @Service
@@ -74,7 +77,8 @@ public class DomesticDailyOhlcvCollectionService {
      * @return 시도/성공/skip 종목 수 집계
      */
     public CollectionResult collect(LocalDate today) {
-        List<Stock> activeStocks = stockRepository.findAllActive();
+        // REQ-BATCH3-024: per-stock 대상은 STOCK+ETF만 — INDEX 헛호출 제거 (StockRepository 계층에서 캡슐화)
+        List<Stock> activeStocks = stockRepository.findAllActiveTradable();
 
         if (activeStocks.isEmpty()) {
             log.info("[domestic-daily] 수집 대상 없음 — activeStocks=0");

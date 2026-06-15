@@ -61,7 +61,7 @@ public class CreditBalanceCollectionService {
      * @return 시도/성공/skip 종목 수 집계
      */
     public SupplyDemandResult collect(LocalDate today) {
-        return collect(today, stockRepository.findAllActive());
+        return collect(today, stockRepository.findAllActiveTradable());
     }
 
     /**

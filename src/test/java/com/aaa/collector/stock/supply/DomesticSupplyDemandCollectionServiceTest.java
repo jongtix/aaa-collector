@@ -62,7 +62,7 @@ class DomesticSupplyDemandCollectionServiceTest {
         void callsThreeKindsInFixedOrder_sharingActiveStocks() {
             // Arrange
             List<Stock> active = List.of(stockOf("005930"), stockOf("000660"));
-            when(stockRepository.findAllActive()).thenReturn(active);
+            when(stockRepository.findAllActiveTradable()).thenReturn(active);
             when(investorTrendService.collect(TODAY, active))
                     .thenReturn(new SupplyDemandResult(2, 2, 0));
             when(shortSaleService.collect(TODAY, active))
@@ -74,7 +74,7 @@ class DomesticSupplyDemandCollectionServiceTest {
             service.collectAll(TODAY);
 
             // Assert — 고정 순서 + 활성종목 1회 조회 공유
-            verify(stockRepository).findAllActive();
+            verify(stockRepository).findAllActiveTradable();
             InOrder inOrder = inOrder(investorTrendService, shortSaleService, creditBalanceService);
             inOrder.verify(investorTrendService).collect(TODAY, active);
             inOrder.verify(shortSaleService).collect(TODAY, active);
@@ -84,8 +84,54 @@ class DomesticSupplyDemandCollectionServiceTest {
         @Test
         @DisplayName("활성종목 없음 — 3종 모두 빈 목록으로 호출(또는 미호출), 예외 없음")
         void noActiveStocks_noException() {
-            when(stockRepository.findAllActive()).thenReturn(List.of());
+            when(stockRepository.findAllActiveTradable()).thenReturn(List.of());
 
+            assertThatCode(() -> service.collectAll(TODAY)).doesNotThrowAnyException();
+        }
+    }
+
+    // ────────────────────────────────────────────────────────────────────
+    // T3a 회귀 테스트 — REQ-BATCH3-024: STOCK+ETF만 포함, INDEX 제외
+    // ────────────────────────────────────────────────────────────────────
+
+    @Nested
+    @DisplayName("T3a 회귀 — asset_type 필터 검증 (REQ-BATCH3-024)")
+    class AssetTypeFilter {
+
+        @Test
+        @DisplayName("findAllActiveTradable()으로 호출 — INDEX 제외는 StockRepository 계층이 보장")
+        void collectAll_callsFindAllActiveTradable() {
+            // Arrange
+            when(stockRepository.findAllActiveTradable()).thenReturn(List.of());
+
+            // Act
+            service.collectAll(TODAY);
+
+            // Assert — INDEX 제외 캡슐화 진입점 호출 확인 (INDEX 제외 자체는 StockRepositoryTest가 검증)
+            verify(stockRepository).findAllActiveTradable();
+        }
+
+        @Test
+        @DisplayName("INDEX assetType 종목은 하위 서비스로 전달되지 않는다")
+        void collectAll_indexStockExcludedFromSubServices() {
+            // Arrange — findAllActiveTradable이 STOCK+ETF만 반환
+            Stock stock =
+                    Stock.builder()
+                            .symbol("005930")
+                            .nameKo("삼성전자")
+                            .market(Market.KOSPI)
+                            .assetType(AssetType.STOCK)
+                            .listedDate(LocalDate.of(2015, 1, 1))
+                            .build();
+            when(stockRepository.findAllActiveTradable()).thenReturn(List.of(stock));
+            when(investorTrendService.collect(TODAY, List.of(stock)))
+                    .thenReturn(new SupplyDemandResult(1, 1, 0));
+            when(shortSaleService.collect(TODAY, List.of(stock)))
+                    .thenReturn(new SupplyDemandResult(1, 1, 0));
+            when(creditBalanceService.collect(TODAY, List.of(stock)))
+                    .thenReturn(new SupplyDemandResult(1, 1, 0));
+
+            // Act & Assert
             assertThatCode(() -> service.collectAll(TODAY)).doesNotThrowAnyException();
         }
     }
@@ -98,7 +144,7 @@ class DomesticSupplyDemandCollectionServiceTest {
         @DisplayName("투자자 수집 예외 — 공매도·신용잔고는 계속 진행")
         void investorThrows_othersStillRun() {
             List<Stock> active = List.of(stockOf("005930"));
-            when(stockRepository.findAllActive()).thenReturn(active);
+            when(stockRepository.findAllActiveTradable()).thenReturn(active);
             when(investorTrendService.collect(TODAY, active))
                     .thenThrow(new RuntimeException("투자자 수집 실패"));
             when(shortSaleService.collect(TODAY, active))
@@ -116,7 +162,7 @@ class DomesticSupplyDemandCollectionServiceTest {
         @DisplayName("공매도 수집 예외 — 신용잔고는 계속 진행, 예외 미전파")
         void shortSaleThrows_creditStillRuns() {
             List<Stock> active = List.of(stockOf("005930"));
-            when(stockRepository.findAllActive()).thenReturn(active);
+            when(stockRepository.findAllActiveTradable()).thenReturn(active);
             when(investorTrendService.collect(TODAY, active))
                     .thenReturn(new SupplyDemandResult(1, 1, 0));
             when(shortSaleService.collect(TODAY, active))

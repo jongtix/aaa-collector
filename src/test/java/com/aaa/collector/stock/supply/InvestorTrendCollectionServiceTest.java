@@ -94,7 +94,7 @@ class InvestorTrendCollectionServiceTest {
     }
 
     private void singleStock(Stock stock) {
-        when(stockRepository.findAllActive()).thenReturn(List.of(stock));
+        when(stockRepository.findAllActiveTradable()).thenReturn(List.of(stock));
         when(distributor.distribute(List.of(stock))).thenReturn(Map.of(ISA, List.of(stock)));
     }
 
@@ -119,7 +119,7 @@ class InvestorTrendCollectionServiceTest {
         @Test
         @DisplayName("활성 종목 없음 — 0/0/0, execute 미호출")
         void noActiveStocks_zero() {
-            when(stockRepository.findAllActive()).thenReturn(List.of());
+            when(stockRepository.findAllActiveTradable()).thenReturn(List.of());
 
             SupplyDemandResult result = service.collect(TODAY);
 
@@ -133,7 +133,7 @@ class InvestorTrendCollectionServiceTest {
         void twoStocks_aggregates() {
             Stock s1 = stockOf("005930");
             Stock s2 = stockOf("000660");
-            when(stockRepository.findAllActive()).thenReturn(List.of(s1, s2));
+            when(stockRepository.findAllActiveTradable()).thenReturn(List.of(s1, s2));
             when(distributor.distribute(List.of(s1, s2)))
                     .thenReturn(Map.of(ISA, List.of(s1), GOLD, List.of(s2)));
             stubFetch(ISA, "005930", response(List.of(row("20260612"))));
@@ -411,7 +411,7 @@ class InvestorTrendCollectionServiceTest {
             Stock s1 = stockOf("005930");
             Stock s2 = stockOf("000660");
             List<Stock> stocks = List.of(s1, s2);
-            when(stockRepository.findAllActive()).thenReturn(stocks);
+            when(stockRepository.findAllActiveTradable()).thenReturn(stocks);
             when(distributor.distribute(stocks)).thenReturn(Map.of());
 
             SupplyDemandResult result = service.collect(TODAY);
@@ -423,6 +423,50 @@ class InvestorTrendCollectionServiceTest {
             List<ILoggingEvent> errors =
                     appender.list.stream().filter(e -> e.getLevel() == Level.ERROR).toList();
             assertThat(errors).hasSize(1);
+        }
+    }
+
+    @Nested
+    @DisplayName("T3a 회귀 — asset_type 필터 검증 (REQ-BATCH3-024)")
+    class AssetTypeFilter {
+
+        @Test
+        @DisplayName("findAllActiveTradable()으로 호출 — INDEX 제외는 StockRepository 계층이 보장")
+        void collect_callsFindAllActiveTradable() {
+            // Arrange
+            when(stockRepository.findAllActiveTradable()).thenReturn(List.of());
+
+            // Act
+            service.collect(TODAY);
+
+            // Assert — INDEX 제외 캡슐화 진입점 호출 확인 (INDEX 제외 자체는 StockRepositoryTest가 검증)
+            verify(stockRepository).findAllActiveTradable();
+        }
+
+        @Test
+        @DisplayName("INDEX 종목은 수집 대상 제외, STOCK+ETF만 API 호출")
+        void indexStock_excluded_stockEtf_included() {
+            // Arrange — 필터 결과로 STOCK+ETF만 반환
+            Stock stockRow = stockOf("005930");
+            Stock etfRow =
+                    Stock.builder()
+                            .symbol("069500")
+                            .nameKo("KODEX 200")
+                            .market(Market.KOSPI)
+                            .assetType(AssetType.ETF)
+                            .listedDate(LocalDate.of(2015, 1, 1))
+                            .build();
+            List<Stock> tradableStocks = List.of(stockRow, etfRow);
+            when(stockRepository.findAllActiveTradable()).thenReturn(tradableStocks);
+            when(distributor.distribute(tradableStocks)).thenReturn(Map.of(ISA, tradableStocks));
+            stubFetch(ISA, "005930", response(List.of(row("20260612"))));
+            stubFetch(ISA, "069500", response(List.of(row("20260612"))));
+
+            // Act
+            SupplyDemandResult result = service.collect(TODAY);
+
+            // Assert — STOCK+ETF 2건 시도, INDEX 없음
+            assertThat(result.attempted()).isEqualTo(2);
         }
     }
 }

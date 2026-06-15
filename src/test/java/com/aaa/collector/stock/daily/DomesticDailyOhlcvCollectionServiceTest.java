@@ -109,7 +109,7 @@ class DomesticDailyOhlcvCollectionServiceTest {
         void collect_oneActiveStock_successResult() {
             // Arrange
             Stock stock = stockOf("005930");
-            when(stockRepository.findAllActive()).thenReturn(List.of(stock));
+            when(stockRepository.findAllActiveTradable()).thenReturn(List.of(stock));
             when(distributor.distribute(List.of(stock))).thenReturn(Map.of(ISA, List.of(stock)));
 
             KisDailyOhlcvResponse.DailyOhlcvRow row = validRow("20260605");
@@ -135,7 +135,7 @@ class DomesticDailyOhlcvCollectionServiceTest {
         @Test
         @DisplayName("활성 종목 없음 — 시도=0, 성공=0, skip=0")
         void collect_noActiveStocks_zeroResult() {
-            when(stockRepository.findAllActive()).thenReturn(List.of());
+            when(stockRepository.findAllActiveTradable()).thenReturn(List.of());
 
             CollectionResult result = service.collect(LocalDate.of(2026, 6, 5));
 
@@ -152,7 +152,7 @@ class DomesticDailyOhlcvCollectionServiceTest {
             // Arrange
             Stock s1 = stockOf("005930");
             Stock s2 = stockOf("000660");
-            when(stockRepository.findAllActive()).thenReturn(List.of(s1, s2));
+            when(stockRepository.findAllActiveTradable()).thenReturn(List.of(s1, s2));
             when(distributor.distribute(List.of(s1, s2)))
                     .thenReturn(Map.of(ISA, List.of(s1), GOLD, List.of(s2)));
 
@@ -192,7 +192,7 @@ class DomesticDailyOhlcvCollectionServiceTest {
         void collect_batchSkip_countedInSkipped() {
             // Arrange
             Stock stock = stockOf("005930");
-            when(stockRepository.findAllActive()).thenReturn(List.of(stock));
+            when(stockRepository.findAllActiveTradable()).thenReturn(List.of(stock));
             when(distributor.distribute(List.of(stock))).thenReturn(Map.of(ISA, List.of(stock)));
             when(batchRestExecutor.execute(
                             eq(ISA),
@@ -216,7 +216,7 @@ class DomesticDailyOhlcvCollectionServiceTest {
         void collect_tokenIssueException_gracefulSkip() {
             // Arrange
             Stock stock = stockOf("005930");
-            when(stockRepository.findAllActive()).thenReturn(List.of(stock));
+            when(stockRepository.findAllActiveTradable()).thenReturn(List.of(stock));
             when(distributor.distribute(List.of(stock))).thenReturn(Map.of(ISA, List.of(stock)));
             when(batchRestExecutor.execute(
                             eq(ISA),
@@ -242,7 +242,7 @@ class DomesticDailyOhlcvCollectionServiceTest {
             // Arrange
             Stock s1 = stockOf("005930");
             Stock s2 = stockOf("000660");
-            when(stockRepository.findAllActive()).thenReturn(List.of(s1, s2));
+            when(stockRepository.findAllActiveTradable()).thenReturn(List.of(s1, s2));
             when(distributor.distribute(List.of(s1, s2)))
                     .thenReturn(Map.of(ISA, List.of(s1), GOLD, List.of(s2)));
 
@@ -278,7 +278,7 @@ class DomesticDailyOhlcvCollectionServiceTest {
             Stock s1 = stockOf("005930");
             Stock s2 = stockOf("000660"); // dies mid-run
             Stock s3 = stockOf("035720");
-            when(stockRepository.findAllActive()).thenReturn(List.of(s1, s2, s3));
+            when(stockRepository.findAllActiveTradable()).thenReturn(List.of(s1, s2, s3));
             when(distributor.distribute(List.of(s1, s2, s3)))
                     .thenReturn(Map.of(ISA, List.of(s1, s2, s3)));
 
@@ -348,7 +348,7 @@ class DomesticDailyOhlcvCollectionServiceTest {
             Stock s2 = stockOf("000660");
             Stock s3 = stockOf("035720");
             List<Stock> stocks = List.of(s1, s2, s3);
-            when(stockRepository.findAllActive()).thenReturn(stocks);
+            when(stockRepository.findAllActiveTradable()).thenReturn(stocks);
             when(distributor.distribute(stocks)).thenReturn(Map.of());
 
             // Act
@@ -377,7 +377,7 @@ class DomesticDailyOhlcvCollectionServiceTest {
         void collect_zeroPriceRow_notInserted() {
             // Arrange
             Stock stock = stockOf("005930");
-            when(stockRepository.findAllActive()).thenReturn(List.of(stock));
+            when(stockRepository.findAllActiveTradable()).thenReturn(List.of(stock));
             when(distributor.distribute(List.of(stock))).thenReturn(Map.of(ISA, List.of(stock)));
 
             KisDailyOhlcvResponse.DailyOhlcvRow invalidRow =
@@ -420,7 +420,7 @@ class DomesticDailyOhlcvCollectionServiceTest {
         void collect_zeroVolumeRow_notInserted() {
             // Arrange
             Stock stock = stockOf("005930");
-            when(stockRepository.findAllActive()).thenReturn(List.of(stock));
+            when(stockRepository.findAllActiveTradable()).thenReturn(List.of(stock));
             when(distributor.distribute(List.of(stock))).thenReturn(Map.of(ISA, List.of(stock)));
 
             KisDailyOhlcvResponse.DailyOhlcvRow invalidRow =
@@ -456,7 +456,7 @@ class DomesticDailyOhlcvCollectionServiceTest {
         void collect_validRow_insertsOnce() {
             // Arrange
             Stock stock = stockOf("005930");
-            when(stockRepository.findAllActive()).thenReturn(List.of(stock));
+            when(stockRepository.findAllActiveTradable()).thenReturn(List.of(stock));
             when(distributor.distribute(List.of(stock))).thenReturn(Map.of(ISA, List.of(stock)));
 
             KisDailyOhlcvResponse response = stubResponse(List.of(validRow("20260605")));
@@ -500,7 +500,7 @@ class DomesticDailyOhlcvCollectionServiceTest {
             Stock s5 = stockOf("068270");
             List<Stock> stocks = List.of(s1, s2, s3, s4, s5);
 
-            when(stockRepository.findAllActive()).thenReturn(stocks);
+            when(stockRepository.findAllActiveTradable()).thenReturn(stocks);
             // Distributor distributes 5 stocks across 3 healthy keys, excluding STOCK_KEY and DC
             when(distributor.distribute(stocks))
                     .thenReturn(
@@ -541,7 +541,7 @@ class DomesticDailyOhlcvCollectionServiceTest {
             Stock s2 = stockOf("000660");
             List<Stock> stocks = List.of(s1, s2);
 
-            when(stockRepository.findAllActive()).thenReturn(stocks);
+            when(stockRepository.findAllActiveTradable()).thenReturn(stocks);
             when(distributor.distribute(stocks))
                     .thenReturn(Map.of(ISA, List.of(s1), GOLD, List.of(s2)));
 
@@ -592,7 +592,7 @@ class DomesticDailyOhlcvCollectionServiceTest {
         void fetchBatch_sendsRawPriceParam() {
             // Arrange
             Stock stock = stockOf("005930");
-            when(stockRepository.findAllActive()).thenReturn(List.of(stock));
+            when(stockRepository.findAllActiveTradable()).thenReturn(List.of(stock));
             when(distributor.distribute(List.of(stock))).thenReturn(Map.of(ISA, List.of(stock)));
 
             ArgumentCaptor<Function<UriBuilder, URI>> uriCaptor =
@@ -627,7 +627,7 @@ class DomesticDailyOhlcvCollectionServiceTest {
         void validRows_delegatesToMismatchDetector() {
             // Arrange
             Stock stock = stockOf("005930");
-            when(stockRepository.findAllActive()).thenReturn(List.of(stock));
+            when(stockRepository.findAllActiveTradable()).thenReturn(List.of(stock));
             when(distributor.distribute(List.of(stock))).thenReturn(Map.of(ISA, List.of(stock)));
 
             KisDailyOhlcvResponse response = stubResponse(List.of(validRow("20260605")));
@@ -665,7 +665,7 @@ class DomesticDailyOhlcvCollectionServiceTest {
         void noValidRows_mismatchDetectorNotCalled() {
             // Arrange — only a modYn=Y row (filtered out before detectAndLog)
             Stock stock = stockOf("005930");
-            when(stockRepository.findAllActive()).thenReturn(List.of(stock));
+            when(stockRepository.findAllActiveTradable()).thenReturn(List.of(stock));
             when(distributor.distribute(List.of(stock))).thenReturn(Map.of(ISA, List.of(stock)));
 
             KisDailyOhlcvResponse.DailyOhlcvRow adjRow =
@@ -692,6 +692,24 @@ class DomesticDailyOhlcvCollectionServiceTest {
 
             // Assert: mismatch detector never called when no valid rows
             verify(mismatchDetector, never()).detectAndLog(any(), any(), any(), any());
+        }
+    }
+
+    @Nested
+    @DisplayName("T3a 회귀 — asset_type 필터 검증 (REQ-BATCH3-024)")
+    class AssetTypeFilter {
+
+        @Test
+        @DisplayName("findAllActiveTradable()으로 호출 — INDEX 제외는 StockRepository 계층이 보장")
+        void collect_callsFindAllActiveTradable() {
+            // Arrange
+            when(stockRepository.findAllActiveTradable()).thenReturn(List.of());
+
+            // Act
+            service.collect(LocalDate.of(2026, 6, 13));
+
+            // Assert — INDEX 제외 캡슐화 진입점 호출 확인 (INDEX 제외 자체는 StockRepositoryTest가 검증)
+            verify(stockRepository).findAllActiveTradable();
         }
     }
 }
