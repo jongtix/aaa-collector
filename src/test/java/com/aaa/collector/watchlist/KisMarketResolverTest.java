@@ -7,23 +7,29 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 
+// @MX:SPEC: SPEC-COLLECTOR-STOCKMETA-001
 @DisplayName("KisMarketResolver — 시장 코드 매핑")
 class KisMarketResolverTest {
 
     @Nested
-    @DisplayName("국내 시장")
+    @DisplayName("국내 시장 (REQ-STOCKMETA-020,022)")
     class Domestic {
 
         @Test
-        @DisplayName("J → KOSPI")
+        @DisplayName("J → KOSPI (coarse 라우팅 값 — mket_id_cd로 확정됨)")
         void resolve_J_returnsKospi() {
             assertThat(KisMarketResolver.resolve("J", "KRX", "005930")).isEqualTo(Market.KOSPI);
         }
 
         @Test
-        @DisplayName("UN → KOSDAQ")
-        void resolve_UN_returnsKosdaq() {
-            assertThat(KisMarketResolver.resolve("UN", "KRX", "005930")).isEqualTo(Market.KOSDAQ);
+        @DisplayName("UN → KOSPI (coarse 라우팅 값 — UN→KOSDAQ 매핑 제거, REQ-STOCKMETA-020)")
+        void resolve_UN_returnsKospiNotKosdaq() {
+            // AC-3: UN→KOSDAQ 오매핑이 제거되어야 한다
+            // fid_mrkt_cls_code="UN"은 실제 KOSPI 종목(NAVER·삼성물산 등)이 반환하는 값임(NAS 실측 2026-06-15)
+            // 실제 KOSPI/KOSDAQ 확정은 parseDomestic의 mket_id_cd에서 수행됨
+            Market result = KisMarketResolver.resolve("UN", "KRX", "035420");
+            assertThat(result).isNotEqualTo(Market.KOSDAQ); // UN→KOSDAQ 금지(REQ-STOCKMETA-020)
+            assertThat(result).isEqualTo(Market.KOSPI); // coarse 국내 라우팅
         }
 
         @Test
