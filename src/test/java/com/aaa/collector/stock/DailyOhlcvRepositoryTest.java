@@ -13,6 +13,7 @@ import java.sql.SQLException;
 import java.sql.Statement;
 import java.time.LocalDate;
 import java.util.List;
+import java.util.Optional;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
@@ -427,6 +428,61 @@ class DailyOhlcvRepositoryTest {
             assertThat(stored.getClosePrice().compareTo(rawClose)).isEqualTo(0);
             assertThat(stored.getClosePrice().scale())
                     .isEqualTo(4); // DB round-trip confirms scale=4
+        }
+    }
+
+    // @MX:SPEC: SPEC-COLLECTOR-STOCKMETA-001
+    @Nested
+    @DisplayName("findMinTradeDateByStockId — 최초 거래일 조회 (REQ-STOCKMETA-013)")
+    class FindMinTradeDateByStockId {
+
+        @Test
+        @DisplayName("거래 데이터 있음 — 가장 오래된 trade_date 반환")
+        void findMinTradeDateByStockId_withRows_returnsMinDate() {
+            // Arrange
+            Stock stock = savedStock("005380");
+            LocalDate oldest = LocalDate.of(2015, 3, 10);
+            LocalDate recent = LocalDate.of(2026, 6, 5);
+            dailyOhlcvRepository.insertIgnoreDuplicate(
+                    stock.getId(),
+                    oldest,
+                    new BigDecimal("50000"),
+                    new BigDecimal("52000"),
+                    new BigDecimal("49000"),
+                    new BigDecimal("51000"),
+                    500_000L,
+                    25_500_000_000L);
+            dailyOhlcvRepository.insertIgnoreDuplicate(
+                    stock.getId(),
+                    recent,
+                    new BigDecimal("70000"),
+                    new BigDecimal("72000"),
+                    new BigDecimal("69000"),
+                    new BigDecimal("71000"),
+                    600_000L,
+                    42_600_000_000L);
+            dailyOhlcvRepository.flush();
+
+            // Act
+            Optional<LocalDate> result =
+                    dailyOhlcvRepository.findMinTradeDateByStockId(stock.getId());
+
+            // Assert
+            assertThat(result).isPresent().contains(oldest);
+        }
+
+        @Test
+        @DisplayName("거래 데이터 없음 — Optional.empty() 반환")
+        void findMinTradeDateByStockId_noRows_returnsEmpty() {
+            // Arrange
+            Stock stock = savedStock("999999");
+
+            // Act
+            Optional<LocalDate> result =
+                    dailyOhlcvRepository.findMinTradeDateByStockId(stock.getId());
+
+            // Assert
+            assertThat(result).isEmpty();
         }
     }
 

@@ -4,6 +4,7 @@ import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.Collection;
 import java.util.List;
+import java.util.Optional;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
@@ -87,4 +88,13 @@ public interface DailyOhlcvRepository extends JpaRepository<DailyOhlcv, Long> {
                     + "WHERE o.stock.id = :stockId AND o.tradeDate IN :tradeDates")
     List<DailyOhlcv> findByStockIdAndTradeDateIn(
             @Param("stockId") Long stockId, @Param("tradeDates") Collection<LocalDate> tradeDates);
+
+    /**
+     * 종목의 최초 거래일(MIN trade_date)을 조회한다 (REQ-STOCKMETA-013, SPEC-COLLECTOR-STOCKMETA-001).
+     *
+     * <p>상장일(listed_date)이 NULL인 종목의 상장일 근사치 추정에 사용된다. 거래 데이터가 없으면 {@link Optional#empty()}를 반환한다.
+     */
+    // @MX:SPEC: SPEC-COLLECTOR-STOCKMETA-001
+    @Query("SELECT MIN(o.tradeDate) FROM DailyOhlcv o WHERE o.stock.id = :stockId")
+    Optional<LocalDate> findMinTradeDateByStockId(@Param("stockId") Long stockId);
 }
