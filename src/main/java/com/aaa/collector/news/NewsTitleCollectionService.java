@@ -6,6 +6,7 @@ import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.dao.DataAccessException;
 import org.springframework.stereotype.Service;
 
 /**
@@ -119,37 +120,94 @@ public class NewsTitleCollectionService {
 
         for (KisNewsTitleResponse.NewsTitleRow row : response.output()) {
             attempted++;
-            String srnoVal = row.cnttUsiqSrno();
-
-            // REQ-BATCH3-070: null serial_no skip
-            if (srnoVal == null || srnoVal.isBlank()) {
-                log.debug("[news-title] 검증 실패 (serial_no null) — skip");
-                skipped++;
-                continue;
-            }
-
-            // REQ-BATCH3-063: 저장된 max serial_no 도달 시 정지
-            if (storedMaxSerialNo != null && srnoVal.compareTo(storedMaxSerialNo) <= 0) {
+            RowOutcome outcome = processRow(row, storedMaxSerialNo, minSrno);
+            if (outcome.reachedStoredMax) {
                 reachedStoredMax = true;
             }
-
-            // 현재 페이지의 최소 srno 추적 (inclusive SRNO 커서용)
-            if (minSrno == null || srnoVal.compareTo(minSrno) < 0) {
-                minSrno = srnoVal;
+            if (outcome.minSrno != null) {
+                minSrno = outcome.minSrno;
             }
-
-            NewsHeadline entity = mapToEntity(row);
-            if (entity == null) {
-                skipped++;
-                continue;
-            }
-
-            // REQ-BATCH3-062: uk_news_headlines_serial 멱등 저장
-            newsHeadlineRepository.insertIgnoreDuplicate(entity);
-            succeeded++;
+            succeeded += outcome.succeeded;
+            skipped += outcome.skipped;
         }
 
         return new PageResult(attempted, succeeded, skipped, reachedStoredMax, minSrno);
+    }
+
+    /**
+     * 단일 행을 처리하고 결과를 반환한다.
+     *
+     * <p>커서/minSrno 집계는 항상 실행되며 저장 실패(DataAccessException) 여부와 무관하다. (W1 영구 정체 방지)
+     */
+    private RowOutcome processRow(
+            KisNewsTitleResponse.NewsTitleRow row,
+            String storedMaxSerialNo,
+            String currentMinSrno) {
+        String srnoVal = row.cnttUsiqSrno();
+
+        // REQ-BATCH3-070: null serial_no skip
+        if (srnoVal == null || srnoVal.isBlank()) {
+            log.debug("[news-title] 검증 실패 (serial_no null) — skip");
+            return RowOutcome.skipped(false, currentMinSrno);
+        }
+
+        // REQ-BATCH3-063: 저장된 max serial_no 도달 시 정지
+        boolean reachedStoredMax =
+                storedMaxSerialNo != null && srnoVal.compareTo(storedMaxSerialNo) <= 0;
+
+        // 현재 페이지의 최소 srno 추적 (inclusive SRNO 커서용)
+        String newMinSrno =
+                (currentMinSrno == null || srnoVal.compareTo(currentMinSrno) < 0)
+                        ? srnoVal
+                        : currentMinSrno;
+
+        NewsHeadline entity = mapToEntity(row);
+        if (entity == null) {
+            return RowOutcome.skipped(reachedStoredMax, newMinSrno);
+        }
+
+        // REQ-BATCH3-062: uk_news_headlines_serial 멱등 저장
+        if (tryInsert(entity, srnoVal)) {
+            return RowOutcome.succeeded(reachedStoredMax, newMinSrno);
+        }
+        return RowOutcome.skipped(reachedStoredMax, newMinSrno);
+    }
+
+    /** 행 처리 결과 (내부 전달용). */
+    private record RowOutcome(
+            int succeeded, int skipped, boolean reachedStoredMax, String minSrno) {
+        static RowOutcome succeeded(boolean reachedStoredMax, String minSrno) {
+            return new RowOutcome(1, 0, reachedStoredMax, minSrno);
+        }
+
+        static RowOutcome skipped(boolean reachedStoredMax, String minSrno) {
+            return new RowOutcome(0, 1, reachedStoredMax, minSrno);
+        }
+    }
+
+    /**
+     * 단건 삽입을 시도하고 성공 여부를 반환한다.
+     *
+     * <p>DataAccessException 발생 시 warn 로그 후 {@code false} 반환 — 커서/minSrno 집계는 호출 측에서 이미 완료되었으므로 이
+     * 메서드 내에서는 영향 없음.
+     *
+     * <p>커서/minSrno 집계는 이 메서드 호출 전에 processPage에서 반드시 실행되며, 예외 발생 여부와 무관하게 진행된다. (W1 영구 정체
+     * 방지) @MX:WARN: [AUTO] 독성 행 DataAccessException 흡수 — 영구 정체 방지 (W1) @MX:REASON:
+     * insertIgnoreDuplicate 예외(예: MySQL "Data too long") 발생 시 커서 진행이 차단되어 동일 페이지가 무한 재시도되는 영구 정체를
+     * 방지한다.
+     */
+    private boolean tryInsert(NewsHeadline entity, String srnoVal) {
+        try {
+            newsHeadlineRepository.insertIgnoreDuplicate(entity);
+            return true;
+        } catch (DataAccessException ex) {
+            log.warn(
+                    "[news-title] 행 저장 실패 — skip (serial_no={}, error={}: {})",
+                    srnoVal,
+                    ex.getClass().getSimpleName(),
+                    ex.getMessage());
+            return false;
+        }
     }
 
     private boolean shouldStopPaging(

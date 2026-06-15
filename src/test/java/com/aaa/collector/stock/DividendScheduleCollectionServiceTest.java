@@ -22,6 +22,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.dao.DataIntegrityViolationException;
 
 @ExtendWith(MockitoExtension.class)
 @DisplayName("DividendScheduleCollectionService 단위 테스트")
@@ -430,6 +431,55 @@ class DividendScheduleCollectionServiceTest {
             ArgumentCaptor<CorporateEvent> captor = ArgumentCaptor.forClass(CorporateEvent.class);
             verify(corporateEventRepository).insertIgnoreDuplicate(captor.capture());
             assertThat(captor.getValue().getCashRate()).isNull();
+        }
+    }
+
+    // ────────────────────────────────────────────────────────────────────
+    // 독성 행 skip — 영구 정체 방지 (W1)
+    // ────────────────────────────────────────────────────────────────────
+
+    @Nested
+    @DisplayName("독성 행 skip — insertIgnoreDuplicate 예외 시 처리 계속 (W1)")
+    class PoisonRowSkip {
+
+        @Test
+        @DisplayName("1건 삽입 예외 → 나머지 행 저장, 루프 종료")
+        void oneRowThrows_otherRowsInserted_processingContinues() {
+            // Arrange — 3건: 005930(독성), 000660(정상), 035420(정상)
+            Stock stock1 = watchlistStock("005930");
+            Stock stock2 = watchlistStock("000660");
+            Stock stock3 = watchlistStock("035420");
+            when(stockRepository.findAllActive()).thenReturn(List.of(stock1, stock2, stock3));
+            when(kisApiExecutor.executeGet(
+                            any(), eq("HHKDB669102C0"), eq(KisDividendScheduleResponse.class)))
+                    .thenReturn(
+                            singlePageResponse(
+                                    List.of(
+                                            sampleRow("005930"), // 독성 행
+                                            sampleRow("000660"), // 정상
+                                            sampleRow("035420")))); // 정상
+
+            // insertIgnoreDuplicate: 005930 독성 행에서 예외 발생
+            // lenient 필요: 엄격 모드에서는 argThat 미일치 호출에 PotentialStubbingProblem 발생
+            org.mockito.Mockito.lenient()
+                    .doThrow(new DataIntegrityViolationException("Data too long"))
+                    .when(corporateEventRepository)
+                    .insertIgnoreDuplicate(
+                            org.mockito.ArgumentMatchers.argThat(
+                                    e -> "005930".equals(e.getStock().getSymbol())));
+
+            // Act
+            DividendCollectionResult result = service.collect("20260601", "20260630");
+
+            // Assert
+            // (a) 정상 행 2건 삽입
+            verify(corporateEventRepository, times(3)).insertIgnoreDuplicate(any());
+            assertThat(result.succeeded()).isEqualTo(2);
+            // (b) 독성 행은 skippedValidation 집계
+            assertThat(result.skippedValidation()).isEqualTo(1);
+            // (c) KisApiExecutor: 1페이지만 호출 (루프 종료)
+            verify(kisApiExecutor, times(1))
+                    .executeGet(any(), eq("HHKDB669102C0"), eq(KisDividendScheduleResponse.class));
         }
     }
 

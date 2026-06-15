@@ -20,6 +20,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.dao.DataIntegrityViolationException;
 
 @ExtendWith(MockitoExtension.class)
 @DisplayName("NewsTitleCollectionService 단위 테스트")
@@ -437,6 +438,81 @@ class NewsTitleCollectionServiceTest {
             // Assert — 파싱 실패로 skip
             assertThat(result.skipped()).isEqualTo(1);
             verify(newsHeadlineRepository, never()).insertIgnoreDuplicate(any());
+        }
+    }
+
+    // ────────────────────────────────────────────────────────────────────
+    // 독성 행 skip — 영구 정체 방지 (W1)
+    // ────────────────────────────────────────────────────────────────────
+
+    @Nested
+    @DisplayName("독성 행 skip — insertIgnoreDuplicate 예외 시 커서 진행 보장 (W1)")
+    class PoisonRowSkip {
+
+        @Test
+        @DisplayName("1건 삽입 예외 → 나머지 행 저장, minSrno에 독성 행 반영, 루프 종료")
+        void oneRowThrows_otherRowsInserted_cursorAdvances_loopTerminates() {
+            // Arrange — 3건 페이지: srno 1003(독성), 1002(정상), 1001(정상)
+            when(newsHeadlineRepository.findMaxSerialNo()).thenReturn(null);
+            KisNewsTitleResponse.NewsTitleRow poisonRow = row("1003", "20260615", "090000");
+            KisNewsTitleResponse.NewsTitleRow row2 = row("1002", "20260615", "090000");
+            KisNewsTitleResponse.NewsTitleRow row3 = row("1001", "20260615", "090000");
+            when(kisApiExecutor.executeGet(
+                            any(), eq("FHKST01011800"), eq(KisNewsTitleResponse.class)))
+                    .thenReturn(pageOf(List.of(poisonRow, row2, row3)));
+
+            // insertIgnoreDuplicate: srno=1003 독성 행에서 예외 발생, 나머지는 정상
+            // lenient 필요: 엄격 모드에서는 argThat 미일치 호출에 PotentialStubbingProblem 발생
+            org.mockito.Mockito.lenient()
+                    .doThrow(
+                            new DataIntegrityViolationException("Data too long for column 'title'"))
+                    .when(newsHeadlineRepository)
+                    .insertIgnoreDuplicate(
+                            org.mockito.ArgumentMatchers.argThat(
+                                    e -> "1003".equals(e.getSerialNo())));
+
+            // Act
+            NewsCollectionResult result = service.collect();
+
+            // Assert
+            // (a) 정상 행 2건 삽입됨
+            verify(newsHeadlineRepository, times(3)).insertIgnoreDuplicate(any());
+            assertThat(result.succeeded()).isEqualTo(2);
+            // (b) 독성 행은 skipped 집계
+            assertThat(result.skipped()).isEqualTo(1);
+            // (c) KisApiExecutor: 페이지 1회만 호출 (루프 종료)
+            verify(kisApiExecutor, times(1))
+                    .executeGet(any(), eq("FHKST01011800"), eq(KisNewsTitleResponse.class));
+        }
+
+        @Test
+        @DisplayName("독성 행의 srno=1003이 페이지 최솟값 — minSrno에 반영되어 커서 진행")
+        void poisonRow_isMinSrno_cursorRefectsIt() {
+            // Arrange — 독성 행(1003)이 이 페이지의 유일한 최솟값
+            when(newsHeadlineRepository.findMaxSerialNo()).thenReturn(null);
+            KisNewsTitleResponse.NewsTitleRow poison = row("1003", "20260615", "090000");
+            KisNewsTitleResponse.NewsTitleRow row2 = row("1005", "20260615", "090000");
+            KisNewsTitleResponse.NewsTitleRow row3 = row("1004", "20260615", "090000");
+            // 총 3건 (count < PAGE_SIZE=40 → shouldStopPaging=true)
+            when(kisApiExecutor.executeGet(
+                            any(), eq("FHKST01011800"), eq(KisNewsTitleResponse.class)))
+                    .thenReturn(pageOf(List.of(row2, row3, poison)));
+
+            org.mockito.Mockito.lenient()
+                    .doThrow(new DataIntegrityViolationException("Data too long"))
+                    .when(newsHeadlineRepository)
+                    .insertIgnoreDuplicate(
+                            org.mockito.ArgumentMatchers.argThat(
+                                    e -> "1003".equals(e.getSerialNo())));
+
+            // Act — 1페이지(3건, count<40)에서 종료
+            NewsCollectionResult result = service.collect();
+
+            // Assert — 2건 저장, 1건 skipped, 루프 1회
+            assertThat(result.succeeded()).isEqualTo(2);
+            assertThat(result.skipped()).isEqualTo(1);
+            verify(kisApiExecutor, times(1))
+                    .executeGet(any(), eq("FHKST01011800"), eq(KisNewsTitleResponse.class));
         }
     }
 
