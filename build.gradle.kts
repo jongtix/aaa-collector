@@ -169,6 +169,17 @@ spotbugs {
     excludeFilter.set(file("config/spotbugs/exclude.xml"))
 }
 
+// SpotBugs 6.5.6(core 4.10.2)은 commons-lang3:3.20.0(org.apache.commons.lang3.Strings)을 요구하지만
+// io.spring.dependency-management(Spring Boot BOM)이 commons-lang3를 3.17.0으로 관리해 spotbugs 분석이
+// NoClassDefFoundError: org/apache/commons/lang3/Strings 로 크래시한다(exit 4). 이 플러그인은 resolutionStrategy.force
+// 보다 우선하므로, 관리 버전 자체를 spotbugs가 요구하는 3.20.0으로 override한다. commons-lang3는 runtimeClasspath에
+// 없어(빌드/정적분석 전용) 런타임 아티팩트에는 영향이 없다.
+dependencyManagement {
+    dependencies {
+        dependency("org.apache.commons:commons-lang3:3.20.0")
+    }
+}
+
 tasks.withType<com.github.spotbugs.snom.SpotBugsTask> {
     reports.create("html") { required.set(true) }
     reports.create("xml") { required.set(false) }
