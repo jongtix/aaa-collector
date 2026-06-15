@@ -372,6 +372,47 @@ class WatchlistWriterTest {
         }
 
         @Test
+        @DisplayName("UN-라우팅 변경 케이스는 in-place 교정 비대상 — M4 DB 재구성(C7)으로 해소 (AC-4 boundary)")
+        void
+                upsertAll_unRoutingChangedMarket_insertsNewRowAndSoftRemovesOldRow_relyingOnDbRebuild() {
+            // 설계 의도: 구버그 KisMarketResolver는 fid="UN" → KOSDAQ으로 라우팅해
+            // NAVER(035420)가 market=KOSDAQ으로 DB에 저장될 수 있었다.
+            // 신규 KisMarketResolver는 fid="UN" → KOSPI(국내 coarse)로 라우팅하고,
+            // mket_id_cd=STK 권위값도 KOSPI이므로 ResolvedStock.market()==KOSPI,
+            // StockInfo.market()==KOSPI.
+            //
+            // 이 케이스에서 lookup 키는 "035420:KOSPI"이지만 DB에는 "035420:KOSDAQ"만 존재하므로
+            // 키가 일치하지 않아 existing==null → INSERT 경로로 진입한다.
+            // correctMetadata(in-place 교정)는 호출되지 않으며,
+            // 기존 KOSDAQ 행은 touchedIds에 포함되지 않아 markWatchlistRemoved 대상이 된다.
+            // 이 동작은 의도된 설계이며, DB 재구성(M4/C7) 단계에서 구버그 행이 정리된다.
+
+            // Arrange
+            StockInfo info = new StockInfo(AssetType.STOCK, "NAVER", null, Market.KOSPI);
+            ResolvedStock resolved = new ResolvedStock("035420", "NAVER", Market.KOSPI, info);
+            // 구버그 상태: 035420이 KOSDAQ으로 잘못 저장됨 (id=7)
+            Stock existingKosdaq =
+                    stockWith("035420", Market.KOSDAQ, "NAVER", "NAVER Corp", true, null, 7L);
+            when(stockRepository.findAllBySymbolIn(any())).thenReturn(List.of(existingKosdaq));
+
+            // Act
+            watchlistWriter.upsertAll(List.of(resolved), 0);
+
+            // Assert — 신규 (035420, KOSPI) 행이 INSERT됨 (in-place 교정이 아님)
+            ArgumentCaptor<Stock> saveCaptor = ArgumentCaptor.forClass(Stock.class);
+            verify(stockRepository).save(saveCaptor.capture());
+            Stock inserted = saveCaptor.getValue();
+            assertThat(inserted.getSymbol()).isEqualTo("035420");
+            assertThat(inserted.getMarket()).isEqualTo(Market.KOSPI);
+
+            // Assert — 기존 (035420, KOSDAQ) 행(id=7)은 soft-remove됨
+            verify(stockRepository).markWatchlistRemoved(Set.of(7L));
+
+            // Assert — 기존 KOSDAQ 엔티티의 market은 변경되지 않음 (in-place 교정 비대상)
+            assertThat(existingKosdaq.getMarket()).isEqualTo(Market.KOSDAQ);
+        }
+
+        @Test
         @DisplayName(
                 "기존 종목 + StockInfo listedDate non-null + 저장 listedDate null — listedDate 채워짐 (AC-5)")
         void upsertAll_existingStockNullListedDate_filledByStockInfo() {
