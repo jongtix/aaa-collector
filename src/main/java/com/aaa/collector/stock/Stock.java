@@ -45,16 +45,17 @@ public class Stock extends BaseEntity {
     @Column(name = "name_en", length = 100)
     private String nameEn;
 
+    // @MX:SPEC: SPEC-COLLECTOR-STOCKMETA-001
     @Enumerated(EnumType.STRING)
     @Column(name = "market", length = 10)
-    private final Market market;
+    private Market market; // correctable — REQ-STOCKMETA-004,011
 
     @Enumerated(EnumType.STRING)
     @Column(name = "asset_type", length = 10)
     private final AssetType assetType;
 
     @Column(name = "listed_date")
-    private final LocalDate listedDate;
+    private LocalDate listedDate; // correctable — REQ-STOCKMETA-004,012
 
     @Column(name = "active")
     private boolean active;
@@ -105,6 +106,39 @@ public class Stock extends BaseEntity {
         }
         if (this.watchlistRemovedAt != null) {
             this.watchlistRemovedAt = null; // NOPMD: intentional null reset for JPA dirty checking
+            changed = true;
+        }
+
+        return changed;
+    }
+
+    /**
+     * 시장 교정 및 상장일 채우기를 수행한다 (REQ-STOCKMETA-004,011,012, SPEC-COLLECTOR-STOCKMETA-001).
+     *
+     * <p>두 보정 모두 단방향 강화만 수행한다:
+     *
+     * <ul>
+     *   <li>시장 교정: 저장값이 {@code authoritativeMarket}과 다른 경우에만 교정한다. 이미 일치하면 변경하지 않는다.
+     *   <li>상장일 채우기: 저장값이 {@code null}이고 {@code authoritative listedDate}가 non-null인 경우에만 채운다.
+     *       non-null → non-null 덮어쓰기나 null로의 변경은 수행하지 않는다.
+     * </ul>
+     *
+     * @param authoritativeMarket 권위 시장값 (null이면 시장 교정을 수행하지 않음)
+     * @param authoritativeListedDate 권위 상장일 (null이면 상장일 채우기를 수행하지 않음)
+     * @return 하나 이상의 필드가 실제로 변경된 경우 {@code true}
+     */
+    public boolean correctMetadata(Market authoritativeMarket, LocalDate authoritativeListedDate) {
+        boolean changed = false;
+
+        // 시장 교정: 저장값 != 권위값인 경우에만 (REQ-STOCKMETA-011)
+        if (authoritativeMarket != null && !Objects.equals(this.market, authoritativeMarket)) {
+            this.market = authoritativeMarket;
+            changed = true;
+        }
+
+        // 상장일 채우기: NULL→non-null만 수행 (REQ-STOCKMETA-012)
+        if (this.listedDate == null && authoritativeListedDate != null) {
+            this.listedDate = authoritativeListedDate;
             changed = true;
         }
 

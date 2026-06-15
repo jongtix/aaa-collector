@@ -1,0 +1,165 @@
+package com.aaa.collector.stock;
+
+import static org.assertj.core.api.Assertions.assertThat;
+
+import com.aaa.collector.stock.enums.AssetType;
+import com.aaa.collector.stock.enums.Market;
+import java.time.LocalDate;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Nested;
+import org.junit.jupiter.api.Test;
+
+// @MX:SPEC: SPEC-COLLECTOR-STOCKMETA-001
+@DisplayName("Stock.correctMetadata — 시장 교정·상장일 채우기 (REQ-STOCKMETA-004,011,012)")
+class StockTest {
+
+    private static Stock kospiStockNullDate() {
+        return Stock.builder()
+                .symbol("005930")
+                .nameKo("삼성전자")
+                .market(Market.KOSPI)
+                .assetType(AssetType.STOCK)
+                .build();
+    }
+
+    private static Stock kosdaqStockWithDate(LocalDate listedDate) {
+        return Stock.builder()
+                .symbol("247540")
+                .nameKo("에코프로비엠")
+                .market(Market.KOSDAQ)
+                .assetType(AssetType.STOCK)
+                .listedDate(listedDate)
+                .build();
+    }
+
+    @Nested
+    @DisplayName("시장 교정 (AC-4, REQ-STOCKMETA-011)")
+    class MarketCorrection {
+
+        @Test
+        @DisplayName("저장 시장이 권위 시장과 다르면 교정되고 true 반환")
+        void correctMetadata_differentMarket_corrected() {
+            // Arrange — KOSPI로 저장된 종목이 실제로는 KOSDAQ
+            Stock stock =
+                    Stock.builder()
+                            .symbol("247540")
+                            .nameKo("에코프로비엠")
+                            .market(Market.KOSPI) // 잘못 저장된 시장
+                            .assetType(AssetType.STOCK)
+                            .build();
+
+            // Act
+            boolean changed = stock.correctMetadata(Market.KOSDAQ, null);
+
+            // Assert
+            assertThat(changed).isTrue();
+            assertThat(stock.getMarket()).isEqualTo(Market.KOSDAQ);
+        }
+
+        @Test
+        @DisplayName("저장 시장이 권위 시장과 같으면 변경 없이 false 반환")
+        void correctMetadata_sameMarket_noChange() {
+            Stock stock = kosdaqStockWithDate(LocalDate.of(2019, 3, 15));
+
+            boolean changed = stock.correctMetadata(Market.KOSDAQ, null);
+
+            assertThat(changed).isFalse();
+            assertThat(stock.getMarket()).isEqualTo(Market.KOSDAQ);
+        }
+
+        @Test
+        @DisplayName("권위 시장이 null이면 시장 교정을 수행하지 않음")
+        void correctMetadata_nullAuthoritativeMarket_noMarketChange() {
+            Stock stock = kosdaqStockWithDate(LocalDate.of(2019, 3, 15));
+
+            boolean changed = stock.correctMetadata(null, null);
+
+            assertThat(changed).isFalse();
+            assertThat(stock.getMarket()).isEqualTo(Market.KOSDAQ);
+        }
+    }
+
+    @Nested
+    @DisplayName("상장일 채우기 (AC-5, REQ-STOCKMETA-012)")
+    class ListedDateFill {
+
+        @Test
+        @DisplayName("저장 상장일이 null이고 권위 상장일이 non-null이면 채워지고 true 반환")
+        void correctMetadata_nullListedDateFilledByAuthoritative() {
+            // Arrange — 상장일 없이 저장된 종목
+            Stock stock = kospiStockNullDate();
+            LocalDate authoritativeDate = LocalDate.of(2000, 1, 1);
+
+            // Act
+            boolean changed = stock.correctMetadata(null, authoritativeDate);
+
+            // Assert
+            assertThat(changed).isTrue();
+            assertThat(stock.getListedDate()).isEqualTo(authoritativeDate);
+        }
+
+        @Test
+        @DisplayName("저장 상장일이 이미 non-null이면 덮어쓰지 않음")
+        void correctMetadata_existingListedDate_notOverwritten() {
+            LocalDate existing = LocalDate.of(2019, 3, 15);
+            Stock stock = kosdaqStockWithDate(existing);
+            LocalDate different = LocalDate.of(2020, 1, 1);
+
+            boolean changed = stock.correctMetadata(null, different);
+
+            assertThat(changed).isFalse();
+            assertThat(stock.getListedDate()).isEqualTo(existing);
+        }
+
+        @Test
+        @DisplayName("저장 상장일이 null이고 권위 상장일도 null이면 변경 없음")
+        void correctMetadata_bothNullListedDate_noChange() {
+            Stock stock = kospiStockNullDate();
+
+            boolean changed = stock.correctMetadata(null, null);
+
+            assertThat(changed).isFalse();
+            assertThat(stock.getListedDate()).isNull();
+        }
+    }
+
+    @Nested
+    @DisplayName("시장 교정 + 상장일 채우기 동시 수행")
+    class CombinedCorrection {
+
+        @Test
+        @DisplayName("시장과 상장일 모두 교정 대상이면 둘 다 교정되고 true 반환")
+        void correctMetadata_bothMarketAndDateCorrected() {
+            // Arrange — 잘못된 시장 + null 상장일
+            Stock stock =
+                    Stock.builder()
+                            .symbol("247540")
+                            .nameKo("에코프로비엠")
+                            .market(Market.KOSPI)
+                            .assetType(AssetType.STOCK)
+                            .build();
+            LocalDate authoritativeDate = LocalDate.of(2019, 3, 15);
+
+            // Act
+            boolean changed = stock.correctMetadata(Market.KOSDAQ, authoritativeDate);
+
+            // Assert
+            assertThat(changed).isTrue();
+            assertThat(stock.getMarket()).isEqualTo(Market.KOSDAQ);
+            assertThat(stock.getListedDate()).isEqualTo(authoritativeDate);
+        }
+
+        @Test
+        @DisplayName("시장과 상장일 모두 교정 불필요이면 false 반환")
+        void correctMetadata_nothingToCorrect_false() {
+            LocalDate date = LocalDate.of(2019, 3, 15);
+            Stock stock = kosdaqStockWithDate(date);
+
+            boolean changed = stock.correctMetadata(Market.KOSDAQ, LocalDate.of(2020, 1, 1));
+
+            assertThat(changed).isFalse();
+            assertThat(stock.getMarket()).isEqualTo(Market.KOSDAQ);
+            assertThat(stock.getListedDate()).isEqualTo(date);
+        }
+    }
+}
