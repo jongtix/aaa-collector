@@ -353,6 +353,73 @@ class WatchlistWriterTest {
         }
 
         @Test
+        @DisplayName("기존 종목 + StockInfo.market != 저장 시장 — 시장 교정됨, counter.updated 증가 (AC-4)")
+        void upsertAll_existingStockMarketDiffersFromAuthoritativeInStockInfo_marketCorrected() {
+            // Arrange — 기존 DB에 KOSPI로 저장, 권위 market은 KOSDAQ (mket_id_cd=KSQ)
+            // resolved.market() = KOSPI (routing market, 이 키로 기존 종목 검색됨)
+            // StockInfo.market() = KOSDAQ (parseDomestic이 확정한 권위값)
+            StockInfo info = new StockInfo(AssetType.STOCK, "에코프로비엠", null, Market.KOSDAQ);
+            ResolvedStock resolved = new ResolvedStock("247540", "에코프로비엠", Market.KOSPI, info);
+            Stock existing = stockWith("247540", Market.KOSPI, "에코프로비엠", "EcoPro BM", true);
+            when(stockRepository.findAllBySymbolIn(any())).thenReturn(List.of(existing));
+
+            // Act
+            watchlistWriter.upsertAll(List.of(resolved), 0);
+
+            // Assert — 시장이 KOSDAQ으로 교정됨 (AC-4), counter.updated 증가(1회 갱신)
+            assertThat(existing.getMarket()).isEqualTo(Market.KOSDAQ);
+            verify(stockRepository, never()).save(any());
+        }
+
+        @Test
+        @DisplayName(
+                "기존 종목 + StockInfo listedDate non-null + 저장 listedDate null — listedDate 채워짐 (AC-5)")
+        void upsertAll_existingStockNullListedDate_filledByStockInfo() {
+            // Arrange
+            LocalDate authoritativeDate = LocalDate.of(2000, 1, 1);
+            StockInfo info =
+                    new StockInfo(AssetType.STOCK, "Samsung Electronics", authoritativeDate);
+            ResolvedStock resolved = new ResolvedStock("005930", "삼성전자", Market.KOSPI, info);
+            Stock existing = stockWith("005930", Market.KOSPI, "삼성전자", "Samsung Electronics", true);
+            // existing.listedDate == null (stockWith에서 listedDate 미설정)
+            when(stockRepository.findAllBySymbolIn(any())).thenReturn(List.of(existing));
+
+            // Act
+            watchlistWriter.upsertAll(List.of(resolved), 0);
+
+            // Assert
+            assertThat(existing.getListedDate()).isEqualTo(authoritativeDate);
+        }
+
+        @Test
+        @DisplayName("기존 종목 + StockInfo listedDate non-null + 저장 listedDate already set — 덮어쓰기 없음")
+        void upsertAll_existingStockWithListedDate_notOverwritten() {
+            // Arrange
+            LocalDate existingDate = LocalDate.of(2000, 1, 1);
+            Stock existing =
+                    Stock.builder()
+                            .symbol("005930")
+                            .nameKo("삼성전자")
+                            .nameEn("Samsung Electronics")
+                            .market(Market.KOSPI)
+                            .assetType(AssetType.STOCK)
+                            .listedDate(existingDate)
+                            .active(true)
+                            .build();
+            ReflectionTestUtils.setField(existing, "id", 1L);
+            StockInfo info =
+                    new StockInfo(AssetType.STOCK, "Samsung Electronics", LocalDate.of(2020, 5, 1));
+            ResolvedStock resolved = new ResolvedStock("005930", "삼성전자", Market.KOSPI, info);
+            when(stockRepository.findAllBySymbolIn(any())).thenReturn(List.of(existing));
+
+            // Act
+            watchlistWriter.upsertAll(List.of(resolved), 0);
+
+            // Assert — 기존 상장일 보존
+            assertThat(existing.getListedDate()).isEqualTo(existingDate);
+        }
+
+        @Test
         @DisplayName("벌크 조회 — 모든 symbol을 한 번의 findAllBySymbolIn 호출로 조회")
         void upsertAll_multipleStocks_singleBulkSelect() {
             // Arrange
@@ -384,7 +451,8 @@ class WatchlistWriterTest {
             // Arrange
             EtfMetaInfo etfMeta = new EtfMetaInfo("069500", 1, false, false, false);
             StockInfo etfInfo =
-                    new StockInfo(AssetType.ETF, "KODEX 200", LocalDate.of(2002, 10, 14), etfMeta);
+                    new StockInfo(
+                            AssetType.ETF, "KODEX 200", LocalDate.of(2002, 10, 14), etfMeta, null);
             ResolvedStock etfStock =
                     new ResolvedStock("069500", "KODEX 200", Market.KOSPI, etfInfo);
             when(stockRepository.findAllBySymbolIn(any())).thenReturn(List.of());
@@ -411,7 +479,8 @@ class WatchlistWriterTest {
             // skip된 종목의 ID는 touchedIds에 추가되어 markWatchlistRemoved 대상에서 제외된다.
             EtfMetaInfo etfMeta = new EtfMetaInfo("069500", 1, false, false, false);
             StockInfo etfInfo =
-                    new StockInfo(AssetType.ETF, "KODEX 200", LocalDate.of(2002, 10, 14), etfMeta);
+                    new StockInfo(
+                            AssetType.ETF, "KODEX 200", LocalDate.of(2002, 10, 14), etfMeta, null);
             Stock existingEtf =
                     stockWith("069500", Market.KOSPI, "KODEX 200", "KODEX 200", true, null, 5L);
             ResolvedStock etfStock =

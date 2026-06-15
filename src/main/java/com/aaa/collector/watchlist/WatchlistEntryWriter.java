@@ -67,11 +67,20 @@ class WatchlistEntryWriter {
                 .build();
     }
 
+    // @MX:SPEC: SPEC-COLLECTOR-STOCKMETA-001
     private void updateIfNeeded(
             Stock existing, ResolvedStock resolved, WatchlistWriter.Counter counter) {
         StockInfo info = resolved.stockInfo();
         String nameEn = info != null ? info.nameEn() : null;
-        if (existing.syncFromWatchlist(resolved.nameKo(), nameEn)) {
+        boolean changed = existing.syncFromWatchlist(resolved.nameKo(), nameEn);
+
+        // 시장 교정 + 상장일 채우기 (REQ-STOCKMETA-004,011,012)
+        // StockInfo가 있을 때만 수행. null이면 교정 정보 없음.
+        if (info != null) {
+            changed |= existing.correctMetadata(info.market(), info.listedDate());
+        }
+
+        if (changed) {
             counter.updated++;
         } else {
             counter.unchanged++;
