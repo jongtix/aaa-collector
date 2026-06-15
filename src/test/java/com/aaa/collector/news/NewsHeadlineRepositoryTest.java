@@ -50,6 +50,31 @@ class NewsHeadlineRepositoryTest {
     }
 
     @Nested
+    @DisplayName("title TEXT 저장 — VARCHAR(400) 초과 제목 (W1)")
+    class TitleTextStorage {
+
+        @Test
+        @DisplayName("500자 제목 삽입 → 잘림 없이 완전하게 읽힘 (V22 TEXT 마이그레이션 검증)")
+        void titleLongerThan400Chars_persistedAndReadBackInFull() {
+            // Arrange — 500자 제목 (구 VARCHAR(400) 초과)
+            String longTitle = "가".repeat(500);
+            String serialNo = "5000000000000000001";
+
+            // Act
+            newsHeadlineRepository.insertIgnoreDuplicate(buildHeadline(serialNo, longTitle));
+
+            // Assert
+            NewsHeadline saved =
+                    newsHeadlineRepository.findAll().stream()
+                            .filter(n -> n.getSerialNo().equals(serialNo))
+                            .findFirst()
+                            .orElseThrow();
+            assertThat(saved.getTitle()).hasSize(500);
+            assertThat(saved.getTitle()).isEqualTo(longTitle);
+        }
+    }
+
+    @Nested
     @DisplayName("insertIgnoreDuplicate — 멱등 삽입 (REQ-BATCH3-062)")
     class InsertIgnoreDuplicate {
 

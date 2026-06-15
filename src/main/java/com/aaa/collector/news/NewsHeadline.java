@@ -39,7 +39,7 @@ public class NewsHeadline extends BaseEntity {
     @Column(name = "provider_code", length = 1)
     private final String providerCode;
 
-    @Column(name = "title", length = 400)
+    @Column(name = "title", nullable = false, columnDefinition = "TEXT")
     private final String title;
 
     @Column(name = "category_code", length = 8)
