@@ -7,10 +7,8 @@ import com.aaa.collector.kis.ranking.KisOverseasRankingResponse;
 import com.aaa.collector.stock.Stock;
 import com.aaa.collector.stock.StockRepository;
 import com.aaa.collector.stock.enums.Market;
-import java.time.LocalDate;
 import java.time.ZoneId;
 import java.time.ZonedDateTime;
-import java.time.temporal.ChronoUnit;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -39,10 +37,6 @@ public class GradeClassificationService {
 
     private static final ZoneId KST = ZoneId.of("Asia/Seoul");
 
-    // 상장일 미상 종목의 fallback 경과 연수. A 등급 임계(7년)를 충분히 초과하는 값으로,
-    // KIS가 상장일을 제공하지 않는 종목(예: 장기 상장 해외 블루칩)을 장기 상장으로 간주한다.
-    private static final double ESTABLISHED_FALLBACK_YEARS = 100.0;
-
     // KRX 시장 집합
     private static final Set<Market> KRX_MARKETS = Set.of(Market.KOSPI, Market.KOSDAQ);
     // US 시장 집합
@@ -54,6 +48,7 @@ public class GradeClassificationService {
     private final AdtvPercentileCalculator percentileCalculator;
     private final GradeClassifier gradeClassifier;
     private final StockGradePersistService stockGradePersistService;
+    private final ListedYearsResolver listedYearsResolver;
 
     /**
      * 모든 활성 종목의 등급을 분류한다.
@@ -94,7 +89,7 @@ public class GradeClassificationService {
                 Map<String, Double> krxMap = krxPercentiles.orElse(Map.of());
                 Map<String, Double> usMap = usPercentiles.orElse(Map.of());
                 double percentile = resolvePercentile(stock, krxMap, usMap);
-                double listedYears = resolveListedYears(stock);
+                double listedYears = listedYearsResolver.resolve(stock);
                 GradeInput input =
                         new GradeInput(
                                 stock.getSymbol(),
@@ -221,23 +216,6 @@ public class GradeClassificationService {
         }
         // INDEX/COMMODITY 등은 등급 분류 대상이 아님 → 100으로 처리(C 등급)
         return 100.0;
-    }
-
-    private double resolveListedYears(Stock stock) {
-        LocalDate listedDate = stock.getListedDate();
-        if (listedDate == null) {
-            // KIS가 상장일을 제공하지 않는 종목(예: 장기 상장 해외 블루칩 JPM·GS)은 장기 상장으로 간주한다.
-            // 단, 신규 상장 종목이 상장일 누락으로 잘못 A 등급 후보가 될 위험이 있으므로(고거래량 IPO 등),
-            // fallback 적용 종목은 반드시 식별 가능하게 로깅하여 예상 밖 종목을 조기에 포착한다.
-            log.warn(
-                    "상장일 미상 — 장기 상장 종목으로 간주(A 등급 후보), 신규 종목 오분류 여부 확인 요망"
-                            + " — symbol={}, market={}, assetType={}",
-                    stock.getSymbol(),
-                    stock.getMarket(),
-                    stock.getAssetType());
-            return ESTABLISHED_FALLBACK_YEARS;
-        }
-        return ChronoUnit.DAYS.between(listedDate, LocalDate.now(KST)) / 365.25;
     }
 
     /** 순위 문자열을 double로 변환. 파싱 실패 시 큰 값(하위) 반환. */

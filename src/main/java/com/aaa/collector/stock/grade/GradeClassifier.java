@@ -39,13 +39,14 @@ public class GradeClassifier {
         }
 
         // 3. A: 상장 7년 이상 AND 상위 20%
-        if (input.listedYears() >= 7.0 && input.percentile() <= 20.0) {
+        if (input.listedYears() >= GradeConstants.ESTABLISHED_YEARS_THRESHOLD
+                && input.percentile() <= 20.0) {
             return Grade.A;
         }
 
         // 4. B: 상장 3년 이상 7년 미만 AND 상위 20%~60%
         if (input.listedYears() >= 3.0
-                && input.listedYears() < 7.0
+                && input.listedYears() < GradeConstants.ESTABLISHED_YEARS_THRESHOLD
                 && input.percentile() > 20.0
                 && input.percentile() <= 60.0) {
             return Grade.B;

@@ -43,6 +43,7 @@ class GradeClassificationServiceTest {
     @Mock private AdtvPercentileCalculator percentileCalculator;
     @Mock private GradeClassifier gradeClassifier;
     @Mock private StockGradePersistService stockGradePersistService;
+    @Mock private ListedYearsResolver listedYearsResolver;
 
     @InjectMocks private GradeClassificationService service;
 
@@ -72,6 +73,8 @@ class GradeClassificationServiceTest {
                 .thenReturn(List.of(new KisOverseasRankingResponse.RankedStock("DUMMY", "1")));
         lenient().when(percentileCalculator.calculate(anyList())).thenReturn(Map.of());
         lenient().when(gradeClassifier.classify(any())).thenReturn(Grade.C);
+        // 기본 listedYearsResolver: 상장일 있는 종목은 실제 날짜 기반 계산을 단순화하여 8.0 반환
+        lenient().when(listedYearsResolver.resolve(any())).thenReturn(8.0);
     }
 
     @Nested
@@ -382,25 +385,69 @@ class GradeClassificationServiceTest {
         }
     }
 
+    // @MX:SPEC: SPEC-COLLECTOR-STOCKMETA-001
     @Nested
-    @DisplayName("상장일 미상 — 장기 상장 fallback")
+    @DisplayName("상장일 미상 — listedYearsResolver 위임 (REQ-STOCKMETA-013, M3 1안)")
     class MissingListedDateFallback {
 
         @Test
-        @DisplayName("listedDate=null — skip 없이 분류, listedYears는 7년↑ fallback (JPM·GS 케이스)")
-        void classify_nullListedDate_treatedAsEstablished() {
-            Stock stock = buildStock("JPM", Market.NYSE, null);
+        @DisplayName("listedDate=null + OHLCV 없음 — resolver가 0.0 반환 → listedYears < 7 (A 미수여)")
+        void classify_nullListedDate_noOhlcv_treatedAsNew() {
+            // Arrange — listedYearsResolver가 보수적 신규(0.0)를 반환하는 케이스를 service 수준에서 검증
+            Stock stock = buildStock("NEWIPO", Market.NASDAQ, null);
             when(stockRepository.findAllActive()).thenReturn(List.of(stock));
-            when(gradeClassifier.classify(any())).thenReturn(Grade.A);
+            when(listedYearsResolver.resolve(stock))
+                    .thenReturn(ListedYearsResolver.NEW_STOCK_FALLBACK_YEARS);
+            when(gradeClassifier.classify(any())).thenReturn(Grade.C);
 
+            // Act
             service.classify();
 
-            // null listedDate가 예외로 skip되지 않고, 장기 상장(7년↑)으로 간주되어 분류됨
+            // Assert — listedYears < 7(신규로 간주), A 미수여
+            ArgumentCaptor<GradeInput> captor = ArgumentCaptor.forClass(GradeInput.class);
+            verify(gradeClassifier).classify(captor.capture());
+            assertThat(captor.getValue().listedYears()).isLessThan(7.0);
+            verify(stockGradePersistService)
+                    .persistSingle(eq(stock), any(), any(ZonedDateTime.class));
+        }
+
+        @Test
+        @DisplayName("listedDate=null + OHLCV MIN >= 7년전 — resolver가 100.0 반환 → listedYears >= 7")
+        void classify_nullListedDate_ohlcvOldEnough_treatedAsEstablished() {
+            // Arrange — listedYearsResolver가 장기 상장(100.0)을 반환하는 케이스
+            Stock stock = buildStock("JPM", Market.NYSE, null);
+            when(stockRepository.findAllActive()).thenReturn(List.of(stock));
+            when(listedYearsResolver.resolve(stock))
+                    .thenReturn(ListedYearsResolver.ESTABLISHED_FALLBACK_YEARS);
+            when(gradeClassifier.classify(any())).thenReturn(Grade.A);
+
+            // Act
+            service.classify();
+
+            // Assert — listedYears >= 7, A 수여 가능
             ArgumentCaptor<GradeInput> captor = ArgumentCaptor.forClass(GradeInput.class);
             verify(gradeClassifier).classify(captor.capture());
             assertThat(captor.getValue().listedYears()).isGreaterThanOrEqualTo(7.0);
             verify(stockGradePersistService)
                     .persistSingle(eq(stock), eq(Grade.A), any(ZonedDateTime.class));
+        }
+
+        @Test
+        @DisplayName("listedDate=null + OHLCV MIN < 7년전 — resolver가 elapsed 반환 → listedYears < 7")
+        void classify_nullListedDate_ohlcvTooRecent_treatedAsNew() {
+            // Arrange — listedYearsResolver가 3년(< 7년)을 반환하는 케이스
+            Stock stock = buildStock("RECENT", Market.NASDAQ, null);
+            when(stockRepository.findAllActive()).thenReturn(List.of(stock));
+            when(listedYearsResolver.resolve(stock)).thenReturn(3.0);
+            when(gradeClassifier.classify(any())).thenReturn(Grade.C);
+
+            // Act
+            service.classify();
+
+            // Assert — listedYears < 7
+            ArgumentCaptor<GradeInput> captor = ArgumentCaptor.forClass(GradeInput.class);
+            verify(gradeClassifier).classify(captor.capture());
+            assertThat(captor.getValue().listedYears()).isLessThan(7.0);
         }
     }
 }
