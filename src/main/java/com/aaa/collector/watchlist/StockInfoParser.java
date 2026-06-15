@@ -7,30 +7,78 @@ import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
 import java.util.Locale;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
+// @MX:SPEC: SPEC-COLLECTOR-STOCKMETA-001
 /**
  * KIS 종목 기본정보 API 응답({@code search-stock-info} / {@code search-info})을 {@link StockInfo}로 파싱하는
  * 컴포넌트.
  *
- * <p>자산 유형 판정, ETF 메타 추출(레버리지/인버스/헤지), 상장일 파싱을 담당한다. URI 빌드·HTTP 호출 책임을 갖는 {@link
- * KisStockInfoClient}와 분리하여 응집도를 높인다.
+ * <p>자산 유형 판정, ETF 메타 추출(레버리지/인버스/헤지), 상장일 파싱, 국내 KOSPI/KOSDAQ 권위 확정을 담당한다. URI 빌드·HTTP 호출 책임을 갖는
+ * {@link KisStockInfoClient}와 분리하여 응집도를 높인다.
  */
+@Slf4j
 @Component
 public class StockInfoParser {
 
-    StockInfo parseDomestic(KisDomesticStockInfoResponse.Output out, Market market) {
+    /**
+     * 국내 종목 기본정보를 파싱한다.
+     *
+     * <p>KOSPI/KOSDAQ 권위 확정: {@code mket_id_cd}({@code STK}=KOSPI, {@code KSQ}=KOSDAQ)로 결정한다
+     * (REQ-STOCKMETA-001, api-specs/kis/17-주식기본조회.md:41). 미매핑 값(예: KNX 코넥스)은 WARN 후 {@code null}
+     * 반환(기존 미매핑 WARN-드롭 정책).
+     *
+     * <p>상장일 필드 선택: 확정된 시장 기준으로 KOSPI→{@code scts_mket_lstg_dt}, KOSDAQ→{@code
+     * kosdaq_mket_lstg_dt}를 선택한다(REQ-STOCKMETA-030). {@code mket_id_cd} 미매핑 시 상장일도 null.
+     *
+     * @param out CTPF1002R 응답 출력
+     * @param symbol 종목코드 (WARN 로깅용)
+     * @return 파싱된 StockInfo. mket_id_cd 미매핑 시 null(기존 WARN-드롭 정책 준수).
+     */
+    StockInfo parseDomestic(KisDomesticStockInfoResponse.Output out, String symbol) {
+        // mket_id_cd로 권위 KOSPI/KOSDAQ 확정 (REQ-STOCKMETA-001)
+        Market authoritative = resolveDomesticMarket(out.mketIdCd(), symbol);
+        if (authoritative == null) {
+            // 미매핑 mket_id_cd — WARN-드롭 정책(기존 동작과 동일)
+            return null;
+        }
+
         AssetType assetType = resolveAssetTypeDomestic(out.sctyGrpIdCd());
-        String rawDate = market == Market.KOSPI ? out.sctsMketLstgDt() : out.kosdaqMketLstgDt();
+        // 권위 시장 기준으로 상장일 필드 선택 (REQ-STOCKMETA-030)
+        String rawDate =
+                authoritative == Market.KOSPI ? out.sctsMketLstgDt() : out.kosdaqMketLstgDt();
 
         EtfMetaInfo etfMetaInfo = null;
         if (assetType == AssetType.ETF) {
             etfMetaInfo = extractDomesticEtfMeta(out);
         }
-        return new StockInfo(assetType, out.prdtEngName(), parseDate(rawDate), etfMetaInfo);
+        return new StockInfo(
+                assetType, out.prdtEngName(), parseDate(rawDate), etfMetaInfo, authoritative);
     }
 
-    StockInfo parseOverseas(KisOverseasStockInfoResponse.Output out) {
+    /**
+     * {@code mket_id_cd} 값을 권위 국내 시장으로 변환한다.
+     *
+     * <p>{@code STK}=KOSPI, {@code KSQ}=KOSDAQ. 미매핑 값(예: KNX 코넥스)은 WARN 후 null 반환(기존 미매핑 WARN-드롭
+     * 정책).
+     */
+    private Market resolveDomesticMarket(String mketIdCd, String symbol) {
+        if (mketIdCd == null || mketIdCd.isBlank()) {
+            log.warn("mket_id_cd 공백 — symbol={} 국내 시장 확정 불가, 종목 드롭", symbol);
+            return null;
+        }
+        return switch (mketIdCd.trim()) {
+            case "STK" -> Market.KOSPI;
+            case "KSQ" -> Market.KOSDAQ;
+            default -> {
+                log.warn("mket_id_cd 미매핑 — symbol={} 종목 드롭: mket_id_cd={}", symbol, mketIdCd);
+                yield null;
+            }
+        };
+    }
+
+    StockInfo parseOverseas(KisOverseasStockInfoResponse.Output out, Market market) {
         AssetType assetType =
                 resolveAssetTypeOverseas(out.ovrsStckDvsnCd(), out.ovrsStckEtfRiskDrtpCd());
 
@@ -38,7 +86,8 @@ public class StockInfoParser {
         if (assetType == AssetType.ETF) {
             etfMetaInfo = extractOverseasEtfMeta(out);
         }
-        return new StockInfo(assetType, out.prdtEngName(), parseDate(out.lstgDt()), etfMetaInfo);
+        return new StockInfo(
+                assetType, out.prdtEngName(), parseDate(out.lstgDt()), etfMetaInfo, market);
     }
 
     // @MX:WARN: [AUTO] ETF attribute derivation from undocumented KIS fields

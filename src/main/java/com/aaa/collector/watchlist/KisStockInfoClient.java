@@ -56,13 +56,13 @@ public class KisStockInfoClient {
     // @MX:SPEC: SPEC-COLLECTOR-WLSYNC-006
     public StockInfo fetchStockInfo(String symbol, Market market, StockInfoFetcher fetcher) {
         return switch (market) {
-            case KOSPI, KOSDAQ -> fetchDomesticInfo(symbol, market, fetcher);
+            case KOSPI, KOSDAQ -> fetchDomesticInfo(symbol, fetcher);
             case NYSE, NASDAQ, AMEX -> fetchOverseasInfo(symbol, market, fetcher);
             default -> throw new IllegalArgumentException("종목 기본정보 조회를 지원하지 않는 시장: " + market);
         };
     }
 
-    private StockInfo fetchDomesticInfo(String symbol, Market market, StockInfoFetcher fetcher) {
+    private StockInfo fetchDomesticInfo(String symbol, StockInfoFetcher fetcher) {
         BatchResult<KisDomesticStockInfoResponse> result =
                 fetcher.fetch(
                         uri ->
@@ -75,7 +75,10 @@ public class KisStockInfoClient {
         if (!result.isSuccess()) {
             return null;
         }
-        return stockInfoParser.parseDomestic(result.getValue().orElseThrow().output(), market);
+        // mket_id_cd 기반 KOSPI/KOSDAQ 권위 확정 (REQ-STOCKMETA-001, SPEC-COLLECTOR-STOCKMETA-001)
+        // market 파라미터는 fetchDomesticInfo 라우팅용 coarse 값이므로 parseDomestic에 전달하지 않음.
+        // parseDomestic이 mket_id_cd로 KOSPI/KOSDAQ를 확정하고 StockInfo.market()에 반환함.
+        return stockInfoParser.parseDomestic(result.getValue().orElseThrow().output(), symbol);
     }
 
     private StockInfo fetchOverseasInfo(String symbol, Market market, StockInfoFetcher fetcher) {
@@ -99,6 +102,7 @@ public class KisStockInfoClient {
         if (!result.isSuccess()) {
             return null;
         }
-        return stockInfoParser.parseOverseas(result.getValue().orElseThrow().output());
+        // 해외 종목: 시장은 거래소 라우팅 market을 권위로 사용(KIS CTPF1702R에 시장 코드 없음)
+        return stockInfoParser.parseOverseas(result.getValue().orElseThrow().output(), market);
     }
 }

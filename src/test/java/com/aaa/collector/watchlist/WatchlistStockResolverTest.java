@@ -17,6 +17,7 @@ import com.aaa.collector.kis.token.KisAccountCredential;
 import com.aaa.collector.kis.token.KisTokenIssueException;
 import com.aaa.collector.stock.StockAssetTypeClassifier;
 import com.aaa.collector.stock.enums.AssetType;
+import com.aaa.collector.stock.enums.Market;
 import java.time.format.DateTimeParseException;
 import java.util.List;
 import java.util.Map;
@@ -358,6 +359,49 @@ class WatchlistStockResolverTest {
             // Assert
             assertThat(result).hasSize(1);
             assertThat(result.getFirst().stockInfo()).isNull();
+        }
+    }
+
+    // @MX:SPEC: SPEC-COLLECTOR-STOCKMETA-001
+    @Nested
+    @DisplayName("mket_id_cd 기반 권위 시장 전파 (AC-6, REQ-STOCKMETA-001,010)")
+    class AuthoritativeMarketPropagation {
+
+        @Test
+        @DisplayName("KOSPI 종목 fid=UN + mket_id_cd=STK → ResolvedStock.market()==KOSPI")
+        void kospiStock_fidUN_mketIdCdSTK_resolvedMarketIsKospi() {
+            // fid_mrkt_cls_code=UN (과거 KOSDAQ 오분류 원인). mket_id_cd=STK → KOSPI 권위
+            List<KisStockListByGroupResponse.Stock> stocks =
+                    List.of(new KisStockListByGroupResponse.Stock("UN", "005930", "KRX", "네이버"));
+            when(distributor.distribute(stocks))
+                    .thenReturn(roundRobin(List.of(cred("isa")), stocks));
+            // KisStockInfoClient이 mket_id_cd=STK를 반영한 StockInfo(market=KOSPI)를 반환
+            StockInfo infoWithKospi = new StockInfo(AssetType.STOCK, "NAVER", null, Market.KOSPI);
+            when(kisStockInfoClient.fetchStockInfo(any(), any(), any())).thenReturn(infoWithKospi);
+
+            List<ResolvedStock> result = watchlistStockResolver.resolve(stocks);
+
+            assertThat(result).hasSize(1);
+            assertThat(result.getFirst().market()).isEqualTo(Market.KOSPI);
+        }
+
+        @Test
+        @DisplayName("KOSDAQ 종목 fid=J + mket_id_cd=KSQ → ResolvedStock.market()==KOSDAQ")
+        void kosdaqStock_fidJ_mketIdCdKSQ_resolvedMarketIsKosdaq() {
+            // fid_mrkt_cls_code=J (과거 KOSPI 오분류 원인). mket_id_cd=KSQ → KOSDAQ 권위
+            List<KisStockListByGroupResponse.Stock> stocks =
+                    List.of(new KisStockListByGroupResponse.Stock("J", "247540", "KRX", "에코프로비엠"));
+            when(distributor.distribute(stocks))
+                    .thenReturn(roundRobin(List.of(cred("isa")), stocks));
+            // KisStockInfoClient이 mket_id_cd=KSQ를 반영한 StockInfo(market=KOSDAQ)를 반환
+            StockInfo infoWithKosdaq =
+                    new StockInfo(AssetType.STOCK, "EcoPro BM", null, Market.KOSDAQ);
+            when(kisStockInfoClient.fetchStockInfo(any(), any(), any())).thenReturn(infoWithKosdaq);
+
+            List<ResolvedStock> result = watchlistStockResolver.resolve(stocks);
+
+            assertThat(result).hasSize(1);
+            assertThat(result.getFirst().market()).isEqualTo(Market.KOSDAQ);
         }
     }
 

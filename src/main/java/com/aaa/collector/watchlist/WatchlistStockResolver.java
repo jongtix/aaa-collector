@@ -104,18 +104,25 @@ public class WatchlistStockResolver {
         return CompletableFuture.supplyAsync(() -> resolveOne(stock, credential), executor);
     }
 
+    // @MX:SPEC: SPEC-COLLECTOR-STOCKMETA-001
     private ResolveResult resolveOne(
             KisStockListByGroupResponse.Stock stock, KisAccountCredential credential) {
-        Market market =
+        Market routingMarket =
                 KisMarketResolver.resolve(
                         stock.fidMrktClsCode(), stock.exchCode(), stock.jongCode());
-        if (market == null) {
+        if (routingMarket == null) {
             return new ResolveResult.Skipped(
                     "알 수 없는 마켓: fid=" + stock.fidMrktClsCode() + ", exch=" + stock.exchCode());
         }
-        StockInfo info = fetchStockInfo(stock, market, credential);
+        StockInfo info = fetchStockInfo(stock, routingMarket, credential);
+
+        // 권위 시장 결정 (REQ-STOCKMETA-010, A안):
+        // StockInfo.market()이 존재하면 그것이 권위 (parseDomestic의 mket_id_cd 기반 확정값 또는 해외 라우팅 시장).
+        // StockInfo가 null(조회 실패) 또는 market()이 null(정적 자산유형 경로)이면 coarse routingMarket 사용.
+        Market authoritative =
+                (info != null && info.market() != null) ? info.market() : routingMarket;
         return new ResolveResult.Success(
-                new ResolvedStock(stock.jongCode(), stock.htsKorIsnm(), market, info));
+                new ResolvedStock(stock.jongCode(), stock.htsKorIsnm(), authoritative, info));
     }
 
     private StockInfo fetchStockInfo(

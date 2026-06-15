@@ -117,8 +117,17 @@ class KisStockInfoClientTest {
                 symbol, market, fetcherFor(batchRestExecutor, symbol));
     }
 
+    /**
+     * Stubs domestic API with mket_id_cd for authoritative market determination (REQ-STOCKMETA-001,
+     * SPEC-COLLECTOR-STOCKMETA-001).
+     */
     private void stubDomestic(
-            String symbol, String sctyGrpIdCd, String sctsDt, String kosdaqDt, String nameEn) {
+            String symbol,
+            String sctyGrpIdCd,
+            String sctsDt,
+            String kosdaqDt,
+            String nameEn,
+            String mketIdCd) {
         String body =
                 "{\"rt_cd\":\"0\",\"msg_cd\":\"MCA00000\",\"msg1\":\"조회되었습니다.\","
                         + "\"output\":{"
@@ -133,6 +142,9 @@ class KisStockInfoClientTest {
                         + "\","
                         + "\"kosdaq_mket_lstg_dt\":\""
                         + kosdaqDt
+                        + "\","
+                        + "\"mket_id_cd\":\""
+                        + mketIdCd
                         + "\""
                         + "}}";
         wireMockServer.stubFor(
@@ -145,6 +157,14 @@ class KisStockInfoClientTest {
                                         .withStatus(200)
                                         .withHeader("Content-Type", "application/json")
                                         .withBody(body)));
+    }
+
+    /** Backwards-compat overload — stubs with STK (KOSPI) as default mket_id_cd. */
+    private void stubDomestic(
+            String symbol, String sctyGrpIdCd, String sctsDt, String kosdaqDt, String nameEn) {
+        // Default to STK(KOSPI) for existing tests that originally used Market.KOSPI directly.
+        // Tests for KOSDAQ should use the explicit overload.
+        stubDomestic(symbol, sctyGrpIdCd, sctsDt, kosdaqDt, nameEn, "STK");
     }
 
     private void stubOverseas(
@@ -223,15 +243,16 @@ class KisStockInfoClientTest {
         }
 
         @Test
-        @DisplayName("KOSDAQ 종목 — kosdaq_mket_lstg_dt 사용")
+        @DisplayName("KOSDAQ 종목 — kosdaq_mket_lstg_dt 사용 (mket_id_cd=KSQ)")
         void fetchStockInfo_kosdaqStock_usesKosdaqDate() {
-            stubDomestic("035420", "ST", "", "20020610", "NAVER Corp");
+            stubDomestic("247540", "ST", "", "20190628", "EcoPro BM", "KSQ");
 
-            StockInfo info = fetch("035420", Market.KOSDAQ);
+            StockInfo info = fetch("247540", Market.KOSPI); // coarse routing market; KSQ→KOSDAQ
 
             assertThat(info.assetType()).isEqualTo(AssetType.STOCK);
-            assertThat(info.nameEn()).isEqualTo("NAVER Corp");
-            assertThat(info.listedDate()).isEqualTo(LocalDate.of(2002, 6, 10));
+            assertThat(info.nameEn()).isEqualTo("EcoPro BM");
+            assertThat(info.market()).isEqualTo(Market.KOSDAQ); // authoritative from mket_id_cd
+            assertThat(info.listedDate()).isEqualTo(LocalDate.of(2019, 6, 28));
         }
 
         @Test
