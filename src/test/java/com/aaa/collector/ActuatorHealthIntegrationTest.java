@@ -2,6 +2,9 @@ package com.aaa.collector;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.aaa.collector.macro.MacroIndicatorRepository;
+import com.aaa.collector.news.NewsHeadlineRepository;
+import com.aaa.collector.stock.CorporateEventRepository;
 import com.aaa.collector.stock.CreditBalanceRepository;
 import com.aaa.collector.stock.DailyOhlcvRepository;
 import com.aaa.collector.stock.InvestorTrendRepository;
@@ -70,6 +73,18 @@ class ActuatorHealthIntegrationTest {
     @MockitoBean
     @SuppressWarnings("unused")
     private CreditBalanceRepository creditBalanceRepository;
+
+    @MockitoBean
+    @SuppressWarnings("unused")
+    private MacroIndicatorRepository macroIndicatorRepository;
+
+    @MockitoBean
+    @SuppressWarnings("unused")
+    private CorporateEventRepository corporateEventRepository;
+
+    @MockitoBean
+    @SuppressWarnings("unused")
+    private NewsHeadlineRepository newsHeadlineRepository;
 
     @Test
     @DisplayName("GET /actuator/health → HTTP 200 반환")
