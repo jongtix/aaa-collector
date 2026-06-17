@@ -116,5 +116,32 @@ class CorporateEventRepositoryTest {
 
             assertThat(corporateEventRepository.countByStockId(stock.getId())).isEqualTo(2L);
         }
+
+        @Test
+        @DisplayName(
+                "AC-MAP-4: 동일 (stock_id, event_date), event_type=DIVIDEND·SPLIT 공존 — uk 충돌 없음, 각각 독립 삽입")
+        void sameStockSameDate_dividendAndSplitCoexist() {
+            // Arrange
+            Stock stock = savedStock("096960");
+            LocalDate eventDate = LocalDate.of(2026, 6, 13);
+
+            CorporateEvent dividend = buildDividend(stock, eventDate, 500L);
+            CorporateEvent split =
+                    CorporateEvent.builder()
+                            .stock(stock)
+                            .eventType(EventType.SPLIT)
+                            .eventDate(eventDate)
+                            .eventSubtype("분할")
+                            .faceValue(100L) // inter_af_face_amt
+                            .stockRate(new BigDecimal("5.0000")) // 분할비율 bf/af = 500/100
+                            .build();
+
+            // Act
+            corporateEventRepository.insertIgnoreDuplicate(dividend);
+            corporateEventRepository.insertIgnoreDuplicate(split);
+
+            // Assert — event_type이 uk의 일부이므로 DIVIDEND·SPLIT은 충돌하지 않고 공존
+            assertThat(corporateEventRepository.countByStockId(stock.getId())).isEqualTo(2L);
+        }
     }
 }
