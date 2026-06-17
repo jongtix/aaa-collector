@@ -13,6 +13,8 @@ import com.aaa.collector.macro.MacroCollectionResult;
 import com.aaa.collector.macro.MarketFundsCollectionService;
 import com.aaa.collector.stock.DividendCollectionResult;
 import com.aaa.collector.stock.DividendScheduleCollectionService;
+import com.aaa.collector.stock.RevSplitCollectionResult;
+import com.aaa.collector.stock.RevSplitCollectionService;
 import java.lang.reflect.Method;
 import java.time.LocalDate;
 import org.junit.jupiter.api.BeforeEach;
@@ -37,6 +39,7 @@ class MarketBatchSchedulerTest {
     @Mock private CompInterestCollectionService compInterestCollectionService;
     @Mock private MarketFundsCollectionService marketFundsCollectionService;
     @Mock private DividendScheduleCollectionService dividendScheduleCollectionService;
+    @Mock private RevSplitCollectionService revSplitCollectionService;
 
     @InjectMocks private MarketBatchScheduler scheduler;
 
@@ -51,6 +54,8 @@ class MarketBatchSchedulerTest {
                 .thenReturn(new MacroCollectionResult(9, 9, 0));
         when(dividendScheduleCollectionService.collect(anyString(), anyString()))
                 .thenReturn(new DividendCollectionResult(10, 8, 1, 1));
+        when(revSplitCollectionService.collect(any(LocalDate.class), any(LocalDate.class)))
+                .thenReturn(new RevSplitCollectionResult(21, 5, 14, 2));
     }
 
     // ────────────────────────────────────────────────────────────────────
@@ -90,26 +95,40 @@ class MarketBatchSchedulerTest {
     // ────────────────────────────────────────────────────────────────────
 
     @Nested
-    @DisplayName("정상 수집 흐름 — 4종 고정 순서 (REQ-BATCH3-005)")
+    @DisplayName("정상 수집 흐름 — 5종 고정 순서 (REQ-BATCH3-005, REQ-BATCH5-001)")
     class NormalFlow {
 
         @Test
-        @DisplayName("4종 모두 호출 — sectorIndex → compInterest → marketFunds → dividendSchedule")
-        void collectMarket_callsAllFourServicesInOrder() {
+        @DisplayName(
+                "5종 모두 호출 — sectorIndex → compInterest → marketFunds → dividendSchedule → revSplit")
+        void collectMarket_callsAllFiveServicesInOrder() {
             // Act
             scheduler.collectMarket();
 
-            // Assert — 고정 순서 검증
+            // Assert — 고정 순서 검증 (배당 다음 액면교체)
             InOrder inOrder =
                     inOrder(
                             sectorIndexCollectionService,
                             compInterestCollectionService,
                             marketFundsCollectionService,
-                            dividendScheduleCollectionService);
+                            dividendScheduleCollectionService,
+                            revSplitCollectionService);
             inOrder.verify(sectorIndexCollectionService).collect(any(LocalDate.class));
             inOrder.verify(compInterestCollectionService).collect();
             inOrder.verify(marketFundsCollectionService).collect(anyString());
             inOrder.verify(dividendScheduleCollectionService).collect(anyString(), anyString());
+            inOrder.verify(revSplitCollectionService)
+                    .collect(any(LocalDate.class), any(LocalDate.class));
+        }
+
+        @Test
+        @DisplayName("AC-SCHED-1: revSplit이 dividendSchedule 다음에 호출됨")
+        void collectMarket_revSplitCalledAfterDividend() {
+            // Act
+            scheduler.collectMarket();
+
+            // Assert — revSplitCollectionService 호출 검증
+            verify(revSplitCollectionService).collect(any(LocalDate.class), any(LocalDate.class));
         }
     }
 
@@ -165,19 +184,33 @@ class MarketBatchSchedulerTest {
         }
 
         @Test
-        @DisplayName("dividendSchedule 예외 — 스케줄러 스레드로 전파 안 됨")
-        void dividendScheduleException_notPropagated() {
+        @DisplayName("dividendSchedule 예외 — 스케줄러 스레드로 전파 안 됨, revSplit 계속 호출")
+        void dividendScheduleException_revSplitStillCalled() {
             // Arrange
             when(dividendScheduleCollectionService.collect(anyString(), anyString()))
                     .thenThrow(new RuntimeException("배당 수집 실패"));
 
             // Act & Assert
             assertThatCode(scheduler::collectMarket).doesNotThrowAnyException();
+
+            // revSplit도 계속 호출됨
+            verify(revSplitCollectionService).collect(any(LocalDate.class), any(LocalDate.class));
         }
 
         @Test
-        @DisplayName("모든 종 예외 — 스케줄러 스레드 종료 없음")
-        void allServicesException_schedulerThreadSurvives() {
+        @DisplayName("AC-SCHED-3: revSplit 예외 — 스케줄러 스레드로 전파 안 됨 (종 단위 격리)")
+        void revSplitException_notPropagated() {
+            // Arrange
+            when(revSplitCollectionService.collect(any(LocalDate.class), any(LocalDate.class)))
+                    .thenThrow(new RuntimeException("액면교체 수집 실패"));
+
+            // Act & Assert — 예외가 스케줄러 스레드로 전파되지 않음
+            assertThatCode(scheduler::collectMarket).doesNotThrowAnyException();
+        }
+
+        @Test
+        @DisplayName("모든 5종 예외 — 스케줄러 스레드 종료 없음")
+        void allFiveServicesException_schedulerThreadSurvives() {
             // Arrange
             when(sectorIndexCollectionService.collect(any(LocalDate.class)))
                     .thenThrow(new RuntimeException("T3 실패"));
@@ -186,6 +219,8 @@ class MarketBatchSchedulerTest {
                     .thenThrow(new RuntimeException("T5 실패"));
             when(dividendScheduleCollectionService.collect(anyString(), anyString()))
                     .thenThrow(new RuntimeException("T6 실패"));
+            when(revSplitCollectionService.collect(any(LocalDate.class), any(LocalDate.class)))
+                    .thenThrow(new RuntimeException("T7 실패"));
 
             // Act & Assert
             assertThatCode(scheduler::collectMarket).doesNotThrowAnyException();
