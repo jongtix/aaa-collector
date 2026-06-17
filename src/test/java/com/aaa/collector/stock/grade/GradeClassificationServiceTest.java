@@ -33,8 +33,14 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.test.util.ReflectionTestUtils;
 
+/**
+ * GradeClassificationService 단위 테스트 — 라이브 fetch 기반 classifyDomestic/classifyOverseas 검증.
+ *
+ * <p>Task 4 REFACTOR: classify() → classifyDomestic() / classifyOverseas() 분리 후 기존 테스트 재매핑. 스냅샷 읽기
+ * 전환(feat) 전 라이브 fetch 동작 보존 검증.
+ */
 @ExtendWith(MockitoExtension.class)
-@DisplayName("GradeClassificationService 단위 테스트")
+@DisplayName("GradeClassificationService 단위 테스트 (라이브 fetch 기반)")
 class GradeClassificationServiceTest {
 
     @Mock private StockRepository stockRepository;
@@ -63,7 +69,6 @@ class GradeClassificationServiceTest {
     @BeforeEach
     void setUpDefaults() {
         // 기본: 비어있지 않은 순위 응답(withhold 미발동) + 빈 백분위 계산 (lenient — 일부 테스트에서 미사용)
-        // 분류 보류 시나리오(시나리오 4/5/7) 테스트는 각 테스트 내에서 빈/throw로 재스텁한다.
         lenient()
                 .when(domesticRankingClient.fetchRanking())
                 .thenReturn(
@@ -73,7 +78,6 @@ class GradeClassificationServiceTest {
                 .thenReturn(List.of(new KisOverseasRankingResponse.RankedStock("DUMMY", "1")));
         lenient().when(percentileCalculator.calculate(anyList())).thenReturn(Map.of());
         lenient().when(gradeClassifier.classify(any())).thenReturn(Grade.C);
-        // 기본 listedYearsResolver: 상장일 있는 종목은 실제 날짜 기반 계산을 단순화하여 8.0 반환
         lenient().when(listedYearsResolver.resolve(any())).thenReturn(8.0);
     }
 
@@ -82,25 +86,37 @@ class GradeClassificationServiceTest {
     class ActiveStocksOnly {
 
         @Test
-        @DisplayName("findAllActive()가 반환한 종목만 분류 대상")
-        void classify_usesOnlyActiveStocks() {
+        @DisplayName("findAllActive()가 반환한 종목만 분류 대상 — classifyDomestic")
+        void classifyDomestic_usesOnlyActiveStocks() {
             Stock active = buildStock("005930", Market.KOSPI, LocalDate.of(2010, 1, 1));
             when(stockRepository.findAllActive()).thenReturn(List.of(active));
 
-            service.classify();
+            service.classifyDomestic();
 
             verify(stockRepository).findAllActive();
             verify(gradeClassifier).classify(any());
         }
 
         @Test
-        @DisplayName("활성 종목 없음 — 분류기 호출 없음")
-        void classify_noActiveStocks_nothingClassified() {
+        @DisplayName("활성 종목 없음 — 분류기 호출 없음 (classifyDomestic)")
+        void classifyDomestic_noActiveStocks_nothingClassified() {
             when(stockRepository.findAllActive()).thenReturn(List.of());
 
-            service.classify();
+            service.classifyDomestic();
 
             verify(gradeClassifier, never()).classify(any());
+        }
+
+        @Test
+        @DisplayName("findAllActive()가 반환한 종목만 분류 대상 — classifyOverseas")
+        void classifyOverseas_usesOnlyActiveStocks() {
+            Stock active = buildStock("AAPL", Market.NYSE, LocalDate.of(1980, 1, 1));
+            when(stockRepository.findAllActive()).thenReturn(List.of(active));
+
+            service.classifyOverseas();
+
+            verify(stockRepository).findAllActive();
+            verify(gradeClassifier).classify(any());
         }
     }
 
@@ -109,25 +125,47 @@ class GradeClassificationServiceTest {
     class MarketRouting {
 
         @Test
-        @DisplayName("KRX 종목 존재 시 — KisDomesticRankingClient 호출")
-        void classify_kospiStock_callsDomesticClient() {
+        @DisplayName("KRX 종목 존재 시 — KisDomesticRankingClient 호출 (classifyDomestic)")
+        void classifyDomestic_kospiStock_callsDomesticClient() {
             Stock stock = buildStock("005930", Market.KOSPI, LocalDate.of(2010, 1, 1));
             when(stockRepository.findAllActive()).thenReturn(List.of(stock));
 
-            service.classify();
+            service.classifyDomestic();
 
             verify(domesticRankingClient).fetchRanking();
         }
 
         @Test
-        @DisplayName("US 종목 존재 시 — KisOverseasRankingClient 호출")
-        void classify_nyseStock_callsOverseasClient() {
+        @DisplayName("US 종목 존재 시 — KisOverseasRankingClient 호출 (classifyOverseas)")
+        void classifyOverseas_nyseStock_callsOverseasClient() {
             Stock stock = buildStock("AAPL", Market.NYSE, LocalDate.of(1980, 1, 1));
             when(stockRepository.findAllActive()).thenReturn(List.of(stock));
 
-            service.classify();
+            service.classifyOverseas();
 
             verify(overseasRankingClient).fetchRanking();
+        }
+
+        @Test
+        @DisplayName("classifyDomestic()은 US 종목에 persistSingle 미호출")
+        void classifyDomestic_usStockPresent_notClassified() {
+            Stock usStock = buildStock("AAPL", Market.NYSE, LocalDate.of(1980, 1, 1));
+            when(stockRepository.findAllActive()).thenReturn(List.of(usStock));
+
+            service.classifyDomestic();
+
+            verify(stockGradePersistService, never()).persistSingle(any(), any(), any());
+        }
+
+        @Test
+        @DisplayName("classifyOverseas()는 KRX 종목에 persistSingle 미호출")
+        void classifyOverseas_krxStockPresent_notClassified() {
+            Stock krxStock = buildStock("005930", Market.KOSPI, LocalDate.of(2010, 1, 1));
+            when(stockRepository.findAllActive()).thenReturn(List.of(krxStock));
+
+            service.classifyOverseas();
+
+            verify(stockGradePersistService, never()).persistSingle(any(), any(), any());
         }
     }
 
@@ -136,13 +174,26 @@ class GradeClassificationServiceTest {
     class PersistenceDelegation {
 
         @Test
-        @DisplayName("등급 산정 후 StockGradePersistService.persistSingle() 호출")
-        void classify_gradeAssigned_delegatesToPersistService() {
+        @DisplayName("등급 산정 후 StockGradePersistService.persistSingle() 호출 — classifyDomestic")
+        void classifyDomestic_gradeAssigned_delegatesToPersistService() {
             Stock stock = buildStock("005930", Market.KOSPI, LocalDate.of(2010, 1, 1));
             when(stockRepository.findAllActive()).thenReturn(List.of(stock));
             when(gradeClassifier.classify(any())).thenReturn(Grade.A);
 
-            service.classify();
+            service.classifyDomestic();
+
+            verify(stockGradePersistService)
+                    .persistSingle(eq(stock), eq(Grade.A), any(ZonedDateTime.class));
+        }
+
+        @Test
+        @DisplayName("등급 산정 후 StockGradePersistService.persistSingle() 호출 — classifyOverseas")
+        void classifyOverseas_gradeAssigned_delegatesToPersistService() {
+            Stock stock = buildStock("AAPL", Market.NYSE, LocalDate.of(1980, 1, 1));
+            when(stockRepository.findAllActive()).thenReturn(List.of(stock));
+            when(gradeClassifier.classify(any())).thenReturn(Grade.A);
+
+            service.classifyOverseas();
 
             verify(stockGradePersistService)
                     .persistSingle(eq(stock), eq(Grade.A), any(ZonedDateTime.class));
@@ -154,8 +205,8 @@ class GradeClassificationServiceTest {
     class FailureHandling {
 
         @Test
-        @DisplayName("한 종목 분류 실패 — 나머지 종목 persistSingle() 계속 호출")
-        void classify_failureOnOneStock_continuesOthers() {
+        @DisplayName("한 종목 분류 실패 — 나머지 종목 persistSingle() 계속 호출 (classifyDomestic)")
+        void classifyDomestic_failureOnOneStock_continuesOthers() {
             Stock fail = buildStock("FAIL", Market.KOSPI, LocalDate.of(2010, 1, 1));
             Stock ok = buildStock("OK", Market.KOSPI, LocalDate.of(2010, 1, 1));
             when(stockRepository.findAllActive()).thenReturn(List.of(fail, ok));
@@ -163,20 +214,20 @@ class GradeClassificationServiceTest {
                     .thenThrow(new RuntimeException("분류 실패"))
                     .thenReturn(Grade.B);
 
-            service.classify();
+            service.classifyDomestic();
 
             // "OK" 종목은 정상 처리 — persistSingle 1회 호출
             verify(stockGradePersistService).persistSingle(eq(ok), eq(Grade.B), any());
         }
 
         @Test
-        @DisplayName("시나리오 6: 분류 실패 종목 — persistSingle 호출 없음")
-        void classify_failureStock_noPersistCall() {
+        @DisplayName("분류 실패 종목 — persistSingle 호출 없음 (classifyDomestic)")
+        void classifyDomestic_failureStock_noPersistCall() {
             Stock stock = buildStock("005930", Market.KOSPI, LocalDate.of(2010, 1, 1));
             when(stockRepository.findAllActive()).thenReturn(List.of(stock));
             when(gradeClassifier.classify(any())).thenThrow(new RuntimeException("분류 실패"));
 
-            service.classify();
+            service.classifyDomestic();
 
             verify(stockGradePersistService, never()).persistSingle(any(), any(), any());
         }
@@ -187,62 +238,59 @@ class GradeClassificationServiceTest {
     class RankingDeficitWithhold {
 
         @Test
-        @DisplayName("시나리오 4: warm + KRX fetchRanking 빈 결과 — KRX 종목 persistSingle 미호출(보류)")
-        void classify_warmKrxRankingEmpty_krxStockNotPersisted() {
-            // Arrange: 이전 등급 행이 존재하는 warm 상태, KRX 순위 빈 결과
-            Stock krxStock = buildStock("005930", Market.KOSPI, LocalDate.of(2010, 1, 1));
-            when(stockRepository.findAllActive()).thenReturn(List.of(krxStock));
-            when(domesticRankingClient.fetchRanking()).thenReturn(List.of()); // 빈 결과 = 시장 결손
-
-            // Act
-            service.classify();
-
-            // Assert: persistSingle 미호출 — 이전 등급 유지(보류)
-            verify(stockGradePersistService, never()).persistSingle(any(), any(), any());
-        }
-
-        @Test
-        @DisplayName("시나리오 5: US fetchRanking throw + KRX 정상 — US 보류, KRX 정상 분류·영속화")
-        void classify_usRankingThrows_usWithheldKrxPersisted() {
-            // Arrange
-            Stock krxStock = buildStock("005930", Market.KOSPI, LocalDate.of(2010, 1, 1));
-            Stock usStock = buildStock("AAPL", Market.NYSE, LocalDate.of(1980, 1, 1));
-            when(stockRepository.findAllActive()).thenReturn(List.of(krxStock, usStock));
-
-            // KRX 순위 정상(비어있지 않음)
-            KisDomesticRankingResponse.RankedStock krxRanked =
-                    new KisDomesticRankingResponse.RankedStock("005930", "1", "삼성전자");
-            when(domesticRankingClient.fetchRanking()).thenReturn(List.of(krxRanked));
-            when(percentileCalculator.calculate(anyList())).thenReturn(Map.of("005930", 10.0));
-            // US 순위 throw
-            when(overseasRankingClient.fetchRanking()).thenThrow(new RuntimeException("US 순위 실패"));
-            when(gradeClassifier.classify(any())).thenReturn(Grade.A);
-
-            // Act
-            service.classify();
-
-            // Assert: KRX 종목은 분류·영속화, US 종목은 persistSingle 미호출
-            verify(stockGradePersistService).persistSingle(eq(krxStock), any(), any());
-            verify(stockGradePersistService, never()).persistSingle(eq(usStock), any(), any());
-        }
-
-        @Test
-        @DisplayName("시나리오 7: cold-start(0행) + KRX 순위 공백 — classify crash 없이 종료, persistSingle 미호출")
-        void classify_coldStartKrxRankingEmpty_noExceptionNoPersist() {
-            // Arrange: stock_grades 0행 cold-start, KRX 순위 공백
+        @DisplayName("warm + KRX fetchRanking 빈 결과 — KRX 종목 persistSingle 미호출(보류)")
+        void classifyDomestic_warmKrxRankingEmpty_krxStockNotPersisted() {
             Stock krxStock = buildStock("005930", Market.KOSPI, LocalDate.of(2010, 1, 1));
             when(stockRepository.findAllActive()).thenReturn(List.of(krxStock));
             when(domesticRankingClient.fetchRanking()).thenReturn(List.of());
 
-            // Act & Assert: crash 없이 종료
-            assertThatCode(service::classify).doesNotThrowAnyException();
+            service.classifyDomestic();
+
             verify(stockGradePersistService, never()).persistSingle(any(), any(), any());
         }
 
         @Test
-        @DisplayName("시나리오 7 self-heal: 이후 순위 API 복구 시 persistSingle A/B로 호출")
-        void classify_afterRankingRecovery_persistSingleCalledWithGrade() {
-            // Arrange: 복구된 KRX 순위 데이터
+        @DisplayName("US fetchRanking throw — US 보류 (classifyOverseas)")
+        void classifyOverseas_usRankingThrows_usWithheld() {
+            Stock usStock = buildStock("AAPL", Market.NYSE, LocalDate.of(1980, 1, 1));
+            when(stockRepository.findAllActive()).thenReturn(List.of(usStock));
+            when(overseasRankingClient.fetchRanking()).thenThrow(new RuntimeException("US 순위 실패"));
+
+            service.classifyOverseas();
+
+            verify(stockGradePersistService, never()).persistSingle(any(), any(), any());
+        }
+
+        @Test
+        @DisplayName("KRX 결손, US 정상 — 시장 독립: US classifyOverseas 정상 분류")
+        void classifyOverseas_usNormal_krxDeficitUnrelated() {
+            Stock usStock = buildStock("AAPL", Market.NYSE, LocalDate.of(1980, 1, 1));
+            when(stockRepository.findAllActive()).thenReturn(List.of(usStock));
+            KisOverseasRankingResponse.RankedStock usRanked =
+                    new KisOverseasRankingResponse.RankedStock("AAPL", "1");
+            when(overseasRankingClient.fetchRanking()).thenReturn(List.of(usRanked));
+            when(percentileCalculator.calculate(anyList())).thenReturn(Map.of("AAPL", 5.0));
+            when(gradeClassifier.classify(any())).thenReturn(Grade.A);
+
+            service.classifyOverseas();
+
+            verify(stockGradePersistService).persistSingle(eq(usStock), eq(Grade.A), any());
+        }
+
+        @Test
+        @DisplayName("cold-start(0행) + KRX 순위 공백 — classifyDomestic crash 없이 종료")
+        void classifyDomestic_coldStartKrxRankingEmpty_noExceptionNoPersist() {
+            Stock krxStock = buildStock("005930", Market.KOSPI, LocalDate.of(2010, 1, 1));
+            when(stockRepository.findAllActive()).thenReturn(List.of(krxStock));
+            when(domesticRankingClient.fetchRanking()).thenReturn(List.of());
+
+            assertThatCode(service::classifyDomestic).doesNotThrowAnyException();
+            verify(stockGradePersistService, never()).persistSingle(any(), any(), any());
+        }
+
+        @Test
+        @DisplayName("self-heal: 순위 API 복구 시 classifyDomestic persistSingle A/B로 호출")
+        void classifyDomestic_afterRankingRecovery_persistSingleCalledWithGrade() {
             Stock krxStock = buildStock("005930", Market.KOSPI, LocalDate.of(2010, 1, 1));
             when(stockRepository.findAllActive()).thenReturn(List.of(krxStock));
             KisDomesticRankingResponse.RankedStock ranked =
@@ -251,38 +299,31 @@ class GradeClassificationServiceTest {
             when(percentileCalculator.calculate(anyList())).thenReturn(Map.of("005930", 5.0));
             when(gradeClassifier.classify(any())).thenReturn(Grade.A);
 
-            // Act
-            service.classify();
+            service.classifyDomestic();
 
-            // Assert: 순위 복구 후 A 등급으로 영속화(self-heal)
             verify(stockGradePersistService).persistSingle(eq(krxStock), eq(Grade.A), any());
         }
 
         @Test
-        @DisplayName("Edge: 순위 정상 + 특정 종목만 순위권 밖 — 100.0 fallback(C) 정상 동작")
-        void classify_rankingNonEmptyButStockAbsent_fallbackCBehavior() {
-            // Arrange: 순위 데이터 존재하나 005930은 순위에 없음 → getOrDefault 100.0 → C
+        @DisplayName("순위 정상 + 특정 종목만 순위권 밖 — 100.0 fallback(C) 정상 동작 (classifyDomestic)")
+        void classifyDomestic_rankingNonEmptyButStockAbsent_fallbackCBehavior() {
             Stock krxStock = buildStock("005930", Market.KOSPI, LocalDate.of(2010, 1, 1));
             when(stockRepository.findAllActive()).thenReturn(List.of(krxStock));
-            // 비어있지 않은 순위 데이터(다른 종목 존재)
             KisDomesticRankingResponse.RankedStock otherRanked =
                     new KisDomesticRankingResponse.RankedStock("000660", "1", "SK하이닉스");
             when(domesticRankingClient.fetchRanking()).thenReturn(List.of(otherRanked));
             when(percentileCalculator.calculate(anyList())).thenReturn(Map.of("000660", 5.0));
             when(gradeClassifier.classify(any())).thenReturn(Grade.C);
 
-            // Act
-            service.classify();
+            service.classifyDomestic();
 
-            // Assert: 분류 보류 아님 — persistSingle 정상 호출(C)
+            // 분류 보류 아님 — persistSingle 정상 호출(C)
             verify(stockGradePersistService).persistSingle(eq(krxStock), eq(Grade.C), any());
         }
 
         @Test
-        @DisplayName(
-                "시나리오 8a: KRX fetchRanking 비어있지 않으나 모든 dataRank 파싱 불가 — KRX 종목 persistSingle 미호출(보류)")
-        void classify_krxAllEntriesUnparseable_krxWithheld() {
-            // Arrange: 비어있지 않은 KRX 응답이지만 dataRank가 모두 파싱 불가(" ", "abc")
+        @DisplayName("KRX fetchRanking 비어있지 않으나 모든 dataRank 파싱 불가 — KRX 보류")
+        void classifyDomestic_krxAllEntriesUnparseable_krxWithheld() {
             Stock krxStock = buildStock("005930", Market.KOSPI, LocalDate.of(2010, 1, 1));
             when(stockRepository.findAllActive()).thenReturn(List.of(krxStock));
             when(domesticRankingClient.fetchRanking())
@@ -293,18 +334,14 @@ class GradeClassificationServiceTest {
                                     new KisDomesticRankingResponse.RankedStock(
                                             "000660", "abc", "SK하이닉스")));
 
-            // Act
-            service.classify();
+            service.classifyDomestic();
 
-            // Assert: 모든 항목 파싱 실패 → entries 공백 → 보류 → persistSingle 미호출
             verify(stockGradePersistService, never()).persistSingle(any(), any(), any());
         }
 
         @Test
-        @DisplayName(
-                "시나리오 8b: US fetchRanking 비어있지 않으나 모든 rank 파싱 불가 — US 종목 persistSingle 미호출(보류)")
-        void classify_usAllEntriesUnparseable_usWithheld() {
-            // Arrange: 비어있지 않은 US 응답이지만 rank가 모두 파싱 불가
+        @DisplayName("US fetchRanking 비어있지 않으나 모든 rank 파싱 불가 — US 보류")
+        void classifyOverseas_usAllEntriesUnparseable_usWithheld() {
             Stock usStock = buildStock("AAPL", Market.NYSE, LocalDate.of(1980, 1, 1));
             when(stockRepository.findAllActive()).thenReturn(List.of(usStock));
             when(overseasRankingClient.fetchRanking())
@@ -313,17 +350,14 @@ class GradeClassificationServiceTest {
                                     new KisOverseasRankingResponse.RankedStock("AAPL", "N/A"),
                                     new KisOverseasRankingResponse.RankedStock("MSFT", "???")));
 
-            // Act
-            service.classify();
+            service.classifyOverseas();
 
-            // Assert: 모든 항목 파싱 실패 → entries 공백 → 보류 → persistSingle 미호출
             verify(stockGradePersistService, never()).persistSingle(any(), any(), any());
         }
 
         @Test
-        @DisplayName("시나리오 8c: KRX 일부 파싱 가능 — 파싱 성공 항목으로 정상 분류")
-        void classify_krxPartiallyUnparseable_successEntryUsed() {
-            // Arrange: 일부는 파싱 불가, 일부는 파싱 가능 → 파싱 성공 항목으로 분류 진행
+        @DisplayName("KRX 일부 파싱 가능 — 파싱 성공 항목으로 정상 분류 (classifyDomestic)")
+        void classifyDomestic_krxPartiallyUnparseable_successEntryUsed() {
             Stock krxStock = buildStock("005930", Market.KOSPI, LocalDate.of(2010, 1, 1));
             when(stockRepository.findAllActive()).thenReturn(List.of(krxStock));
             when(domesticRankingClient.fetchRanking())
@@ -336,17 +370,14 @@ class GradeClassificationServiceTest {
             when(percentileCalculator.calculate(anyList())).thenReturn(Map.of("005930", 5.0));
             when(gradeClassifier.classify(any())).thenReturn(Grade.A);
 
-            // Act
-            service.classify();
+            service.classifyDomestic();
 
-            // Assert: 파싱 성공 1건 → entries 비어있지 않음 → 정상 분류
             verify(stockGradePersistService).persistSingle(eq(krxStock), eq(Grade.A), any());
         }
 
         @Test
-        @DisplayName("시나리오 8d: US 일부 파싱 가능 — 파싱 성공 항목으로 정상 분류")
-        void classify_usPartiallyUnparseable_successEntryUsed() {
-            // Arrange: 일부 파싱 불가, 일부 파싱 가능
+        @DisplayName("US 일부 파싱 가능 — 파싱 성공 항목으로 정상 분류 (classifyOverseas)")
+        void classifyOverseas_usPartiallyUnparseable_successEntryUsed() {
             Stock usStock = buildStock("AAPL", Market.NYSE, LocalDate.of(1980, 1, 1));
             when(stockRepository.findAllActive()).thenReturn(List.of(usStock));
             when(overseasRankingClient.fetchRanking())
@@ -357,17 +388,14 @@ class GradeClassificationServiceTest {
             when(percentileCalculator.calculate(anyList())).thenReturn(Map.of("AAPL", 10.0));
             when(gradeClassifier.classify(any())).thenReturn(Grade.A);
 
-            // Act
-            service.classify();
+            service.classifyOverseas();
 
-            // Assert: 파싱 성공 1건 → entries 비어있지 않음 → 정상 분류
             verify(stockGradePersistService).persistSingle(eq(usStock), eq(Grade.A), any());
         }
 
         @Test
-        @DisplayName("Edge: KRX 종목만 존재, US 순위 빈 결과 — US 보류 판정 미발동(US 종목 없음)")
-        void classify_krxOnlyWithUsEmpty_noUsWithhold() {
-            // Arrange: KRX 종목만, US 순위는 빈 결과지만 US 종목이 없으므로 보류 판정 무관
+        @DisplayName("KRX 종목만 존재, classifyDomestic 정상 — overseasRankingClient 미호출")
+        void classifyDomestic_krxOnly_overseasClientNotCalled() {
             Stock krxStock = buildStock("005930", Market.KOSPI, LocalDate.of(2010, 1, 1));
             when(stockRepository.findAllActive()).thenReturn(List.of(krxStock));
             KisDomesticRankingResponse.RankedStock ranked =
@@ -376,10 +404,8 @@ class GradeClassificationServiceTest {
             when(percentileCalculator.calculate(anyList())).thenReturn(Map.of("005930", 10.0));
             when(gradeClassifier.classify(any())).thenReturn(Grade.B);
 
-            // Act
-            service.classify();
+            service.classifyDomestic();
 
-            // Assert: KRX 종목 정상 분류, US overseasRankingClient는 호출되지 않음
             verify(stockGradePersistService).persistSingle(eq(krxStock), eq(Grade.B), any());
             verify(overseasRankingClient, never()).fetchRanking();
         }
@@ -387,23 +413,20 @@ class GradeClassificationServiceTest {
 
     // @MX:SPEC: SPEC-COLLECTOR-STOCKMETA-001
     @Nested
-    @DisplayName("상장일 미상 — listedYearsResolver 위임 (REQ-STOCKMETA-013, M3 1안)")
+    @DisplayName("상장일 미상 — listedYearsResolver 위임 (REQ-STOCKMETA-013)")
     class MissingListedDateFallback {
 
         @Test
-        @DisplayName("listedDate=null + OHLCV 없음 — resolver가 0.0 반환 → listedYears < 7 (A 미수여)")
-        void classify_nullListedDate_noOhlcv_treatedAsNew() {
-            // Arrange — listedYearsResolver가 보수적 신규(0.0)를 반환하는 케이스를 service 수준에서 검증
+        @DisplayName("listedDate=null + OHLCV 없음 — resolver가 0.0 반환 → listedYears < 7")
+        void classifyDomestic_nullListedDate_noOhlcv_treatedAsNew() {
             Stock stock = buildStock("NEWIPO", Market.NASDAQ, null);
             when(stockRepository.findAllActive()).thenReturn(List.of(stock));
             when(listedYearsResolver.resolve(stock))
                     .thenReturn(ListedYearsResolver.NEW_STOCK_FALLBACK_YEARS);
             when(gradeClassifier.classify(any())).thenReturn(Grade.C);
 
-            // Act
-            service.classify();
+            service.classifyOverseas();
 
-            // Assert — listedYears < 7(신규로 간주), A 미수여
             ArgumentCaptor<GradeInput> captor = ArgumentCaptor.forClass(GradeInput.class);
             verify(gradeClassifier).classify(captor.capture());
             assertThat(captor.getValue().listedYears()).isLessThan(7.0);
@@ -413,18 +436,15 @@ class GradeClassificationServiceTest {
 
         @Test
         @DisplayName("listedDate=null + OHLCV MIN >= 7년전 — resolver가 100.0 반환 → listedYears >= 7")
-        void classify_nullListedDate_ohlcvOldEnough_treatedAsEstablished() {
-            // Arrange — listedYearsResolver가 장기 상장(100.0)을 반환하는 케이스
+        void classifyOverseas_nullListedDate_ohlcvOldEnough_treatedAsEstablished() {
             Stock stock = buildStock("JPM", Market.NYSE, null);
             when(stockRepository.findAllActive()).thenReturn(List.of(stock));
             when(listedYearsResolver.resolve(stock))
                     .thenReturn(ListedYearsResolver.ESTABLISHED_FALLBACK_YEARS);
             when(gradeClassifier.classify(any())).thenReturn(Grade.A);
 
-            // Act
-            service.classify();
+            service.classifyOverseas();
 
-            // Assert — listedYears >= 7, A 수여 가능
             ArgumentCaptor<GradeInput> captor = ArgumentCaptor.forClass(GradeInput.class);
             verify(gradeClassifier).classify(captor.capture());
             assertThat(captor.getValue().listedYears()).isGreaterThanOrEqualTo(7.0);
@@ -434,17 +454,14 @@ class GradeClassificationServiceTest {
 
         @Test
         @DisplayName("listedDate=null + OHLCV MIN < 7년전 — resolver가 elapsed 반환 → listedYears < 7")
-        void classify_nullListedDate_ohlcvTooRecent_treatedAsNew() {
-            // Arrange — listedYearsResolver가 3년(< 7년)을 반환하는 케이스
+        void classifyOverseas_nullListedDate_ohlcvTooRecent_treatedAsNew() {
             Stock stock = buildStock("RECENT", Market.NASDAQ, null);
             when(stockRepository.findAllActive()).thenReturn(List.of(stock));
             when(listedYearsResolver.resolve(stock)).thenReturn(3.0);
             when(gradeClassifier.classify(any())).thenReturn(Grade.C);
 
-            // Act
-            service.classify();
+            service.classifyOverseas();
 
-            // Assert — listedYears < 7
             ArgumentCaptor<GradeInput> captor = ArgumentCaptor.forClass(GradeInput.class);
             verify(gradeClassifier).classify(captor.capture());
             assertThat(captor.getValue().listedYears()).isLessThan(7.0);

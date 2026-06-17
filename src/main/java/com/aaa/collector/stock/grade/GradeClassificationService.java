@@ -51,13 +51,132 @@ public class GradeClassificationService {
     private final ListedYearsResolver listedYearsResolver;
 
     /**
+     * KRX(KOSPI/KOSDAQ) 종목만 등급 분류한다.
+     *
+     * <p>라이브 KIS 국내 순위 fetch 후 백분위 재계산. KRX 종목 결손 시 보류(이전 등급 유지). 개별 종목 분류 실패 시 해당 종목을 skip하고 나머지를
+     * 계속 처리한다.
+     */
+    // @MX:NOTE: [AUTO] KRX 시장 분류 진입점. 라이브 fetch→percentile→classify→persist.
+    // 결손(빈 결과/예외) 시 전 KRX 종목 보류(REQ-004/006). Task 4 refactor로 classify()에서 분리.
+    @SuppressWarnings({
+        "PMD.AvoidCatchingGenericException", // 종목별 실패 포착해 나머지 계속 처리
+        "PMD.AvoidInstantiatingObjectsInLoops" // GradeInput은 종목별 불변 값 객체로 루프 내 생성 불가피
+    })
+    public void classifyDomestic() {
+        List<Stock> allActive = stockRepository.findAllActive();
+        if (allActive.isEmpty()) {
+            return;
+        }
+
+        // KRX 시장 백분위 계산 — Optional.empty()는 결손(보류) 의미
+        Optional<Map<String, Double>> krxPercentiles = buildKrxPercentiles(allActive);
+
+        ZonedDateTime gradedAt = ZonedDateTime.now(KST);
+
+        for (Stock stock : allActive) {
+            // KRX 종목만 처리
+            if (!KRX_MARKETS.contains(stock.getMarket())) {
+                continue;
+            }
+            // 순위 데이터 결손 시 보류 — 이전 등급 유지(REQ-004)
+            if (krxPercentiles.isEmpty()) {
+                if (log.isDebugEnabled()) {
+                    log.debug(
+                            "KRX 순위 데이터 결손으로 분류 보류 — symbol={}, market={}",
+                            stock.getSymbol(),
+                            stock.getMarket());
+                }
+                continue;
+            }
+            try {
+                double percentile = krxPercentiles.get().getOrDefault(stock.getSymbol(), 100.0);
+                double listedYears = listedYearsResolver.resolve(stock);
+                GradeInput input =
+                        new GradeInput(
+                                stock.getSymbol(),
+                                stock.getNameKo(),
+                                stock.getAssetType(),
+                                listedYears,
+                                percentile);
+                Grade grade = gradeClassifier.classify(input);
+                stockGradePersistService.persistSingle(stock, grade, gradedAt);
+            } catch (Exception e) {
+                log.warn(
+                        "KRX 종목 등급 분류 실패 — symbol={}, market={}: {}",
+                        stock.getSymbol(),
+                        stock.getMarket(),
+                        e.getMessage());
+            }
+        }
+    }
+
+    /**
+     * US(NYSE/NASDAQ/AMEX) 종목만 등급 분류한다.
+     *
+     * <p>라이브 KIS 해외 순위 fetch 후 백분위 재계산. US 종목 결손 시 보류(이전 등급 유지). 개별 종목 분류 실패 시 해당 종목을 skip하고 나머지를
+     * 계속 처리한다.
+     */
+    // @MX:NOTE: [AUTO] US 시장 분류 진입점. 라이브 fetch→percentile→classify→persist.
+    // 결손(빈 결과/예외) 시 전 US 종목 보류(REQ-004/006). Task 4 refactor로 classify()에서 분리.
+    @SuppressWarnings({
+        "PMD.AvoidCatchingGenericException", // 종목별 실패 포착해 나머지 계속 처리
+        "PMD.AvoidInstantiatingObjectsInLoops" // GradeInput은 종목별 불변 값 객체로 루프 내 생성 불가피
+    })
+    public void classifyOverseas() {
+        List<Stock> allActive = stockRepository.findAllActive();
+        if (allActive.isEmpty()) {
+            return;
+        }
+
+        // US 시장 백분위 계산 — Optional.empty()는 결손(보류) 의미
+        Optional<Map<String, Double>> usPercentiles = buildUsPercentiles(allActive);
+
+        ZonedDateTime gradedAt = ZonedDateTime.now(KST);
+
+        for (Stock stock : allActive) {
+            // US 종목만 처리
+            if (!US_MARKETS.contains(stock.getMarket())) {
+                continue;
+            }
+            // 순위 데이터 결손 시 보류 — 이전 등급 유지(REQ-004)
+            if (usPercentiles.isEmpty()) {
+                if (log.isDebugEnabled()) {
+                    log.debug(
+                            "US 순위 데이터 결손으로 분류 보류 — symbol={}, market={}",
+                            stock.getSymbol(),
+                            stock.getMarket());
+                }
+                continue;
+            }
+            try {
+                double percentile = usPercentiles.get().getOrDefault(stock.getSymbol(), 100.0);
+                double listedYears = listedYearsResolver.resolve(stock);
+                GradeInput input =
+                        new GradeInput(
+                                stock.getSymbol(),
+                                stock.getNameKo(),
+                                stock.getAssetType(),
+                                listedYears,
+                                percentile);
+                Grade grade = gradeClassifier.classify(input);
+                stockGradePersistService.persistSingle(stock, grade, gradedAt);
+            } catch (Exception e) {
+                log.warn(
+                        "US 종목 등급 분류 실패 — symbol={}, market={}: {}",
+                        stock.getSymbol(),
+                        stock.getMarket(),
+                        e.getMessage());
+            }
+        }
+    }
+
+    /**
      * 모든 활성 종목의 등급을 분류한다.
      *
      * <p>개별 종목 분류 실패 시 해당 종목을 skip하고 나머지를 계속 처리한다 (REQ-009/010).
+     *
+     * <p>Task 5에서 {@link #classifyDomestic()} / {@link #classifyOverseas()} 호출로 대체 예정.
      */
-    // @MX:NOTE: [AUTO] WatchlistSyncService.sync() 말미 단일 호출 진입점.
-    // failedGroupCount와 무관하게 항상 실행, 예외는 호출자 try/catch로 격리(SPEC-COLLECTOR-GRADE-002).
-    // 개별 종목 실패는 warn 후 계속 처리(REQ-009/010). @Transactional 없음 — KIS API 호출과 DB 트랜잭션 분리(CR-002).
     @SuppressWarnings({
         "PMD.AvoidCatchingGenericException", // 종목별 실패 포착해 나머지 계속 처리
         "PMD.AvoidInstantiatingObjectsInLoops" // GradeInput은 종목별 불변 값 객체로 루프 내 생성 불가피
