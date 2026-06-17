@@ -30,6 +30,8 @@ public class KisOverseasRankingClient {
     private static final String TR_ID = "HHDFS76310010";
     private static final String PATH = "/uapi/overseas-stock/v1/ranking/trade-vol";
     private static final List<String> EXCHANGES = List.of("NYS", "NAS", "AMS");
+    // KIS 해외 순위 요청의 페이지네이션/가격필터 파라미터 — 전체 순위 조회 시 빈 문자열로 전달(REQ-GRADE-003).
+    private static final String EMPTY_PARAM = "";
 
     private final GuardedKisExecutor guardedKisExecutor;
     private final KeyLeaseRegistry keyLeaseRegistry;
@@ -42,6 +44,9 @@ public class KisOverseasRankingClient {
      *
      * @return 세 거래소 합산 순위 종목 목록
      */
+    // @MX:NOTE: [AUTO] AUTH(빈 문자열) 필수 — 누락 시 OPSQ2001 INPUT FIELD NOT FOUND [AUTH]로 호출 전면
+    // 실패(REQ-GRADE-003).
+    // 스펙 충실성을 위해 KEYB/PRC1/PRC2(빈)도 포함. 권위 예시: api-specs/kis/20-해외주식거래량순위.md.
     public List<KisOverseasRankingResponse.RankedStock> fetchRanking() {
         // REQ-KISGATE-006a: 3거래소 루프 = 1 batch — 루프 전 per-batch 스냅샷 1회 고정
         LeaseSession session = keyLeaseRegistry.openSession();
@@ -57,6 +62,12 @@ public class KisOverseasRankingClient {
                                                 .queryParam("EXCD", exchangeCode)
                                                 .queryParam("NDAY", "0")
                                                 .queryParam("VOL_RANG", "0")
+                                                // REQ-GRADE-003: AUTH 빈 문자열 필수(라이브 프로브 실증).
+                                                // KEYB/PRC1/PRC2는 스펙 충실성.
+                                                .queryParam("KEYB", EMPTY_PARAM)
+                                                .queryParam("AUTH", EMPTY_PARAM)
+                                                .queryParam("PRC1", EMPTY_PARAM)
+                                                .queryParam("PRC2", EMPTY_PARAM)
                                                 .build(),
                                 TR_ID,
                                 KisOverseasRankingResponse.class);

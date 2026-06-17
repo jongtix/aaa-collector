@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -12,15 +13,20 @@ import com.aaa.collector.kis.KisRateLimitException;
 import com.aaa.collector.kis.gate.GuardedKisExecutor;
 import com.aaa.collector.kis.gate.KeyLeaseRegistry;
 import com.aaa.collector.kis.gate.KeyLeaseRegistry.LeaseSession;
+import java.net.URI;
 import java.util.List;
+import java.util.function.Function;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.Mockito;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.web.util.UriBuilder;
+import org.springframework.web.util.UriComponentsBuilder;
 
 /**
  * SPEC-COLLECTOR-KISGATE-001 M6(T22) — {@link KisOverseasRankingClient} 게이트 경유 단위 테스트.
@@ -95,6 +101,33 @@ class KisOverseasRankingClientTest {
             List<KisOverseasRankingResponse.RankedStock> result = client.fetchRanking();
 
             assertThat(result).hasSize(2);
+        }
+
+        @Test
+        @DisplayName("요청 URI에 AUTH·KEYB·PRC1·PRC2 빈 파라미터 포함 (REQ-GRADE-003 회귀 방지)")
+        void fetchRanking_uriIncludesAuthParams() throws Exception {
+            when(guardedKisExecutor.execute(
+                            eq(session), any(), eq(TR_ID), eq(KisOverseasRankingResponse.class)))
+                    .thenReturn(response("AAPL"));
+
+            client.fetchRanking();
+
+            // 게이트 mock은 uri 빌더 람다를 any()로 받으므로, 람다를 캡처해 실제 URI로 빌드하여
+            // AUTH(빈) 누락 회귀를 방지한다 — 누락 시 OPSQ2001 INPUT FIELD NOT FOUND [AUTH]로 호출 전면 실패.
+            ArgumentCaptor<Function<UriBuilder, URI>> uriFnCaptor = ArgumentCaptor.captor();
+            verify(guardedKisExecutor, atLeastOnce())
+                    .execute(
+                            eq(session),
+                            uriFnCaptor.capture(),
+                            eq(TR_ID),
+                            eq(KisOverseasRankingResponse.class));
+
+            URI uri = uriFnCaptor.getValue().apply(UriComponentsBuilder.newInstance());
+            assertThat(uri.getRawQuery())
+                    .contains("AUTH=")
+                    .contains("KEYB=")
+                    .contains("PRC1=")
+                    .contains("PRC2=");
         }
     }
 
