@@ -1,7 +1,6 @@
 package com.aaa.collector.watchlist;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.argThat;
@@ -19,7 +18,6 @@ import com.aaa.collector.kis.gate.KeyLeaseRegistry.LeaseSession;
 import com.aaa.collector.kis.token.HealthyKeySelector;
 import com.aaa.collector.kis.token.KisAccountCredential;
 import com.aaa.collector.stock.enums.Market;
-import com.aaa.collector.stock.grade.GradeClassificationService;
 import java.util.Arrays;
 import java.util.List;
 import org.junit.jupiter.api.BeforeEach;
@@ -54,7 +52,6 @@ class WatchlistSyncServiceTest {
     @Mock private KisWatchlistClient kisWatchlistClient;
     @Mock private WatchlistWriter watchlistWriter;
     @Mock private WatchlistStockResolver watchlistStockResolver;
-    @Mock private GradeClassificationService gradeClassificationService;
 
     private WatchlistSyncService syncService;
 
@@ -66,8 +63,7 @@ class WatchlistSyncServiceTest {
                         kisWatchlistClient,
                         keyLeaseRegistry,
                         watchlistWriter,
-                        watchlistStockResolver,
-                        gradeClassificationService);
+                        watchlistStockResolver);
 
         // 기본: 건강 키 2개 스냅샷. selectHealthy 호출 횟수는 개별 테스트가 검증.
         lenient().when(healthyKeySelector.selectHealthy()).thenReturn(List.of(K1, K2));
@@ -231,7 +227,7 @@ class WatchlistSyncServiceTest {
         }
 
         @Test
-        @DisplayName("전 키 사망(빈 스냅샷) — 종목 조회 0회, 모든 그룹 skip 집계, classify 여전히 호출")
+        @DisplayName("전 키 사망(빈 스냅샷) — 종목 조회 0회, 모든 그룹 skip 집계")
         void sync_allKeysDead_skipsAllGroupsAndNoFetch() {
             when(healthyKeySelector.selectHealthy()).thenReturn(List.of());
             KisGroupListResponse.Group group1 =
@@ -245,52 +241,6 @@ class WatchlistSyncServiceTest {
             // 빈 스냅샷 = 전 키 사망 → 종목 조회 0회, 2개 그룹 모두 skip 집계(failedGroupCount=2).
             verify(kisWatchlistClient, never()).fetchStocksByGroup(any(), any());
             verify(watchlistWriter).upsertAll(eq(List.of()), eq(2));
-            verify(gradeClassificationService).classify();
-        }
-    }
-
-    @Nested
-    @DisplayName("classify 트리거 및 예외 격리 (회귀, SPEC-COLLECTOR-GRADE-002)")
-    class ClassifyTrigger {
-
-        @Test
-        @DisplayName("일부 그룹 실패 — sync 후 classify 정확히 1회 호출")
-        void sync_partialGroupFailure_classifyCalledOnce() {
-            KisGroupListResponse.Group group1 =
-                    new KisGroupListResponse.Group("001", "그룹1", "1", "1");
-            KisGroupListResponse.Group group2 =
-                    new KisGroupListResponse.Group("002", "그룹2", "1", "2");
-            KisStockListByGroupResponse.Stock item =
-                    new KisStockListByGroupResponse.Stock("J", "005930", "KRX", "삼성전자");
-            when(kisWatchlistClient.fetchGroups()).thenReturn(List.of(group1, group2));
-            when(kisWatchlistClient.fetchStocksByGroup(any(), eq("001")))
-                    .thenThrow(new KisRateLimitException("isa", "rate-limit"));
-            when(kisWatchlistClient.fetchStocksByGroup(any(), eq("002"))).thenReturn(List.of(item));
-
-            syncService.sync();
-
-            verify(gradeClassificationService).classify();
-        }
-
-        @Test
-        @DisplayName("전면 실패(빈 그룹, upsertAll early-return) — classify 여전히 호출")
-        void sync_totalGroupFailure_classifyStillCalled() {
-            when(kisWatchlistClient.fetchGroups()).thenReturn(List.of());
-
-            syncService.sync();
-
-            verify(gradeClassificationService).classify();
-        }
-
-        @Test
-        @DisplayName("classify 예외 — sync 미실패(예외 전파 없음)")
-        void sync_classifyThrows_syncDoesNotThrow() {
-            when(kisWatchlistClient.fetchGroups()).thenReturn(List.of());
-            org.mockito.Mockito.doThrow(new RuntimeException("등급 분류 실패"))
-                    .when(gradeClassificationService)
-                    .classify();
-
-            assertThatCode(syncService::sync).doesNotThrowAnyException();
         }
     }
 }
