@@ -67,14 +67,23 @@ class KisRevSplitResponseTest {
 
             // Assert
             assertThat(response.output1()).hasSize(1);
-            KisRevSplitResponse.RevSplitRow row = response.output1().getFirst();
-            assertThat(row.recordDate()).isEqualTo("20260613");
-            assertThat(row.shtCd()).isEqualTo("096960");
-            assertThat(row.isinName()).isEqualTo("SK바이오사이언스");
-            assertThat(row.interBfFaceAmt()).isEqualTo("000000500");
-            assertThat(row.interAfFaceAmt()).isEqualTo("000000100");
-            assertThat(row.tdStopDt()).isEqualTo("2026/06/12 ~");
-            assertThat(row.listDt()).isEqualTo("20260613");
+            assertThat(response.output1().getFirst())
+                    .extracting(
+                            KisRevSplitResponse.RevSplitRow::recordDate,
+                            KisRevSplitResponse.RevSplitRow::shtCd,
+                            KisRevSplitResponse.RevSplitRow::isinName,
+                            KisRevSplitResponse.RevSplitRow::interBfFaceAmt,
+                            KisRevSplitResponse.RevSplitRow::interAfFaceAmt,
+                            KisRevSplitResponse.RevSplitRow::tdStopDt,
+                            KisRevSplitResponse.RevSplitRow::listDt)
+                    .containsExactly(
+                            "20260613",
+                            "096960",
+                            "SK바이오사이언스",
+                            "000000500",
+                            "000000100",
+                            "2026/06/12 ~",
+                            "20260613");
         }
 
         @Test

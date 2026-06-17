@@ -10,6 +10,7 @@ import java.time.format.DateTimeParseException;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.dao.DataAccessException;
@@ -42,8 +43,8 @@ import org.springframework.stereotype.Service;
 @RequiredArgsConstructor
 public class RevSplitCollectionService {
 
-    /** 최대 페이지 수 — CTS 구조적 불가로 실질적으로 1. 형식적 안전 상한(PROBE-1). */
-    private static final int MAX_PAGES = 1;
+    /** PROBE-1: KIS TR HHKDB669105C0 응답 최대 행 수 — 100건 초과 불가(구조적 제한). */
+    private static final int MAX_ROWS_PER_PAGE = 100;
 
     /** DECIMAL(12,4) 최대 정수부 자릿수 (10^8 = 99999999). */
     private static final int MAX_DECIMAL_INTEGER_DIGITS = 8;
@@ -70,71 +71,49 @@ public class RevSplitCollectionService {
         // 관심종목 맵 — 심볼 기준 조회 (비관심종목 skip 판단용)
         Map<String, Stock> watchlistMap = buildWatchlistMap();
 
-        int attempted = 0;
-        int succeeded = 0;
-        int skippedNonWatchlist = 0;
-        int skippedValidation = 0;
-
+        // REQ-BATCH5-011: SHT_CD=공백(전체), MARKET_GB=0(전체), F_DT/T_DT 윈도우
         String fromDate = from.format(DATE_FMT);
         String toDate = to.format(DATE_FMT);
+        KisRevSplitResponse response =
+                kisApiExecutor.executeGet(
+                        uri ->
+                                uri.path(PATH)
+                                        .queryParam("SHT_CD", "")
+                                        .queryParam("MARKET_GB", "0")
+                                        .queryParam("F_DT", fromDate)
+                                        .queryParam("T_DT", toDate)
+                                        .queryParam("CTS", "")
+                                        .build(),
+                        TR_ID,
+                        KisRevSplitResponse.class);
 
-        int pageCount = 0;
-        boolean capReached = false;
+        List<KisRevSplitResponse.RevSplitRow> rows = response.output1();
 
-        while (pageCount < MAX_PAGES) {
-            pageCount++;
-
-            // REQ-BATCH5-011: SHT_CD=공백(전체), MARKET_GB=0(전체), F_DT/T_DT 윈도우
-            KisRevSplitResponse response =
-                    kisApiExecutor.executeGet(
-                            uri ->
-                                    uri.path(PATH)
-                                            .queryParam("SHT_CD", "")
-                                            .queryParam("MARKET_GB", "0")
-                                            .queryParam("F_DT", fromDate)
-                                            .queryParam("T_DT", toDate)
-                                            .queryParam("CTS", "")
-                                            .build(),
-                            TR_ID,
-                            KisRevSplitResponse.class);
-
-            List<KisRevSplitResponse.RevSplitRow> rows = response.output1();
-
-            // REQ-BATCH5-073: 빈 output1 → 0건 정상 종료
-            if (rows.isEmpty()) {
-                log.info("[rev-split] output1 빈 응답 — 단일 페이지 종료 (page={})", pageCount);
-                break;
-            }
-
-            // PROBE-1: 100건 캡 도달 시 WARN (윈도우 축소 필요)
-            if (rows.size() >= 100) {
-                log.warn(
-                        "[rev-split] 100건 캡 도달 (records={}) — 윈도우 F_DT/T_DT 축소 필요 (PROBE-1)",
-                        rows.size());
-                capReached = true;
-            }
-
-            RowCounts counts = processRows(rows, watchlistMap);
-            attempted += counts.attempted;
-            succeeded += counts.succeeded;
-            skippedNonWatchlist += counts.skippedNonWatchlist;
-            skippedValidation += counts.skippedValidation;
-
-            // 단일 페이지 — 루프 종료 (CTS 구조적 불가, PROBE-1)
-            break;
+        // REQ-BATCH5-073: 빈 output1 → 0건 정상 종료
+        if (rows.isEmpty()) {
+            log.info("[rev-split] output1 빈 응답 — 단일 페이지 종료");
+            return new RevSplitCollectionResult(0, 0, 0, 0);
         }
 
-        if (pageCount >= MAX_PAGES && !capReached) {
-            log.warn("[rev-split] MAX_PAGES({}) 도달 — 강제 종료", MAX_PAGES);
+        // PROBE-1: 100건 캡 도달 시 WARN (윈도우 축소 필요)
+        if (rows.size() >= MAX_ROWS_PER_PAGE) {
+            log.warn(
+                    "[rev-split] {}건 캡 도달 (records={}) — 윈도우 F_DT/T_DT 축소 필요 (PROBE-1)",
+                    MAX_ROWS_PER_PAGE,
+                    rows.size());
         }
 
-        if (skippedNonWatchlist > 0) {
-            log.info("[rev-split] 비관심종목 skip 집계 — {} 건", skippedNonWatchlist);
+        RowCounts counts = processRows(rows, watchlistMap);
+        if (counts.skippedNonWatchlist() > 0) {
+            log.info("[rev-split] 비관심종목 skip 집계 — {} 건", counts.skippedNonWatchlist());
         }
 
         RevSplitCollectionResult result =
                 new RevSplitCollectionResult(
-                        attempted, succeeded, skippedNonWatchlist, skippedValidation);
+                        counts.attempted(),
+                        counts.succeeded(),
+                        counts.skippedNonWatchlist(),
+                        counts.skippedValidation());
         log.info(
                 "[rev-split] 수집 완료 — attempted={}, succeeded={}, skippedNonWatchlist={}, skippedValidation={}",
                 result.attempted(),
@@ -208,8 +187,8 @@ public class RevSplitCollectionService {
     /**
      * RevSplitRow → CorporateEvent 매핑.
      *
-     * <p>처리 순서: (1) 키/날짜 검증 → (2) 면액 파싱 → (3) degenerate/무변동 skip(CR-01) → (4) 분할/병합 분류 → (5) 비율
-     * 산출.
+     * <p>처리 순서: (1) 키/날짜 검증 → (2) 면액 파싱+degenerate skip({@link #parseFaceAmounts}) → (3) 분할/병합 분류 →
+     * (4) 비율 산출.
      *
      * <p>[HARD] REQ-BATCH5-025: SPLIT 행 {@code stock_rate}는 V12 컬럼 주석상 "주식배당률"이 아니라 분할비율({@code
      * inter_bf_face_amt / inter_af_face_amt})이다. analyzer가 {@code event_type} 분기로 해석한다.
@@ -237,29 +216,13 @@ public class RevSplitCollectionService {
             return null;
         }
 
-        // 면액 파싱 (9자리 zero-pad 흡수 — parseLongOrNull)
-        Long bf = parseLongOrNull(row.interBfFaceAmt());
-        Long af = parseLongOrNull(row.interAfFaceAmt());
-        if (bf == null || af == null) {
-            log.debug(
-                    "[rev-split] 면액 파싱 실패 — sht_cd={}, bf={}, af={}",
-                    row.shtCd(),
-                    row.interBfFaceAmt(),
-                    row.interAfFaceAmt());
+        // 면액 파싱 + degenerate/무변동 skip (REQ-BATCH5-022, CR-01)
+        Optional<long[]> faceAmountsOpt = parseFaceAmounts(row);
+        if (faceAmountsOpt.isEmpty()) {
             return null;
         }
-
-        // REQ-BATCH5-022, CR-01: skip 판정 먼저 (degenerate/무변동) — 분류 이전
-        // af<=0 OR bf<=0 → 분모 0/음수 비율 산출 불가 OR 무액면전환 ratio=0 degenerate (실측 900250/900070)
-        // af==bf → 동일면액 무조정
-        if (af <= 0 || bf <= 0 || af.equals(bf)) {
-            log.debug(
-                    "[rev-split] degenerate/무변동 skip (bf={}, af={}) — sht_cd={}",
-                    bf,
-                    af,
-                    row.shtCd());
-            return null;
-        }
+        long bf = faceAmountsOpt.get()[0];
+        long af = faceAmountsOpt.get()[1];
 
         // REQ-BATCH5-021: 통과분만 분할(af<bf)/병합(af>bf) 분류
         String eventSubtype = af < bf ? "분할" : "병합";
@@ -286,6 +249,39 @@ public class RevSplitCollectionService {
     }
 
     /**
+     * 면액 파싱 및 degenerate/무변동 검증 (CR-01).
+     *
+     * <p>검증 순서: 파싱 실패 → empty, degenerate({@code af<=0 OR bf<=0}) → empty, 무변동({@code af==bf}) →
+     * empty. 통과분만 {@code Optional.of([bf, af])} 반환.
+     *
+     * @return {@code Optional<long[]>} — empty이면 skip
+     */
+    @SuppressWarnings("PMD.GuardLogStatement") // debug 파라미터 구성 비용은 무시 가능
+    private Optional<long[]> parseFaceAmounts(KisRevSplitResponse.RevSplitRow row) {
+        Long bf = parseLongOrNull(row.interBfFaceAmt());
+        Long af = parseLongOrNull(row.interAfFaceAmt());
+        if (bf == null || af == null) {
+            log.debug(
+                    "[rev-split] 면액 파싱 실패 — sht_cd={}, bf={}, af={}",
+                    row.shtCd(),
+                    row.interBfFaceAmt(),
+                    row.interAfFaceAmt());
+            return Optional.empty();
+        }
+        // af<=0 OR bf<=0 → 분모 0/음수 비율 산출 불가 (실측 900250 bf=0/af=2, 900070 bf=0/af=1)
+        // af==bf → 동일면액 무조정
+        if (af <= 0 || bf <= 0 || af.equals(bf)) {
+            log.debug(
+                    "[rev-split] degenerate/무변동 skip (bf={}, af={}) — sht_cd={}",
+                    bf,
+                    af,
+                    row.shtCd());
+            return Optional.empty();
+        }
+        return Optional.of(new long[] {bf, af});
+    }
+
+    /**
      * 분할비율 산출: {@code bf.divide(af, 4, HALF_UP)}.
      *
      * <p>비종료 소수(예 100/300=0.333…) 처리: {@code RoundingMode.HALF_UP} 필수 — 미지정 시 {@code
@@ -295,7 +291,7 @@ public class RevSplitCollectionService {
      *
      * @return null 이면 skip
      */
-    private BigDecimal calcSplitRatio(Long bf, Long af, String shtCd) {
+    private BigDecimal calcSplitRatio(long bf, long af, String shtCd) {
         BigDecimal bfBd = BigDecimal.valueOf(bf);
         BigDecimal afBd = BigDecimal.valueOf(af);
         BigDecimal ratio = bfBd.divide(afBd, 4, RoundingMode.HALF_UP);

@@ -256,14 +256,16 @@ class RevSplitCollectionServiceTest {
             // Assert — SPLIT 행 미사용 컬럼은 null
             ArgumentCaptor<CorporateEvent> captor = ArgumentCaptor.forClass(CorporateEvent.class);
             verify(corporateEventRepository).insertIgnoreDuplicate(captor.capture());
-            CorporateEvent saved = captor.getValue();
-            assertThat(saved.getPayDate()).isNull();
-            assertThat(saved.getStockPayDate()).isNull();
-            assertThat(saved.getOddPayDate()).isNull();
-            assertThat(saved.getCashAmount()).isNull();
-            assertThat(saved.getCashRate()).isNull();
-            assertThat(saved.getStockKind()).isNull();
-            assertThat(saved.getHighDividendFlag()).isNull();
+            assertThat(captor.getValue())
+                    .extracting(
+                            CorporateEvent::getPayDate,
+                            CorporateEvent::getStockPayDate,
+                            CorporateEvent::getOddPayDate,
+                            CorporateEvent::getCashAmount,
+                            CorporateEvent::getCashRate,
+                            CorporateEvent::getStockKind,
+                            CorporateEvent::getHighDividendFlag)
+                    .containsOnlyNulls();
         }
     }
 
