@@ -88,6 +88,9 @@ public class InvestOpinionCollectionService {
         LocalDate windowStart = today.minusDays(LOOKBACK_CALENDAR_DAYS);
         AtomicInteger succeeded = new AtomicInteger();
         AtomicInteger skipped = new AtomicInteger();
+        // MI-01: 행 단위 저장/skip 집계 — VT 복수 스레드 공유이므로 AtomicInteger 사용
+        AtomicInteger batchRowsSaved = new AtomicInteger();
+        AtomicInteger batchRowsSkipped = new AtomicInteger();
 
         try (ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor()) {
             allocation.forEach(
@@ -101,17 +104,21 @@ public class InvestOpinionCollectionService {
                                                     today,
                                                     windowStart,
                                                     succeeded,
-                                                    skipped));
+                                                    skipped,
+                                                    batchRowsSaved,
+                                                    batchRowsSkipped));
                         }
                     });
         }
 
         FundamentalResult result = new FundamentalResult(total, succeeded.get(), skipped.get());
         log.info(
-                "[invest-opinion] 수집 완료 — attempted={}, succeeded={}, skipped={}",
+                "[invest-opinion] 수집 완료 — attempted={}, succeeded={}, skipped={}, totalRowsSaved={}, totalRowsSkipped={}",
                 result.attempted(),
                 result.succeeded(),
-                result.skipped());
+                result.skipped(),
+                batchRowsSaved.get(),
+                batchRowsSkipped.get());
         return result;
     }
 
@@ -121,7 +128,9 @@ public class InvestOpinionCollectionService {
             LocalDate today,
             LocalDate windowStart,
             AtomicInteger succeeded,
-            AtomicInteger skipped) {
+            AtomicInteger skipped,
+            AtomicInteger batchRowsSaved,
+            AtomicInteger batchRowsSkipped) {
 
         String symbol = stock.getSymbol();
         try {
@@ -136,7 +145,17 @@ public class InvestOpinionCollectionService {
             }
 
             KisInvestOpinionResponse response = batchResult.getValue().orElseThrow();
-            saveValidRows(stock, symbol, response);
+            // MI-01: per-stock 행 단위 결과 집계 (saveValidRows 내부는 순차 실행)
+            int[] rowCounts = saveValidRows(stock, symbol, response);
+            int rowsSaved = rowCounts[0];
+            int rowsSkipped = rowCounts[1];
+            batchRowsSaved.addAndGet(rowsSaved);
+            batchRowsSkipped.addAndGet(rowsSkipped);
+            log.info(
+                    "[invest-opinion] stock 완료 — symbol={}, rowsSaved={}, rowsSkipped={}",
+                    symbol,
+                    rowsSaved,
+                    rowsSkipped);
             succeeded.incrementAndGet();
 
         } catch (KisTokenIssueException e) {
@@ -170,18 +189,36 @@ public class InvestOpinionCollectionService {
                 symbol);
     }
 
-    private void saveValidRows(Stock stock, String symbol, KisInvestOpinionResponse response) {
+    /**
+     * 응답 행을 순차 처리하여 유효 행을 저장하고 결과를 반환한다.
+     *
+     * @return {@code int[]{rowsSaved, rowsSkipped}} — per-stock 로그 및 배치 합산에 사용 (MI-01)
+     */
+    private int[] saveValidRows(Stock stock, String symbol, KisInvestOpinionResponse response) {
+        int rowsSaved = 0;
+        int rowsSkipped = 0;
         for (KisInvestOpinionResponse.InvestOpinionRow row : response.output()) {
-            insertIfValid(stock, symbol, row);
+            boolean saved = insertIfValid(stock, symbol, row);
+            if (saved) {
+                rowsSaved++;
+            } else {
+                rowsSkipped++;
+            }
         }
+        return new int[] {rowsSaved, rowsSkipped};
     }
 
-    private void insertIfValid(
+    /**
+     * 단일 행 파싱·검증·저장을 수행한다.
+     *
+     * @return 저장 성공 여부 ({@code false} = 검증 실패 skip)
+     */
+    private boolean insertIfValid(
             Stock stock, String symbol, KisInvestOpinionResponse.InvestOpinionRow row) {
 
         if (row.stckBsopDate() == null || row.stckBsopDate().isBlank()) {
             log.warn("[invest-opinion] 검증 실패 (trade_date null) — symbol={}", symbol);
-            return;
+            return false;
         }
 
         LocalDate tradeDate;
@@ -192,7 +229,7 @@ public class InvestOpinionCollectionService {
                     "[invest-opinion] 검증 실패 (trade_date 파싱 불가) — symbol={}, date={}",
                     symbol,
                     row.stckBsopDate());
-            return;
+            return false;
         }
 
         try {
@@ -214,6 +251,7 @@ public class InvestOpinionCollectionService {
                             .gapRateFutures(FundamentalValueParser.parseDecimal(row.dprt()))
                             .build();
             analystEstimateRepository.insertIgnoreDuplicate(entity);
+            return true;
         } catch (NumberFormatException | ArithmeticException e) {
             // 파싱 실패·DECIMAL 정수부 경계 초과·BIGINT 비0 소수부·long 범위 초과 → 건별 skip (REQ-BATCH4-070a)
             log.warn(
@@ -221,6 +259,7 @@ public class InvestOpinionCollectionService {
                     symbol,
                     row.stckBsopDate(),
                     e.getMessage());
+            return false;
         }
     }
 }

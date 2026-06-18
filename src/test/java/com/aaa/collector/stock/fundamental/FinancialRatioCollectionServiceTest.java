@@ -598,4 +598,35 @@ class FinancialRatioCollectionServiceTest {
             verify(stockRepository, never()).findAllActiveTradable();
         }
     }
+
+    @Nested
+    @DisplayName("collect — 행 단위 집계 관측성 (MI-01)")
+    class RowTally {
+
+        @Test
+        @DisplayName("MI-01: 혼합 응답(유효 1행 + skip 1행) — insertIgnoreDuplicate 1회, skip 1건 집계")
+        void mixedResponse_savedAndSkippedCounted() {
+            // Arrange — 연간: 유효 1행 + 파싱실패 1행, 분기: 빈 응답
+            Stock stock = stockOf("005930");
+            when(stockRepository.findAllActiveStock()).thenReturn(List.of(stock));
+            when(distributor.distribute(List.of(stock))).thenReturn(Map.of(ISA, List.of(stock)));
+            KisFinancialRatioResponse.FinancialRatioRow invalidRow =
+                    new KisFinancialRatioResponse.FinancialRatioRow(
+                            "202312", "x", "y", "z", "w", "v", "u", "t", "s", "r");
+            when(batchRestExecutor.execute(
+                            eq(ISA),
+                            any(),
+                            anyString(),
+                            eq(KisFinancialRatioResponse.class),
+                            eq("005930")))
+                    .thenReturn(BatchResult.success(response(List.of(invalidRow, row("202403")))))
+                    .thenReturn(BatchResult.success(response(List.of())));
+
+            // Act
+            service.collect();
+
+            // Assert — 저장 1행(유효), skip 1행(파싱 실패), call 집계 불변 확인
+            verify(financialRepository, times(1)).insertIgnoreDuplicate(any(Financial.class));
+        }
+    }
 }

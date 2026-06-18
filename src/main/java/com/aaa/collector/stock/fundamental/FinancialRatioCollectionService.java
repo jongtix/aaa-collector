@@ -88,23 +88,35 @@ public class FinancialRatioCollectionService {
 
         AtomicInteger succeeded = new AtomicInteger();
         AtomicInteger skipped = new AtomicInteger();
+        // MI-01: 행 단위 저장/skip 집계 — VT 복수 스레드 공유이므로 AtomicInteger 사용
+        AtomicInteger batchRowsSaved = new AtomicInteger();
+        AtomicInteger batchRowsSkipped = new AtomicInteger();
 
         try (ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor()) {
             allocation.forEach(
                     (credential, stocks) -> {
                         for (Stock stock : stocks) {
                             executor.submit(
-                                    () -> collectStock(stock, credential, succeeded, skipped));
+                                    () ->
+                                            collectStock(
+                                                    stock,
+                                                    credential,
+                                                    succeeded,
+                                                    skipped,
+                                                    batchRowsSaved,
+                                                    batchRowsSkipped));
                         }
                     });
         }
 
         FundamentalResult result = new FundamentalResult(total, succeeded.get(), skipped.get());
         log.info(
-                "[financial-ratio] 수집 완료 — attempted={}, succeeded={}, skipped={}",
+                "[financial-ratio] 수집 완료 — attempted={}, succeeded={}, skipped={}, totalRowsSaved={}, totalRowsSkipped={}",
                 result.attempted(),
                 result.succeeded(),
-                result.skipped());
+                result.skipped(),
+                batchRowsSaved.get(),
+                batchRowsSkipped.get());
         return result;
     }
 
@@ -112,9 +124,27 @@ public class FinancialRatioCollectionService {
             Stock stock,
             KisAccountCredential credential,
             AtomicInteger succeeded,
-            AtomicInteger skipped) {
-        collectDivision(stock, credential, DIV_ANNUAL, PeriodType.ANNUAL, succeeded, skipped);
-        collectDivision(stock, credential, DIV_QUARTERLY, PeriodType.QUARTERLY, succeeded, skipped);
+            AtomicInteger skipped,
+            AtomicInteger batchRowsSaved,
+            AtomicInteger batchRowsSkipped) {
+        collectDivision(
+                stock,
+                credential,
+                DIV_ANNUAL,
+                PeriodType.ANNUAL,
+                succeeded,
+                skipped,
+                batchRowsSaved,
+                batchRowsSkipped);
+        collectDivision(
+                stock,
+                credential,
+                DIV_QUARTERLY,
+                PeriodType.QUARTERLY,
+                succeeded,
+                skipped,
+                batchRowsSaved,
+                batchRowsSkipped);
     }
 
     private void collectDivision(
@@ -123,7 +153,9 @@ public class FinancialRatioCollectionService {
             String divClsCode,
             PeriodType periodType,
             AtomicInteger succeeded,
-            AtomicInteger skipped) {
+            AtomicInteger skipped,
+            AtomicInteger batchRowsSaved,
+            AtomicInteger batchRowsSkipped) {
 
         String symbol = stock.getSymbol();
         try {
@@ -142,7 +174,18 @@ public class FinancialRatioCollectionService {
             }
 
             KisFinancialRatioResponse response = batchResult.getValue().orElseThrow();
-            saveValidRows(stock, symbol, periodType, response);
+            // MI-01: division별 행 단위 결과를 지역 카운터로 집계 (saveValidRows 내부는 순차 실행)
+            int[] rowCounts = saveValidRows(stock, symbol, periodType, response);
+            int rowsSaved = rowCounts[0];
+            int rowsSkipped = rowCounts[1];
+            batchRowsSaved.addAndGet(rowsSaved);
+            batchRowsSkipped.addAndGet(rowsSkipped);
+            log.info(
+                    "[financial-ratio] div 완료 — symbol={}, div={}, rowsSaved={}, rowsSkipped={}",
+                    symbol,
+                    periodType,
+                    rowsSaved,
+                    rowsSkipped);
             succeeded.incrementAndGet();
 
         } catch (KisTokenIssueException e) {
@@ -170,14 +213,32 @@ public class FinancialRatioCollectionService {
                 symbol);
     }
 
-    private void saveValidRows(
+    /**
+     * 응답 행을 순차 처리하여 유효 행을 저장하고 결과를 반환한다.
+     *
+     * @return {@code int[]{rowsSaved, rowsSkipped}} — division별 로그 및 배치 합산에 사용 (MI-01)
+     */
+    private int[] saveValidRows(
             Stock stock, String symbol, PeriodType periodType, KisFinancialRatioResponse response) {
+        int rowsSaved = 0;
+        int rowsSkipped = 0;
         for (KisFinancialRatioResponse.FinancialRatioRow row : response.output()) {
-            insertIfValid(stock, symbol, periodType, row);
+            boolean saved = insertIfValid(stock, symbol, periodType, row);
+            if (saved) {
+                rowsSaved++;
+            } else {
+                rowsSkipped++;
+            }
         }
+        return new int[] {rowsSaved, rowsSkipped};
     }
 
-    private void insertIfValid(
+    /**
+     * 단일 행 파싱·검증·저장을 수행한다.
+     *
+     * @return 저장 성공 여부 ({@code false} = 검증 실패 skip)
+     */
+    private boolean insertIfValid(
             Stock stock,
             String symbol,
             PeriodType periodType,
@@ -188,7 +249,7 @@ public class FinancialRatioCollectionService {
                     "[financial-ratio] 검증 실패 (stac_yymm null) — symbol={}, periodType={}",
                     symbol,
                     periodType);
-            return;
+            return false;
         }
 
         LocalDate periodDate = parsePeriodDate(row.stacYymm());
@@ -198,7 +259,7 @@ public class FinancialRatioCollectionService {
                     symbol,
                     periodType,
                     row.stacYymm());
-            return;
+            return false;
         }
 
         try {
@@ -219,6 +280,7 @@ public class FinancialRatioCollectionService {
                             .debtRatio(FundamentalValueParser.parseDecimal(row.lbltRate()))
                             .build();
             financialRepository.insertIgnoreDuplicate(entity);
+            return true;
         } catch (NumberFormatException | ArithmeticException e) {
             // 파싱 실패·DECIMAL 정수부 경계 초과·BIGINT 비0 소수부·long 범위 초과 → 건별 skip (REQ-BATCH4-070a)
             log.warn(
@@ -227,6 +289,7 @@ public class FinancialRatioCollectionService {
                     periodType,
                     row.stacYymm(),
                     e.getMessage());
+            return false;
         }
     }
 

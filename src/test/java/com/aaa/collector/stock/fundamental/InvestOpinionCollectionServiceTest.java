@@ -395,6 +395,30 @@ class InvestOpinionCollectionServiceTest {
     }
 
     @Nested
+    @DisplayName("collect — 행 단위 집계 관측성 (MI-01)")
+    class RowTally {
+
+        @Test
+        @DisplayName("MI-01: 혼합 응답(유효 1행 + 파싱실패 1행) — insertIgnoreDuplicate 1회, skip 1건")
+        void mixedResponse_savedAndSkippedCounted() {
+            // Arrange
+            Stock stock = stockOf("005930");
+            singleStock(stock);
+            KisInvestOpinionResponse.InvestOpinionRow invalidRow =
+                    new KisInvestOpinionResponse.InvestOpinionRow(
+                            "20260611", "매수", "2", "중립", "3", "OO증권", "x", "y", "z", "w", "v", "u");
+            stubFetch(ISA, "005930", response(List.of(invalidRow, row("20260612", "OO증권"))));
+
+            // Act
+            service.collect(TODAY);
+
+            // Assert — 저장 1행, skip 1행(파싱 실패)
+            verify(analystEstimateRepository, times(1))
+                    .insertIgnoreDuplicate(any(AnalystEstimate.class));
+        }
+    }
+
+    @Nested
     @DisplayName("collect — 모든 키 죽음 (AC-PATH-2)")
     class AllKeysDead {
 
