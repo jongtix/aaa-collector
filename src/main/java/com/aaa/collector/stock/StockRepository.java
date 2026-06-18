@@ -60,6 +60,20 @@ public interface StockRepository extends JpaRepository<Stock, Long> {
     List<Stock> findAllActiveByAssetTypeIn(@Param("assetTypes") Collection<AssetType> assetTypes);
 
     /**
+     * 종목 단위 펀더멘털 배치(재무비율/투자의견) 대상 종목을 조회한다 — {@code asset_type = STOCK} 한정
+     * (SPEC-COLLECTOR-BATCH-004 REQ-BATCH4-013).
+     *
+     * <p>재무비율·투자의견은 일반 주식 지표라 ETF/INDEX/ETN/COMMODITY엔 무의미·빈 응답이 온다. 따라서 활성({@code
+     * watchlistRemovedAt IS NULL}) 종목 중 {@code asset_type = STOCK}만 반환한다. BATCH-001/002(일봉/수급)의
+     * {@link #findAllActiveTradable()}({@code IN (STOCK, ETF)})와는 별개의 자체 필터다 — 기존 {@link
+     * #findAllActive()}·{@link #findAllActiveTradable()}는 변경하지 않는다.
+     */
+    @Query(
+            "SELECT s FROM Stock s WHERE s.watchlistRemovedAt IS NULL"
+                    + " AND s.assetType = com.aaa.collector.stock.enums.AssetType.STOCK")
+    List<Stock> findAllActiveStock();
+
+    /**
      * 기존 INDEX 종목 행을 조회한다 — {@code asset_type=INDEX}, {@code market=KRX}, {@code symbol IN
      * symbols}.
      *
