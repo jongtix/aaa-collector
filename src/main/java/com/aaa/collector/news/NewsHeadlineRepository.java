@@ -9,11 +9,20 @@ import org.springframework.transaction.annotation.Transactional;
 /** 뉴스 제목 리포지토리. */
 public interface NewsHeadlineRepository extends JpaRepository<NewsHeadline, Long> {
 
+    // @MX:WARN: [AUTO] 권한 민감 네이티브 SQL — 반드시 INSERT IGNORE 유지 (ON DUPLICATE KEY UPDATE 금지)
+    // @MX:REASON: [AUTO] collector는 news_headlines에 UPDATE 권한이 없어 ON DUPLICATE KEY UPDATE 사용 시 중복
+    // 충돌에서
+    // SQL 1142 발생 (ADR-026, SPEC-COLLECTOR-DBGRANT-002)
     /**
      * 뉴스 제목 1건을 멱등 삽입한다 (REQ-BATCH3-062).
      *
-     * <p>{@code ON DUPLICATE KEY UPDATE id=id} no-op upsert. Unique Key {@code
-     * uk_news_headlines_serial (serial_no)} 충돌 시 행 수 미증가·UPDATE 미발생(TECHSPEC 4절).
+     * <p>{@code INSERT IGNORE}는 Unique Key {@code uk_news_headlines_serial (serial_no)} 충돌 시 해당 행을
+     * 무시하여 행 수가 증가하지 않으며 UPDATE를 발생시키지 않는다.
+     *
+     * <p>기존 {@code ON DUPLICATE KEY UPDATE id = id}는 no-op이라도 MySQL이 중복 충돌 시 UPDATE 경로를 밟아 UPDATE
+     * 권한을 검사하므로, UPDATE 권한이 없는 {@code collector} 사용자에게 SQL 1142({@code UPDATE command denied to
+     * user 'collector'@'%' for table 'news_headlines'})를 유발했다(ADR-026 Tier-1, ADR-025 §맥락 1).
+     * production 24시간 42,460회 실패 확인.
      *
      * <p>10분 간격 재실행 시 inclusive SRNO 커서로 중복 경계 행이 발생해도 멱등이 흡수한다(REQ-BATCH3-063).
      *
@@ -26,7 +35,7 @@ public interface NewsHeadlineRepository extends JpaRepository<NewsHeadline, Long
     @Query(
             value =
                     """
-                    INSERT INTO news_headlines
+                    INSERT IGNORE INTO news_headlines
                         (serial_no, published_at, provider_code, title,
                          category_code, source,
                          stock_code1, stock_code2, stock_code3, stock_code4, stock_code5,
@@ -36,7 +45,6 @@ public interface NewsHeadlineRepository extends JpaRepository<NewsHeadline, Long
                          :#{#e.categoryCode}, :#{#e.source},
                          :#{#e.stockCode1}, :#{#e.stockCode2}, :#{#e.stockCode3}, :#{#e.stockCode4}, :#{#e.stockCode5},
                          NOW(), NOW())
-                    ON DUPLICATE KEY UPDATE id = id
                     """,
             nativeQuery = true)
     void insertIgnoreDuplicate(@Param("e") NewsHeadline e);
