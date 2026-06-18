@@ -73,9 +73,10 @@ class WatchlistSyncSchedulerTest {
         @Test
         @DisplayName("syncAfternoon 메서드 없음 (REQ-WLSYNC-112 supersede)")
         void syncAfternoon_methodDoesNotExist() {
+            final String afternoonMethodName = "syncAfternoon";
             boolean hasSyncAfternoon = false;
             for (Method method : WatchlistSyncScheduler.class.getMethods()) {
-                if ("syncAfternoon".equals(method.getName())) {
+                if (afternoonMethodName.equals(method.getName())) {
                     hasSyncAfternoon = true;
                     break;
                 }

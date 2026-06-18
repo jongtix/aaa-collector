@@ -120,7 +120,6 @@ public class RankingSnapshotService {
      * @param clock 캡처 시각 결정 시계 (테스트 주입용)
      */
     @Transactional
-    @SuppressWarnings("PMD.AvoidInstantiatingObjectsInLoops") // 순위 엔트리별 RankingSnapshot 생성 불가피
     public void saveSnapshot(
             String market, List<AdtvPercentileCalculator.RankEntry> entries, Clock clock) {
 

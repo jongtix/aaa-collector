@@ -55,7 +55,7 @@ public class GradeClassificationService {
     private final ListedYearsResolver listedYearsResolver;
 
     // 테스트 주입 가능한 시계 (기본: 시스템 시계)
-    private Clock clock = Clock.systemDefaultZone();
+    private final Clock clock = Clock.systemDefaultZone();
 
     /**
      * KRX(KOSPI/KOSDAQ) 종목만 등급 분류한다.

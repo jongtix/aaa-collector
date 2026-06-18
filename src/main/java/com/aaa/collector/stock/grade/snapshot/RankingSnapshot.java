@@ -31,7 +31,7 @@ import lombok.NoArgsConstructor;
                         name = "uk_ranking_snapshots_market_date_symbol",
                         columnNames = {"market", "snapshot_date", "symbol"}))
 @Getter
-@NoArgsConstructor(access = AccessLevel.PROTECTED)
+@NoArgsConstructor(access = AccessLevel.PROTECTED, force = true)
 public class RankingSnapshot {
 
     @Id
@@ -40,7 +40,7 @@ public class RankingSnapshot {
 
     /** 시장 구분 (KRX/US). */
     @Column(name = "market", nullable = false, length = 10)
-    private String market;
+    private final String market;
 
     /**
      * 시장 기준 zone의 캡처 cycle 일자 (C1).
@@ -51,11 +51,11 @@ public class RankingSnapshot {
      * </ul>
      */
     @Column(name = "snapshot_date", nullable = false)
-    private LocalDate snapshotDate;
+    private final LocalDate snapshotDate;
 
     /** 종목 코드. */
     @Column(name = "symbol", nullable = false, length = 20)
-    private String symbol;
+    private final String symbol;
 
     /**
      * 순위 결정 값.
@@ -66,15 +66,15 @@ public class RankingSnapshot {
      * </ul>
      */
     @Column(name = "rank_value", nullable = false)
-    private double rankValue;
+    private final double rankValue;
 
     /** 원본 순위 위치. */
     @Column(name = "rank_position", nullable = false)
-    private int rankPosition;
+    private final int rankPosition;
 
     /** 스냅샷 캡처 시각 (UTC). */
     @Column(name = "captured_at", nullable = false)
-    private Instant capturedAt;
+    private final Instant capturedAt;
 
     private RankingSnapshot(
             String market,

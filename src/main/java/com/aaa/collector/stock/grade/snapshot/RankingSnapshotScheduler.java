@@ -46,7 +46,7 @@ public class RankingSnapshotScheduler {
     private final RankingSnapshotService snapshotService;
 
     // 테스트 주입 가능한 시계 (기본: 시스템 시계)
-    private Clock clock = Clock.system(KST);
+    private final Clock clock = Clock.system(KST);
 
     // REQ-GRADE-007: 작업별 독립 single-flight 가드
     private final AtomicBoolean krxRunning = new AtomicBoolean(false);

@@ -147,8 +147,8 @@ class RankingSnapshotServiceTest {
             List<RankingSnapshot> saved = captor.getValue();
             assertThat(saved).hasSize(2);
             // snapshot_date = KST 날짜 = 2024-06-17
-            assertThat(saved.get(0).getSnapshotDate()).isEqualTo(LocalDate.of(2024, 6, 17));
-            assertThat(saved.get(0).getMarket()).isEqualTo("KRX");
+            assertThat(saved.getFirst().getSnapshotDate()).isEqualTo(LocalDate.of(2024, 6, 17));
+            assertThat(saved.getFirst().getMarket()).isEqualTo("KRX");
         }
     }
 
@@ -234,7 +234,7 @@ class RankingSnapshotServiceTest {
 
             // Assert
             assertThat(result).hasSize(1);
-            assertThat(result.get(0).getSymbol()).isEqualTo("005930");
+            assertThat(result.getFirst().getSymbol()).isEqualTo("005930");
         }
 
         @Test
@@ -290,7 +290,7 @@ class RankingSnapshotServiceTest {
             // Assert: 기존 행 삭제 후 재저장 (멱등)
             verify(snapshotRepository)
                     .deleteByMarketAndSnapshotDate(
-                            argThat(m -> m.equals("KRX")),
+                            argThat("KRX"::equals),
                             argThat(d -> d.equals(LocalDate.of(2024, 6, 17))));
             verify(snapshotRepository).saveAll(any());
         }
