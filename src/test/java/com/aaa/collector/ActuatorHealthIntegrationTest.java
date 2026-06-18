@@ -4,9 +4,11 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import com.aaa.collector.macro.MacroIndicatorRepository;
 import com.aaa.collector.news.NewsHeadlineRepository;
+import com.aaa.collector.stock.AnalystEstimateRepository;
 import com.aaa.collector.stock.CorporateEventRepository;
 import com.aaa.collector.stock.CreditBalanceRepository;
 import com.aaa.collector.stock.DailyOhlcvRepository;
+import com.aaa.collector.stock.FinancialRepository;
 import com.aaa.collector.stock.InvestorTrendRepository;
 import com.aaa.collector.stock.ShortSaleDomesticRepository;
 import com.aaa.collector.stock.StockRepository;
@@ -32,59 +34,29 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
 @TestPropertySource(
         properties = {"management.server.port=0", "management.health.redis.enabled=false"})
 @DisplayName("Actuator health 엔드포인트 통합 테스트")
+// 컨텍스트 로드를 위해 DB/Redis 의존 빈을 일괄 모킹한다. 클래스 레벨 types 배열로 중복 필드 선언을 회피한다.
+@MockitoBean(
+        types = {
+            StringRedisTemplate.class,
+            StockRepository.class,
+            EtfMetadataRepository.class,
+            EtfRepresentativeHistoryRepository.class,
+            DailyOhlcvRepository.class,
+            StockGradeRepository.class,
+            InvestorTrendRepository.class,
+            ShortSaleDomesticRepository.class,
+            CreditBalanceRepository.class,
+            MacroIndicatorRepository.class,
+            CorporateEventRepository.class,
+            NewsHeadlineRepository.class,
+            FinancialRepository.class,
+            AnalystEstimateRepository.class
+        })
 class ActuatorHealthIntegrationTest {
 
     @LocalManagementPort private int managementPort;
 
     @Autowired private TestRestTemplate restTemplate;
-
-    @MockitoBean
-    @SuppressWarnings("unused")
-    private StringRedisTemplate redisTemplate;
-
-    @MockitoBean
-    @SuppressWarnings("unused")
-    private StockRepository stockRepository;
-
-    @MockitoBean
-    @SuppressWarnings("unused")
-    private EtfMetadataRepository etfMetadataRepository;
-
-    @MockitoBean
-    @SuppressWarnings("unused")
-    private EtfRepresentativeHistoryRepository etfRepresentativeHistoryRepository;
-
-    @MockitoBean
-    @SuppressWarnings("unused")
-    private DailyOhlcvRepository dailyOhlcvRepository;
-
-    @MockitoBean
-    @SuppressWarnings("unused")
-    private StockGradeRepository stockGradeRepository;
-
-    @MockitoBean
-    @SuppressWarnings("unused")
-    private InvestorTrendRepository investorTrendRepository;
-
-    @MockitoBean
-    @SuppressWarnings("unused")
-    private ShortSaleDomesticRepository shortSaleDomesticRepository;
-
-    @MockitoBean
-    @SuppressWarnings("unused")
-    private CreditBalanceRepository creditBalanceRepository;
-
-    @MockitoBean
-    @SuppressWarnings("unused")
-    private MacroIndicatorRepository macroIndicatorRepository;
-
-    @MockitoBean
-    @SuppressWarnings("unused")
-    private CorporateEventRepository corporateEventRepository;
-
-    @MockitoBean
-    @SuppressWarnings("unused")
-    private NewsHeadlineRepository newsHeadlineRepository;
 
     @Test
     @DisplayName("GET /actuator/health → HTTP 200 반환")
