@@ -42,6 +42,42 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 - KIS API 파라미터 Description의 `Unique key(N)` 표기는 해당 값(N)을 그대로 요청 파라미터로 사용한다는 의미
 
+## DB Grant Tiers / Idempotent Insert (ADR-026)
+
+collector DB 사용자는 `aaa.*`에 `SELECT, INSERT`를 가지며, `UPDATE`는 Tier-2 허용목록 테이블에만 테이블별로 부여된다.
+
+| 티어 | 해당 테이블 예시 | 권한 | 멱등 삽입 규칙 |
+|------|-----------------|------|---------------|
+| **Tier-1** (시계열/이벤트/로그, 쓰기 전용) | `daily_ohlcv`, `news_headlines`, `macro_indicators`, `credit_balance`, `short_sale_domestic`, `corporate_events`, `investor_trend` 등 | `SELECT, INSERT` only | **반드시 `INSERT IGNORE` 사용. `ON DUPLICATE KEY UPDATE` 절대 금지.** |
+| **Tier-2** (마스터/상태, in-place 갱신 허용) | `stocks`, `stock_grades`, `short_sale_overseas`, `etf_metadata` | `SELECT, INSERT, UPDATE` | UPDATE 경로 SQL 허용 |
+
+### SQL 1142 실패 양상
+
+`ON DUPLICATE KEY UPDATE id = id`는 no-op처럼 보이지만, MySQL은 Unique Key 충돌 시 UPDATE 경로를 밟아 **SET 이전에** UPDATE 권한을 검사한다. Tier-1 테이블에는 UPDATE 권한이 없으므로 다음 오류가 발생한다:
+
+```
+ERROR 1142 (42000): UPDATE command denied to user 'collector'@'%' for table '<table>'
+```
+
+`INSERT IGNORE`는 동일한 "중복 무시" 결과를 내면서 INSERT 권한만 필요로 하므로 SQL 1142를 발생시키지 않는다.
+
+### 규칙
+
+- **[HARD]** Tier-1 테이블에 대한 멱등 삽입 네이티브 `@Query`는 반드시 `INSERT IGNORE INTO ... VALUES (...)` 형태를 사용한다.
+- **[HARD]** Tier-1 SQL 1142를 GRANT 추가로 해결하지 않는다 — ADR-026 Tier-1 불변성 위반이다.
+- Tier-1 멱등 삽입 메서드에는 `DailyOhlcvRepository` 형식의 `@MX:WARN`/`@MX:REASON` 가드 주석을 추가한다.
+- Tier-1/Tier-2 분류 기준: "행이 삽입 후 in-place로 갱신되어야 하는가?" Yes → Tier-2 (ADR-026·이 허용목록 수정 필요), No → Tier-1 (INSERT IGNORE).
+- 빌드 게이트 `./gradlew check`는 회귀 가드 테스트(`Tier1InsertIgnoreGuardTest`)로 Tier-1 리포지토리의 `ON DUPLICATE KEY UPDATE` 사용을 자동 탐지하여 빌드를 실패시킨다.
+
+### 참조
+
+- **ADR-026** (`aaa-infra/docs/ADR/ADR-026-collector-grant-two-tier-model.md`) — 2-tier 모델, Tier-2 허용목록
+- **ADR-025** (`aaa-infra/docs/ADR/ADR-025-daily-ohlcv-raw-price-storage.md`) — SQL 1142 원인 최초 진단
+- **SPEC-COLLECTOR-OHLCV-001** — `daily_ohlcv` INSERT IGNORE 전환 선례
+- **SPEC-INFRA-DBGRANT-001** — Tier-2 UPDATE grant 복원 + 기동 self-check
+- **SPEC-COLLECTOR-DBGRANT-002** — news/macro 및 Tier-1 전체 INSERT IGNORE 전환 + 회귀 가드
+- **룰 문서** — `aaa/.claude/rules/moai/development/collector-db-grant-tiers.md`
+
 ## Project Documents
 
 - 프로젝트 전체 문서: `aaa-infra/docs/` — 상위 `aaa/CLAUDE.md` 참고
