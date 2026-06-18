@@ -15,6 +15,7 @@ import com.aaa.collector.stock.StockRepository;
 import com.aaa.collector.stock.etf.EtfMetadataRepository;
 import com.aaa.collector.stock.etf.EtfRepresentativeHistoryRepository;
 import com.aaa.collector.stock.grade.StockGradeRepository;
+import com.aaa.collector.stock.grade.snapshot.RankingSnapshotRepository;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -52,6 +53,7 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
             EtfRepresentativeHistoryRepository.class,
             DailyOhlcvRepository.class,
             StockGradeRepository.class,
+            RankingSnapshotRepository.class,
             InvestorTrendRepository.class,
             ShortSaleDomesticRepository.class,
             CreditBalanceRepository.class,
