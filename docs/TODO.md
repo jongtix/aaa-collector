@@ -88,14 +88,17 @@
 - [x] Trace ID Redis Streams 헤더 전파
 
 ### 1-7. KIS REST 배치 수집
-- [ ] 국내 배치: OHLCV 일봉, 투자자별 매매동향, 공매도, 신용잔고, 재무제표, 업종지수, 금리, 증시자금, 배당/증자, 투자의견, 뉴스 제목
+- [x] 국내 배치(완료분): OHLCV 일봉 (SPEC-COLLECTOR-BATCH-001, v1.10.0 / 멱등 INSERT IGNORE: SPEC-COLLECTOR-OHLCV-001, v1.13.1 / 원주가 전환: SPEC-COLLECTOR-OHLCV-002, v1.15.0), 투자자별 매매동향·공매도·신용잔고 (SPEC-COLLECTOR-BATCH-002, v1.14.0)
+- [x] 국내 배치(시장 단위 5종): 업종지수, 금리종합, 증시자금종합, 배당/증자일정, 뉴스 제목 (SPEC-COLLECTOR-BATCH-003, v1.16.0~v1.17.0 / 묶음 스케줄러 17:00·뉴스 장중 10분)
+- [x] 국내 배치(종목 단위 2종): 재무비율, 투자의견 (SPEC-COLLECTOR-BATCH-004 — 머지 대기 / `feature/SPEC-COLLECTOR-BATCH-004` 브랜치, SPEC status `completed`)
+- [x] 국내 액면교체(SPLIT) 이벤트 수집: 액면분할/액면병합 → `corporate_events`(EventType.SPLIT) 멱등 저장 (SPEC-COLLECTOR-BATCH-005, v1.18.0). SPEC-COLLECTOR-SPLIT-001은 BATCH-005가 대체(`superseded`)
 - [ ] 해외 배치: OHLCV, 해외선물, 배당/권리, 뉴스 제목
-- [ ] Rate Limit 준수: 초당 20건/계좌 × 5계좌 = 100건
-- [ ] `@Scheduled` cron 표현식만 사용 (`fixedDelay` 금지)
-- [ ] 일봉 수집 완료 시 `stream:daily:complete` 이벤트 발행 (`market` 필드: `domestic` / `overseas`)
+- [x] Rate Limit 준수: 초당 20건/계좌 × 5계좌 = 100건 — 멀티키 라운드로빈 분산 (`HealthyKeyRoundRobinDistributor`/`BatchRestExecutor`, SPEC-COLLECTOR-KEYDIST-001). 완료분 배치에 적용, 잔여 배치 추가 시 동일 메커니즘 사용
+- [x] `@Scheduled` cron 표현식만 사용 (`fixedDelay` 금지) — 국내 일봉/수급 스케줄러 (`DomesticDailyOhlcvScheduler`, `cron = "0 0 16 * * MON-FRI"`)
+- [x] 일봉 수집 완료 시 `stream:daily:complete` 이벤트 발행 (`market` 필드) (`DailyCompletePublisher`, SPEC-COLLECTOR-BATCH-001) — 국내(`domestic`)만 발행, 해외(`overseas`) 미구현
 - [ ] 과거 데이터 백필: 일봉 OHLCV, 수급 데이터를 종목별 최대 과거까지 수집
 - [ ] `backfill_status` 테이블 관리: (대상, 데이터 테이블) 단위로 백필 상태 추적, 미완료 항목 대상 하루 1회 스케줄 실행
-- [ ] 외부 API 응답 검증: null/0 이하/극단값 필터 적용, 검증 실패 건 저장 제외 + 로그 기록
+- [x] 외부 API 응답 검증: null/0 이하/극단값 필터 적용, 검증 실패 건 저장 제외 + 로그 기록 — 완료분 배치에 적용 (`SupplyDemandValidator`, `DomesticDailyOhlcvCollectionService` 검증, BATCH-003 금리/뉴스 poison-row graceful skip), 잔여 배치 추가 시 동일 정책 적용
 
 ### 1-8. 외부 API 수집
 - [ ] 환율 USDKRW 일봉 Fallback 체인: 한국수출입은행 → ECOS → yfinance
