@@ -49,7 +49,9 @@ val coverageExclusions = listOf(
     "com/aaa/collector/kis/websocket/ParsedTick.class",
     "com/aaa/collector/kis/websocket/AesKey.class",
     "com/aaa/collector/stock/grade/GradeInput.class",
-    "com/aaa/collector/stock/daily/CollectionResult.class"
+    "com/aaa/collector/stock/daily/CollectionResult.class",
+    // M3 순수 nested record DTO: accessor만, 손작성 로직 0건 (KisHolidayResponse 외부 클래스는 compact 생성자 있어 제외 불가)
+    "com/aaa/collector/kis/holiday/KisHolidayResponse\$HolidayRow.class"
 )
 
 // --- JaCoCo 커버리지 게이트 (BUNDLE LINE ≥ 85% 즉시 강제 — REQ-JACOCO-010/011/012) ---
@@ -106,7 +108,8 @@ repositories {
 dependencies {
     // --- Runtime ---
     implementation(libs.spring.boot.starter.web)          // 내장 Tomcat, Spring MVC, Jackson
-    implementation(libs.spring.boot.starter.actuator)     // 헬스체크 엔드포인트
+    implementation(libs.spring.boot.starter.actuator)     // 헬스체크 + Prometheus 노출 엔드포인트
+    implementation(libs.micrometer.registry.prometheus)   // /actuator/prometheus (VictoriaMetrics 호환) 노출
     implementation(libs.spring.boot.starter.data.jpa)     // JPA + Hibernate
     implementation(libs.spring.boot.starter.data.redis)   // Redis 연동
     implementation(libs.spring.boot.starter.websocket)    // KIS WebSocket 클라이언트 (StandardWebSocketClient)
