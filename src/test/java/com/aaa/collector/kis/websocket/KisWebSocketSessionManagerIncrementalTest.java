@@ -9,6 +9,7 @@ import com.aaa.collector.common.safemode.SafeModeManager;
 import com.aaa.collector.kis.token.KisAccountCredential;
 import com.aaa.collector.kis.token.KisProperties;
 import com.aaa.collector.kis.token.KisTokenService;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.time.Clock;
 import java.util.ArrayList;
 import java.util.List;
@@ -72,7 +73,8 @@ class KisWebSocketSessionManagerIncrementalTest {
                         marketSchedule,
                         sleeper,
                         clock,
-                        factory);
+                        factory,
+                        new SimpleMeterRegistry());
 
         manager.openAll();
     }

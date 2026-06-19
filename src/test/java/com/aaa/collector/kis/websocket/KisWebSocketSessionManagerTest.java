@@ -15,6 +15,7 @@ import com.aaa.collector.common.safemode.SafeModeManager;
 import com.aaa.collector.kis.token.KisAccountCredential;
 import com.aaa.collector.kis.token.KisProperties;
 import com.aaa.collector.kis.token.KisTokenService;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.time.Clock;
 import java.util.ArrayList;
 import java.util.List;
@@ -85,7 +86,8 @@ class KisWebSocketSessionManagerTest {
                         marketSchedule,
                         sleeper,
                         clock,
-                        factory);
+                        factory,
+                        new SimpleMeterRegistry());
 
         manager.openAll();
     }
@@ -313,7 +315,8 @@ class KisWebSocketSessionManagerTest {
                             marketSchedule,
                             sleeper,
                             clock,
-                            reissueFactory);
+                            reissueFactory,
+                            new SimpleMeterRegistry());
 
             // Act
             reissueManager.openAll();
@@ -356,7 +359,8 @@ class KisWebSocketSessionManagerTest {
                             marketSchedule,
                             sleeper,
                             clock,
-                            retryFactory);
+                            retryFactory,
+                            new SimpleMeterRegistry());
 
             // Act — 1회 실패 → 자동 재시도 → 성공
             retryManager.openAll();

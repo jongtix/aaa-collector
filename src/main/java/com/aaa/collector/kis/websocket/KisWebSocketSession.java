@@ -259,6 +259,18 @@ public class KisWebSocketSession {
         return alias;
     }
 
+    /**
+     * 현재 WebSocket 연결 상태를 반환한다 (REQ-OBSV-011).
+     *
+     * <p>원시 세션이 존재하고 열려 있으면 연결 상태로 간주한다. 연결 해제 시 {@code rawSession}이 {@code null}로 설정된다.
+     *
+     * @return 연결되어 있으면 {@code true}
+     */
+    public boolean isConnected() {
+        WebSocketSession current = this.rawSession;
+        return current != null && current.isOpen();
+    }
+
     // ──────────────────────────────────────────────────────────────────
     // 내부 메서드
     // ──────────────────────────────────────────────────────────────────

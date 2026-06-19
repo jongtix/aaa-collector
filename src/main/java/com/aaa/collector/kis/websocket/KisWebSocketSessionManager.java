@@ -5,9 +5,12 @@ import com.aaa.collector.common.safemode.SafeModeManager;
 import com.aaa.collector.kis.token.KisAccountCredential;
 import com.aaa.collector.kis.token.KisProperties;
 import com.aaa.collector.kis.token.KisTokenService;
+import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.Tags;
 import java.time.Clock;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Collectors;
@@ -36,6 +39,12 @@ public class KisWebSocketSessionManager {
     /** 세션당 최대 구독 수 (REQ-WS-005). */
     private static final int MAX_SUBSCRIPTIONS_PER_SESSION = 40;
 
+    /** 활성 구독 종목 수 gauge (틱 충족률 분모, REQ-OBSV-011). */
+    static final String ACTIVE_SUBSCRIPTIONS_METRIC = "aaa_collector_tick_active_subscriptions";
+
+    /** 세션별 연결 상태 gauge (connected 1/0, REQ-OBSV-011). */
+    static final String SESSION_CONNECTED_METRIC = "aaa_collector_websocket_session_connected";
+
     private final KisProperties kisProperties;
     private final KisTokenService kisTokenService;
     private final KisTickPublisher tickPublisher;
@@ -62,7 +71,8 @@ public class KisWebSocketSessionManager {
             @Qualifier("webSocketSafeModeManager") SafeModeManager webSocketSafeModeManager,
             KisMarketSchedule marketSchedule,
             Sleeper sleeper,
-            Clock clock) {
+            Clock clock,
+            MeterRegistry meterRegistry) {
         this(
                 kisProperties,
                 kisTokenService,
@@ -71,13 +81,18 @@ public class KisWebSocketSessionManager {
                 marketSchedule,
                 sleeper,
                 clock,
-                null); // 팩토리 null → 기본 팩토리 사용
+                null, // 팩토리 null → 기본 팩토리 사용
+                meterRegistry);
     }
 
     /**
      * 테스트 및 프로덕션 공용 생성자.
      *
+     * <p>구독/세션 계측 gauge(REQ-OBSV-011)를 생성 시점에 지연 조회 supplier로 등록한다 — 활성 구독 종목 수(분모)와 세션별 연결
+     * 상태(1/0). gauge는 내부 상태를 매 스크랩 시 지연 조회하므로 산발적 {@code set()} 호출이 불필요하다.
+     *
      * @param sessionFactory null이면 기본 {@link StandardWebSocketClient} 기반 팩토리 사용
+     * @param meterRegistry 구독/세션 gauge 등록 대상 레지스트리
      */
     public KisWebSocketSessionManager(
             KisProperties kisProperties,
@@ -87,7 +102,8 @@ public class KisWebSocketSessionManager {
             KisMarketSchedule marketSchedule,
             Sleeper sleeper,
             Clock clock,
-            KisWebSocketSessionFactory sessionFactory) {
+            KisWebSocketSessionFactory sessionFactory,
+            MeterRegistry meterRegistry) {
         this.kisProperties = kisProperties;
         this.kisTokenService = kisTokenService;
         this.tickPublisher = tickPublisher;
@@ -97,6 +113,41 @@ public class KisWebSocketSessionManager {
         this.clock = clock;
         this.sessionFactory =
                 (sessionFactory != null) ? sessionFactory : this::createDefaultSession;
+        registerMetrics(meterRegistry);
+    }
+
+    /**
+     * 구독/세션 gauge를 supplier 기반으로 등록한다 (REQ-OBSV-011).
+     *
+     * <p>활성 구독 종목 수는 {@code subscriptionOwner} 복합 키({@code trId:trKey})에서 distinct symbol(trKey)을
+     * 세어 동일 종목의 체결·호가 2개 구독이 분모를 부풀리지 않게 한다. 세션 연결 상태는 계좌 alias별 1개 gauge로 노출하고, 세션 부재·미연결 시 0이다.
+     */
+    private void registerMetrics(MeterRegistry meterRegistry) {
+        meterRegistry.gauge(
+                ACTIVE_SUBSCRIPTIONS_METRIC, this, KisWebSocketSessionManager::activeSymbolCount);
+        for (KisAccountCredential credential : kisProperties.accounts()) {
+            String alias = credential.alias();
+            meterRegistry.gauge(
+                    SESSION_CONNECTED_METRIC,
+                    Tags.of("alias", alias),
+                    this,
+                    manager -> manager.sessionConnected(alias));
+        }
+    }
+
+    /** subscriptionOwner 복합 키에서 distinct symbol(trKey) 수를 센다 (REQ-OBSV-011 분모). */
+    private double activeSymbolCount() {
+        Set<String> distinctSymbols =
+                subscriptionOwner.keySet().stream()
+                        .map(key -> key.substring(key.indexOf(':') + 1))
+                        .collect(Collectors.toSet());
+        return distinctSymbols.size();
+    }
+
+    /** 세션 연결 상태를 1/0으로 반환한다 (세션 부재·미연결 시 0). */
+    private double sessionConnected(String alias) {
+        KisWebSocketSession session = sessions.get(alias);
+        return (session != null && session.isConnected()) ? 1.0 : 0.0;
     }
 
     // ──────────────────────────────────────────────────────────────────
