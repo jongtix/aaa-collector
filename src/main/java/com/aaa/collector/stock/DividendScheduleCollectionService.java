@@ -1,6 +1,8 @@
 package com.aaa.collector.stock;
 
-import com.aaa.collector.kis.KisApiExecutor;
+import com.aaa.collector.kis.gate.GuardedKisExecutor;
+import com.aaa.collector.kis.gate.KeyLeaseRegistry;
+import com.aaa.collector.kis.gate.KeyLeaseRegistry.LeaseSession;
 import com.aaa.collector.stock.enums.EventType;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
@@ -18,8 +20,13 @@ import org.springframework.stereotype.Service;
 /**
  * 배당 일정 수집 서비스 (TR HHKDB669102C0).
  *
- * <p>단일키(isa) 단일 호출, {@code SHT_CD=공백}(전체 종목), {@code GB1=0}(배당전체), CTS 페이징으로 전체 범위를 순회한다.
- * per-stock 루프 아님.
+ * <p>단일 호출 경로, {@code SHT_CD=공백}(전체 종목), {@code GB1=0}(배당전체), CTS 페이징으로 전체 범위를 순회한다. per-stock 루프
+ * 아님.
+ *
+ * <p>호출은 단일 보호 게이트 {@link GuardedKisExecutor}를 경유한다(SPEC-COLLECTOR-KISGATE-001 REQ-KISGATE-001) —
+ * 기존 3-arg 맨몸 호출(throttle❌·재시도❌·isa 단일키)에서 throttle✅·재시도✅·멀티키 lease✅로 바뀐 의도된 동작 변경(패턴 A). CTS 페이징
+ * 전체 = 1 batch이므로 페이지 루프 전 {@link LeaseSession}을 1회 연다(REQ-KISGATE-006a — 모든 페이지가 동일 스냅샷에서 lease).
+ * 소진 시 게이트가 예외를 전파한다(패턴 A 종단 = 예외 전파, REQ-KISGATE-022).
  *
  * <p>관심종목만 저장(REQ-BATCH3-052): {@code sht_cd}가 활성 관심종목에 없는 행은 건별 skip. 비관심종목 skip은 집계 카운트 위주 로깅(개별
  * WARN 남발 회피).
@@ -46,7 +53,8 @@ public class DividendScheduleCollectionService {
     private static final String TR_ID = "HHKDB669102C0";
     private static final String PATH = "/uapi/domestic-stock/v1/ksdinfo/dividend";
 
-    private final KisApiExecutor kisApiExecutor;
+    private final GuardedKisExecutor guardedKisExecutor;
+    private final KeyLeaseRegistry keyLeaseRegistry;
     private final StockRepository stockRepository;
     private final CorporateEventRepository corporateEventRepository;
 
@@ -61,6 +69,9 @@ public class DividendScheduleCollectionService {
         // 관심종목 맵 — 심볼 기준 조회 (비관심종목 skip 판단용)
         Map<String, Stock> watchlistMap = buildWatchlistMap();
 
+        // REQ-KISGATE-006a: CTS 페이징 전체 = 1 batch — 루프 전 per-batch 헬스 스냅샷 1회 고정
+        LeaseSession session = keyLeaseRegistry.openSession();
+
         int attempted = 0;
         int succeeded = 0;
         int skippedNonWatchlist = 0;
@@ -74,19 +85,7 @@ public class DividendScheduleCollectionService {
 
             // REQ-BATCH3-050: CTS 페이징, GB1=0(배당전체), SHT_CD=공백(전체)
             final String currentCts = cts;
-            KisDividendScheduleResponse response =
-                    kisApiExecutor.executeGet(
-                            uri ->
-                                    uri.path(PATH)
-                                            .queryParam("CTS", currentCts)
-                                            .queryParam("GB1", "0")
-                                            .queryParam("F_DT", fromDate)
-                                            .queryParam("T_DT", toDate)
-                                            .queryParam("SHT_CD", "")
-                                            .queryParam("HIGH_GB", "")
-                                            .build(),
-                            TR_ID,
-                            KisDividendScheduleResponse.class);
+            KisDividendScheduleResponse response = fetchPage(session, currentCts, fromDate, toDate);
 
             // REQ-BATCH3-073: 빈 output1 → 페이지 종료
             if (response.output1().isEmpty()) {
@@ -130,6 +129,33 @@ public class DividendScheduleCollectionService {
                 result.skippedNonWatchlist(),
                 result.skippedValidation());
         return result;
+    }
+
+    /**
+     * 게이트를 경유해 배당 일정 CTS 페이지 1건을 조회한다(REQ-BATCH3-050).
+     *
+     * <p>인터럽트 수신 시 플래그를 복원한 뒤 {@link IllegalStateException}으로 전파한다(패턴 A 종단 = 예외 전파).
+     */
+    private KisDividendScheduleResponse fetchPage(
+            LeaseSession session, String cts, String fromDate, String toDate) {
+        try {
+            return guardedKisExecutor.execute(
+                    session,
+                    uri ->
+                            uri.path(PATH)
+                                    .queryParam("CTS", cts)
+                                    .queryParam("GB1", "0")
+                                    .queryParam("F_DT", fromDate)
+                                    .queryParam("T_DT", toDate)
+                                    .queryParam("SHT_CD", "")
+                                    .queryParam("HIGH_GB", "")
+                                    .build(),
+                    TR_ID,
+                    KisDividendScheduleResponse.class);
+        } catch (InterruptedException ie) {
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException("dividend 수집 중 인터럽트", ie);
+        }
     }
 
     private RowCounts processRows(

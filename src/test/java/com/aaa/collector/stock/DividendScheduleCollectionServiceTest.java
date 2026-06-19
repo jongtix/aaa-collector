@@ -9,7 +9,9 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-import com.aaa.collector.kis.KisApiExecutor;
+import com.aaa.collector.kis.gate.GuardedKisExecutor;
+import com.aaa.collector.kis.gate.KeyLeaseRegistry;
+import com.aaa.collector.kis.gate.KeyLeaseRegistry.LeaseSession;
 import com.aaa.collector.stock.enums.AssetType;
 import com.aaa.collector.stock.enums.EventType;
 import com.aaa.collector.stock.enums.Market;
@@ -21,16 +23,27 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
+import org.mockito.Mockito;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.dao.DataIntegrityViolationException;
 
+/**
+ * SPEC-COLLECTOR-KISGATE-001 M6(T19) — {@link DividendScheduleCollectionService} 게이트 경유 단위 테스트.
+ *
+ * <p>패턴 A는 Behavior:Changed이므로 신규 게이트 라우팅(throttle-on 4-arg 경유·CTS 페이징 전체 = 1 batch이므로 세션 1회 open)과
+ * 기존 수집 의미(비관심종목 skip·검증 skip·CTS 페이징·멱등·독성 행 흡수)를 함께 검증한다.
+ */
 @ExtendWith(MockitoExtension.class)
-@DisplayName("DividendScheduleCollectionService 단위 테스트")
+@DisplayName("DividendScheduleCollectionService — 게이트 경유 단위 테스트")
 class DividendScheduleCollectionServiceTest {
 
-    @Mock private KisApiExecutor kisApiExecutor;
+    private static final String TR_ID = "HHKDB669102C0";
+
+    @Mock private GuardedKisExecutor guardedKisExecutor;
+    @Mock private KeyLeaseRegistry keyLeaseRegistry;
     @Mock private StockRepository stockRepository;
     @Mock private CorporateEventRepository corporateEventRepository;
+    @Mock private LeaseSession session;
 
     private DividendScheduleCollectionService service;
 
@@ -38,7 +51,11 @@ class DividendScheduleCollectionServiceTest {
     void setUp() {
         service =
                 new DividendScheduleCollectionService(
-                        kisApiExecutor, stockRepository, corporateEventRepository);
+                        guardedKisExecutor,
+                        keyLeaseRegistry,
+                        stockRepository,
+                        corporateEventRepository);
+        Mockito.lenient().when(keyLeaseRegistry.openSession()).thenReturn(session);
     }
 
     private Stock watchlistStock(String symbol) {
@@ -90,12 +107,12 @@ class DividendScheduleCollectionServiceTest {
         @Test
         @SuppressWarnings("PMD.UnitTestContainsTooManyAsserts") // 매핑 필드 전체 검증을 한 테스트에서 수행
         @DisplayName("관심종목 행 → CorporateEvent(DIVIDEND) 저장, 매핑 정확")
-        void watchlistRow_storedAsDividend() {
+        void watchlistRow_storedAsDividend() throws Exception {
             // Arrange
             Stock stock = watchlistStock("005930");
             when(stockRepository.findAllActive()).thenReturn(List.of(stock));
-            when(kisApiExecutor.executeGet(
-                            any(), eq("HHKDB669102C0"), eq(KisDividendScheduleResponse.class)))
+            when(guardedKisExecutor.execute(
+                            eq(session), any(), eq(TR_ID), eq(KisDividendScheduleResponse.class)))
                     .thenReturn(singlePageResponse(List.of(sampleRow("005930"))));
 
             // Act
@@ -120,12 +137,12 @@ class DividendScheduleCollectionServiceTest {
 
         @Test
         @DisplayName("pay_date·stock_pay_date·face_value 매핑 정확")
-        void dateAndAmountFieldsCorrect() {
+        void dateAndAmountFieldsCorrect() throws Exception {
             // Arrange
             Stock stock = watchlistStock("000660");
             when(stockRepository.findAllActive()).thenReturn(List.of(stock));
-            when(kisApiExecutor.executeGet(
-                            any(), eq("HHKDB669102C0"), eq(KisDividendScheduleResponse.class)))
+            when(guardedKisExecutor.execute(
+                            eq(session), any(), eq(TR_ID), eq(KisDividendScheduleResponse.class)))
                     .thenReturn(singlePageResponse(List.of(sampleRow("000660"))));
 
             // Act
@@ -152,12 +169,12 @@ class DividendScheduleCollectionServiceTest {
 
         @Test
         @DisplayName("비관심종목 행은 skip, 관심종목만 저장")
-        void nonWatchlistRows_skipped() {
+        void nonWatchlistRows_skipped() throws Exception {
             // Arrange — 관심종목: 005930, 비관심종목: 000001 (2건)
             Stock watchlistStock = watchlistStock("005930");
             when(stockRepository.findAllActive()).thenReturn(List.of(watchlistStock));
-            when(kisApiExecutor.executeGet(
-                            any(), eq("HHKDB669102C0"), eq(KisDividendScheduleResponse.class)))
+            when(guardedKisExecutor.execute(
+                            eq(session), any(), eq(TR_ID), eq(KisDividendScheduleResponse.class)))
                     .thenReturn(
                             singlePageResponse(
                                     List.of(
@@ -176,11 +193,11 @@ class DividendScheduleCollectionServiceTest {
 
         @Test
         @DisplayName("관심종목이 없으면 전부 skip — 저장 없음")
-        void noWatchlistMatches_nothingStored() {
+        void noWatchlistMatches_nothingStored() throws Exception {
             // Arrange
             when(stockRepository.findAllActive()).thenReturn(List.of());
-            when(kisApiExecutor.executeGet(
-                            any(), eq("HHKDB669102C0"), eq(KisDividendScheduleResponse.class)))
+            when(guardedKisExecutor.execute(
+                            eq(session), any(), eq(TR_ID), eq(KisDividendScheduleResponse.class)))
                     .thenReturn(
                             singlePageResponse(List.of(sampleRow("005930"), sampleRow("000660"))));
 
@@ -203,7 +220,7 @@ class DividendScheduleCollectionServiceTest {
 
         @Test
         @DisplayName("CTS 2페이지 순회 → 양쪽 관심종목 저장")
-        void multiPage_traversesAll() {
+        void multiPage_traversesAll() throws Exception {
             // Arrange
             Stock stock1 = watchlistStock("005930");
             Stock stock2 = watchlistStock("000660");
@@ -215,8 +232,8 @@ class DividendScheduleCollectionServiceTest {
             // Page 2: CTS null → 마지막
             KisDividendScheduleResponse page2 = singlePageResponse(List.of(sampleRow("000660")));
 
-            when(kisApiExecutor.executeGet(
-                            any(), eq("HHKDB669102C0"), eq(KisDividendScheduleResponse.class)))
+            when(guardedKisExecutor.execute(
+                            eq(session), any(), eq(TR_ID), eq(KisDividendScheduleResponse.class)))
                     .thenReturn(page1)
                     .thenReturn(page2);
 
@@ -226,18 +243,19 @@ class DividendScheduleCollectionServiceTest {
             // Assert — 2건 저장
             assertThat(result.succeeded()).isEqualTo(2);
             verify(corporateEventRepository, times(2)).insertIgnoreDuplicate(any());
-            // KisApiExecutor 2회 호출 확인
-            verify(kisApiExecutor, times(2))
-                    .executeGet(any(), eq("HHKDB669102C0"), eq(KisDividendScheduleResponse.class));
+            // 게이트 2회 경유 확인(2페이지), 동일 세션 공유 + per-batch 스냅샷 1회
+            verify(guardedKisExecutor, times(2))
+                    .execute(eq(session), any(), eq(TR_ID), eq(KisDividendScheduleResponse.class));
+            verify(keyLeaseRegistry, times(1)).openSession();
         }
 
         @Test
         @DisplayName("첫 페이지 빈 output1 → 즉시 종료, 저장 없음")
-        void emptyFirstPage_zeroSuccess() {
+        void emptyFirstPage_zeroSuccess() throws Exception {
             // Arrange
             when(stockRepository.findAllActive()).thenReturn(List.of());
-            when(kisApiExecutor.executeGet(
-                            any(), eq("HHKDB669102C0"), eq(KisDividendScheduleResponse.class)))
+            when(guardedKisExecutor.execute(
+                            eq(session), any(), eq(TR_ID), eq(KisDividendScheduleResponse.class)))
                     .thenReturn(singlePageResponse(List.of()));
 
             // Act
@@ -259,7 +277,7 @@ class DividendScheduleCollectionServiceTest {
 
         @Test
         @DisplayName("record_date null 행은 skip")
-        void nullRecordDate_skip() {
+        void nullRecordDate_skip() throws Exception {
             // Arrange
             Stock stock = watchlistStock("005930");
             when(stockRepository.findAllActive()).thenReturn(List.of(stock));
@@ -277,8 +295,8 @@ class DividendScheduleCollectionServiceTest {
                             "5000",
                             "보통주",
                             "0");
-            when(kisApiExecutor.executeGet(
-                            any(), eq("HHKDB669102C0"), eq(KisDividendScheduleResponse.class)))
+            when(guardedKisExecutor.execute(
+                            eq(session), any(), eq(TR_ID), eq(KisDividendScheduleResponse.class)))
                     .thenReturn(singlePageResponse(List.of(nullDateRow)));
 
             // Act
@@ -291,7 +309,7 @@ class DividendScheduleCollectionServiceTest {
 
         @Test
         @DisplayName("shtCd null 행은 skip")
-        void nullShtCd_skip() {
+        void nullShtCd_skip() throws Exception {
             // Arrange
             when(stockRepository.findAllActive()).thenReturn(List.of());
             KisDividendScheduleResponse.DividendRow nullShtCd =
@@ -308,8 +326,8 @@ class DividendScheduleCollectionServiceTest {
                             "5000",
                             "보통주",
                             "0");
-            when(kisApiExecutor.executeGet(
-                            any(), eq("HHKDB669102C0"), eq(KisDividendScheduleResponse.class)))
+            when(guardedKisExecutor.execute(
+                            eq(session), any(), eq(TR_ID), eq(KisDividendScheduleResponse.class)))
                     .thenReturn(singlePageResponse(List.of(nullShtCd)));
 
             // Act
@@ -331,12 +349,12 @@ class DividendScheduleCollectionServiceTest {
 
         @Test
         @DisplayName("동일 행 재수집 시 insertIgnoreDuplicate 재호출 (DB가 중복 무시)")
-        void idempotentRerun() {
+        void idempotentRerun() throws Exception {
             // Arrange
             Stock stock = watchlistStock("005930");
             when(stockRepository.findAllActive()).thenReturn(List.of(stock));
-            when(kisApiExecutor.executeGet(
-                            any(), eq("HHKDB669102C0"), eq(KisDividendScheduleResponse.class)))
+            when(guardedKisExecutor.execute(
+                            eq(session), any(), eq(TR_ID), eq(KisDividendScheduleResponse.class)))
                     .thenReturn(singlePageResponse(List.of(sampleRow("005930"))));
 
             // Act — 2회 실행
@@ -358,7 +376,7 @@ class DividendScheduleCollectionServiceTest {
 
         @Test
         @DisplayName("8자리지만 유효하지 않은 날짜 — 파싱 실패 시 pay_date=null로 저장 성공")
-        void invalidDate_parseFailure_nullPayDate() {
+        void invalidDate_parseFailure_nullPayDate() throws Exception {
             // Arrange — diviPayDt에 월=99인 유효하지 않은 날짜 전달
             Stock stock = watchlistStock("005930");
             when(stockRepository.findAllActive()).thenReturn(List.of(stock));
@@ -376,8 +394,8 @@ class DividendScheduleCollectionServiceTest {
                             "5000",
                             "보통주",
                             "0");
-            when(kisApiExecutor.executeGet(
-                            any(), eq("HHKDB669102C0"), eq(KisDividendScheduleResponse.class)))
+            when(guardedKisExecutor.execute(
+                            eq(session), any(), eq(TR_ID), eq(KisDividendScheduleResponse.class)))
                     .thenReturn(singlePageResponse(List.of(rowWithBadDate)));
 
             // Act
@@ -401,7 +419,7 @@ class DividendScheduleCollectionServiceTest {
 
         @Test
         @DisplayName("배당률 정수부 9자리 — DECIMAL(12,4) 초과 → cash_rate=null로 저장 (경계 초과 시 null 매핑)")
-        void rateExceedsDecimalBound_cashRateNull() {
+        void rateExceedsDecimalBound_cashRateNull() throws Exception {
             // Arrange — 정수부 9자리(100000000.0) → DECIMAL(12,4) 정수부 8자리(99999999) 초과
             Stock stock = watchlistStock("005930");
             when(stockRepository.findAllActive()).thenReturn(List.of(stock));
@@ -419,8 +437,8 @@ class DividendScheduleCollectionServiceTest {
                             "5000",
                             "보통주",
                             "0");
-            when(kisApiExecutor.executeGet(
-                            any(), eq("HHKDB669102C0"), eq(KisDividendScheduleResponse.class)))
+            when(guardedKisExecutor.execute(
+                            eq(session), any(), eq(TR_ID), eq(KisDividendScheduleResponse.class)))
                     .thenReturn(singlePageResponse(List.of(rowWithBigRate)));
 
             // Act
@@ -444,14 +462,14 @@ class DividendScheduleCollectionServiceTest {
 
         @Test
         @DisplayName("1건 삽입 예외 → 나머지 행 저장, 루프 종료")
-        void oneRowThrows_otherRowsInserted_processingContinues() {
+        void oneRowThrows_otherRowsInserted_processingContinues() throws Exception {
             // Arrange — 3건: 005930(독성), 000660(정상), 035420(정상)
             Stock stock1 = watchlistStock("005930");
             Stock stock2 = watchlistStock("000660");
             Stock stock3 = watchlistStock("035420");
             when(stockRepository.findAllActive()).thenReturn(List.of(stock1, stock2, stock3));
-            when(kisApiExecutor.executeGet(
-                            any(), eq("HHKDB669102C0"), eq(KisDividendScheduleResponse.class)))
+            when(guardedKisExecutor.execute(
+                            eq(session), any(), eq(TR_ID), eq(KisDividendScheduleResponse.class)))
                     .thenReturn(
                             singlePageResponse(
                                     List.of(
@@ -461,7 +479,7 @@ class DividendScheduleCollectionServiceTest {
 
             // insertIgnoreDuplicate: 005930 독성 행에서 예외 발생
             // lenient 필요: 엄격 모드에서는 argThat 미일치 호출에 PotentialStubbingProblem 발생
-            org.mockito.Mockito.lenient()
+            Mockito.lenient()
                     .doThrow(new DataIntegrityViolationException("Data too long"))
                     .when(corporateEventRepository)
                     .insertIgnoreDuplicate(
@@ -477,9 +495,9 @@ class DividendScheduleCollectionServiceTest {
             assertThat(result.succeeded()).isEqualTo(2);
             // (b) 독성 행은 skippedValidation 집계
             assertThat(result.skippedValidation()).isEqualTo(1);
-            // (c) KisApiExecutor: 1페이지만 호출 (루프 종료)
-            verify(kisApiExecutor, times(1))
-                    .executeGet(any(), eq("HHKDB669102C0"), eq(KisDividendScheduleResponse.class));
+            // (c) 게이트: 1페이지만 경유 (루프 종료)
+            verify(guardedKisExecutor, times(1))
+                    .execute(eq(session), any(), eq(TR_ID), eq(KisDividendScheduleResponse.class));
         }
     }
 
@@ -493,12 +511,12 @@ class DividendScheduleCollectionServiceTest {
 
         @Test
         @DisplayName("저장된 모든 CorporateEvent가 DIVIDEND 타입")
-        void allStoredEventsAreDividend() {
+        void allStoredEventsAreDividend() throws Exception {
             // Arrange
             Stock stock = watchlistStock("005930");
             when(stockRepository.findAllActive()).thenReturn(List.of(stock));
-            when(kisApiExecutor.executeGet(
-                            any(), eq("HHKDB669102C0"), eq(KisDividendScheduleResponse.class)))
+            when(guardedKisExecutor.execute(
+                            eq(session), any(), eq(TR_ID), eq(KisDividendScheduleResponse.class)))
                     .thenReturn(
                             singlePageResponse(List.of(sampleRow("005930"), sampleRow("005930"))));
 
