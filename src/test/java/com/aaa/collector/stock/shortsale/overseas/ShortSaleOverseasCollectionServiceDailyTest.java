@@ -10,6 +10,7 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.aaa.collector.observability.BatchMetrics;
 import com.aaa.collector.stock.ShortSaleOverseasRepository;
 import com.aaa.collector.stock.Stock;
 import com.aaa.collector.stock.StockRepository;
@@ -39,6 +40,7 @@ class ShortSaleOverseasCollectionServiceDailyTest {
     @Mock private FinraShortSaleClient finraClient;
     @Mock private StockRepository stockRepository;
     @Mock private ShortSaleOverseasRepository shortSaleOverseasRepository;
+    @Mock private BatchMetrics batchMetrics;
 
     private ShortSaleOverseasCollectionService service;
 
@@ -46,7 +48,7 @@ class ShortSaleOverseasCollectionServiceDailyTest {
     void setUp() {
         service =
                 new ShortSaleOverseasCollectionService(
-                        finraClient, stockRepository, shortSaleOverseasRepository);
+                        finraClient, stockRepository, shortSaleOverseasRepository, batchMetrics);
         // T5 LOCF forward 배치 조회 — Daily 테스트는 forward 매칭 없음(빈 Map) 기본값으로 둔다(lenient)
         Mockito.lenient()
                 .when(
