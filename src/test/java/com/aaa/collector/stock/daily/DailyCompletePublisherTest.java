@@ -47,17 +47,31 @@ class DailyCompletePublisherTest {
     class PublishEvent {
 
         @Test
-        @DisplayName("market=domestic 필드 포함 (AC-5 S5-1)")
+        @DisplayName("market=domestic 필드 포함 — 국내 발행 회귀 보존 (AC-5 S5-1, AC-EVT-4)")
         void publish_containsDomesticMarketField() {
             // Arrange
             ArgumentCaptor<MapRecord<String, String, String>> captor = recordCaptor();
 
             // Act
-            publisher.publish(new CollectionResult(10, 9, 1));
+            publisher.publish(new CollectionResult(10, 9, 1), "domestic");
 
             // Assert
             verify(streamOps).add(captor.capture(), any(XAddOptions.class));
             assertThat(captor.getValue().getValue()).containsEntry("market", "domestic");
+        }
+
+        @Test
+        @DisplayName("market=overseas 필드 포함 — 해외 발행 (AC-EVT-1, REQ-OVOH-011)")
+        void publish_containsOverseasMarketField() {
+            // Arrange
+            ArgumentCaptor<MapRecord<String, String, String>> captor = recordCaptor();
+
+            // Act
+            publisher.publish(new CollectionResult(10, 9, 1), "overseas");
+
+            // Assert
+            verify(streamOps).add(captor.capture(), any(XAddOptions.class));
+            assertThat(captor.getValue().getValue()).containsEntry("market", "overseas");
         }
 
         @Test
@@ -67,7 +81,7 @@ class DailyCompletePublisherTest {
             ArgumentCaptor<MapRecord<String, String, String>> captor = recordCaptor();
 
             // Act
-            publisher.publish(new CollectionResult(10, 8, 2));
+            publisher.publish(new CollectionResult(10, 8, 2), "domestic");
 
             // Assert
             verify(streamOps).add(captor.capture(), any(XAddOptions.class));
@@ -82,7 +96,7 @@ class DailyCompletePublisherTest {
         void publish_allSuccess_zeroSkip() {
             ArgumentCaptor<MapRecord<String, String, String>> captor = recordCaptor();
 
-            publisher.publish(new CollectionResult(5, 5, 0));
+            publisher.publish(new CollectionResult(5, 5, 0), "domestic");
 
             verify(streamOps).add(captor.capture(), any(XAddOptions.class));
             assertThat(captor.getValue().getValue()).containsEntry("skipped", "0");
@@ -93,7 +107,7 @@ class DailyCompletePublisherTest {
         void publish_usesCorrectStreamKey() {
             ArgumentCaptor<MapRecord<String, String, String>> captor = recordCaptor();
 
-            publisher.publish(new CollectionResult(1, 1, 0));
+            publisher.publish(new CollectionResult(1, 1, 0), "domestic");
 
             verify(streamOps).add(captor.capture(), any(XAddOptions.class));
             assertThat(captor.getValue().getStream()).isEqualTo("stream:daily:complete");
@@ -111,7 +125,7 @@ class DailyCompletePublisherTest {
             ArgumentCaptor<XAddOptions> optionsCaptor = ArgumentCaptor.forClass(XAddOptions.class);
 
             // Act
-            publisher.publish(new CollectionResult(1, 1, 0));
+            publisher.publish(new CollectionResult(1, 1, 0), "domestic");
 
             // Assert
             verify(streamOps).add(any(), optionsCaptor.capture());
@@ -134,7 +148,7 @@ class DailyCompletePublisherTest {
                     .add(any(), any(XAddOptions.class));
 
             // Act & Assert — 예외가 외부로 전파되지 않아야 함
-            assertThatCode(() -> publisher.publish(new CollectionResult(5, 4, 1)))
+            assertThatCode(() -> publisher.publish(new CollectionResult(5, 4, 1), "domestic"))
                     .doesNotThrowAnyException();
         }
     }

@@ -74,7 +74,7 @@ class DomesticDailyOhlcvSchedulerTest {
 
             // Assert
             verify(collectionService).collect(any(LocalDate.class));
-            verify(publisher).publish(result);
+            verify(publisher).publish(result, "domestic");
             verify(supplyDemandService).collectAll(any(LocalDate.class));
         }
 
@@ -107,7 +107,7 @@ class DomesticDailyOhlcvSchedulerTest {
 
             // 발행 후 수급 호출 순서 검증
             InOrder inOrder = inOrder(publisher, supplyDemandService);
-            inOrder.verify(publisher).publish(result);
+            inOrder.verify(publisher).publish(result, "domestic");
             inOrder.verify(supplyDemandService).collectAll(any(LocalDate.class));
         }
 

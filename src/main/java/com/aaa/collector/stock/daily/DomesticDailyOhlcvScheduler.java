@@ -53,7 +53,7 @@ public class DomesticDailyOhlcvScheduler {
     private void collectDailyOhlcv(LocalDate today) {
         try {
             CollectionResult result = collectionService.collect(today);
-            publisher.publish(result);
+            publisher.publish(result, "domestic");
             log.info(
                     "[domestic-daily] 수집 배치 완료 — attempted={}, succeeded={}, skipped={}",
                     result.attempted(),
