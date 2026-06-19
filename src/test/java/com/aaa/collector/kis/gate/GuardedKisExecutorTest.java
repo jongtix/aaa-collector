@@ -6,6 +6,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -266,6 +267,35 @@ class GuardedKisExecutorTest {
             // 키는 여전히 lease되어 executeGet에 전달됨
             verify(kisApiExecutor, times(1))
                     .executeGet(eq(K1), any(), eq(TR_ID), eq(StubResponse.class));
+        }
+    }
+
+    @Nested
+    @DisplayName("consume() 인터럽트 시 lease 누수 방지 (REQ-KISGATE-005c)")
+    class ConsumeInterruptLeaseLeak {
+
+        @Test
+        @DisplayName("limiter.consume()가 InterruptedException — lease 카운터 0 복귀(누수 없음) + 인터럽트 전파")
+        void execute_consumeInterrupted_releasesLeaseNoLeak() throws Exception {
+            // Arrange: consume()이 슬롯 대기 중 인터럽트되는 상황. lease는 이미 획득된 상태여야 한다.
+            when(healthyKeySelector.selectHealthy()).thenReturn(List.of(K1));
+            KisRateLimiter limiter = mock(KisRateLimiter.class);
+            when(kisRateLimiterRegistry.forAlias("isa")).thenReturn(limiter);
+            InterruptedException interrupt = new InterruptedException("throttle 대기 중 인터럽트");
+            doThrow(interrupt).when(limiter).consume();
+
+            LeaseSession session = keyLeaseRegistry.openSession();
+
+            // Act & Assert: 인터럽트는 RetryExecutor를 통해 그대로 전파된다(재시도 대상 아님).
+            assertThatThrownBy(
+                            () -> gate.execute(session, URI_CUSTOMIZER, TR_ID, StubResponse.class))
+                    .isSameAs(interrupt);
+
+            // lease 누수 없음: consume()이 던졌어도 lease.release()가 finally로 보장되어 카운터가 0으로 복귀.
+            assertThat(session.inUseCount("isa")).isZero();
+            // consume() 실패 → executeGet 미도달 → limiter.release()는 호출되지 않음(acquire/release 페어링 보존).
+            verify(kisApiExecutor, never()).executeGet(any(), any(), anyString(), any());
+            verify(limiter, never()).release();
         }
     }
 

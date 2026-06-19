@@ -142,16 +142,25 @@ public class GuardedKisExecutor {
         KeyLease lease = session.lease(lastAlias.get()).orElseThrow(NoHealthyKeyException::new);
         lastAlias.set(lease.alias());
 
-        KisRateLimiter limiter = throttle ? kisRateLimiterRegistry.forAlias(lease.alias()) : null;
-        if (limiter != null) {
-            limiter.consume();
-        }
+        // 외곽 try/finally: lease 획득 직후부터 lease.release()를 무조건 보장(REQ-KISGATE-005c).
+        // consume()이 슬롯 대기 중 InterruptedException을 던져도 lease 카운터가 누수되지 않는다.
         try {
-            return kisApiExecutor.executeGet(lease.credential(), uriCustomizer, trId, responseType);
-        } finally {
+            KisRateLimiter limiter =
+                    throttle ? kisRateLimiterRegistry.forAlias(lease.alias()) : null;
             if (limiter != null) {
-                limiter.release();
+                limiter.consume();
             }
+            // 내곽 try/finally: limiter.release()는 consume() 성공 이후에만 실행 — acquire/release 페어링 보존
+            // (consume() 미성공 시 release() 호출 시 세마포어 permit이 과반환되는 것을 방지).
+            try {
+                return kisApiExecutor.executeGet(
+                        lease.credential(), uriCustomizer, trId, responseType);
+            } finally {
+                if (limiter != null) {
+                    limiter.release();
+                }
+            }
+        } finally {
             lease.release();
         }
     }
