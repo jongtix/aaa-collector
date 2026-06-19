@@ -5,6 +5,9 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.aaa.collector.observability.TickMetrics;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
+import java.time.Clock;
 import java.util.Map;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -29,13 +32,16 @@ class KisTickPublisherTest {
     // StringRedisTemplate.opsForStream()은 StreamOperations<String,Object,Object> 반환
     private StreamOperations<String, Object, Object> streamOps;
 
+    private SimpleMeterRegistry meterRegistry;
     private KisTickPublisher publisher;
 
     @BeforeEach
     void setUp() {
         streamOps = org.mockito.Mockito.mock(StreamOperations.class);
         when(redisTemplate.opsForStream()).thenReturn(streamOps);
-        publisher = new KisTickPublisher(redisTemplate);
+        meterRegistry = new SimpleMeterRegistry();
+        TickMetrics tickMetrics = new TickMetrics(meterRegistry, Clock.systemDefaultZone());
+        publisher = new KisTickPublisher(redisTemplate, tickMetrics);
     }
 
     @Nested
@@ -79,6 +85,25 @@ class KisTickPublisherTest {
             assertThat(fields).containsEntry("data", "rawData|100|200");
             assertThat(fields).containsEntry("trace_id", "trace-abc");
         }
+
+        @Test
+        @DisplayName("국내 틱 발행 시 TickMetrics 수신 카운터 증가 (REQ-OBSV-010)")
+        void recordsTickMetricForDomestic() {
+            // Arrange
+            ParsedTick tick = new ParsedTick("H0STCNT0", "005930", "data", true, "trace-001");
+
+            // Act
+            publisher.publish(tick);
+
+            // Assert
+            double count =
+                    meterRegistry
+                            .get("aaa_collector_tick_received_total")
+                            .tags("symbol", "005930", "market", "domestic")
+                            .counter()
+                            .count();
+            assertThat(count).isEqualTo(1.0);
+        }
     }
 
     @Nested
@@ -99,6 +124,20 @@ class KisTickPublisherTest {
                     ArgumentCaptor.forClass(MapRecord.class);
             verify(streamOps).add(recordCaptor.capture(), any(XAddOptions.class));
             assertThat(recordCaptor.getValue().getStream()).isEqualTo("stream:tick:overseas");
+        }
+
+        @Test
+        @DisplayName("해외 틱은 틱 메트릭을 생성하지 않는다 (카디널리티 가드, REQ-OBSV-012)")
+        void doesNotRecordTickMetricForOverseas() {
+            // Arrange
+            ParsedTick tick = new ParsedTick("HDFSCNT0", "AAPL", "AAPL|...", false, "trace-002");
+
+            // Act
+            publisher.publish(tick);
+
+            // Assert — AAPL 틱 시계열이 생성되지 않음
+            assertThat(meterRegistry.find("aaa_collector_tick_received_total").counters())
+                    .isEmpty();
         }
     }
 
