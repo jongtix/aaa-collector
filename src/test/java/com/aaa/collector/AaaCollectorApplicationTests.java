@@ -22,6 +22,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.ApplicationContext;
 import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 
@@ -31,6 +32,9 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
 @MockitoBean(
         types = {
             StringRedisTemplate.class,
+            // smoke 프로파일은 DataSource AutoConfiguration을 exclude하므로 JdbcTemplate 빈이 없다.
+            // WarningCountingOhlcvInserter가 JdbcTemplate를 주입받으므로 모킹해 컨텍스트 로드를 보장한다.
+            JdbcTemplate.class,
             StockRepository.class,
             EtfMetadataRepository.class,
             EtfRepresentativeHistoryRepository.class,

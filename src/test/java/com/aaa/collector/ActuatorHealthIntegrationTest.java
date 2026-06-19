@@ -27,6 +27,7 @@ import org.springframework.boot.test.web.server.LocalManagementPort;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
@@ -40,6 +41,7 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
 @MockitoBean(
         types = {
             StringRedisTemplate.class,
+            JdbcTemplate.class,
             StockRepository.class,
             EtfMetadataRepository.class,
             EtfRepresentativeHistoryRepository.class,
