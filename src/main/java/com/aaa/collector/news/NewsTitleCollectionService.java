@@ -1,6 +1,8 @@
 package com.aaa.collector.news;
 
-import com.aaa.collector.kis.KisApiExecutor;
+import com.aaa.collector.kis.gate.GuardedKisExecutor;
+import com.aaa.collector.kis.gate.KeyLeaseRegistry;
+import com.aaa.collector.kis.gate.KeyLeaseRegistry.LeaseSession;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
@@ -20,6 +22,11 @@ import org.springframework.stereotype.Service;
  *
  * <p>전체 시황/공시 저장(종목 한정 아님), iscd1~5 보존(REQ-BATCH3-061). stream:daily:complete 미발행(REQ-BATCH3-011).
  * 백필 미수행(REQ-BATCH3-012).
+ *
+ * <p>호출은 단일 보호 게이트 {@link GuardedKisExecutor}를 경유한다(SPEC-COLLECTOR-KISGATE-001 REQ-KISGATE-001) —
+ * 기존 3-arg 맨몸 호출(throttle❌·재시도❌·isa 단일키)에서 throttle✅·재시도✅·멀티키 lease✅로 바뀐 의도된 동작 변경(패턴 A). collect()
+ * 한 번의 페이지 루프 전체 = 1 batch이므로 루프 전 {@link LeaseSession}을 1회 연다(REQ-KISGATE-006a — 모든 페이지가 동일 스냅샷에서
+ * lease). 소진 시 게이트가 예외를 전파한다(패턴 A 종단 = 예외 전파, REQ-KISGATE-022).
  */
 @Slf4j
 @Service
@@ -35,7 +42,8 @@ public class NewsTitleCollectionService {
     private static final String TR_ID = "FHKST01011800";
     private static final String PATH = "/uapi/domestic-stock/v1/quotations/news-title";
 
-    private final KisApiExecutor kisApiExecutor;
+    private final GuardedKisExecutor guardedKisExecutor;
+    private final KeyLeaseRegistry keyLeaseRegistry;
     private final NewsHeadlineRepository newsHeadlineRepository;
 
     /**
@@ -49,6 +57,9 @@ public class NewsTitleCollectionService {
         // REQ-BATCH3-063: 저장된 최신 serial_no 조회 (없으면 null → 전체 수집)
         String storedMaxSerialNo = newsHeadlineRepository.findMaxSerialNo();
 
+        // REQ-KISGATE-006a: collect() 페이지 루프 전체 = 1 batch — 루프 전 per-batch 헬스 스냅샷 1회 고정
+        LeaseSession session = keyLeaseRegistry.openSession();
+
         int attempted = 0;
         int succeeded = 0;
         int skipped = 0;
@@ -60,7 +71,7 @@ public class NewsTitleCollectionService {
         while (pageCount < MAX_PAGES && !reachedStoredMax) {
             pageCount++;
 
-            KisNewsTitleResponse response = fetchPage(srno);
+            KisNewsTitleResponse response = fetchPage(session, srno);
 
             // REQ-BATCH3-073: 빈 output → 0건 성공, 페이지 종료
             if (response.output().isEmpty()) {
@@ -93,22 +104,35 @@ public class NewsTitleCollectionService {
         return result;
     }
 
-    private KisNewsTitleResponse fetchPage(String srno) {
-        // REQ-BATCH3-060: FID_INPUT_ISCD=공백, FID_INPUT_SRNO={커서}, 나머지 공백 필수
-        return kisApiExecutor.executeGet(
-                uri ->
-                        uri.path(PATH)
-                                .queryParam("FID_NEWS_OFER_ENTP_CODE", "")
-                                .queryParam("FID_COND_MRKT_CLS_CODE", "")
-                                .queryParam("FID_INPUT_ISCD", "")
-                                .queryParam("FID_TITL_CNTT", "")
-                                .queryParam("FID_INPUT_DATE_1", "")
-                                .queryParam("FID_INPUT_HOUR_1", "")
-                                .queryParam("FID_RANK_SORT_CLS_CODE", "")
-                                .queryParam("FID_INPUT_SRNO", srno)
-                                .build(),
-                TR_ID,
-                KisNewsTitleResponse.class);
+    /**
+     * 게이트를 경유해 뉴스 제목 한 페이지를 조회한다(REQ-BATCH3-060: FID_INPUT_ISCD=공백, FID_INPUT_SRNO={커서}, 나머지 공백
+     * 필수).
+     *
+     * <p>인터럽트 수신 시 플래그를 복원한 뒤 {@link IllegalStateException}으로 전파한다(패턴 A 종단 = 예외 전파).
+     *
+     * @param session collect() 작업 단위당 1회 연 per-batch 헬스 스냅샷 세션(REQ-KISGATE-006a)
+     */
+    private KisNewsTitleResponse fetchPage(LeaseSession session, String srno) {
+        try {
+            return guardedKisExecutor.execute(
+                    session,
+                    uri ->
+                            uri.path(PATH)
+                                    .queryParam("FID_NEWS_OFER_ENTP_CODE", "")
+                                    .queryParam("FID_COND_MRKT_CLS_CODE", "")
+                                    .queryParam("FID_INPUT_ISCD", "")
+                                    .queryParam("FID_TITL_CNTT", "")
+                                    .queryParam("FID_INPUT_DATE_1", "")
+                                    .queryParam("FID_INPUT_HOUR_1", "")
+                                    .queryParam("FID_RANK_SORT_CLS_CODE", "")
+                                    .queryParam("FID_INPUT_SRNO", srno)
+                                    .build(),
+                    TR_ID,
+                    KisNewsTitleResponse.class);
+        } catch (InterruptedException ie) {
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException("news-title 수집 중 인터럽트", ie);
+        }
     }
 
     private PageResult processPage(KisNewsTitleResponse response, String storedMaxSerialNo) {
