@@ -1,6 +1,8 @@
 package com.aaa.collector.macro;
 
-import com.aaa.collector.kis.KisApiExecutor;
+import com.aaa.collector.kis.gate.GuardedKisExecutor;
+import com.aaa.collector.kis.gate.KeyLeaseRegistry;
+import com.aaa.collector.kis.gate.KeyLeaseRegistry.LeaseSession;
 import com.aaa.collector.macro.enums.MacroSource;
 import java.math.BigDecimal;
 import java.time.LocalDate;
@@ -13,8 +15,11 @@ import org.springframework.stereotype.Service;
 /**
  * 국내 증시자금종합 수집 서비스 (TR FHKST649100C0).
  *
- * <p>단일키(isa) 단일 호출로 일자별 한 행의 9개 금액 지표를 각각 별도 {@code MacroIndicator(source=KIS)}로 분해·멱등 저장한다
- * (REQ-BATCH3-040/041).
+ * <p>단일 호출로 일자별 한 행의 9개 금액 지표를 각각 별도 {@code MacroIndicator(source=KIS)}로 분해·멱등 저장한다
+ * (REQ-BATCH3-040/041). 호출은 단일 보호 게이트 {@link GuardedKisExecutor}를 경유한다(SPEC-COLLECTOR-KISGATE-001
+ * REQ-KISGATE-001) — 기존 3-arg 맨몸 호출(throttle❌·재시도❌·isa 단일키)에서 throttle✅·재시도✅·멀티키 lease✅로 바뀐 의도된 동작
+ * 변경(패턴 A). 단발 collect() = 1 batch이므로 자체 {@link LeaseSession}을 1회 연다(REQ-KISGATE-006a). 소진 시 게이트가
+ * 예외를 전파한다(패턴 A 종단 = 예외 전파, REQ-KISGATE-022).
  *
  * <p>원(KRW) 정규화: API 단위 "억원"(10^8 원)을 {@link #EOK_WON_TO_WON} 상수로 곱해 저장한다 (REQ-BATCH3-042). {@code
  * MacroIndicator.value}는 DECIMAL(24,8) (V21 마이그레이션 적용 후) 이므로 예탁금 ~10^14 원을 수용한다.
@@ -39,7 +44,8 @@ public class MarketFundsCollectionService {
     private static final String TR_ID = "FHKST649100C0";
     private static final String PATH = "/uapi/domestic-stock/v1/quotations/mktfunds";
 
-    private final KisApiExecutor kisApiExecutor;
+    private final GuardedKisExecutor guardedKisExecutor;
+    private final KeyLeaseRegistry keyLeaseRegistry;
     private final MacroIndicatorRepository macroIndicatorRepository;
 
     /**
@@ -49,12 +55,9 @@ public class MarketFundsCollectionService {
      * @return attempted/succeeded/skipped 행 수 집계 (9개 지표 × output 행 수)
      */
     public MacroCollectionResult collect(String baseDate) {
-        // REQ-BATCH3-040: FID_INPUT_DATE_1={기준일} 단일 호출
-        KisMarketFundsResponse response =
-                kisApiExecutor.executeGet(
-                        uri -> uri.path(PATH).queryParam("FID_INPUT_DATE_1", baseDate).build(),
-                        TR_ID,
-                        KisMarketFundsResponse.class);
+        // REQ-KISGATE-006a: 단발 collect() = 1 batch — per-batch 헬스 스냅샷 1회 고정
+        LeaseSession session = keyLeaseRegistry.openSession();
+        KisMarketFundsResponse response = fetch(session, baseDate);
 
         // REQ-BATCH3-073: 빈 output → 0건 성공
         if (response.output().isEmpty()) {
@@ -111,6 +114,24 @@ public class MarketFundsCollectionService {
                 result.skipped(),
                 baseDate);
         return result;
+    }
+
+    /**
+     * 게이트를 경유해 증시자금 단발 조회를 수행한다(REQ-BATCH3-040: FID_INPUT_DATE_1={기준일}).
+     *
+     * <p>인터럽트 수신 시 플래그를 복원한 뒤 {@link IllegalStateException}으로 전파한다(패턴 A 종단 = 예외 전파).
+     */
+    private KisMarketFundsResponse fetch(LeaseSession session, String baseDate) {
+        try {
+            return guardedKisExecutor.execute(
+                    session,
+                    uri -> uri.path(PATH).queryParam("FID_INPUT_DATE_1", baseDate).build(),
+                    TR_ID,
+                    KisMarketFundsResponse.class);
+        } catch (InterruptedException ie) {
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException("mktfunds 수집 중 인터럽트", ie);
+        }
     }
 
     /**

@@ -8,7 +8,9 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-import com.aaa.collector.kis.KisApiExecutor;
+import com.aaa.collector.kis.gate.GuardedKisExecutor;
+import com.aaa.collector.kis.gate.KeyLeaseRegistry;
+import com.aaa.collector.kis.gate.KeyLeaseRegistry.LeaseSession;
 import com.aaa.collector.macro.enums.MacroSource;
 import java.math.BigDecimal;
 import java.time.LocalDate;
@@ -20,20 +22,41 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
+import org.mockito.Mockito;
 import org.mockito.junit.jupiter.MockitoExtension;
 
+/**
+ * SPEC-COLLECTOR-KISGATE-001 M6(T17) — {@link MarketFundsCollectionService} 게이트 경유 단위 테스트.
+ *
+ * <p>패턴 A는 Behavior:Changed이므로 신규 게이트 라우팅(throttle-on 4-arg 경유·단발 collect()당 세션 1회 open)과 기존 수집
+ * 의미(9지표 분해·원 정규화·지표별 graceful skip·멱등)를 함께 검증한다.
+ */
 @ExtendWith(MockitoExtension.class)
-@DisplayName("MarketFundsCollectionService 단위 테스트")
+@DisplayName("MarketFundsCollectionService — 게이트 경유 단위 테스트")
 class MarketFundsCollectionServiceTest {
 
-    @Mock private KisApiExecutor kisApiExecutor;
+    private static final String TR_ID = "FHKST649100C0";
+
+    @Mock private GuardedKisExecutor guardedKisExecutor;
+    @Mock private KeyLeaseRegistry keyLeaseRegistry;
     @Mock private MacroIndicatorRepository macroIndicatorRepository;
+    @Mock private LeaseSession session;
 
     private MarketFundsCollectionService service;
 
     @BeforeEach
     void setUp() {
-        service = new MarketFundsCollectionService(kisApiExecutor, macroIndicatorRepository);
+        service =
+                new MarketFundsCollectionService(
+                        guardedKisExecutor, keyLeaseRegistry, macroIndicatorRepository);
+        Mockito.lenient().when(keyLeaseRegistry.openSession()).thenReturn(session);
+    }
+
+    /** 게이트가 주어진 응답을 반환하도록 stub한다(throttle-on 4-arg 경유). */
+    private void stubGate(KisMarketFundsResponse response) throws InterruptedException {
+        when(guardedKisExecutor.execute(
+                        eq(session), any(), eq(TR_ID), eq(KisMarketFundsResponse.class)))
+                .thenReturn(response);
     }
 
     private KisMarketFundsResponse response(List<KisMarketFundsResponse.MarketFundsRow> rows) {
@@ -54,6 +77,30 @@ class MarketFundsCollectionServiceTest {
     }
 
     // ────────────────────────────────────────────────────────────────────
+    // 신규 게이트 라우팅 (Behavior:Changed)
+    // ────────────────────────────────────────────────────────────────────
+
+    @Nested
+    @DisplayName("게이트 경유 — 패턴 A 신규 동작 (REQ-KISGATE-001/006a)")
+    class GateRouting {
+
+        @Test
+        @DisplayName("단발 collect() = 1 batch — 세션 1회 open 후 게이트를 throttle-on(4-arg)으로 1회 경유")
+        void collect_routesThroughGateOnceWithOwnSession() throws Exception {
+            // Arrange
+            stubGate(response(List.of(sampleRow("20260613"))));
+
+            // Act
+            service.collect("20260613");
+
+            // Assert
+            verify(keyLeaseRegistry, times(1)).openSession();
+            verify(guardedKisExecutor, times(1))
+                    .execute(eq(session), any(), eq(TR_ID), eq(KisMarketFundsResponse.class));
+        }
+    }
+
+    // ────────────────────────────────────────────────────────────────────
     // 정상 수집
     // ────────────────────────────────────────────────────────────────────
 
@@ -63,11 +110,9 @@ class MarketFundsCollectionServiceTest {
 
         @Test
         @DisplayName("샘플 행 → 9건 시도·9건 성공, 9회 insertIgnoreDuplicate 호출")
-        void storesSampleRow_9Indicators() {
+        void storesSampleRow_9Indicators() throws Exception {
             // Arrange
-            when(kisApiExecutor.executeGet(
-                            any(), eq("FHKST649100C0"), eq(KisMarketFundsResponse.class)))
-                    .thenReturn(response(List.of(sampleRow("20260613"))));
+            stubGate(response(List.of(sampleRow("20260613"))));
 
             // Act
             MacroCollectionResult result = service.collect("20260613");
@@ -81,11 +126,9 @@ class MarketFundsCollectionServiceTest {
 
         @Test
         @DisplayName("indicator_code가 §6.3 MKTFUND_* 매핑을 따름")
-        void indicatorCodesMatchMapping() {
+        void indicatorCodesMatchMapping() throws Exception {
             // Arrange
-            when(kisApiExecutor.executeGet(
-                            any(), eq("FHKST649100C0"), eq(KisMarketFundsResponse.class)))
-                    .thenReturn(response(List.of(sampleRow("20260613"))));
+            stubGate(response(List.of(sampleRow("20260613"))));
 
             // Act
             service.collect("20260613");
@@ -111,11 +154,9 @@ class MarketFundsCollectionServiceTest {
 
         @Test
         @DisplayName("source=KIS, tradeDate=bsopDate 파싱 정확")
-        void sourceAndTradeDateCorrect() {
+        void sourceAndTradeDateCorrect() throws Exception {
             // Arrange
-            when(kisApiExecutor.executeGet(
-                            any(), eq("FHKST649100C0"), eq(KisMarketFundsResponse.class)))
-                    .thenReturn(response(List.of(sampleRow("20260613"))));
+            stubGate(response(List.of(sampleRow("20260613"))));
 
             // Act
             service.collect("20260613");
@@ -131,11 +172,9 @@ class MarketFundsCollectionServiceTest {
 
         @Test
         @DisplayName("억원 → 원 정규화 (×EOK_WON_TO_WON=10^8): 590000억원 = 59조원 정확 저장")
-        void wonNormalization_custDepositCorrect() {
+        void wonNormalization_custDepositCorrect() throws Exception {
             // Arrange
-            when(kisApiExecutor.executeGet(
-                            any(), eq("FHKST649100C0"), eq(KisMarketFundsResponse.class)))
-                    .thenReturn(response(List.of(sampleRow("20260613"))));
+            stubGate(response(List.of(sampleRow("20260613"))));
 
             // Act
             service.collect("20260613");
@@ -161,7 +200,7 @@ class MarketFundsCollectionServiceTest {
 
         @Test
         @DisplayName("대규모 값 (~10^14) 정밀도 손실 없이 저장 — DECIMAL(24,8) 수용 검증")
-        void largeValueNoPrecisionLoss() {
+        void largeValueNoPrecisionLoss() throws Exception {
             // Arrange — 예탁금 1000000억원 = 10^14 원
             KisMarketFundsResponse.MarketFundsRow largeRow =
                     new KisMarketFundsResponse.MarketFundsRow(
@@ -175,9 +214,7 @@ class MarketFundsCollectionServiceTest {
                             "1",
                             "1",
                             "1");
-            when(kisApiExecutor.executeGet(
-                            any(), eq("FHKST649100C0"), eq(KisMarketFundsResponse.class)))
-                    .thenReturn(response(List.of(largeRow)));
+            stubGate(response(List.of(largeRow)));
 
             // Act
             service.collect("20260613");
@@ -211,10 +248,8 @@ class MarketFundsCollectionServiceTest {
 
         @Test
         @DisplayName("빈 output → 저장 없음, 0건 성공")
-        void emptyOutput_zeroSuccess() {
-            when(kisApiExecutor.executeGet(
-                            any(), eq("FHKST649100C0"), eq(KisMarketFundsResponse.class)))
-                    .thenReturn(response(List.of()));
+        void emptyOutput_zeroSuccess() throws Exception {
+            stubGate(response(List.of()));
 
             MacroCollectionResult result = service.collect("20260613");
 
@@ -234,7 +269,7 @@ class MarketFundsCollectionServiceTest {
 
         @Test
         @DisplayName("특정 지표 값이 null이면 해당 지표만 skip, 나머지 저장")
-        void nullIndicatorValue_skipsOnly1() {
+        void nullIndicatorValue_skipsOnly1() throws Exception {
             // Arrange — custDpmnAmt null
             KisMarketFundsResponse.MarketFundsRow partialRow =
                     new KisMarketFundsResponse.MarketFundsRow(
@@ -248,9 +283,7 @@ class MarketFundsCollectionServiceTest {
                             "80000",
                             "60000",
                             "50000");
-            when(kisApiExecutor.executeGet(
-                            any(), eq("FHKST649100C0"), eq(KisMarketFundsResponse.class)))
-                    .thenReturn(response(List.of(partialRow)));
+            stubGate(response(List.of(partialRow)));
 
             // Act
             MacroCollectionResult result = service.collect("20260613");
@@ -263,7 +296,7 @@ class MarketFundsCollectionServiceTest {
 
         @Test
         @DisplayName("비숫자 지표 값은 skip")
-        void nonNumericValue_skip() {
+        void nonNumericValue_skip() throws Exception {
             // Arrange — mmfAmt = "N/A"
             KisMarketFundsResponse.MarketFundsRow badRow =
                     new KisMarketFundsResponse.MarketFundsRow(
@@ -277,9 +310,7 @@ class MarketFundsCollectionServiceTest {
                             "80000",
                             "60000",
                             "50000");
-            when(kisApiExecutor.executeGet(
-                            any(), eq("FHKST649100C0"), eq(KisMarketFundsResponse.class)))
-                    .thenReturn(response(List.of(badRow)));
+            stubGate(response(List.of(badRow)));
 
             // Act
             MacroCollectionResult result = service.collect("20260613");
@@ -291,15 +322,13 @@ class MarketFundsCollectionServiceTest {
 
         @Test
         @DisplayName("bsopDate null → 해당 행 9건 전부 skip")
-        void nullBsopDate_skips9() {
+        void nullBsopDate_skips9() throws Exception {
             // Arrange
             KisMarketFundsResponse.MarketFundsRow nullDateRow =
                     new KisMarketFundsResponse.MarketFundsRow(
                             null, "590000", "180000", "120000", "1500", "30000", "100000", "80000",
                             "60000", "50000");
-            when(kisApiExecutor.executeGet(
-                            any(), eq("FHKST649100C0"), eq(KisMarketFundsResponse.class)))
-                    .thenReturn(response(List.of(nullDateRow)));
+            stubGate(response(List.of(nullDateRow)));
 
             // Act
             MacroCollectionResult result = service.collect("20260613");
@@ -321,17 +350,16 @@ class MarketFundsCollectionServiceTest {
 
         @Test
         @DisplayName("동일 행 재수집 시 insertIgnoreDuplicate 재호출 (DB가 중복 무시)")
-        void idempotentRerun_insertIgnoreCalledTwice() {
-            when(kisApiExecutor.executeGet(
-                            any(), eq("FHKST649100C0"), eq(KisMarketFundsResponse.class)))
-                    .thenReturn(response(List.of(sampleRow("20260613"))));
+        void idempotentRerun_insertIgnoreCalledTwice() throws Exception {
+            stubGate(response(List.of(sampleRow("20260613"))));
 
             // Act — 2회 실행
             service.collect("20260613");
             service.collect("20260613");
 
-            // Assert — 2회 × 9건 = 18회 호출
+            // Assert — 2회 × 9건 = 18회 호출, 게이트도 2회·세션 2회 open
             verify(macroIndicatorRepository, times(18)).insertIgnoreDuplicate(any());
+            verify(keyLeaseRegistry, times(2)).openSession();
         }
     }
 }
