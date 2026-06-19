@@ -2,17 +2,21 @@ package com.aaa.collector.watchlist;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.argThat;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.aaa.collector.kis.KisApiBusinessException;
-import com.aaa.collector.kis.batch.BatchRestExecutor;
+import com.aaa.collector.kis.KisRateLimitException;
 import com.aaa.collector.kis.batch.BatchResult;
-import com.aaa.collector.kis.batch.HealthyKeyRoundRobinDistributor;
+import com.aaa.collector.kis.gate.GuardedKisExecutor;
+import com.aaa.collector.kis.gate.KeyLeaseRegistry;
+import com.aaa.collector.kis.gate.KeyLeaseRegistry.LeaseSession;
+import com.aaa.collector.kis.token.HealthyKeySelector;
 import com.aaa.collector.kis.token.KisAccountCredential;
 import com.aaa.collector.kis.token.KisTokenIssueException;
 import com.aaa.collector.stock.StockAssetTypeClassifier;
@@ -20,71 +24,63 @@ import com.aaa.collector.stock.enums.AssetType;
 import com.aaa.collector.stock.enums.Market;
 import java.time.format.DateTimeParseException;
 import java.util.List;
-import java.util.Map;
-import java.util.Queue;
-import java.util.concurrent.ConcurrentLinkedQueue;
-import java.util.stream.Collectors;
-import java.util.stream.IntStream;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.web.client.RestClientException;
 
+/**
+ * SPEC-COLLECTOR-KISGATE-001 M4(T11) — 게이트 이전 후 회귀 테스트.
+ *
+ * <p>②단계 종목 해석을 {@code BatchRestExecutor}+{@code HealthyKeyRoundRobinDistributor}에서 {@code
+ * GuardedKisExecutor}+{@code KeyLeaseRegistry} 게이트로 이전. graceful skip(REQ-WLSYNC-134)·per-batch
+ * 스냅샷(REQ-KISGATE-006a)·예외별 종목 skip을 고정한다.
+ */
 @ExtendWith(MockitoExtension.class)
 class WatchlistStockResolverTest {
 
+    private static final KisAccountCredential ISA =
+            new KisAccountCredential("isa", "11111111", "appkey-isa", "appsecret-isa");
+
     @Mock private KisStockInfoClient kisStockInfoClient;
     @Mock private StockAssetTypeClassifier stockAssetTypeClassifier;
-    @Mock private HealthyKeyRoundRobinDistributor distributor;
-    @Mock private BatchRestExecutor batchRestExecutor;
-    @InjectMocks private WatchlistStockResolver watchlistStockResolver;
+    @Mock private GuardedKisExecutor guardedKisExecutor;
+    @Mock private HealthyKeySelector healthyKeySelector;
 
-    private static KisAccountCredential cred(String alias) {
-        return new KisAccountCredential(alias, "12345678", alias + "-key", alias + "-secret");
-    }
-
-    /**
-     * 인라인 라운드로빈(레거시)과 동일한 분배 규칙({@code item[i] → healthyKeys.get(i % size)})을 distributor mock으로
-     * 재현한다. resolver는 이제 distributor.distribute(items) 맵을 순회하므로, 테스트도 동일 규칙으로 맵을 구성한다.
-     */
-    private static Map<KisAccountCredential, List<KisStockListByGroupResponse.Stock>> roundRobin(
-            List<KisAccountCredential> healthyKeys, List<KisStockListByGroupResponse.Stock> items) {
-        if (healthyKeys.isEmpty() || items.isEmpty()) {
-            return Map.of();
-        }
-        int size = healthyKeys.size();
-        return IntStream.range(0, items.size())
-                .boxed()
-                .collect(
-                        Collectors.groupingBy(
-                                i -> healthyKeys.get(i % size),
-                                Collectors.mapping(items::get, Collectors.toList())));
-    }
+    private WatchlistStockResolver watchlistStockResolver;
 
     @BeforeEach
-    void setUpClassifier() {
-        // StockAssetTypeClassifier 실제 구현과 동일하게 동작하도록 lenient 스텁 설정
+    void setUp() {
+        KeyLeaseRegistry keyLeaseRegistry = new KeyLeaseRegistry(healthyKeySelector);
+        watchlistStockResolver =
+                new WatchlistStockResolver(
+                        kisStockInfoClient,
+                        stockAssetTypeClassifier,
+                        guardedKisExecutor,
+                        keyLeaseRegistry);
+        // StockAssetTypeClassifier 실제 구현과 동일하게 동작하도록 lenient 스텁
         StockAssetTypeClassifier real = new StockAssetTypeClassifier();
         lenient()
                 .when(stockAssetTypeClassifier.classify(any(), any()))
                 .thenAnswer(inv -> real.classify(inv.getArgument(0), inv.getArgument(1)));
     }
 
+    /** 건강 키 스냅샷을 1키(isa)로 고정한다. */
+    private void singleHealthyKey() {
+        when(healthyKeySelector.selectHealthy()).thenReturn(List.of(ISA));
+    }
+
     @Nested
-    @DisplayName("건강 키 라운드로빈 분산 (REQ-WLSYNC-131)")
-    class RoundRobinDistribution {
+    @DisplayName("게이트 경유 분산 + 커버리지 (REQ-KISGATE-001/006a)")
+    class GateDistribution {
 
         @Test
-        @DisplayName("죽은 키 제외 시 건강 키에만 종목 배정 (죽은 키 호출 0회), 커버리지 100%")
-        void deadKeyExcluded_onlyHealthyKeysUsed_fullCoverage() {
-            // Arrange: 5키 중 3키만 건강. 5종목.
-            List<KisAccountCredential> threeHealthy =
-                    List.of(cred("isa"), cred("pension"), cred("stock"));
+        @DisplayName("5종목 — 전부 산출(커버리지 100%), per-batch selectHealthy 1회")
+        void allStocksResolved_singleSnapshot() {
             List<KisStockListByGroupResponse.Stock> stocks =
                     List.of(
                             new KisStockListByGroupResponse.Stock("FS", "S1", "NAS", "n1"),
@@ -92,59 +88,32 @@ class WatchlistStockResolverTest {
                             new KisStockListByGroupResponse.Stock("FS", "S3", "NAS", "n3"),
                             new KisStockListByGroupResponse.Stock("FS", "S4", "NAS", "n4"),
                             new KisStockListByGroupResponse.Stock("FS", "S5", "NAS", "n5"));
-            when(distributor.distribute(stocks)).thenReturn(roundRobin(threeHealthy, stocks));
-
-            Queue<String> usedAliases = new ConcurrentLinkedQueue<>();
+            when(healthyKeySelector.selectHealthy())
+                    .thenReturn(List.of(ISA, new KisAccountCredential("gold", "2", "k", "s")));
             when(kisStockInfoClient.fetchStockInfo(any(), any(), any()))
-                    .thenAnswer(
-                            inv -> {
-                                KisStockInfoClient.StockInfoFetcher fetcher = inv.getArgument(2);
-                                fetcher.fetch(
-                                        uri -> null, "trId", KisDomesticStockInfoResponse.class);
-                                return new StockInfo(AssetType.STOCK, "x", null);
-                            });
-            when(batchRestExecutor.execute(any(), any(), any(), any(), any()))
-                    .thenAnswer(
-                            inv -> {
-                                KisAccountCredential c = inv.getArgument(0);
-                                usedAliases.add(c.alias());
-                                return BatchResult.success(
-                                        new KisDomesticStockInfoResponse("0", "M", "ok", null));
-                            });
+                    .thenReturn(new StockInfo(AssetType.STOCK, "x", null));
 
-            // Act
             List<ResolvedStock> result = watchlistStockResolver.resolve(stocks);
 
-            // Assert: 5종목 전부 산출(커버리지 100%)
             assertThat(result).hasSize(5);
-            // REQ-WLSYNC-131 회귀 방지: 건강 키만 사용(죽은 키 미사용) + i % healthyKeys.size() 인덱스 매핑 정확성.
-            //   3키(isa=0, pension=1, stock=2)에 5종목 라운드로빈: i=0→isa, 1→pension, 2→stock, 3→isa,
-            // 4→pension → 정확히 {isa:2, pension:2, stock:1}.
-            Map<String, Long> aliasCounts =
-                    usedAliases.stream()
-                            .collect(Collectors.groupingBy(a -> a, Collectors.counting()));
-            assertThat(aliasCounts)
-                    .containsExactlyInAnyOrderEntriesOf(
-                            Map.of("isa", 2L, "pension", 2L, "stock", 1L));
+            // REQ-KISGATE-006a: 종목 수와 무관하게 스냅샷 1회
+            verify(healthyKeySelector, times(1)).selectHealthy();
         }
     }
 
     @Nested
-    @DisplayName("건강 키 0개 graceful skip (REQ-WLSYNC-134)")
+    @DisplayName("건강 키 0개 graceful skip (REQ-WLSYNC-134, REQ-KISGATE-024)")
     class GracefulSkip {
 
         @Test
-        @DisplayName("distributor 빈 맵 반환 — 빈 목록 반환, fetchStockInfo 미호출, 예외 미전파")
-        void emptyAllocation_returnsEmptyList_noException() {
-            // Arrange: 건강 키 0개 → distributor 빈 맵
+        @DisplayName("빈 스냅샷 — 빈 목록 반환, fetchStockInfo 미호출, 예외 미전파")
+        void emptySnapshot_returnsEmptyList_noException() {
             List<KisStockListByGroupResponse.Stock> stocks =
                     List.of(new KisStockListByGroupResponse.Stock("FS", "AAPL", "NAS", "Apple"));
-            when(distributor.distribute(stocks)).thenReturn(Map.of());
+            when(healthyKeySelector.selectHealthy()).thenReturn(List.of());
 
-            // Act
             List<ResolvedStock> result = watchlistStockResolver.resolve(stocks);
 
-            // Assert: 빈 목록 + client 미호출 (graceful skip)
             assertThat(result).isEmpty();
             verify(kisStockInfoClient, never()).fetchStockInfo(any(), any(), any());
         }
@@ -155,28 +124,20 @@ class WatchlistStockResolverTest {
     class EmptyInput {
 
         @Test
-        @DisplayName("빈 rawStocks + 건강 키 존재 — 빈 목록 반환, distributor/fetch 경로 미호출")
-        void emptyRawStocks_withHealthyKeys_returnsEmptyList_noFetch() {
-            // Arrange: 건강 키가 있는 정상 상태를 가정(distributor를 건강 키 보유 분산으로 스텁).
-            // early guard로 인해 distribute는 실제 호출되지 않으나, "키 0개라서가 아니다"를 명시하기 위해 건강 키로 스텁한다.
+        @DisplayName("빈 rawStocks — 빈 목록 반환, selectHealthy/fetch 경로 미호출")
+        void emptyRawStocks_returnsEmptyList_noFetch() {
             List<KisStockListByGroupResponse.Stock> emptyStocks = List.of();
-            lenient()
-                    .when(distributor.distribute(emptyStocks))
-                    .thenReturn(roundRobin(List.of(cred("isa")), emptyStocks));
 
-            // Act
             List<ResolvedStock> result = watchlistStockResolver.resolve(emptyStocks);
 
-            // Assert: 빈 목록 + 분산/①단계 fetch 경로 미호출 — 오인 WARN 없는 무로그 빈 입력 경로
             assertThat(result).isEmpty();
-            verify(distributor, never()).distribute(any());
+            verify(healthyKeySelector, never()).selectHealthy();
             verify(kisStockInfoClient, never()).fetchStockInfo(any(), any(), any());
-            verify(batchRestExecutor, never()).execute(any(), any(), any(), any(), any());
         }
     }
 
     @Nested
-    @DisplayName("정적 자산유형 분류 short-circuit")
+    @DisplayName("정적 자산유형 분류 short-circuit (보존)")
     class StaticClassification {
 
         @Test
@@ -184,8 +145,7 @@ class WatchlistStockResolverTest {
         void krxIndex_classifiedStatically_noApiCall() {
             List<KisStockListByGroupResponse.Stock> stocks =
                     List.of(new KisStockListByGroupResponse.Stock("U", "KRX001", "KRX", "KRX지수"));
-            when(distributor.distribute(stocks))
-                    .thenReturn(roundRobin(List.of(cred("isa")), stocks));
+            singleHealthyKey();
 
             List<ResolvedStock> result = watchlistStockResolver.resolve(stocks);
 
@@ -201,8 +161,7 @@ class WatchlistStockResolverTest {
                     List.of(
                             new KisStockListByGroupResponse.Stock(
                                     "J", "M04020000", "KRX", "금 99.99_1Kg"));
-            when(distributor.distribute(stocks))
-                    .thenReturn(roundRobin(List.of(cred("isa")), stocks));
+            singleHealthyKey();
 
             List<ResolvedStock> result = watchlistStockResolver.resolve(stocks);
 
@@ -213,7 +172,7 @@ class WatchlistStockResolverTest {
     }
 
     @Nested
-    @DisplayName("알 수 없는 시장 코드 처리")
+    @DisplayName("알 수 없는 시장 코드 처리 (보존)")
     class UnknownMarket {
 
         @Test
@@ -223,8 +182,7 @@ class WatchlistStockResolverTest {
                     List.of(
                             new KisStockListByGroupResponse.Stock(
                                     "UNKNOWN", "X001", "KRX", "알수없음"));
-            when(distributor.distribute(stocks))
-                    .thenReturn(roundRobin(List.of(cred("isa")), stocks));
+            singleHealthyKey();
 
             List<ResolvedStock> result = watchlistStockResolver.resolve(stocks);
 
@@ -233,29 +191,25 @@ class WatchlistStockResolverTest {
     }
 
     @Nested
-    @DisplayName("예외별 종목 skip (graceful)")
+    @DisplayName("예외별 종목 skip (graceful 보존)")
     class PerExceptionSkip {
 
         @Test
         @DisplayName("DateTimeParseException — 해당 종목 stockInfo null, 나머지 정상")
         void dateTimeParseException_thatStockNull_restContinues() {
-            // Arrange
             List<KisStockListByGroupResponse.Stock> stocks =
                     List.of(
                             new KisStockListByGroupResponse.Stock("FS", "AAPL", "NAS", "Apple"),
                             new KisStockListByGroupResponse.Stock(
                                     "FS", "MSFT", "NAS", "Microsoft"));
-            when(distributor.distribute(stocks))
-                    .thenReturn(roundRobin(List.of(cred("isa")), stocks));
+            singleHealthyKey();
             when(kisStockInfoClient.fetchStockInfo(eq("AAPL"), any(), any()))
                     .thenThrow(new DateTimeParseException("invalid", "99999999", 0));
             when(kisStockInfoClient.fetchStockInfo(eq("MSFT"), any(), any()))
                     .thenReturn(new StockInfo(AssetType.STOCK, "Microsoft", null));
 
-            // Act
             List<ResolvedStock> result = watchlistStockResolver.resolve(stocks);
 
-            // Assert: AAPL → null stockInfo, MSFT → 정상. 두 종목 모두 산출.
             assertThat(result).hasSize(2);
             assertThat(result).anyMatch(r -> "MSFT".equals(r.symbol()) && r.stockInfo() != null);
             assertThat(result).anyMatch(r -> "AAPL".equals(r.symbol()) && r.stockInfo() == null);
@@ -264,23 +218,19 @@ class WatchlistStockResolverTest {
         @Test
         @DisplayName("KisTokenIssueException — 해당 종목만 skip, 나머지 정상")
         void tokenIssueException_onlyThatStockSkipped() {
-            // Arrange
             List<KisStockListByGroupResponse.Stock> stocks =
                     List.of(
                             new KisStockListByGroupResponse.Stock("FS", "AAPL", "NAS", "Apple"),
                             new KisStockListByGroupResponse.Stock(
                                     "FS", "MSFT", "NAS", "Microsoft"));
-            when(distributor.distribute(stocks))
-                    .thenReturn(roundRobin(List.of(cred("isa")), stocks));
+            singleHealthyKey();
             when(kisStockInfoClient.fetchStockInfo(eq("AAPL"), any(), any()))
                     .thenThrow(new KisTokenIssueException("isa", new RuntimeException("dead")));
             when(kisStockInfoClient.fetchStockInfo(eq("MSFT"), any(), any()))
                     .thenReturn(new StockInfo(AssetType.STOCK, "Microsoft", null));
 
-            // Act
             List<ResolvedStock> result = watchlistStockResolver.resolve(stocks);
 
-            // Assert
             assertThat(result).hasSize(2);
             assertThat(result).anyMatch(r -> "MSFT".equals(r.symbol()) && r.stockInfo() != null);
             assertThat(result).anyMatch(r -> "AAPL".equals(r.symbol()) && r.stockInfo() == null);
@@ -289,18 +239,14 @@ class WatchlistStockResolverTest {
         @Test
         @DisplayName("RestClientException — 해당 종목 stockInfo null")
         void restClientException_thatStockNull() {
-            // Arrange
             List<KisStockListByGroupResponse.Stock> stocks =
                     List.of(new KisStockListByGroupResponse.Stock("FS", "AAPL", "NAS", "Apple"));
-            when(distributor.distribute(stocks))
-                    .thenReturn(roundRobin(List.of(cred("isa")), stocks));
+            singleHealthyKey();
             when(kisStockInfoClient.fetchStockInfo(any(), any(), any()))
                     .thenThrow(new RestClientException("API 오류"));
 
-            // Act
             List<ResolvedStock> result = watchlistStockResolver.resolve(stocks);
 
-            // Assert
             assertThat(result).hasSize(1);
             assertThat(result.getFirst().stockInfo()).isNull();
         }
@@ -308,18 +254,14 @@ class WatchlistStockResolverTest {
         @Test
         @DisplayName("KisApiBusinessException — 해당 종목 stockInfo null")
         void kisApiBusinessException_thatStockNull() {
-            // Arrange
             List<KisStockListByGroupResponse.Stock> stocks =
                     List.of(new KisStockListByGroupResponse.Stock("FS", "AAPL", "NAS", "Apple"));
-            when(distributor.distribute(stocks))
-                    .thenReturn(roundRobin(List.of(cred("isa")), stocks));
+            singleHealthyKey();
             when(kisStockInfoClient.fetchStockInfo(any(), any(), any()))
                     .thenThrow(new KisApiBusinessException("1", "EGW00999", "업무 오류"));
 
-            // Act
             List<ResolvedStock> result = watchlistStockResolver.resolve(stocks);
 
-            // Assert
             assertThat(result).hasSize(1);
             assertThat(result.getFirst().stockInfo()).isNull();
         }
@@ -327,18 +269,14 @@ class WatchlistStockResolverTest {
         @Test
         @DisplayName("IllegalStateException — 해당 종목 stockInfo null")
         void illegalStateException_thatStockNull() {
-            // Arrange
             List<KisStockListByGroupResponse.Stock> stocks =
                     List.of(new KisStockListByGroupResponse.Stock("FS", "AAPL", "NAS", "Apple"));
-            when(distributor.distribute(stocks))
-                    .thenReturn(roundRobin(List.of(cred("isa")), stocks));
+            singleHealthyKey();
             when(kisStockInfoClient.fetchStockInfo(any(), any(), any()))
                     .thenThrow(new IllegalStateException("잘못된 상태"));
 
-            // Act
             List<ResolvedStock> result = watchlistStockResolver.resolve(stocks);
 
-            // Assert
             assertThat(result).hasSize(1);
             assertThat(result.getFirst().stockInfo()).isNull();
         }
@@ -346,17 +284,13 @@ class WatchlistStockResolverTest {
         @Test
         @DisplayName("fetchStockInfo가 null 반환(BatchResult skip) — stockInfo null로 산출")
         void fetchStockInfoReturnsNull_stockInfoNull() {
-            // Arrange
             List<KisStockListByGroupResponse.Stock> stocks =
                     List.of(new KisStockListByGroupResponse.Stock("FS", "AAPL", "NAS", "Apple"));
-            when(distributor.distribute(stocks))
-                    .thenReturn(roundRobin(List.of(cred("isa")), stocks));
+            singleHealthyKey();
             when(kisStockInfoClient.fetchStockInfo(any(), any(), any())).thenReturn(null);
 
-            // Act
             List<ResolvedStock> result = watchlistStockResolver.resolve(stocks);
 
-            // Assert
             assertThat(result).hasSize(1);
             assertThat(result.getFirst().stockInfo()).isNull();
         }
@@ -364,18 +298,15 @@ class WatchlistStockResolverTest {
 
     // @MX:SPEC: SPEC-COLLECTOR-STOCKMETA-001
     @Nested
-    @DisplayName("mket_id_cd 기반 권위 시장 전파 (AC-6, REQ-STOCKMETA-001,010)")
+    @DisplayName("mket_id_cd 기반 권위 시장 전파 (보존)")
     class AuthoritativeMarketPropagation {
 
         @Test
         @DisplayName("KOSPI 종목 fid=UN + mket_id_cd=STK → ResolvedStock.market()==KOSPI")
         void kospiStock_fidUN_mketIdCdSTK_resolvedMarketIsKospi() {
-            // fid_mrkt_cls_code=UN (과거 KOSDAQ 오분류 원인). mket_id_cd=STK → KOSPI 권위
             List<KisStockListByGroupResponse.Stock> stocks =
                     List.of(new KisStockListByGroupResponse.Stock("UN", "005930", "KRX", "네이버"));
-            when(distributor.distribute(stocks))
-                    .thenReturn(roundRobin(List.of(cred("isa")), stocks));
-            // KisStockInfoClient이 mket_id_cd=STK를 반영한 StockInfo(market=KOSPI)를 반환
+            singleHealthyKey();
             StockInfo infoWithKospi = new StockInfo(AssetType.STOCK, "NAVER", null, Market.KOSPI);
             when(kisStockInfoClient.fetchStockInfo(any(), any(), any())).thenReturn(infoWithKospi);
 
@@ -388,12 +319,9 @@ class WatchlistStockResolverTest {
         @Test
         @DisplayName("KOSDAQ 종목 fid=J + mket_id_cd=KSQ → ResolvedStock.market()==KOSDAQ")
         void kosdaqStock_fidJ_mketIdCdKSQ_resolvedMarketIsKosdaq() {
-            // fid_mrkt_cls_code=J (과거 KOSPI 오분류 원인). mket_id_cd=KSQ → KOSDAQ 권위
             List<KisStockListByGroupResponse.Stock> stocks =
                     List.of(new KisStockListByGroupResponse.Stock("J", "247540", "KRX", "에코프로비엠"));
-            when(distributor.distribute(stocks))
-                    .thenReturn(roundRobin(List.of(cred("isa")), stocks));
-            // KisStockInfoClient이 mket_id_cd=KSQ를 반영한 StockInfo(market=KOSDAQ)를 반환
+            singleHealthyKey();
             StockInfo infoWithKosdaq =
                     new StockInfo(AssetType.STOCK, "EcoPro BM", null, Market.KOSDAQ);
             when(kisStockInfoClient.fetchStockInfo(any(), any(), any())).thenReturn(infoWithKosdaq);
@@ -406,38 +334,110 @@ class WatchlistStockResolverTest {
     }
 
     @Nested
-    @DisplayName("멀티키 fetcher 경유 검증")
-    class MultikeyFetcher {
+    @DisplayName("게이트 fetcher 경유 검증 (REQ-KISGATE-001/022)")
+    class GateFetcher {
 
         @Test
-        @DisplayName("API 종목 — 지정 credential로 batchRestExecutor 경유 호출")
-        void apiStock_routedThroughBatchRestExecutorWithCredential() {
-            // Arrange
+        @DisplayName("API 종목 — fetcher가 게이트 경유 호출 후 BatchResult.success 반환")
+        void apiStock_routedThroughGate() throws Exception {
             List<KisStockListByGroupResponse.Stock> stocks =
                     List.of(new KisStockListByGroupResponse.Stock("FS", "AAPL", "NAS", "Apple"));
-            when(distributor.distribute(stocks))
-                    .thenReturn(roundRobin(List.of(cred("isa")), stocks));
+            singleHealthyKey();
             when(kisStockInfoClient.fetchStockInfo(any(), any(), any()))
                     .thenAnswer(
                             inv -> {
                                 KisStockInfoClient.StockInfoFetcher fetcher = inv.getArgument(2);
-                                fetcher.fetch(
-                                        uri -> null, "trId", KisDomesticStockInfoResponse.class);
+                                BatchResult<KisDomesticStockInfoResponse> r =
+                                        fetcher.fetch(
+                                                uri -> null,
+                                                "trId",
+                                                KisDomesticStockInfoResponse.class);
+                                assertThat(r.isSuccess()).isTrue();
                                 return new StockInfo(AssetType.STOCK, "x", null);
                             });
-            when(batchRestExecutor.execute(any(), any(), any(), any(), any()))
-                    .thenReturn(
-                            BatchResult.success(
-                                    new KisDomesticStockInfoResponse("0", "M", "ok", null)));
+            when(guardedKisExecutor.execute(
+                            any(LeaseSession.class),
+                            any(),
+                            anyString(),
+                            eq(KisDomesticStockInfoResponse.class)))
+                    .thenReturn(new KisDomesticStockInfoResponse("0", "M", "ok", null));
 
-            // Act
             List<ResolvedStock> result = watchlistStockResolver.resolve(stocks);
 
-            // Assert: batchRestExecutor가 isa credential + AAPL symbol로 호출됨
             assertThat(result).hasSize(1);
-            verify(batchRestExecutor)
+            verify(guardedKisExecutor)
                     .execute(
-                            argThat(c -> "isa".equals(c.alias())), any(), any(), any(), eq("AAPL"));
+                            any(LeaseSession.class),
+                            any(),
+                            anyString(),
+                            eq(KisDomesticStockInfoResponse.class));
+        }
+
+        @Test
+        @DisplayName(
+                "게이트 retryable 소진(KisRateLimitException) — fetcher가 BatchResult.skip 변환 → stockInfo null")
+        void gateRetryableExhausted_fetcherSkips_stockInfoNull() throws Exception {
+            List<KisStockListByGroupResponse.Stock> stocks =
+                    List.of(new KisStockListByGroupResponse.Stock("FS", "AAPL", "NAS", "Apple"));
+            singleHealthyKey();
+            when(kisStockInfoClient.fetchStockInfo(any(), any(), any()))
+                    .thenAnswer(
+                            inv -> {
+                                KisStockInfoClient.StockInfoFetcher fetcher = inv.getArgument(2);
+                                BatchResult<KisDomesticStockInfoResponse> r =
+                                        fetcher.fetch(
+                                                uri -> null,
+                                                "trId",
+                                                KisDomesticStockInfoResponse.class);
+                                // 소진 → skip → KisStockInfoClient는 null 반환(graceful skip)
+                                return r.isSuccess()
+                                        ? new StockInfo(AssetType.STOCK, "x", null)
+                                        : null;
+                            });
+            when(guardedKisExecutor.execute(
+                            any(LeaseSession.class),
+                            any(),
+                            anyString(),
+                            eq(KisDomesticStockInfoResponse.class)))
+                    .thenThrow(new KisRateLimitException("isa", "EGW00201 소진"));
+
+            List<ResolvedStock> result = watchlistStockResolver.resolve(stocks);
+
+            assertThat(result).hasSize(1);
+            assertThat(result.getFirst().stockInfo()).isNull();
+        }
+
+        @Test
+        @DisplayName(
+                "게이트 InterruptedException — fetcher가 BatchResult.skip 변환(전파 아님) → stockInfo null")
+        void gateInterrupted_fetcherSkips_stockInfoNull() throws Exception {
+            List<KisStockListByGroupResponse.Stock> stocks =
+                    List.of(new KisStockListByGroupResponse.Stock("FS", "AAPL", "NAS", "Apple"));
+            singleHealthyKey();
+            when(kisStockInfoClient.fetchStockInfo(any(), any(), any()))
+                    .thenAnswer(
+                            inv -> {
+                                KisStockInfoClient.StockInfoFetcher fetcher = inv.getArgument(2);
+                                BatchResult<KisDomesticStockInfoResponse> r =
+                                        fetcher.fetch(
+                                                uri -> null,
+                                                "trId",
+                                                KisDomesticStockInfoResponse.class);
+                                return r.isSuccess()
+                                        ? new StockInfo(AssetType.STOCK, "x", null)
+                                        : null;
+                            });
+            when(guardedKisExecutor.execute(
+                            any(LeaseSession.class),
+                            any(),
+                            anyString(),
+                            eq(KisDomesticStockInfoResponse.class)))
+                    .thenThrow(new InterruptedException("테스트 인터럽트"));
+
+            List<ResolvedStock> result = watchlistStockResolver.resolve(stocks);
+
+            assertThat(result).hasSize(1);
+            assertThat(result.getFirst().stockInfo()).isNull();
         }
     }
 }
