@@ -1,25 +1,29 @@
 package com.aaa.collector.stock.fundamental;
 
-import com.aaa.collector.kis.batch.BatchRestExecutor;
-import com.aaa.collector.kis.batch.BatchResult;
-import com.aaa.collector.kis.batch.HealthyKeyRoundRobinDistributor;
-import com.aaa.collector.kis.token.KisAccountCredential;
+import com.aaa.collector.kis.KisRateLimitException;
+import com.aaa.collector.kis.gate.GuardedKisExecutor;
+import com.aaa.collector.kis.gate.KeyLeaseRegistry;
+import com.aaa.collector.kis.gate.KeyLeaseRegistry.LeaseSession;
+import com.aaa.collector.kis.gate.NoHealthyKeyException;
 import com.aaa.collector.kis.token.KisTokenIssueException;
 import com.aaa.collector.stock.Financial;
 import com.aaa.collector.stock.FinancialRepository;
 import com.aaa.collector.stock.Stock;
 import com.aaa.collector.stock.StockRepository;
 import com.aaa.collector.stock.enums.PeriodType;
+import java.net.URI;
 import java.time.DateTimeException;
 import java.time.LocalDate;
 import java.util.List;
-import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.Function;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
+import org.springframework.web.client.RestClientException;
+import org.springframework.web.util.UriBuilder;
 
 /**
  * 국내주식재무비율 수집 서비스 (TR FHKST66430300 → financials, SPEC-COLLECTOR-BATCH-004).
@@ -39,10 +43,10 @@ import org.springframework.stereotype.Service;
 @Slf4j
 @Service
 @RequiredArgsConstructor
-// @MX:ANCHOR: [AUTO] 국내 재무비율 수집 진입점 — STOCK-only 분산·연간+분기 2회 호출·매핑·검증·멱등 저장·집계 담당
-// @MX:REASON: SPEC-COLLECTOR-BATCH-004 REQ-BATCH4-010,-011,-013,-020~024,-070,-070a,-072 — 스케줄러에서
-// 호출하는 단일 진입점
-// @MX:SPEC: SPEC-COLLECTOR-BATCH-004
+// @MX:ANCHOR: [AUTO] 국내 재무비율 수집 진입점 — STOCK-only 게이트 lease·연간+분기 2회 호출·매핑·검증·멱등 저장·집계 담당
+// @MX:REASON: SPEC-COLLECTOR-BATCH-004 REQ-BATCH4-013,-020~024,-070,-070a,-072,
+// SPEC-COLLECTOR-KISGATE-001 REQ-KISGATE-001,-020,-024 — 게이트 경유 단일 진입점
+// @MX:SPEC: SPEC-COLLECTOR-BATCH-004, SPEC-COLLECTOR-KISGATE-001
 public class FinancialRatioCollectionService {
 
     private static final String TR_ID = "FHKST66430300";
@@ -58,8 +62,8 @@ public class FinancialRatioCollectionService {
 
     private final StockRepository stockRepository;
     private final FinancialRepository financialRepository;
-    private final BatchRestExecutor batchRestExecutor;
-    private final HealthyKeyRoundRobinDistributor distributor;
+    private final GuardedKisExecutor guardedKisExecutor;
+    private final KeyLeaseRegistry keyLeaseRegistry;
 
     /**
      * 재무비율 수집을 실행하고 집계 결과를 반환한다 (STOCK-only 자체 조회).
@@ -74,11 +78,13 @@ public class FinancialRatioCollectionService {
             return new FundamentalResult(0, 0, 0);
         }
 
-        Map<KisAccountCredential, List<Stock>> allocation = distributor.distribute(activeStocks);
+        // REQ-KISGATE-006a: per-batch 헬스 스냅샷 1회 고정
+        LeaseSession session = keyLeaseRegistry.openSession();
         // 종목당 연간+분기 2회 호출 → attempted는 종목 수의 2배
         int total = activeStocks.size() * 2;
 
-        if (allocation.isEmpty()) {
+        // REQ-KISGATE-024, REQ-KEYDIST-020 보존: 빈 스냅샷 = 전 키 사망 → skip-all + ERROR + no fallback
+        if (session.isEmpty()) {
             log.error(
                     "[financial-ratio] 모든 키 죽음 — per-stock 수집 0회, 전체 skip. attempted={}, succeeded=0, skipped={}",
                     total,
@@ -92,21 +98,19 @@ public class FinancialRatioCollectionService {
         AtomicInteger batchRowsSaved = new AtomicInteger();
         AtomicInteger batchRowsSkipped = new AtomicInteger();
 
+        // 키 선택은 게이트가 세션 스냅샷에서 동적 lease한다(REQ-KISGATE-020). 모든 종목이 동일 세션 공유(REQ-KISGATE-031).
         try (ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor()) {
-            allocation.forEach(
-                    (credential, stocks) -> {
-                        for (Stock stock : stocks) {
-                            executor.submit(
-                                    () ->
-                                            collectStock(
-                                                    stock,
-                                                    credential,
-                                                    succeeded,
-                                                    skipped,
-                                                    batchRowsSaved,
-                                                    batchRowsSkipped));
-                        }
-                    });
+            for (Stock stock : activeStocks) {
+                executor.submit(
+                        () ->
+                                collectStock(
+                                        stock,
+                                        session,
+                                        succeeded,
+                                        skipped,
+                                        batchRowsSaved,
+                                        batchRowsSkipped));
+            }
         }
 
         FundamentalResult result = new FundamentalResult(total, succeeded.get(), skipped.get());
@@ -122,14 +126,14 @@ public class FinancialRatioCollectionService {
 
     private void collectStock(
             Stock stock,
-            KisAccountCredential credential,
+            LeaseSession session,
             AtomicInteger succeeded,
             AtomicInteger skipped,
             AtomicInteger batchRowsSaved,
             AtomicInteger batchRowsSkipped) {
         collectDivision(
                 stock,
-                credential,
+                session,
                 DIV_ANNUAL,
                 PeriodType.ANNUAL,
                 succeeded,
@@ -138,7 +142,7 @@ public class FinancialRatioCollectionService {
                 batchRowsSkipped);
         collectDivision(
                 stock,
-                credential,
+                session,
                 DIV_QUARTERLY,
                 PeriodType.QUARTERLY,
                 succeeded,
@@ -149,7 +153,7 @@ public class FinancialRatioCollectionService {
 
     private void collectDivision(
             Stock stock,
-            KisAccountCredential credential,
+            LeaseSession session,
             String divClsCode,
             PeriodType periodType,
             AtomicInteger succeeded,
@@ -159,21 +163,7 @@ public class FinancialRatioCollectionService {
 
         String symbol = stock.getSymbol();
         try {
-            BatchResult<KisFinancialRatioResponse> batchResult =
-                    fetch(credential, symbol, divClsCode);
-
-            if (!batchResult.isSuccess()) {
-                String reason = batchResult.getSkipReason().orElse("알 수 없음");
-                log.warn(
-                        "[financial-ratio] skip (데이터 유실) — symbol={}, periodType={}, reason={}",
-                        symbol,
-                        periodType,
-                        reason);
-                skipped.incrementAndGet();
-                return;
-            }
-
-            KisFinancialRatioResponse response = batchResult.getValue().orElseThrow();
+            KisFinancialRatioResponse response = fetch(session, symbol, divClsCode);
             // MI-01: division별 행 단위 결과를 지역 카운터로 집계 (saveValidRows 내부는 순차 실행)
             int[] rowCounts = saveValidRows(stock, symbol, periodType, response);
             int rowsSaved = rowCounts[0];
@@ -188,6 +178,25 @@ public class FinancialRatioCollectionService {
                     rowsSkipped);
             succeeded.incrementAndGet();
 
+        } catch (KisRateLimitException | RestClientException e) {
+            // REQ-KISGATE-022: retryable 재시도 소진 → graceful skip
+            log.warn(
+                    "[financial-ratio] skip (재시도 소진) — symbol={}, periodType={}, reason={}",
+                    symbol,
+                    periodType,
+                    e.getMessage());
+            skipped.incrementAndGet();
+        } catch (InterruptedException e) {
+            // RETRY-001 REQ-RETRY-017 보존: 인터럽트 플래그 복원 후 skip
+            Thread.currentThread().interrupt();
+            log.warn("[financial-ratio] 인터럽트 — symbol={}, periodType={} skip", symbol, periodType);
+            skipped.incrementAndGet();
+        } catch (NoHealthyKeyException e) {
+            log.warn(
+                    "[financial-ratio] 건강 키 0개로 skip — symbol={}, periodType={}",
+                    symbol,
+                    periodType);
+            skipped.incrementAndGet();
         } catch (KisTokenIssueException e) {
             log.warn(
                     "[financial-ratio] 토큰 발급 실패로 skip — symbol={}, periodType={}, error={}",
@@ -198,19 +207,17 @@ public class FinancialRatioCollectionService {
         }
     }
 
-    private BatchResult<KisFinancialRatioResponse> fetch(
-            KisAccountCredential credential, String symbol, String divClsCode) {
-        return batchRestExecutor.execute(
-                credential,
+    private KisFinancialRatioResponse fetch(LeaseSession session, String symbol, String divClsCode)
+            throws InterruptedException {
+        Function<UriBuilder, URI> uriCustomizer =
                 uri ->
                         uri.path(PATH)
                                 .queryParam("fid_cond_mrkt_div_code", "J")
                                 .queryParam("fid_input_iscd", symbol)
                                 .queryParam("FID_DIV_CLS_CODE", divClsCode)
-                                .build(),
-                TR_ID,
-                KisFinancialRatioResponse.class,
-                symbol);
+                                .build();
+        return guardedKisExecutor.execute(
+                session, uriCustomizer, TR_ID, KisFinancialRatioResponse.class);
     }
 
     /**

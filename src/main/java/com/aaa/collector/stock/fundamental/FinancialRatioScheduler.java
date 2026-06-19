@@ -13,7 +13,7 @@ import org.springframework.stereotype.Component;
  * REQ-BATCH4-003).
  *
  * <p>토큰 갱신 cron({@code KisTokenScheduler} = {@code 0 15 8 * * MON-FRI}, 평일 전용)이 토요일에 동작하지 않으므로, 토요일
- * 재무 배치는 사전발급 토큰이 없다. 토큰은 멀티키 호출 경로({@code BatchRestExecutor}→{@code KisApiExecutor})에 내장된 REST
+ * 재무 배치는 사전발급 토큰이 없다. 토큰은 게이트 호출 경로({@code GuardedKisExecutor}→{@code KisApiExecutor})에 내장된 REST
  * access_token Lazy 발급 fallback({@code getValidToken}→캐시 미스 시 {@code issueOne})에 의존해 확보한다(D-9). 본
  * 스케줄러는 신규 토큰 cron이나 eager 발급을 추가하지 않는다 — WLSYNC-006이 보존한 Lazy 경로를 재사용한다.
  *
