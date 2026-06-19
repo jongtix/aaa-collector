@@ -38,6 +38,12 @@ import org.testcontainers.junit.jupiter.Testcontainers;
  * <p>실제 {@link DailyOhlcvRepository}/{@link StockRepository}와 실제 {@code KeyLeaseRegistry} 빈을 사용하고
  * KIS 호출({@link GuardedKisExecutor})·건강 키 스냅샷({@link HealthyKeySelector})만 모킹하여 원주가(MODP=0)·zdiv=4
  * 무손실·tamt BIGINT·ETF 행·멱등성을 검증한다. (REQ-OVOH-003/003a/004/022, SPEC-COLLECTOR-KISGATE-001 게이트 이전)
+ *
+ * <p><b>테스트 격리 전제(HARD)</b>: {@code collect()}는 {@code findAllActiveOverseasTradable()}가 반환하는
+ * <em>모든</em> 활성 종목에 동일 stub 응답 행을 기록하고, {@code @SpringBootTest}는 롤백하지 않아 직전 테스트가 저장한 종목이 공유 컨테이너에
+ * 누적된다. 따라서 모든 단언은 반드시 {@code stock.getId()} 스코프 ({@code countByStockId}/{@code
+ * findByStockIdAndTradeDateIn})로 한정해야 한다 — 글로벌 단언 ({@code repository.count()} 등)을 추가하면 교차 테스트 쓰기로
+ * 조용히 깨진다.
  */
 @SpringBootTest
 @ActiveProfiles({"test", "db-integration"})
