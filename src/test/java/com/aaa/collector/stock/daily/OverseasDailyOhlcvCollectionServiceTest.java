@@ -14,9 +14,11 @@ import ch.qos.logback.classic.Level;
 import ch.qos.logback.classic.Logger;
 import ch.qos.logback.classic.spi.ILoggingEvent;
 import ch.qos.logback.core.read.ListAppender;
-import com.aaa.collector.kis.batch.BatchRestExecutor;
-import com.aaa.collector.kis.batch.BatchResult;
-import com.aaa.collector.kis.batch.HealthyKeyRoundRobinDistributor;
+import com.aaa.collector.kis.KisRateLimitException;
+import com.aaa.collector.kis.gate.GuardedKisExecutor;
+import com.aaa.collector.kis.gate.KeyLeaseRegistry;
+import com.aaa.collector.kis.gate.KeyLeaseRegistry.LeaseSession;
+import com.aaa.collector.kis.token.HealthyKeySelector;
 import com.aaa.collector.kis.token.KisAccountCredential;
 import com.aaa.collector.kis.token.KisTokenIssueException;
 import com.aaa.collector.stock.DailyOhlcvRepository;
@@ -27,7 +29,6 @@ import com.aaa.collector.stock.enums.Market;
 import java.net.URI;
 import java.time.LocalDate;
 import java.util.List;
-import java.util.Map;
 import java.util.function.Function;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -42,8 +43,16 @@ import org.slf4j.LoggerFactory;
 import org.springframework.web.util.UriBuilder;
 import org.springframework.web.util.UriComponentsBuilder;
 
+/**
+ * SPEC-COLLECTOR-KISGATE-001 — 게이트 이전 후 회귀 테스트.
+ *
+ * <p>{@code BatchRestExecutor}+{@code HealthyKeyRoundRobinDistributor} 경로에서 {@code
+ * GuardedKisExecutor}+{@code KeyLeaseRegistry} 게이트로 이전했으나, 보존 종단 동작(EXCD 라우팅·MODP=0·zdiv/빈응답/ET 당일
+ * 가드·검증·skip 집계·전 키 사망·per-batch selectHealthy 1회)은 동일하게 유지됨을 고정한다
+ * (SPEC-COLLECTOR-OVERSEAS-OHLCV-001).
+ */
 @ExtendWith(MockitoExtension.class)
-@DisplayName("OverseasDailyOhlcvCollectionService 단위 테스트 (SPEC-COLLECTOR-OVERSEAS-OHLCV-001)")
+@DisplayName("OverseasDailyOhlcvCollectionService 단위 테스트 (게이트 이전)")
 class OverseasDailyOhlcvCollectionServiceTest {
 
     private static final KisAccountCredential ISA =
@@ -57,16 +66,22 @@ class OverseasDailyOhlcvCollectionServiceTest {
 
     @Mock private StockRepository stockRepository;
     @Mock private DailyOhlcvRepository dailyOhlcvRepository;
-    @Mock private BatchRestExecutor batchRestExecutor;
-    @Mock private HealthyKeyRoundRobinDistributor distributor;
+    @Mock private GuardedKisExecutor guardedKisExecutor;
+    @Mock private HealthyKeySelector healthyKeySelector;
 
     private OverseasDailyOhlcvCollectionService service;
 
     @BeforeEach
     void setUp() {
+        // 실제 KeyLeaseRegistry + mock HealthyKeySelector — openSession()이 진짜 LeaseSession을 생성하여
+        // selectHealthy() per-batch 1회 호출(REQ-KISGATE-006a)을 검증 가능하게 한다.
+        KeyLeaseRegistry keyLeaseRegistry = new KeyLeaseRegistry(healthyKeySelector);
         service =
                 new OverseasDailyOhlcvCollectionService(
-                        stockRepository, dailyOhlcvRepository, batchRestExecutor, distributor);
+                        stockRepository,
+                        dailyOhlcvRepository,
+                        guardedKisExecutor,
+                        keyLeaseRegistry);
     }
 
     private Stock stockOf(String symbol, Market market, AssetType assetType) {
@@ -100,17 +115,6 @@ class OverseasDailyOhlcvCollectionServiceTest {
         return response("4", List.of(row(PREV_YMD, "296.9200", "42745060", "12697950974")));
     }
 
-    private void stubExecute(
-            KisAccountCredential cred, String symbol, KisOverseasDailyOhlcvResponse resp) {
-        when(batchRestExecutor.execute(
-                        eq(cred),
-                        any(),
-                        anyString(),
-                        eq(KisOverseasDailyOhlcvResponse.class),
-                        eq(symbol)))
-                .thenReturn(BatchResult.success(resp));
-    }
-
     @Nested
     @DisplayName("collect — 대상 조회 (AC-TGT-1, AC-PATH-4)")
     class Target {
@@ -126,8 +130,8 @@ class OverseasDailyOhlcvCollectionServiceTest {
         }
 
         @Test
-        @DisplayName("빈 대상 — attempted=0, 외부 호출 0회 (AC-PATH-4, REQ-OVOH-030)")
-        void collect_emptyTarget_zeroResultNoCall() {
+        @DisplayName("빈 대상 — attempted=0, 게이트 미호출, selectHealthy 미호출 (AC-PATH-4, REQ-OVOH-030)")
+        void collect_emptyTarget_zeroResultNoCall() throws Exception {
             when(stockRepository.findAllActiveOverseasTradable()).thenReturn(List.of());
 
             CollectionResult result = service.collect(TODAY);
@@ -135,8 +139,9 @@ class OverseasDailyOhlcvCollectionServiceTest {
             assertThat(result.attempted()).isZero();
             assertThat(result.succeeded()).isZero();
             assertThat(result.skipped()).isZero();
-            verify(batchRestExecutor, never())
-                    .execute(any(), any(), anyString(), any(), anyString());
+            verify(guardedKisExecutor, never())
+                    .execute(any(LeaseSession.class), any(), anyString(), any());
+            verify(healthyKeySelector, never()).selectHealthy();
         }
     }
 
@@ -146,39 +151,43 @@ class OverseasDailyOhlcvCollectionServiceTest {
 
         @Test
         @DisplayName("NASDAQ → EXCD=NAS")
-        void collect_nasdaq_routesToNas() {
+        void collect_nasdaq_routesToNas() throws Exception {
             assertExcd("AAPL", Market.NASDAQ, AssetType.STOCK, "NAS");
         }
 
         @Test
         @DisplayName("NYSE → EXCD=NYS")
-        void collect_nyse_routesToNys() {
+        void collect_nyse_routesToNys() throws Exception {
             assertExcd("F", Market.NYSE, AssetType.STOCK, "NYS");
         }
 
         @Test
         @DisplayName("AMEX(SPY ETF) → EXCD=AMS — NYSE Arca 실측 정합, 상품기본정보 529와 구분")
-        void collect_amex_routesToAms() {
+        void collect_amex_routesToAms() throws Exception {
             assertExcd("SPY", Market.AMEX, AssetType.ETF, "AMS");
         }
 
         @SuppressWarnings("unchecked")
         private void assertExcd(
-                String symbol, Market market, AssetType assetType, String expectedExcd) {
+                String symbol, Market market, AssetType assetType, String expectedExcd)
+                throws InterruptedException {
             // Arrange
             Stock stock = stockOf(symbol, market, assetType);
             when(stockRepository.findAllActiveOverseasTradable()).thenReturn(List.of(stock));
-            when(distributor.distribute(List.of(stock))).thenReturn(Map.of(ISA, List.of(stock)));
+            when(healthyKeySelector.selectHealthy()).thenReturn(List.of(ISA));
             ArgumentCaptor<Function<UriBuilder, URI>> uriCaptor =
                     ArgumentCaptor.forClass(Function.class);
-            stubExecute(ISA, symbol, validResponse());
+            when(guardedKisExecutor.execute(
+                            any(LeaseSession.class),
+                            uriCaptor.capture(),
+                            anyString(),
+                            eq(KisOverseasDailyOhlcvResponse.class)))
+                    .thenReturn(validResponse());
 
             // Act
             service.collect(TODAY);
 
             // Assert
-            verify(batchRestExecutor)
-                    .execute(eq(ISA), uriCaptor.capture(), anyString(), any(), eq(symbol));
             assertThat(uriCaptor.getValue().apply(UriComponentsBuilder.newInstance()).toString())
                     .contains("EXCD=" + expectedExcd);
         }
@@ -191,21 +200,20 @@ class OverseasDailyOhlcvCollectionServiceTest {
         @Test
         @DisplayName("MODP=0(원주가) — 국내 FID_ORG_ADJ_PRC=1(원주가)와 의미 반대, 1 복사 금지")
         @SuppressWarnings("unchecked")
-        void fetchBatch_sendsModp0_rawPrice() {
+        void fetch_sendsModp0_rawPrice() throws Exception {
             // Arrange
             Stock stock = stockOf("AAPL", Market.NASDAQ, AssetType.STOCK);
             when(stockRepository.findAllActiveOverseasTradable()).thenReturn(List.of(stock));
-            when(distributor.distribute(List.of(stock))).thenReturn(Map.of(ISA, List.of(stock)));
+            when(healthyKeySelector.selectHealthy()).thenReturn(List.of(ISA));
 
             ArgumentCaptor<Function<UriBuilder, URI>> uriCaptor =
                     ArgumentCaptor.forClass(Function.class);
-            when(batchRestExecutor.execute(
-                            eq(ISA),
+            when(guardedKisExecutor.execute(
+                            any(LeaseSession.class),
                             uriCaptor.capture(),
                             eq("HHDFS76240000"),
-                            eq(KisOverseasDailyOhlcvResponse.class),
-                            eq("AAPL")))
-                    .thenReturn(BatchResult.success(validResponse()));
+                            eq(KisOverseasDailyOhlcvResponse.class)))
+                    .thenReturn(validResponse());
 
             // Act
             service.collect(TODAY);
@@ -221,28 +229,27 @@ class OverseasDailyOhlcvCollectionServiceTest {
         @Test
         @DisplayName("BYMD=실행 ET 거래일 단건 호출 — 종목당 execute 정확히 1회 (AC-SCOPE-1)")
         @SuppressWarnings("unchecked")
-        void fetchBatch_bymdEtToday_singleCall() {
+        void fetch_bymdEtToday_singleCall() throws Exception {
             // Arrange
             Stock stock = stockOf("AAPL", Market.NASDAQ, AssetType.STOCK);
             when(stockRepository.findAllActiveOverseasTradable()).thenReturn(List.of(stock));
-            when(distributor.distribute(List.of(stock))).thenReturn(Map.of(ISA, List.of(stock)));
+            when(healthyKeySelector.selectHealthy()).thenReturn(List.of(ISA));
 
             ArgumentCaptor<Function<UriBuilder, URI>> uriCaptor =
                     ArgumentCaptor.forClass(Function.class);
-            when(batchRestExecutor.execute(
-                            eq(ISA),
+            when(guardedKisExecutor.execute(
+                            any(LeaseSession.class),
                             uriCaptor.capture(),
                             anyString(),
-                            eq(KisOverseasDailyOhlcvResponse.class),
-                            eq("AAPL")))
-                    .thenReturn(BatchResult.success(validResponse()));
+                            eq(KisOverseasDailyOhlcvResponse.class)))
+                    .thenReturn(validResponse());
 
             // Act
             service.collect(TODAY);
 
             // Assert — 종목당 1회 호출, BYMD=ET 거래일
-            verify(batchRestExecutor, times(1))
-                    .execute(eq(ISA), any(), anyString(), any(), eq("AAPL"));
+            verify(guardedKisExecutor, times(1))
+                    .execute(any(LeaseSession.class), any(), anyString(), any());
             String uri = uriCaptor.getValue().apply(UriComponentsBuilder.newInstance()).toString();
             assertThat(uri).contains("BYMD=" + TODAY_YMD);
         }
@@ -253,29 +260,33 @@ class OverseasDailyOhlcvCollectionServiceTest {
     class MultiKeyPath {
 
         @Test
-        @DisplayName("distributor 멀티키 분산 위임 — 집계 시도=2, 성공=2")
-        void collect_delegatesToDistributor() {
+        @DisplayName("멀티키 게이트 경유 — 집계 시도=2, 성공=2, selectHealthy 배치당 1회")
+        void collect_routesThroughGate() throws Exception {
             // Arrange
             Stock s1 = stockOf("AAPL", Market.NASDAQ, AssetType.STOCK);
             Stock s2 = stockOf("F", Market.NYSE, AssetType.STOCK);
             when(stockRepository.findAllActiveOverseasTradable()).thenReturn(List.of(s1, s2));
-            when(distributor.distribute(List.of(s1, s2)))
-                    .thenReturn(Map.of(ISA, List.of(s1), GOLD, List.of(s2)));
-            stubExecute(ISA, "AAPL", validResponse());
-            stubExecute(GOLD, "F", validResponse());
+            when(healthyKeySelector.selectHealthy()).thenReturn(List.of(ISA, GOLD));
+            when(guardedKisExecutor.execute(
+                            any(LeaseSession.class),
+                            any(),
+                            anyString(),
+                            eq(KisOverseasDailyOhlcvResponse.class)))
+                    .thenReturn(validResponse());
 
             // Act
             CollectionResult result = service.collect(TODAY);
 
             // Assert
-            verify(distributor).distribute(List.of(s1, s2));
             assertThat(result.attempted()).isEqualTo(2);
             assertThat(result.succeeded()).isEqualTo(2);
             assertThat(result.skipped()).isZero();
+            // REQ-KISGATE-006a: per-batch 스냅샷 1회
+            verify(healthyKeySelector, times(1)).selectHealthy();
         }
 
         @Nested
-        @DisplayName("모든 키 죽음 (AC-PATH-3, REQ-OVOH-031)")
+        @DisplayName("모든 키 죽음 (AC-PATH-3, REQ-OVOH-031, REQ-KISGATE-024)")
         class AllKeysDead {
 
             private Logger serviceLogger;
@@ -297,21 +308,21 @@ class OverseasDailyOhlcvCollectionServiceTest {
             }
 
             @Test
-            @DisplayName("빈 할당 — execute 0회, 전체 skip, ERROR 1회 (AC-PATH-3)")
-            void collect_emptyAllocation_skipAllErrorOnce() {
+            @DisplayName("빈 스냅샷 — 게이트 0회, 전체 skip, ERROR 1회 (AC-PATH-3)")
+            void collect_emptySnapshot_skipAllErrorOnce() throws Exception {
                 // Arrange
                 Stock s1 = stockOf("AAPL", Market.NASDAQ, AssetType.STOCK);
                 Stock s2 = stockOf("F", Market.NYSE, AssetType.STOCK);
                 List<Stock> stocks = List.of(s1, s2);
                 when(stockRepository.findAllActiveOverseasTradable()).thenReturn(stocks);
-                when(distributor.distribute(stocks)).thenReturn(Map.of());
+                when(healthyKeySelector.selectHealthy()).thenReturn(List.of());
 
                 // Act
                 CollectionResult result = service.collect(TODAY);
 
                 // Assert
-                verify(batchRestExecutor, never())
-                        .execute(any(), any(), anyString(), any(), anyString());
+                verify(guardedKisExecutor, never())
+                        .execute(any(LeaseSession.class), any(), anyString(), any());
                 assertThat(result.attempted()).isEqualTo(2);
                 assertThat(result.succeeded()).isZero();
                 assertThat(result.skipped()).isEqualTo(2);
@@ -330,7 +341,7 @@ class OverseasDailyOhlcvCollectionServiceTest {
 
         @Test
         @DisplayName("가격 0/음수 행 — 저장 제외")
-        void collect_nonPositivePrice_notInserted() {
+        void collect_nonPositivePrice_notInserted() throws Exception {
             stubSingle("AAPL", response("4", List.of(row(PREV_YMD, "0", "1000", "1000"))));
 
             service.collect(TODAY);
@@ -340,7 +351,7 @@ class OverseasDailyOhlcvCollectionServiceTest {
 
         @Test
         @DisplayName("가격 > USD 100,000 행 — 저장 제외(상한 가드)")
-        void collect_priceAboveMax_notInserted() {
+        void collect_priceAboveMax_notInserted() throws Exception {
             stubSingle("AAPL", response("4", List.of(row(PREV_YMD, "100001", "1000", "1000"))));
 
             service.collect(TODAY);
@@ -350,7 +361,7 @@ class OverseasDailyOhlcvCollectionServiceTest {
 
         @Test
         @DisplayName("tvol ≤ 0 행 — 저장 제외(양수 검증)")
-        void collect_nonPositiveTvol_notInserted() {
+        void collect_nonPositiveTvol_notInserted() throws Exception {
             stubSingle("AAPL", response("4", List.of(row(PREV_YMD, "100", "0", "1000"))));
 
             service.collect(TODAY);
@@ -360,7 +371,7 @@ class OverseasDailyOhlcvCollectionServiceTest {
 
         @Test
         @DisplayName("tamt ≤ 0 행 — 저장 제외(양수 검증)")
-        void collect_nonPositiveTamt_notInserted() {
+        void collect_nonPositiveTamt_notInserted() throws Exception {
             stubSingle("AAPL", response("4", List.of(row(PREV_YMD, "100", "1000", "-5"))));
 
             service.collect(TODAY);
@@ -370,7 +381,7 @@ class OverseasDailyOhlcvCollectionServiceTest {
 
         @Test
         @DisplayName("숫자 파싱 실패 행 — 저장 제외")
-        void collect_parseFailure_notInserted() {
+        void collect_parseFailure_notInserted() throws Exception {
             stubSingle("AAPL", response("4", List.of(row(PREV_YMD, "abc", "1000", "1000"))));
 
             service.collect(TODAY);
@@ -380,7 +391,7 @@ class OverseasDailyOhlcvCollectionServiceTest {
 
         @Test
         @DisplayName("회귀(MA-01): tamt=1.27e10(AAPL 실측) 정상 저장 — tvol/tamt 상한 미적용")
-        void collect_largeTamt_inserted() {
+        void collect_largeTamt_inserted() throws Exception {
             // Arrange — 국내 VOLUME_MAX(1.0e10)를 초과하는 정상 미국 대형주 거래대금
             stubSingle(
                     "AAPL",
@@ -409,7 +420,7 @@ class OverseasDailyOhlcvCollectionServiceTest {
 
         @Test
         @DisplayName("zdiv>4 — 종목 skip+WARN, 저장 0건")
-        void collect_zdivAboveMax_skipsStock() {
+        void collect_zdivAboveMax_skipsStock() throws Exception {
             stubSingle("AAPL", response("5", List.of(row(PREV_YMD, "1.40000", "1000", "1000"))));
 
             CollectionResult result = service.collect(TODAY);
@@ -421,7 +432,7 @@ class OverseasDailyOhlcvCollectionServiceTest {
 
         @Test
         @DisplayName("zdiv=4 — 정상 저장")
-        void collect_zdiv4_inserted() {
+        void collect_zdiv4_inserted() throws Exception {
             stubSingle("AAPL", validResponse());
 
             CollectionResult result = service.collect(TODAY);
@@ -441,7 +452,7 @@ class OverseasDailyOhlcvCollectionServiceTest {
 
         @Test
         @DisplayName("zdiv 비숫자(NumberFormatException) — 보수적 상한 초과 처리, 종목 skip")
-        void collect_zdivNonNumeric_skipsStock() {
+        void collect_zdivNonNumeric_skipsStock() throws Exception {
             // Arrange — "N/A"나 빈 문자열처럼 숫자 파싱 불가한 zdiv
             stubSingle("AAPL", response("N/A", List.of(row(PREV_YMD, "296.9200", "1000", "1000"))));
 
@@ -461,7 +472,7 @@ class OverseasDailyOhlcvCollectionServiceTest {
 
         @Test
         @DisplayName("rt_cd=0이나 output 빈값 — 종목 skip, 저장 0건")
-        void collect_emptyOutput_skipsStock() {
+        void collect_emptyOutput_skipsStock() throws Exception {
             // Arrange — GSAT@AMS 실측: rt_cd=0 + 빈 output
             KisOverseasDailyOhlcvResponse empty =
                     new KisOverseasDailyOhlcvResponse("0", "MCA00000", "정상", null, List.of());
@@ -482,7 +493,7 @@ class OverseasDailyOhlcvCollectionServiceTest {
 
         @Test
         @DisplayName("최신 행 xymd==ET today — 그 행 제외, 직전 영업일 행은 저장(KST 비교 시 무력화 회귀)")
-        void collect_etTodayRowExcluded_prevBusinessDaySaved() {
+        void collect_etTodayRowExcluded_prevBusinessDaySaved() throws Exception {
             // Arrange — 최신 행은 ET 당일(미마감 스냅샷 tvol 비정상), 직전 행은 확정
             KisOverseasDailyOhlcvResponse resp =
                     response(
@@ -520,22 +531,21 @@ class OverseasDailyOhlcvCollectionServiceTest {
     }
 
     @Nested
-    @DisplayName("collect — 토큰 실패 / 집계 (AC-VAL-2, AC-AGG-1)")
-    class TokenFailureAndAggregation {
+    @DisplayName("collect — 실패 종단 / 집계 (AC-VAL-2, AC-AGG-1, REQ-KISGATE-022)")
+    class FailureAndAggregation {
 
         @Test
         @DisplayName("KisTokenIssueException — graceful skip, 배치 미실패")
-        void collect_tokenIssue_gracefulSkip() {
+        void collect_tokenIssue_gracefulSkip() throws Exception {
             // Arrange
             Stock stock = stockOf("AAPL", Market.NASDAQ, AssetType.STOCK);
             when(stockRepository.findAllActiveOverseasTradable()).thenReturn(List.of(stock));
-            when(distributor.distribute(List.of(stock))).thenReturn(Map.of(ISA, List.of(stock)));
-            when(batchRestExecutor.execute(
-                            eq(ISA),
+            when(healthyKeySelector.selectHealthy()).thenReturn(List.of(ISA));
+            when(guardedKisExecutor.execute(
+                            any(LeaseSession.class),
                             any(),
                             anyString(),
-                            eq(KisOverseasDailyOhlcvResponse.class),
-                            eq("AAPL")))
+                            eq(KisOverseasDailyOhlcvResponse.class)))
                     .thenThrow(new KisTokenIssueException("isa", new RuntimeException("token")));
 
             // Act
@@ -548,19 +558,18 @@ class OverseasDailyOhlcvCollectionServiceTest {
         }
 
         @Test
-        @DisplayName("BatchResult.skip — skip 집계")
-        void collect_batchSkip_countedSkipped() {
+        @DisplayName("retryable 재시도 소진(KisRateLimitException 전파) — skip 집계 (구 BatchResult.skip 등가)")
+        void collect_retryableExhausted_countedSkipped() throws Exception {
             // Arrange
             Stock stock = stockOf("AAPL", Market.NASDAQ, AssetType.STOCK);
             when(stockRepository.findAllActiveOverseasTradable()).thenReturn(List.of(stock));
-            when(distributor.distribute(List.of(stock))).thenReturn(Map.of(ISA, List.of(stock)));
-            when(batchRestExecutor.execute(
-                            eq(ISA),
+            when(healthyKeySelector.selectHealthy()).thenReturn(List.of(ISA));
+            when(guardedKisExecutor.execute(
+                            any(LeaseSession.class),
                             any(),
                             anyString(),
-                            eq(KisOverseasDailyOhlcvResponse.class),
-                            eq("AAPL")))
-                    .thenReturn(BatchResult.skip("AAPL", "EGW00201 소진"));
+                            eq(KisOverseasDailyOhlcvResponse.class)))
+                    .thenThrow(new KisRateLimitException("isa", "EGW00201 소진"));
 
             // Act
             CollectionResult result = service.collect(TODAY);
@@ -573,21 +582,19 @@ class OverseasDailyOhlcvCollectionServiceTest {
 
         @Test
         @DisplayName("일부 성공·일부 skip — attempted=succeeded+skipped (AC-AGG-1)")
-        void collect_partialSuccess_aggregates() {
-            // Arrange
+        void collect_partialSuccess_aggregates() throws Exception {
+            // Arrange — 첫 종목 성공, 둘째 종목 재시도 소진 skip
             Stock s1 = stockOf("AAPL", Market.NASDAQ, AssetType.STOCK);
             Stock s2 = stockOf("F", Market.NYSE, AssetType.STOCK);
             when(stockRepository.findAllActiveOverseasTradable()).thenReturn(List.of(s1, s2));
-            when(distributor.distribute(List.of(s1, s2)))
-                    .thenReturn(Map.of(ISA, List.of(s1), GOLD, List.of(s2)));
-            stubExecute(ISA, "AAPL", validResponse());
-            when(batchRestExecutor.execute(
-                            eq(GOLD),
+            when(healthyKeySelector.selectHealthy()).thenReturn(List.of(ISA, GOLD));
+            when(guardedKisExecutor.execute(
+                            any(LeaseSession.class),
                             any(),
                             anyString(),
-                            eq(KisOverseasDailyOhlcvResponse.class),
-                            eq("F")))
-                    .thenReturn(BatchResult.skip("F", "skip"));
+                            eq(KisOverseasDailyOhlcvResponse.class)))
+                    .thenReturn(validResponse())
+                    .thenThrow(new KisRateLimitException("gold", "skip"));
 
             // Act
             CollectionResult result = service.collect(TODAY);
@@ -602,21 +609,19 @@ class OverseasDailyOhlcvCollectionServiceTest {
 
     // ── helpers ──
 
-    private void stubSingle(String symbol, KisOverseasDailyOhlcvResponse resp) {
+    private void stubSingle(String symbol, KisOverseasDailyOhlcvResponse resp)
+            throws InterruptedException {
         Stock stock = stockOf(symbol, Market.NASDAQ, AssetType.STOCK);
         lenient().when(stockRepository.findAllActiveOverseasTradable()).thenReturn(List.of(stock));
-        lenient()
-                .when(distributor.distribute(List.of(stock)))
-                .thenReturn(Map.of(ISA, List.of(stock)));
+        lenient().when(healthyKeySelector.selectHealthy()).thenReturn(List.of(ISA));
         lenient()
                 .when(
-                        batchRestExecutor.execute(
-                                eq(ISA),
+                        guardedKisExecutor.execute(
+                                any(LeaseSession.class),
                                 any(),
                                 anyString(),
-                                eq(KisOverseasDailyOhlcvResponse.class),
-                                eq(symbol)))
-                .thenReturn(BatchResult.success(resp));
+                                eq(KisOverseasDailyOhlcvResponse.class)))
+                .thenReturn(resp);
     }
 
     private void verifyNoInsert() {

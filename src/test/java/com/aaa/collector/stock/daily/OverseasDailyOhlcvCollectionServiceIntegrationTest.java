@@ -6,9 +6,9 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.when;
 
-import com.aaa.collector.kis.batch.BatchRestExecutor;
-import com.aaa.collector.kis.batch.BatchResult;
-import com.aaa.collector.kis.batch.HealthyKeyRoundRobinDistributor;
+import com.aaa.collector.kis.gate.GuardedKisExecutor;
+import com.aaa.collector.kis.gate.KeyLeaseRegistry.LeaseSession;
+import com.aaa.collector.kis.token.HealthyKeySelector;
 import com.aaa.collector.kis.token.KisAccountCredential;
 import com.aaa.collector.stock.DailyOhlcv;
 import com.aaa.collector.stock.DailyOhlcvRepository;
@@ -19,7 +19,6 @@ import com.aaa.collector.stock.enums.Market;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.List;
-import java.util.Map;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
@@ -36,9 +35,9 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 /**
  * 미국 일봉 멱등 저장 통합 테스트 (MySQL Testcontainer — H2는 {@code INSERT IGNORE} 네이티브 미재현).
  *
- * <p>실제 {@link DailyOhlcvRepository}/{@link StockRepository}를 사용하고 KIS 호출({@link
- * BatchRestExecutor})·키 분산({@link HealthyKeyRoundRobinDistributor})만 모킹하여 원주가(MODP=0)·zdiv=4
- * 무손실·tamt BIGINT·ETF 행·멱등성을 검증한다. (REQ-OVOH-003/003a/004/022)
+ * <p>실제 {@link DailyOhlcvRepository}/{@link StockRepository}와 실제 {@code KeyLeaseRegistry} 빈을 사용하고
+ * KIS 호출({@link GuardedKisExecutor})·건강 키 스냅샷({@link HealthyKeySelector})만 모킹하여 원주가(MODP=0)·zdiv=4
+ * 무손실·tamt BIGINT·ETF 행·멱등성을 검증한다. (REQ-OVOH-003/003a/004/022, SPEC-COLLECTOR-KISGATE-001 게이트 이전)
  */
 @SpringBootTest
 @ActiveProfiles({"test", "db-integration"})
@@ -53,8 +52,8 @@ class OverseasDailyOhlcvCollectionServiceIntegrationTest {
     @SuppressWarnings("unused")
     private StringRedisTemplate redisTemplate;
 
-    @MockitoBean private BatchRestExecutor batchRestExecutor;
-    @MockitoBean private HealthyKeyRoundRobinDistributor distributor;
+    @MockitoBean private GuardedKisExecutor guardedKisExecutor;
+    @MockitoBean private HealthyKeySelector healthyKeySelector;
 
     @Autowired private OverseasDailyOhlcvCollectionService service;
     @Autowired private StockRepository stockRepository;
@@ -99,16 +98,15 @@ class OverseasDailyOhlcvCollectionServiceIntegrationTest {
                 rows);
     }
 
-    private void stub(Stock stock, KisOverseasDailyOhlcvResponse resp) {
-        // stockRepository는 실제 빈 — 저장된 미국 STOCK/ETF가 findAllActiveOverseasTradable()로 조회된다.
-        when(distributor.distribute(any())).thenReturn(Map.of(ISA, List.of(stock)));
-        when(batchRestExecutor.execute(
-                        eq(ISA),
+    private void stub(KisOverseasDailyOhlcvResponse resp) throws InterruptedException {
+        // 실제 KeyLeaseRegistry 빈이 openSession() 시 selectHealthy() 스냅샷을 고정한다.
+        when(healthyKeySelector.selectHealthy()).thenReturn(List.of(ISA));
+        when(guardedKisExecutor.execute(
+                        any(LeaseSession.class),
                         any(),
                         anyString(),
-                        eq(KisOverseasDailyOhlcvResponse.class),
-                        eq(stock.getSymbol())))
-                .thenReturn(BatchResult.success(resp));
+                        eq(KisOverseasDailyOhlcvResponse.class)))
+                .thenReturn(resp);
     }
 
     private DailyOhlcv findRow(Stock stock, LocalDate date) {
@@ -123,12 +121,11 @@ class OverseasDailyOhlcvCollectionServiceIntegrationTest {
 
         @Test
         @DisplayName("신규 행 저장 — zdiv=4 가격 BigDecimal 4자리 무손실, tamt BIGINT 저장")
-        void collect_newRow_savedLossless() {
-            // Arrange — when() 스텁이므로 실제 findAll로 조회되지 않게 미리 저장 후 stockRepository는 모킹
+        void collect_newRow_savedLossless() throws Exception {
+            // Arrange — 실제 stockRepository에 저장된 미국 STOCK가 findAllActiveOverseasTradable()로 조회된다.
             Stock stock = savedStock("AAPL", Market.NASDAQ, AssetType.STOCK);
             LocalDate date = LocalDate.of(2026, 6, 17);
             stub(
-                    stock,
                     response(
                             List.of(
                                     row(
@@ -155,13 +152,12 @@ class OverseasDailyOhlcvCollectionServiceIntegrationTest {
 
         @Test
         @DisplayName("재수집 — 동일 (stock_id, trade_date) 중복 미증가, 최초 값 보존(UPDATE 미발생)")
-        void collect_recollect_noDuplicateNoUpdate() {
+        void collect_recollect_noDuplicateNoUpdate() throws Exception {
             // Arrange — 최초 수집
             Stock stock = savedStock("MSFT", Market.NASDAQ, AssetType.STOCK);
             LocalDate date = LocalDate.of(2026, 6, 17);
             BigDecimal originalClose = new BigDecimal("295.9500");
             stub(
-                    stock,
                     response(
                             List.of(
                                     row(
@@ -177,7 +173,6 @@ class OverseasDailyOhlcvCollectionServiceIntegrationTest {
 
             // Act — 다른 값으로 재수집(같은 키)
             stub(
-                    stock,
                     response(
                             List.of(
                                     row(
@@ -198,12 +193,11 @@ class OverseasDailyOhlcvCollectionServiceIntegrationTest {
 
         @Test
         @DisplayName("ETF 행 저장 — SPY(AMEX) 정상 적재(STOCK과 동일 경로)")
-        void collect_etfRow_saved() {
+        void collect_etfRow_saved() throws Exception {
             // Arrange
             Stock spy = savedStock("SPY", Market.AMEX, AssetType.ETF);
             LocalDate date = LocalDate.of(2026, 6, 17);
             stub(
-                    spy,
                     response(
                             List.of(
                                     row(
