@@ -7,7 +7,12 @@ import static com.github.tomakehurst.wiremock.client.WireMock.urlPathEqualTo;
 import static com.github.tomakehurst.wiremock.core.WireMockConfiguration.wireMockConfig;
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.aaa.collector.common.retry.Sleeper;
 import com.aaa.collector.kis.KisApiExecutor;
+import com.aaa.collector.kis.KisRateLimiterRegistry;
+import com.aaa.collector.kis.gate.GuardedKisExecutor;
+import com.aaa.collector.kis.gate.KeyLeaseRegistry;
+import com.aaa.collector.kis.token.HealthyKeySelector;
 import com.aaa.collector.kis.token.KisAccountCredential;
 import com.aaa.collector.kis.token.KisProperties;
 import com.aaa.collector.kis.token.KisTokenService;
@@ -39,6 +44,7 @@ class KisHolidayClientTest {
 
     @Mock private KisTokenService kisTokenService;
     @Mock private KisProperties kisProperties;
+    @Mock private HealthyKeySelector healthyKeySelector;
 
     @BeforeEach
     void setUp() {
@@ -62,10 +68,25 @@ class KisHolidayClientTest {
                 new KisAccountCredential("test", "12345678", "test-app-key", "test-app-secret");
         KisApiExecutor kisApiExecutor =
                 new KisApiExecutor(restClient, kisProperties, kisTokenService);
-        client = new KisHolidayClient(kisApiExecutor);
+
+        // REQ-KISGATE-008: KIS REST는 GuardedKisExecutor 게이트를 경유한다. 실 게이트를 WireMock 위에 구성한다.
+        KisProperties realProperties =
+                new KisProperties(
+                        "https://localhost",
+                        "testUser",
+                        List.of(credential),
+                        new KisProperties.RateLimit(100, 100, 50));
+        KisRateLimiterRegistry registry = new KisRateLimiterRegistry(realProperties);
+        Sleeper noopSleeper = millis -> {};
+        GuardedKisExecutor guardedKisExecutor =
+                new GuardedKisExecutor(registry, kisApiExecutor, noopSleeper);
+        KeyLeaseRegistry keyLeaseRegistry = new KeyLeaseRegistry(healthyKeySelector);
+        client = new KisHolidayClient(guardedKisExecutor, keyLeaseRegistry);
 
         Mockito.lenient().when(kisProperties.accounts()).thenReturn(List.of(credential));
         Mockito.lenient().when(kisTokenService.getValidToken("test")).thenReturn("test-token");
+        // 게이트 per-call 스냅샷에 단일 건강 키(test)를 고정한다.
+        Mockito.lenient().when(healthyKeySelector.selectHealthy()).thenReturn(List.of(credential));
     }
 
     @AfterEach
