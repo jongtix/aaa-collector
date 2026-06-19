@@ -1,10 +1,14 @@
 package com.aaa.collector.stock.supply;
 
 import static org.assertj.core.api.Assertions.assertThatCode;
+import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.inOrder;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.aaa.collector.observability.BatchMetrics;
 import com.aaa.collector.stock.Stock;
 import com.aaa.collector.stock.StockRepository;
 import com.aaa.collector.stock.enums.AssetType;
@@ -30,6 +34,7 @@ class DomesticSupplyDemandCollectionServiceTest {
     @Mock private InvestorTrendCollectionService investorTrendService;
     @Mock private ShortSaleCollectionService shortSaleService;
     @Mock private CreditBalanceCollectionService creditBalanceService;
+    @Mock private BatchMetrics batchMetrics;
 
     private DomesticSupplyDemandCollectionService service;
 
@@ -40,7 +45,8 @@ class DomesticSupplyDemandCollectionServiceTest {
                         stockRepository,
                         investorTrendService,
                         shortSaleService,
-                        creditBalanceService);
+                        creditBalanceService,
+                        batchMetrics);
     }
 
     private Stock stockOf(String symbol) {
@@ -172,6 +178,58 @@ class DomesticSupplyDemandCollectionServiceTest {
 
             assertThatCode(() -> service.collectAll(TODAY)).doesNotThrowAnyException();
             verify(creditBalanceService).collect(TODAY, active);
+        }
+    }
+
+    @Nested
+    @DisplayName("배치 계측 — 3 per-kind 라벨 (REQ-OBSV-020/021)")
+    class BatchMetricsRecording {
+
+        @Test
+        @DisplayName("3종 완료 시 domestic-supply-{investor,short-sale,credit-balance} 라벨로 집계 기록")
+        void recordsThreePerKindLabels() {
+            // Arrange
+            List<Stock> active = List.of(stockOf("005930"), stockOf("000660"));
+            when(stockRepository.findAllActiveTradable()).thenReturn(active);
+            when(investorTrendService.collect(TODAY, active))
+                    .thenReturn(new SupplyDemandResult(2, 2, 0));
+            when(shortSaleService.collect(TODAY, active))
+                    .thenReturn(new SupplyDemandResult(2, 1, 1));
+            when(creditBalanceService.collect(TODAY, active))
+                    .thenReturn(new SupplyDemandResult(2, 0, 2));
+
+            // Act
+            service.collectAll(TODAY);
+
+            // Assert — fail은 attempted-succeeded-skipped로 유도(투자자 0, 공매도 0, 신용 0)
+            verify(batchMetrics).recordCompletion("domestic-supply-investor", 2, 2, 0, 0);
+            verify(batchMetrics).recordCompletion("domestic-supply-short-sale", 2, 1, 0, 1);
+            verify(batchMetrics).recordCompletion("domestic-supply-credit-balance", 2, 0, 0, 2);
+        }
+
+        @Test
+        @DisplayName("한 종 수집 예외 시 그 종은 집계를 기록하지 않고 나머지는 기록한다")
+        void doesNotRecordForFailedKind() {
+            List<Stock> active = List.of(stockOf("005930"));
+            when(stockRepository.findAllActiveTradable()).thenReturn(active);
+            when(investorTrendService.collect(TODAY, active))
+                    .thenThrow(new RuntimeException("투자자 수집 실패"));
+            when(shortSaleService.collect(TODAY, active))
+                    .thenReturn(new SupplyDemandResult(1, 1, 0));
+            when(creditBalanceService.collect(TODAY, active))
+                    .thenReturn(new SupplyDemandResult(1, 1, 0));
+
+            service.collectAll(TODAY);
+
+            verify(batchMetrics, never())
+                    .recordCompletion(
+                            eq("domestic-supply-investor"),
+                            anyLong(),
+                            anyLong(),
+                            anyLong(),
+                            anyLong());
+            verify(batchMetrics).recordCompletion("domestic-supply-short-sale", 1, 1, 0, 0);
+            verify(batchMetrics).recordCompletion("domestic-supply-credit-balance", 1, 1, 0, 0);
         }
     }
 }

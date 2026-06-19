@@ -2,6 +2,7 @@ package com.aaa.collector.stock.supply;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
@@ -21,7 +22,6 @@ import com.aaa.collector.kis.token.HealthyKeySelector;
 import com.aaa.collector.kis.token.KisAccountCredential;
 import com.aaa.collector.kis.token.KisTokenIssueException;
 import com.aaa.collector.stock.InvestorTrend;
-import com.aaa.collector.stock.InvestorTrendRepository;
 import com.aaa.collector.stock.Stock;
 import com.aaa.collector.stock.StockRepository;
 import com.aaa.collector.stock.enums.AssetType;
@@ -58,7 +58,7 @@ class InvestorTrendCollectionServiceTest {
     private static final LocalDate TODAY = LocalDate.of(2026, 6, 13);
 
     @Mock private StockRepository stockRepository;
-    @Mock private InvestorTrendRepository investorTrendRepository;
+    @Mock private InvestorTrendInserter inserter;
     @Mock private GuardedKisExecutor guardedKisExecutor;
     @Mock private HealthyKeySelector healthyKeySelector;
 
@@ -69,10 +69,7 @@ class InvestorTrendCollectionServiceTest {
         KeyLeaseRegistry keyLeaseRegistry = new KeyLeaseRegistry(healthyKeySelector);
         service =
                 new InvestorTrendCollectionService(
-                        stockRepository,
-                        investorTrendRepository,
-                        guardedKisExecutor,
-                        keyLeaseRegistry);
+                        stockRepository, inserter, guardedKisExecutor, keyLeaseRegistry);
     }
 
     private Stock stockOf(String symbol) {
@@ -162,7 +159,8 @@ class InvestorTrendCollectionServiceTest {
     class Mapping {
 
         @Test
-        @DisplayName("누적 거래대금·순매수 거래대금 백만원→원 ×1,000,000 변환")
+        @DisplayName("누적 거래대금·순매수 거래대금 백만원→원 ×1,000,000 변환 (REQ-033, AC-4 S4-2)")
+        @SuppressWarnings("unchecked")
         void valuesConvertedToWon() throws Exception {
             Stock stock = stockOf("005930");
             singleStock(stock);
@@ -170,9 +168,10 @@ class InvestorTrendCollectionServiceTest {
 
             service.collect(TODAY);
 
-            ArgumentCaptor<InvestorTrend> captor = ArgumentCaptor.forClass(InvestorTrend.class);
-            verify(investorTrendRepository).insertIgnoreDuplicate(captor.capture());
-            assertThat(captor.getValue())
+            ArgumentCaptor<List<InvestorTrend>> captor = ArgumentCaptor.forClass(List.class);
+            verify(inserter).insertBatch(captor.capture());
+            assertThat(captor.getValue()).hasSize(1);
+            assertThat(captor.getValue().getFirst())
                     .extracting(
                             InvestorTrend::getTradeDate,
                             InvestorTrend::getForeignNetQty,
@@ -209,8 +208,7 @@ class InvestorTrendCollectionServiceTest {
 
             service.collect(TODAY);
 
-            verify(investorTrendRepository, times(1))
-                    .insertIgnoreDuplicate(any(InvestorTrend.class));
+            verify(inserter, times(1)).insertBatch(anyList());
         }
 
         @Test
@@ -233,12 +231,12 @@ class InvestorTrendCollectionServiceTest {
 
             service.collect(TODAY);
 
-            verify(investorTrendRepository, never())
-                    .insertIgnoreDuplicate(any(InvestorTrend.class));
+            verify(inserter, never()).insertBatch(anyList());
         }
 
         @Test
         @DisplayName("숫자 파싱 실패 행 — 저장 제외, 같은 종목 다음 행 계속")
+        @SuppressWarnings("unchecked")
         void unparseableRow_excluded_othersContinue() throws Exception {
             Stock stock = stockOf("005930");
             singleStock(stock);
@@ -249,14 +247,17 @@ class InvestorTrendCollectionServiceTest {
 
             SupplyDemandResult result = service.collect(TODAY);
 
-            ArgumentCaptor<InvestorTrend> captor = ArgumentCaptor.forClass(InvestorTrend.class);
-            verify(investorTrendRepository, times(1)).insertIgnoreDuplicate(captor.capture());
-            assertThat(captor.getValue().getTradeDate()).isEqualTo(LocalDate.of(2026, 6, 12));
+            ArgumentCaptor<List<InvestorTrend>> captor = ArgumentCaptor.forClass(List.class);
+            verify(inserter, times(1)).insertBatch(captor.capture());
+            assertThat(captor.getValue()).hasSize(1);
+            assertThat(captor.getValue().getFirst().getTradeDate())
+                    .isEqualTo(LocalDate.of(2026, 6, 12));
             assertThat(result.succeeded()).isEqualTo(1);
         }
 
         @Test
         @DisplayName("14일 윈도우 밖 행 — 저장 제외")
+        @SuppressWarnings("unchecked")
         void rowOutsideWindow_excluded() throws Exception {
             Stock stock = stockOf("005930");
             singleStock(stock);
@@ -264,9 +265,11 @@ class InvestorTrendCollectionServiceTest {
 
             service.collect(TODAY);
 
-            ArgumentCaptor<InvestorTrend> captor = ArgumentCaptor.forClass(InvestorTrend.class);
-            verify(investorTrendRepository, times(1)).insertIgnoreDuplicate(captor.capture());
-            assertThat(captor.getValue().getTradeDate()).isEqualTo(LocalDate.of(2026, 6, 12));
+            ArgumentCaptor<List<InvestorTrend>> captor = ArgumentCaptor.forClass(List.class);
+            verify(inserter, times(1)).insertBatch(captor.capture());
+            assertThat(captor.getValue()).hasSize(1);
+            assertThat(captor.getValue().getFirst().getTradeDate())
+                    .isEqualTo(LocalDate.of(2026, 6, 12));
         }
 
         @Test
@@ -280,8 +283,7 @@ class InvestorTrendCollectionServiceTest {
 
             assertThat(result.succeeded()).isEqualTo(1);
             assertThat(result.skipped()).isEqualTo(0);
-            verify(investorTrendRepository, never())
-                    .insertIgnoreDuplicate(any(InvestorTrend.class));
+            verify(inserter, never()).insertBatch(anyList());
         }
     }
 
@@ -399,6 +401,7 @@ class InvestorTrendCollectionServiceTest {
 
         @Test
         @DisplayName("S3-4b: 최소 trade_date(2026-06-02) > 윈도우 시작일(2026-05-30) — WARN 1건, 반환분 저장")
+        @SuppressWarnings("unchecked")
         void minMissesBottom_warnAndStillSaves() throws Exception {
             Stock stock = stockOf("005930");
             singleStock(stock);
@@ -407,8 +410,10 @@ class InvestorTrendCollectionServiceTest {
             SupplyDemandResult result = service.collect(TODAY);
 
             assertThat(warns()).hasSize(1);
-            verify(investorTrendRepository, times(2))
-                    .insertIgnoreDuplicate(any(InvestorTrend.class));
+            // 반환분은 정상 멱등 저장 (수집 미중단)
+            ArgumentCaptor<List<InvestorTrend>> captor = ArgumentCaptor.forClass(List.class);
+            verify(inserter, times(1)).insertBatch(captor.capture());
+            assertThat(captor.getValue()).hasSize(2);
             assertThat(result.succeeded()).isEqualTo(1);
         }
 

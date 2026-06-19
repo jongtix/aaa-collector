@@ -1,5 +1,6 @@
 package com.aaa.collector.stock.supply;
 
+import com.aaa.collector.observability.BatchMetrics;
 import com.aaa.collector.stock.Stock;
 import com.aaa.collector.stock.StockRepository;
 import java.time.LocalDate;
@@ -25,10 +26,14 @@ import org.springframework.stereotype.Service;
 // @MX:SPEC: SPEC-COLLECTOR-BATCH-002
 public class DomesticSupplyDemandCollectionService {
 
+    /** 배치 계측 라벨 접두사 — {@code kind}와 결합해 3 per-kind 라벨을 만든다 (REQ-OBSV-020/021). */
+    private static final String BATCH_LABEL_PREFIX = "domestic-supply-";
+
     private final StockRepository stockRepository;
     private final InvestorTrendCollectionService investorTrendService;
     private final ShortSaleCollectionService shortSaleService;
     private final CreditBalanceCollectionService creditBalanceService;
+    private final BatchMetrics batchMetrics;
 
     /**
      * 수급 3종을 고정 순서로 순차 수집한다.
@@ -63,6 +68,15 @@ public class DomesticSupplyDemandCollectionService {
             BiFunction<LocalDate, List<Stock>, SupplyDemandResult> collector) {
         try {
             SupplyDemandResult result = collector.apply(today, activeStocks);
+            // REQ-OBSV-020/021: per-kind 배치 집계 계측 — fail은 attempted-succeeded-skipped로 유도.
+            long fail =
+                    Math.max(0L, (long) result.attempted() - result.succeeded() - result.skipped());
+            batchMetrics.recordCompletion(
+                    BATCH_LABEL_PREFIX + kind,
+                    result.attempted(),
+                    result.succeeded(),
+                    fail,
+                    result.skipped());
             log.info(
                     "[supply-demand] {} 수집 완료 — attempted={}, succeeded={}, skipped={}",
                     kind,

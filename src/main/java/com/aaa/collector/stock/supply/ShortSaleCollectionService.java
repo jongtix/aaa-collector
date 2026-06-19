@@ -7,14 +7,11 @@ import com.aaa.collector.kis.gate.KeyLeaseRegistry.LeaseSession;
 import com.aaa.collector.kis.gate.NoHealthyKeyException;
 import com.aaa.collector.kis.token.KisTokenIssueException;
 import com.aaa.collector.stock.ShortSaleDomestic;
-import com.aaa.collector.stock.ShortSaleDomesticRepository;
 import com.aaa.collector.stock.Stock;
 import com.aaa.collector.stock.StockRepository;
-import java.math.BigDecimal;
 import java.net.URI;
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
-import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -36,6 +33,10 @@ import org.springframework.web.util.UriBuilder;
  *
  * <p>검증(REQ-BATCH2-060~063): 비율 절댓값 ≥ 1000(DECIMAL(7,4) 경계) 초과·음수 수량/금액·null·파싱 실패 건별 skip. 14일 윈도우
  * 밖 행 제외. 빈 응답은 0건 succeeded.
+ *
+ * <p>침묵 드롭(REQ-OBSV-023): 검증 통과 행들을 {@link ShortSaleInserter}로 종목별 배치 삽입한다 — 인서터가 JDBC 경고 체인에서 비-중복
+ * 드롭을 캡처하고 {@link com.aaa.collector.observability.BatchMetrics}에 기록한다. 본 서비스는 도메인 검증·매핑·skip 집계만
+ * 담당한다.
  */
 @Slf4j
 @Service
@@ -53,7 +54,8 @@ public class ShortSaleCollectionService {
     private static final String PATH = "/uapi/domestic-stock/v1/quotations/daily-short-sale";
 
     private final StockRepository stockRepository;
-    private final ShortSaleDomesticRepository shortSaleDomesticRepository;
+    private final ShortSaleRowMapper mapper;
+    private final ShortSaleInserter inserter;
     private final GuardedKisExecutor guardedKisExecutor;
     private final KeyLeaseRegistry keyLeaseRegistry;
 
@@ -163,92 +165,18 @@ public class ShortSaleCollectionService {
                 session, uriCustomizer, TR_ID, KisShortSaleResponse.class);
     }
 
+    /** 검증·매핑·윈도우 필터·경계 커버리지 관측은 mapper에 위임하고, 결과 엔티티만 배치 삽입한다. */
     private void saveValidRows(
             Stock stock,
             String symbol,
             KisShortSaleResponse response,
             LocalDate today,
             LocalDate windowStart) {
-        List<LocalDate> tradeDates = new ArrayList<>();
-        for (KisShortSaleResponse.ShortSaleRow row : response.output2()) {
-            LocalDate tradeDate = insertIfValid(stock, symbol, row, today, windowStart);
-            if (tradeDate != null) {
-                tradeDates.add(tradeDate);
-            }
+        List<ShortSaleDomestic> validEntities =
+                mapper.collectValid(stock, symbol, response, today, windowStart);
+        if (validEntities.isEmpty()) {
+            return;
         }
-        // REQ-BATCH2-025: 경계 커버리지 관측 (단일 응답 윈도우 하단 미커버 시 WARN)
-        WindowCoverageChecker.check("short-sale", symbol, tradeDates, windowStart);
-    }
-
-    /**
-     * 검증 통과 시 행을 멱등 저장한다.
-     *
-     * @return 파싱된 {@code trade_date}(경계 커버리지 검사용 — 윈도우 밖 행 포함, 파싱/검증 실패 시 null)
-     */
-    private LocalDate insertIfValid(
-            Stock stock,
-            String symbol,
-            KisShortSaleResponse.ShortSaleRow row,
-            LocalDate today,
-            LocalDate windowStart) {
-        if (row.stckBsopDate() == null || row.stckBsopDate().isBlank()) {
-            log.warn("[short-sale] 검증 실패 (trade_date null) — symbol={}", symbol);
-            return null;
-        }
-        try {
-            LocalDate tradeDate = LocalDate.parse(row.stckBsopDate(), DATE_FMT);
-            if (tradeDate.isBefore(windowStart) || tradeDate.isAfter(today)) {
-                return tradeDate;
-            }
-
-            long shortSellQty = Long.parseLong(row.sstsCntgQty());
-            long shortSellAmt = Long.parseLong(row.sstsTrPbmn());
-            long shortSellAccQty = Long.parseLong(row.acmlSstsCntgQty());
-            long shortSellAccAmt = Long.parseLong(row.acmlSstsTrPbmn());
-            BigDecimal shortSellVolRate = new BigDecimal(row.sstsVolRlim());
-            BigDecimal shortSellAmtRate = new BigDecimal(row.sstsTrPbmnRlim());
-            BigDecimal shortSellAccQtyRate = new BigDecimal(row.acmlSstsCntgQtyRlim());
-            BigDecimal shortSellAccAmtRate = new BigDecimal(row.acmlSstsTrPbmnRlim());
-
-            if (SupplyDemandValidator.anyNegative(
-                    shortSellQty, shortSellAmt, shortSellAccQty, shortSellAccAmt)) {
-                log.warn(
-                        "[short-sale] 검증 실패 (음수 수량/금액) — symbol={}, date={}",
-                        symbol,
-                        row.stckBsopDate());
-                return tradeDate;
-            }
-
-            if (!SupplyDemandValidator.allRatesWithinBounds(
-                    shortSellVolRate, shortSellAmtRate, shortSellAccQtyRate, shortSellAccAmtRate)) {
-                log.warn(
-                        "[short-sale] 검증 실패 (비율 DECIMAL(7,4) 경계 초과) — symbol={}, date={}",
-                        symbol,
-                        row.stckBsopDate());
-                return tradeDate;
-            }
-
-            ShortSaleDomestic entity =
-                    ShortSaleDomestic.builder()
-                            .stock(stock)
-                            .tradeDate(tradeDate)
-                            .shortSellQty(shortSellQty)
-                            .shortSellVolRate(shortSellVolRate)
-                            .shortSellAmt(shortSellAmt)
-                            .shortSellAmtRate(shortSellAmtRate)
-                            .shortSellAccQty(shortSellAccQty)
-                            .shortSellAccQtyRate(shortSellAccQtyRate)
-                            .shortSellAccAmt(shortSellAccAmt)
-                            .shortSellAccAmtRate(shortSellAccAmtRate)
-                            .build();
-            shortSaleDomesticRepository.insertIgnoreDuplicate(entity);
-            return tradeDate;
-        } catch (NumberFormatException e) {
-            log.warn(
-                    "[short-sale] 숫자 파싱 실패 (데이터 유실) — symbol={}, date={}",
-                    symbol,
-                    row.stckBsopDate());
-            return null;
-        }
+        inserter.insertBatch(validEntities);
     }
 }

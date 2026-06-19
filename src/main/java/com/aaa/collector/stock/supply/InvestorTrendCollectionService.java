@@ -7,7 +7,6 @@ import com.aaa.collector.kis.gate.KeyLeaseRegistry.LeaseSession;
 import com.aaa.collector.kis.gate.NoHealthyKeyException;
 import com.aaa.collector.kis.token.KisTokenIssueException;
 import com.aaa.collector.stock.InvestorTrend;
-import com.aaa.collector.stock.InvestorTrendRepository;
 import com.aaa.collector.stock.Stock;
 import com.aaa.collector.stock.StockRepository;
 import java.net.URI;
@@ -37,6 +36,10 @@ import org.springframework.web.util.UriBuilder;
  *
  * <p>검증(REQ-BATCH2-060~063): null 키 필드·총거래량/총거래대금 음수·파싱 실패 건별 skip. 순매수 수량·거래대금은 매도 우위 시 음수 정상이므로
  * 음수 허용(R-F). 14일 윈도우 밖 행 제외. 빈 응답은 0건 succeeded(REQ-063).
+ *
+ * <p>침묵 드롭(REQ-OBSV-023): 검증 통과 행들을 {@link InvestorTrendInserter}로 종목별 배치 삽입한다 — 인서터가 JDBC 경고 체인에서
+ * 비-중복 드롭을 캡처하고 {@link com.aaa.collector.observability.BatchMetrics}에 기록한다. 본 서비스는 도메인 검증·매핑·skip
+ * 집계만 담당한다.
  */
 @Slf4j
 @Service
@@ -66,7 +69,7 @@ public class InvestorTrendCollectionService {
             "/uapi/domestic-stock/v1/quotations/investor-trade-by-stock-daily";
 
     private final StockRepository stockRepository;
-    private final InvestorTrendRepository investorTrendRepository;
+    private final InvestorTrendInserter inserter;
     private final GuardedKisExecutor guardedKisExecutor;
     private final KeyLeaseRegistry keyLeaseRegistry;
 
@@ -181,84 +184,85 @@ public class InvestorTrendCollectionService {
                 session, uriCustomizer, TR_ID, KisInvestorTrendResponse.class);
     }
 
+    /**
+     * 검증 통과 행만 수집하여 배치 삽입한다.
+     *
+     * <p>{@code tradeDates}는 경계 커버리지 산정에 사용 — 파싱 성공한 날짜만 포함(NumberFormatException 제외, 윈도우 밖·검증 실패
+     * 포함).
+     */
     private void saveValidRows(
             Stock stock,
             String symbol,
             KisInvestorTrendResponse response,
             LocalDate today,
             LocalDate windowStart) {
+        List<InvestorTrend> validEntities = new ArrayList<>();
         List<LocalDate> tradeDates = new ArrayList<>();
         for (KisInvestorTrendResponse.InvestorTrendRow row : response.output2()) {
-            LocalDate tradeDate = insertIfValid(stock, symbol, row, today, windowStart);
-            if (tradeDate != null) {
-                tradeDates.add(tradeDate);
+            if (row.stckBsopDate() == null || row.stckBsopDate().isBlank()) {
+                log.warn("[investor-trend] 검증 실패 (trade_date null) — symbol={}", symbol);
+                continue;
+            }
+            LocalDate tradeDate = LocalDate.parse(row.stckBsopDate(), DATE_FMT);
+            tradeDates.add(tradeDate);
+            if (tradeDate.isBefore(windowStart) || tradeDate.isAfter(today)) {
+                // 윈도우 밖 행은 저장하지 않으나, 경계 커버리지 최소 trade_date 산정에는 포함한다.
+                continue;
+            }
+            try {
+                InvestorTrend entity = buildEntity(stock, symbol, tradeDate, row);
+                if (entity != null) {
+                    validEntities.add(entity);
+                }
+            } catch (NumberFormatException e) {
+                log.warn(
+                        "[investor-trend] 숫자 파싱 실패 (데이터 유실) — symbol={}, date={}",
+                        symbol,
+                        row.stckBsopDate());
             }
         }
         // REQ-BATCH2-025: 경계 커버리지 관측 (단일 응답 윈도우 하단 미커버 시 WARN)
         WindowCoverageChecker.check("investor", symbol, tradeDates, windowStart);
+        if (validEntities.isEmpty()) {
+            return;
+        }
+        inserter.insertBatch(validEntities);
     }
 
     /**
-     * 검증 통과 시 행을 멱등 저장한다.
-     *
-     * @return 파싱된 {@code trade_date}(경계 커버리지 검사용 — 윈도우 밖 행 포함, 파싱/검증 실패 시 null)
+     * 검증 통과 시 엔티티를 반환한다. 검증 실패 시 {@code null}(로그 후). 숫자 파싱 실패 시 {@link NumberFormatException} 전파.
      */
-    private LocalDate insertIfValid(
+    private InvestorTrend buildEntity(
             Stock stock,
             String symbol,
-            KisInvestorTrendResponse.InvestorTrendRow row,
-            LocalDate today,
-            LocalDate windowStart) {
-        if (row.stckBsopDate() == null || row.stckBsopDate().isBlank()) {
-            log.warn("[investor-trend] 검증 실패 (trade_date null) — symbol={}", symbol);
-            return null;
-        }
-        try {
-            LocalDate tradeDate = LocalDate.parse(row.stckBsopDate(), DATE_FMT);
-            if (tradeDate.isBefore(windowStart) || tradeDate.isAfter(today)) {
-                // 윈도우 밖 행은 저장하지 않으나, 경계 커버리지 최소 trade_date 산정에는 포함한다.
-                return tradeDate;
-            }
+            LocalDate tradeDate,
+            KisInvestorTrendResponse.InvestorTrendRow row) {
+        long totalVolume = Long.parseLong(row.acmlVol());
+        long totalTradingValue = Long.parseLong(row.acmlTrPbmn()) * MILLION_WON_TO_WON;
 
-            long totalVolume = Long.parseLong(row.acmlVol());
-            long totalTradingValue = Long.parseLong(row.acmlTrPbmn()) * MILLION_WON_TO_WON;
-
-            // 순매수 수량·거래대금은 매도 우위 시 음수가 정상이므로 음수 검증 제외(R-F).
-            // 총거래량·총거래대금은 음수 비정상 — 저장 제외.
-            if (SupplyDemandValidator.anyNegative(totalVolume, totalTradingValue)) {
-                log.warn(
-                        "[investor-trend] 검증 실패 (음수 총거래량/거래대금) — symbol={}, date={}, totalVolume={}, totalTradingValue={}",
-                        symbol,
-                        row.stckBsopDate(),
-                        totalVolume,
-                        totalTradingValue);
-                return tradeDate;
-            }
-
-            InvestorTrend entity =
-                    InvestorTrend.builder()
-                            .stock(stock)
-                            .tradeDate(tradeDate)
-                            .foreignNetQty(Long.parseLong(row.frgnNtbyQty()))
-                            .institutionNetQty(Long.parseLong(row.orgnNtbyQty()))
-                            .individualNetQty(Long.parseLong(row.prsnNtbyQty()))
-                            .foreignNetValue(
-                                    Long.parseLong(row.frgnNtbyTrPbmn()) * MILLION_WON_TO_WON)
-                            .institutionNetValue(
-                                    Long.parseLong(row.orgnNtbyTrPbmn()) * MILLION_WON_TO_WON)
-                            .individualNetValue(
-                                    Long.parseLong(row.prsnNtbyTrPbmn()) * MILLION_WON_TO_WON)
-                            .totalVolume(totalVolume)
-                            .totalTradingValue(totalTradingValue)
-                            .build();
-            investorTrendRepository.insertIgnoreDuplicate(entity);
-            return tradeDate;
-        } catch (NumberFormatException e) {
+        // 순매수 수량·거래대금은 매도 우위 시 음수가 정상이므로 음수 검증 제외(R-F).
+        // 총거래량·총거래대금은 음수 비정상 — 저장 제외.
+        if (SupplyDemandValidator.anyNegative(totalVolume, totalTradingValue)) {
             log.warn(
-                    "[investor-trend] 숫자 파싱 실패 (데이터 유실) — symbol={}, date={}",
+                    "[investor-trend] 검증 실패 (음수 총거래량/거래대금) — symbol={}, date={}, totalVolume={}, totalTradingValue={}",
                     symbol,
-                    row.stckBsopDate());
+                    tradeDate,
+                    totalVolume,
+                    totalTradingValue);
             return null;
         }
+
+        return InvestorTrend.builder()
+                .stock(stock)
+                .tradeDate(tradeDate)
+                .foreignNetQty(Long.parseLong(row.frgnNtbyQty()))
+                .institutionNetQty(Long.parseLong(row.orgnNtbyQty()))
+                .individualNetQty(Long.parseLong(row.prsnNtbyQty()))
+                .foreignNetValue(Long.parseLong(row.frgnNtbyTrPbmn()) * MILLION_WON_TO_WON)
+                .institutionNetValue(Long.parseLong(row.orgnNtbyTrPbmn()) * MILLION_WON_TO_WON)
+                .individualNetValue(Long.parseLong(row.prsnNtbyTrPbmn()) * MILLION_WON_TO_WON)
+                .totalVolume(totalVolume)
+                .totalTradingValue(totalTradingValue)
+                .build();
     }
 }

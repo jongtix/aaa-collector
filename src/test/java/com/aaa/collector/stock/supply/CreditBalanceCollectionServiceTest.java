@@ -2,6 +2,7 @@ package com.aaa.collector.stock.supply;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
@@ -17,7 +18,6 @@ import com.aaa.collector.kis.token.HealthyKeySelector;
 import com.aaa.collector.kis.token.KisAccountCredential;
 import com.aaa.collector.kis.token.KisTokenIssueException;
 import com.aaa.collector.stock.CreditBalance;
-import com.aaa.collector.stock.CreditBalanceRepository;
 import com.aaa.collector.stock.Stock;
 import com.aaa.collector.stock.StockRepository;
 import com.aaa.collector.stock.enums.AssetType;
@@ -51,7 +51,7 @@ class CreditBalanceCollectionServiceTest {
     private static final LocalDate TODAY = LocalDate.of(2026, 6, 13);
 
     @Mock private StockRepository stockRepository;
-    @Mock private CreditBalanceRepository creditBalanceRepository;
+    @Mock private CreditBalanceInserter inserter;
     @Mock private GuardedKisExecutor guardedKisExecutor;
     @Mock private HealthyKeySelector healthyKeySelector;
 
@@ -63,7 +63,8 @@ class CreditBalanceCollectionServiceTest {
         service =
                 new CreditBalanceCollectionService(
                         stockRepository,
-                        creditBalanceRepository,
+                        new CreditBalanceRowMapper(),
+                        inserter,
                         guardedKisExecutor,
                         keyLeaseRegistry);
     }
@@ -108,7 +109,8 @@ class CreditBalanceCollectionServiceTest {
     class CollectSuccess {
 
         @Test
-        @DisplayName("trade_date에 deal_date 매핑(stlm_date 미사용) + 만원 무변환")
+        @DisplayName("trade_date에 deal_date 매핑(stlm_date 미사용) + 만원 무변환 (AC-6 S6-2/S6-3)")
+        @SuppressWarnings("unchecked")
         void success_dealDateMapping_noConversion() throws Exception {
             Stock stock = stockOf("005930");
             singleStock(stock);
@@ -117,9 +119,12 @@ class CreditBalanceCollectionServiceTest {
             SupplyDemandResult result = service.collect(TODAY);
 
             assertThat(result.succeeded()).isEqualTo(1);
-            ArgumentCaptor<CreditBalance> captor = ArgumentCaptor.forClass(CreditBalance.class);
-            verify(creditBalanceRepository).insertIgnoreDuplicate(captor.capture());
-            assertThat(captor.getValue())
+            ArgumentCaptor<List<CreditBalance>> captor = ArgumentCaptor.forClass(List.class);
+            verify(inserter).insertBatch(captor.capture());
+            assertThat(captor.getValue()).hasSize(1);
+            // [HARD] trade_date == deal_date(20260612), NOT stlm_date(20260616) (REQ-052)
+            // + 융자/대주 전 필드 만원 무변환(REQ-053)을 단일 assert로 검증
+            assertThat(captor.getValue().getFirst())
                     .extracting(
                             CreditBalance::getTradeDate,
                             CreditBalance::getLoanNewQty,
@@ -193,8 +198,7 @@ class CreditBalanceCollectionServiceTest {
 
             service.collect(TODAY);
 
-            verify(creditBalanceRepository, never())
-                    .insertIgnoreDuplicate(any(CreditBalance.class));
+            verify(inserter, never()).insertBatch(anyList());
         }
 
         @Test
@@ -226,12 +230,12 @@ class CreditBalanceCollectionServiceTest {
 
             service.collect(TODAY);
 
-            verify(creditBalanceRepository, never())
-                    .insertIgnoreDuplicate(any(CreditBalance.class));
+            verify(inserter, never()).insertBatch(anyList());
         }
 
         @Test
         @DisplayName("14일 윈도우 밖 행 — 저장 제외")
+        @SuppressWarnings("unchecked")
         void outsideWindow_excluded() throws Exception {
             Stock stock = stockOf("005930");
             singleStock(stock);
@@ -239,9 +243,11 @@ class CreditBalanceCollectionServiceTest {
 
             service.collect(TODAY);
 
-            ArgumentCaptor<CreditBalance> captor = ArgumentCaptor.forClass(CreditBalance.class);
-            verify(creditBalanceRepository, times(1)).insertIgnoreDuplicate(captor.capture());
-            assertThat(captor.getValue().getTradeDate()).isEqualTo(LocalDate.of(2026, 6, 12));
+            ArgumentCaptor<List<CreditBalance>> captor = ArgumentCaptor.forClass(List.class);
+            verify(inserter, times(1)).insertBatch(captor.capture());
+            assertThat(captor.getValue()).hasSize(1);
+            assertThat(captor.getValue().getFirst().getTradeDate())
+                    .isEqualTo(LocalDate.of(2026, 6, 12));
         }
 
         @Test
@@ -361,8 +367,7 @@ class CreditBalanceCollectionServiceTest {
 
             SupplyDemandResult result = service.collect(TODAY);
 
-            verify(creditBalanceRepository, never())
-                    .insertIgnoreDuplicate(any(CreditBalance.class));
+            verify(inserter, never()).insertBatch(anyList());
             assertThat(result.succeeded()).isEqualTo(1);
         }
 
@@ -395,8 +400,7 @@ class CreditBalanceCollectionServiceTest {
 
             service.collect(TODAY);
 
-            verify(creditBalanceRepository, never())
-                    .insertIgnoreDuplicate(any(CreditBalance.class));
+            verify(inserter, never()).insertBatch(anyList());
         }
     }
 

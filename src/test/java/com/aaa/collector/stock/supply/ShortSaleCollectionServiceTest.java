@@ -2,6 +2,7 @@ package com.aaa.collector.stock.supply;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
@@ -17,7 +18,6 @@ import com.aaa.collector.kis.token.HealthyKeySelector;
 import com.aaa.collector.kis.token.KisAccountCredential;
 import com.aaa.collector.kis.token.KisTokenIssueException;
 import com.aaa.collector.stock.ShortSaleDomestic;
-import com.aaa.collector.stock.ShortSaleDomesticRepository;
 import com.aaa.collector.stock.Stock;
 import com.aaa.collector.stock.StockRepository;
 import com.aaa.collector.stock.enums.AssetType;
@@ -52,7 +52,7 @@ class ShortSaleCollectionServiceTest {
     private static final LocalDate TODAY = LocalDate.of(2026, 6, 13);
 
     @Mock private StockRepository stockRepository;
-    @Mock private ShortSaleDomesticRepository shortSaleDomesticRepository;
+    @Mock private ShortSaleInserter inserter;
     @Mock private GuardedKisExecutor guardedKisExecutor;
     @Mock private HealthyKeySelector healthyKeySelector;
 
@@ -61,10 +61,12 @@ class ShortSaleCollectionServiceTest {
     @BeforeEach
     void setUp() {
         KeyLeaseRegistry keyLeaseRegistry = new KeyLeaseRegistry(healthyKeySelector);
+        // 실제 mapper 사용 — 매핑·검증 동작을 그대로 검증(캡처된 엔티티가 실 매핑 결과).
         service =
                 new ShortSaleCollectionService(
                         stockRepository,
-                        shortSaleDomesticRepository,
+                        new ShortSaleRowMapper(),
+                        inserter,
                         guardedKisExecutor,
                         keyLeaseRegistry);
     }
@@ -108,6 +110,7 @@ class ShortSaleCollectionServiceTest {
 
         @Test
         @DisplayName("매핑 + 금액 원 단위 무변환 (OI-2)")
+        @SuppressWarnings("unchecked")
         void success_mapping_noConversion() throws Exception {
             Stock stock = stockOf("005930");
             singleStock(stock);
@@ -116,10 +119,11 @@ class ShortSaleCollectionServiceTest {
             SupplyDemandResult result = service.collect(TODAY);
 
             assertThat(result.succeeded()).isEqualTo(1);
-            ArgumentCaptor<ShortSaleDomestic> captor =
-                    ArgumentCaptor.forClass(ShortSaleDomestic.class);
-            verify(shortSaleDomesticRepository).insertIgnoreDuplicate(captor.capture());
-            assertThat(captor.getValue())
+            ArgumentCaptor<List<ShortSaleDomestic>> captor = ArgumentCaptor.forClass(List.class);
+            verify(inserter).insertBatch(captor.capture());
+            assertThat(captor.getValue()).hasSize(1);
+            ShortSaleDomestic entity = captor.getValue().getFirst();
+            assertThat(entity)
                     .extracting(
                             ShortSaleDomestic::getTradeDate,
                             ShortSaleDomestic::getShortSellQty,
@@ -169,8 +173,7 @@ class ShortSaleCollectionServiceTest {
 
             service.collect(TODAY);
 
-            verify(shortSaleDomesticRepository, never())
-                    .insertIgnoreDuplicate(any(ShortSaleDomestic.class));
+            verify(inserter, never()).insertBatch(anyList());
         }
 
         @Test
@@ -193,8 +196,7 @@ class ShortSaleCollectionServiceTest {
 
             service.collect(TODAY);
 
-            verify(shortSaleDomesticRepository, times(1))
-                    .insertIgnoreDuplicate(any(ShortSaleDomestic.class));
+            verify(inserter, times(1)).insertBatch(anyList());
         }
 
         @Test
@@ -217,12 +219,12 @@ class ShortSaleCollectionServiceTest {
 
             service.collect(TODAY);
 
-            verify(shortSaleDomesticRepository, never())
-                    .insertIgnoreDuplicate(any(ShortSaleDomestic.class));
+            verify(inserter, never()).insertBatch(anyList());
         }
 
         @Test
         @DisplayName("14일 윈도우 밖 행 — 저장 제외")
+        @SuppressWarnings("unchecked")
         void outsideWindow_excluded() throws Exception {
             Stock stock = stockOf("005930");
             singleStock(stock);
@@ -230,10 +232,11 @@ class ShortSaleCollectionServiceTest {
 
             service.collect(TODAY);
 
-            ArgumentCaptor<ShortSaleDomestic> captor =
-                    ArgumentCaptor.forClass(ShortSaleDomestic.class);
-            verify(shortSaleDomesticRepository, times(1)).insertIgnoreDuplicate(captor.capture());
-            assertThat(captor.getValue().getTradeDate()).isEqualTo(LocalDate.of(2026, 6, 12));
+            ArgumentCaptor<List<ShortSaleDomestic>> captor = ArgumentCaptor.forClass(List.class);
+            verify(inserter, times(1)).insertBatch(captor.capture());
+            assertThat(captor.getValue()).hasSize(1);
+            assertThat(captor.getValue().getFirst().getTradeDate())
+                    .isEqualTo(LocalDate.of(2026, 6, 12));
         }
 
         @Test
@@ -344,8 +347,7 @@ class ShortSaleCollectionServiceTest {
 
             SupplyDemandResult result = service.collect(TODAY);
 
-            verify(shortSaleDomesticRepository, never())
-                    .insertIgnoreDuplicate(any(ShortSaleDomestic.class));
+            verify(inserter, never()).insertBatch(anyList());
             assertThat(result.succeeded()).isEqualTo(1);
         }
 
@@ -369,8 +371,7 @@ class ShortSaleCollectionServiceTest {
 
             service.collect(TODAY);
 
-            verify(shortSaleDomesticRepository, never())
-                    .insertIgnoreDuplicate(any(ShortSaleDomestic.class));
+            verify(inserter, never()).insertBatch(anyList());
         }
     }
 
