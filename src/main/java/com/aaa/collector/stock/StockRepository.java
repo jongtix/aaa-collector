@@ -18,6 +18,9 @@ public interface StockRepository extends JpaRepository<Stock, Long> {
     /** per-stock J-API 배치(일봉/수급) 대상 자산 유형 — STOCK·ETF만 포함, INDEX 제외(REQ-BATCH3-024). */
     Set<AssetType> TRADABLE_ASSET_TYPES = Set.of(AssetType.STOCK, AssetType.ETF);
 
+    /** 미국 일봉 배치 대상 시장 — NYSE/NASDAQ/AMEX(REQ-OVOH-001). */
+    Set<Market> OVERSEAS_TRADABLE_MARKETS = Set.of(Market.NYSE, Market.NASDAQ, Market.AMEX);
+
     Optional<Stock> findBySymbolAndMarket(String symbol, Market market);
 
     List<Stock> findAllBySymbolIn(Collection<String> symbols);
@@ -58,6 +61,33 @@ public interface StockRepository extends JpaRepository<Stock, Long> {
     @Query(
             "SELECT s FROM Stock s WHERE s.watchlistRemovedAt IS NULL AND s.assetType IN :assetTypes")
     List<Stock> findAllActiveByAssetTypeIn(@Param("assetTypes") Collection<AssetType> assetTypes);
+
+    /**
+     * 미국 일봉 배치 대상 종목을 조회한다 — 활성({@code watchlistRemovedAt IS NULL}) ∩ {@code market IN (NYSE,
+     * NASDAQ, AMEX)} ∩ {@code asset_type IN (STOCK, ETF)} (SPEC-COLLECTOR-OVERSEAS-OHLCV-001
+     * REQ-OVOH-001).
+     *
+     * <p>국내 일봉/수급 배치가 사용하는 {@link #findAllActiveTradable()}(시장 무관 STOCK+ETF)와 분리된 미국 시장 한정 조회다 — 국내
+     * 종목·미국 INDEX를 제외한다. 기존 {@link #findAllActive()}/{@link #findAllActiveTradable()}/{@link
+     * #findAllActiveStock()}는 변경하지 않는다.
+     */
+    default List<Stock> findAllActiveOverseasTradable() {
+        return findAllActiveByMarketInAndAssetTypeIn(
+                OVERSEAS_TRADABLE_MARKETS, TRADABLE_ASSET_TYPES);
+    }
+
+    /**
+     * 활성 종목 중 지정 시장·자산 유형에 속한 종목을 조회한다 (REQ-OVOH-001).
+     *
+     * <p>호출자는 시장·자산 유형 집합을 직접 구성하지 않고 {@link #findAllActiveOverseasTradable()}를 사용한다 — 미국 일봉 배치 대상
+     * 집합은 이 레포지토리 계층에서만 관리한다.
+     */
+    @Query(
+            "SELECT s FROM Stock s WHERE s.watchlistRemovedAt IS NULL"
+                    + " AND s.market IN :markets AND s.assetType IN :assetTypes")
+    List<Stock> findAllActiveByMarketInAndAssetTypeIn(
+            @Param("markets") Collection<Market> markets,
+            @Param("assetTypes") Collection<AssetType> assetTypes);
 
     /**
      * 종목 단위 펀더멘털 배치(재무비율/투자의견) 대상 종목을 조회한다 — {@code asset_type = STOCK} 한정

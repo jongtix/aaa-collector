@@ -36,11 +36,15 @@ class StockRepositoryTest {
     @Autowired private StockRepository stockRepository;
 
     private Stock savedStock(String symbol, AssetType assetType) {
+        return savedStock(symbol, assetType, Market.KOSPI);
+    }
+
+    private Stock savedStock(String symbol, AssetType assetType, Market market) {
         return stockRepository.save(
                 Stock.builder()
                         .symbol(symbol)
                         .nameKo("테스트종목_" + symbol)
-                        .market(Market.KOSPI)
+                        .market(market)
                         .assetType(assetType)
                         .listedDate(LocalDate.of(2015, 1, 1))
                         .build());
@@ -143,6 +147,55 @@ class StockRepositoryTest {
             // Assert
             List<Long> resultIds = result.stream().map(Stock::getId).toList();
             assertThat(resultIds).contains(stock.getId(), etf.getId());
+        }
+    }
+
+    @Nested
+    @DisplayName(
+            "findAllActiveOverseasTradable — 미국 STOCK+ETF 한정"
+                    + " (SPEC-COLLECTOR-OVERSEAS-OHLCV-001 REQ-OVOH-001, AC-TGT-1)")
+    class FindAllActiveOverseasTradable {
+
+        @Test
+        @DisplayName("미국 STOCK·ETF만 반환 — 미국 INDEX·국내 STOCK/ETF·제거 종목 제외")
+        void returnsUsStockAndEtf_excludesUsIndexDomesticAndRemoved() {
+            // Arrange
+            Stock nyseStock = savedStock("OVS_NYSE_STK", AssetType.STOCK, Market.NYSE);
+            Stock nasdaqStock = savedStock("OVS_NAS_STK", AssetType.STOCK, Market.NASDAQ);
+            Stock amexEtf = savedStock("OVS_AMEX_ETF", AssetType.ETF, Market.AMEX);
+            Stock usIndex = savedStock("OVS_US_IDX", AssetType.INDEX, Market.US);
+            Stock domesticStock = savedStock("OVS_DOM_STK", AssetType.STOCK, Market.KOSPI);
+            Stock domesticEtf = savedStock("OVS_DOM_ETF", AssetType.ETF, Market.KOSDAQ);
+            Stock removedUsStock = savedStock("OVS_NYSE_REM", AssetType.STOCK, Market.NYSE);
+            stockRepository.markWatchlistRemoved(Set.of(removedUsStock.getId()));
+
+            // Act
+            List<Stock> result = stockRepository.findAllActiveOverseasTradable();
+
+            // Assert — 미국 STOCK·ETF만 포함, 그 외 전부 제외
+            List<Long> resultIds = result.stream().map(Stock::getId).toList();
+            assertThat(resultIds).contains(nyseStock.getId(), nasdaqStock.getId(), amexEtf.getId());
+            assertThat(resultIds)
+                    .doesNotContain(
+                            usIndex.getId(),
+                            domesticStock.getId(),
+                            domesticEtf.getId(),
+                            removedUsStock.getId());
+        }
+
+        @Test
+        @DisplayName("기존 findAllActiveTradable()는 시장 무관 — 국내 종목도 포함(회귀 보존)")
+        void findAllActiveTradable_unchanged_includesDomestic() {
+            // Arrange
+            Stock domestic = savedStock("OVS_REG_DOM", AssetType.STOCK, Market.KOSPI);
+            Stock overseas = savedStock("OVS_REG_US", AssetType.STOCK, Market.NASDAQ);
+
+            // Act — 시장 무관 메서드는 국내·미국 모두 포함(회귀 보존)
+            List<Stock> result = stockRepository.findAllActiveTradable();
+
+            // Assert
+            List<Long> resultIds = result.stream().map(Stock::getId).toList();
+            assertThat(resultIds).contains(domestic.getId(), overseas.getId());
         }
     }
 }
