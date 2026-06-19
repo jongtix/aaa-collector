@@ -26,6 +26,11 @@ import java.util.List;
  * ps.getWarnings()}를 읽어 누적해야 한다. {@link #countDropsPerRow}가 이 실행·누적 루프를 공유 제공하고, {@link
  * #countGenuineDrops}가 한 체인의 비-1062 경고를 세는 순수 분류기다. 두 메서드 모두 상태 없음.
  */
+// @MX:ANCHOR: [AUTO] 침묵 드롭 분류·행별 실행 공유 엔진 — daily/short-sale/investor/credit 4개 Tier-1 인서터가
+// 호출(fan_in 4)
+// @MX:WARN: [AUTO] countDropsPerRow를 executeBatch로 "최적화"하지 말 것 — executeBatch는 INSERT IGNORE 강등 경고를
+// statement에 보존하지 않아(실측, 클래스 Javadoc 참조) 침묵 드롭 캡처가 영구 0이 된다. 행별 executeUpdate 유지가 정확성의 전제다.
+// @MX:SPEC: SPEC-COLLECTOR-OBSV-001
 public final class SilentDropWarningCounter {
 
     /** MySQL 중복 키 경고 코드 (ER_DUP_ENTRY) — 정상 멱등 중복이므로 드롭으로 세지 않는다. */
