@@ -12,9 +12,14 @@ import com.aaa.collector.common.retry.Sleeper;
 import com.aaa.collector.kis.KisApiBusinessException;
 import com.aaa.collector.kis.KisApiExecutor;
 import com.aaa.collector.kis.KisApiResponse;
+import com.aaa.collector.kis.KisRateLimitException;
 import com.aaa.collector.kis.KisRateLimiterRegistry;
-import com.aaa.collector.kis.batch.BatchRestExecutor;
 import com.aaa.collector.kis.batch.BatchResult;
+import com.aaa.collector.kis.gate.GuardedKisExecutor;
+import com.aaa.collector.kis.gate.KeyLeaseRegistry;
+import com.aaa.collector.kis.gate.KeyLeaseRegistry.LeaseSession;
+import com.aaa.collector.kis.gate.NoHealthyKeyException;
+import com.aaa.collector.kis.token.HealthyKeySelector;
 import com.aaa.collector.kis.token.KisAccountCredential;
 import com.aaa.collector.kis.token.KisProperties;
 import com.aaa.collector.kis.token.KisTokenService;
@@ -38,6 +43,7 @@ import org.mockito.Mockito;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.http.converter.json.MappingJackson2HttpMessageConverter;
 import org.springframework.web.client.RestClient;
+import org.springframework.web.client.RestClientException;
 import org.springframework.web.util.UriBuilder;
 
 @ExtendWith(MockitoExtension.class)
@@ -49,21 +55,35 @@ class KisStockInfoClientTest {
 
     @Mock private KisTokenService kisTokenService;
     @Mock private KisProperties kisProperties;
+    @Mock private HealthyKeySelector healthyKeySelector;
 
     private WireMockServer wireMockServer;
     private KisStockInfoClient kisStockInfoClient;
-    private KisAccountCredential credential;
-    private BatchRestExecutor batchRestExecutor;
+    private GuardedKisExecutor guardedKisExecutor;
+    private KeyLeaseRegistry keyLeaseRegistry;
 
-    /** 멀티키 경로로 BatchRestExecutor를 경유하여 fetch하는 fetcher (서비스가 ②단계에서 백킹하는 형태와 동일). */
-    private KisStockInfoClient.StockInfoFetcher fetcherFor(
-            BatchRestExecutor batchRestExecutor, String symbol) {
+    /**
+     * 게이트(GuardedKisExecutor)를 경유해 fetch하는 fetcher — 프로덕션 {@code
+     * WatchlistStockResolver.gateFetcher}와 동일한 종단 변환(재시도 소진/인터럽트/건강 키 0개 → {@link
+     * BatchResult#skip})을 재현한다. KISGATE M4(T11) 게이트 이전으로 기존 {@code BatchRestExecutor} 백킹을 대체했다.
+     */
+    private KisStockInfoClient.StockInfoFetcher fetcherFor(LeaseSession session, String symbol) {
         return new KisStockInfoClient.StockInfoFetcher() {
             @Override
             public <T extends KisApiResponse> BatchResult<T> fetch(
                     Function<UriBuilder, URI> uriCustomizer, String trId, Class<T> responseType) {
-                return batchRestExecutor.execute(
-                        credential, uriCustomizer, trId, responseType, symbol);
+                try {
+                    T response =
+                            guardedKisExecutor.execute(session, uriCustomizer, trId, responseType);
+                    return BatchResult.success(response);
+                } catch (KisRateLimitException | RestClientException e) {
+                    return BatchResult.skip(symbol, "재시도 소진: " + e.getMessage());
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    return BatchResult.skip(symbol, "인터럽트");
+                } catch (NoHealthyKeyException e) {
+                    return BatchResult.skip(symbol, "건강 키 0개");
+                }
             }
         };
     }
@@ -86,7 +106,7 @@ class KisStockInfoClientTest {
                                 })
                         .build();
 
-        credential =
+        KisAccountCredential credential =
                 new KisAccountCredential("test", "12345678", "test-app-key", "test-app-secret");
 
         KisApiExecutor kisApiExecutor =
@@ -101,10 +121,13 @@ class KisStockInfoClientTest {
                         new KisProperties.RateLimit(100, 100, 50));
         KisRateLimiterRegistry registry = new KisRateLimiterRegistry(realProperties);
         Sleeper noopSleeper = millis -> {};
-        batchRestExecutor = new BatchRestExecutor(kisApiExecutor, registry, noopSleeper);
+        guardedKisExecutor = new GuardedKisExecutor(registry, kisApiExecutor, noopSleeper);
+        keyLeaseRegistry = new KeyLeaseRegistry(healthyKeySelector);
 
         Mockito.lenient().when(kisProperties.accounts()).thenReturn(List.of(credential));
         Mockito.lenient().when(kisTokenService.getValidToken("test")).thenReturn("test-token");
+        // 게이트 per-batch 스냅샷에 단일 건강 키(test)를 고정한다.
+        Mockito.lenient().when(healthyKeySelector.selectHealthy()).thenReturn(List.of(credential));
     }
 
     @AfterEach
@@ -113,8 +136,8 @@ class KisStockInfoClientTest {
     }
 
     private StockInfo fetch(String symbol, Market market) {
-        return kisStockInfoClient.fetchStockInfo(
-                symbol, market, fetcherFor(batchRestExecutor, symbol));
+        LeaseSession session = keyLeaseRegistry.openSession();
+        return kisStockInfoClient.fetchStockInfo(symbol, market, fetcherFor(session, symbol));
     }
 
     /**
