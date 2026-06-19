@@ -13,9 +13,9 @@ import org.springframework.stereotype.Component;
 /**
  * 건강 키 스냅샷 기반 least-busy 동적 lease 레지스트리 (SPEC-COLLECTOR-KISGATE-001 REQ-KISGATE-005/006/024/031).
  *
- * <p>정적 {@code HealthyKeyRoundRobinDistributor}(i%N 사전 분배)를 대체하는 동적 lease 메커니즘이다. 건강 키 판정은 기존
- * {@link HealthyKeySelector}에 위임하며(REQ-KISGATE-006 — 신규 헬스 로직 부재), 본 레지스트리는 in-use 카운터 기반
- * least-busy 선택만 담당한다.
+ * <p>구 정적 라운드로빈 분배(i%N 사전 분배, KISGATE-001로 제거됨)를 대체하는 동적 lease 메커니즘이다. 건강 키 판정은 기존 {@link
+ * HealthyKeySelector}에 위임하며(REQ-KISGATE-006 — 신규 헬스 로직 부재), 본 레지스트리는 in-use 카운터 기반 least-busy 선택만
+ * 담당한다.
  *
  * <p><strong>per-batch 스냅샷(DP3, REQ-KISGATE-006a):</strong> {@link #openSession()}이 {@link
  * HealthyKeySelector#selectHealthy()}를 <b>정확히 1회</b> 호출해 {@link LeaseSession}을 만든다. 그 세션의 모든 lease는

@@ -47,7 +47,7 @@ import org.springframework.web.util.UriBuilder;
 // @MX:SPEC: SPEC-COLLECTOR-KISGATE-001
 public class GuardedKisExecutor {
 
-    /** EGW00201/네트워크 재시도 상한 (패턴 C BatchRestExecutor와 동일 — 총 {@code MAX_RETRIES + 1}회 시도). */
+    /** EGW00201/네트워크 재시도 상한 (구 패턴 C 배치 경로 확정값 계승 — 총 {@code MAX_RETRIES + 1}회 시도). */
     static final int MAX_RETRIES = 2;
 
     private static final long BACKOFF_BASE_DELAY_MS = 500L;

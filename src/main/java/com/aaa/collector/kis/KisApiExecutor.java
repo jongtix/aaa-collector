@@ -43,11 +43,11 @@ public class KisApiExecutor {
      * @param responseType 응답 역직렬화 대상 클래스
      * @return 검증 완료된 응답 객체
      */
-    // @MX:ANCHOR: [AUTO] 단일키(isa) 경로 진입점 — ①단계(관심종목 그룹/종목 목록)만 사용, ②단계는 WLSYNC-006으로 멀티키 전환됨
-    // @MX:REASON: SPEC-COLLECTOR-WLSYNC-006 이후 ②단계(KisStockInfoClient)는 더 이상 단일키 경로를 쓰지 않음.
-    //             메서드 자체는 ①단계(KisWatchlistClient) 단일키 호출이 계속 사용하므로 보존(SPEC-COLLECTOR-TOKEN-001 제약
-    // 유지)
-    // @MX:SPEC: SPEC-COLLECTOR-WLSYNC-006
+    // @MX:NOTE: [AUTO] 단일키(isa) 경로 오버로드 — KISGATE-001 이후 프로덕션 직접 호출자 0(①단계 KisWatchlistClient도
+    //           GuardedKisExecutor 게이트로 전환됨). 4-arg에 firstCredential을 위임하는 편의 시그니처로만 보존한다.
+    // @MX:REASON: KisApiExecutorGateGuardTest(AC-2)가 두 오버로드(3-arg·4-arg)를 모두 가드 대상으로 검증하므로
+    //             public 시그니처를 유지한다(DP1=B: 가시성 축소 대신 ArchUnit 게이트-전용 가드로 외부 직접 호출 차단).
+    // @MX:SPEC: SPEC-COLLECTOR-KISGATE-001
     public <T extends KisApiResponse> T executeGet(
             Function<UriBuilder, URI> uriCustomizer, String trId, Class<T> responseType) {
 
@@ -68,9 +68,11 @@ public class KisApiExecutor {
      * @return 검증 완료된 응답 객체
      * @throws KisRateLimitException HTTP 500 + msg_cd=EGW00201 rate-limit 오류 식별 시
      */
-    // @MX:ANCHOR: [AUTO] 멀티키 배치 경로 진입점 — EGW00201 식별·KisRateLimitException 던짐 포함
-    // @MX:REASON: SPEC-COLLECTOR-BATCH-001 REQ-BATCH-001,-003 — 배치 호출의 5키 분산 실행기
-    // @MX:SPEC: SPEC-COLLECTOR-BATCH-001
+    // @MX:ANCHOR: [AUTO] KIS HTTP 단일 경계 — EGW00201 식별·KisRateLimitException 던짐 포함. KISGATE-001 이후
+    //             유일한 직접 호출자는 GuardedKisExecutor(게이트)이며, 그 외 직접 호출은 ArchUnit 가드로 차단된다(REQ-008).
+    // @MX:REASON: SPEC-COLLECTOR-KISGATE-001 REQ-008 — 모든 패턴 A/B/C 호출이 게이트를 거쳐 이 멀티키 경로로 수렴하는
+    //             보호 대상 경계(executeGet 게이트-전용 가드의 타깃 메서드).
+    // @MX:SPEC: SPEC-COLLECTOR-KISGATE-001
     public <T extends KisApiResponse> T executeGet(
             KisAccountCredential credential,
             Function<UriBuilder, URI> uriCustomizer,

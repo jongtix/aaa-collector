@@ -36,21 +36,12 @@ public class KisConfig {
     }
 
     /**
-     * KIS API rate limiter 빈.
-     *
-     * <p>기존 단일키 경로({@code WatchlistSyncService} 등)가 사용하는 단일 빈. SPEC-COLLECTOR-WLSYNC-005 유지.
-     *
-     * @return {@link KisProperties#rateLimit()} 설정 기반 KisRateLimiter
-     */
-    @Bean
-    KisRateLimiter kisRateLimiter(KisProperties kisProperties) {
-        return new KisRateLimiter(kisProperties.rateLimit());
-    }
-
-    /**
      * 앱키별 독립 {@link KisRateLimiter} 인스턴스 레지스트리 빈.
      *
-     * <p>배치 멀티키 경로에서 alias별 rate limiter를 획득하는 데 사용한다. 기존 단일 빈({@link #kisRateLimiter})은 유지한다.
+     * <p>모든 KIS REST 호출은 {@link com.aaa.collector.kis.gate.GuardedKisExecutor} 게이트가 본 레지스트리에서
+     * alias별 rate limiter를 획득해 throttle한다(SPEC-COLLECTOR-KISGATE-001). 기존 단일키 전용 {@code
+     * kisRateLimiter} 빈은 KISGATE-001 이후 소비자가 0이 되어 제거되었다(WatchlistSyncService 외부 throttle 제거 =
+     * T14).
      *
      * @return alias → KisRateLimiter 레지스트리
      */
