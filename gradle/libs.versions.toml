@@ -10,11 +10,15 @@ wiremock = "3.10.6"
 findsecbugs = "1.14.0"
 bucket4j = "8.10.1"
 jacoco = "0.8.13"
+# micrometer-registry-prometheus는 Spring Boot BOM(spring-boot 3.5.15 → micrometer 1.15.12)이 관리하나,
+# 의존성 버전 단일 소스 원칙(CLAUDE.md)에 따라 BOM 관리 버전과 동일하게 명시 핀 고정한다.
+micrometer = "1.15.12"
 
 [libraries]
 # Spring Boot (버전은 spring-dependency-management가 관리)
 spring-boot-starter-web = { group = "org.springframework.boot", name = "spring-boot-starter-web" }
 spring-boot-starter-actuator = { group = "org.springframework.boot", name = "spring-boot-starter-actuator" }
+micrometer-registry-prometheus = { group = "io.micrometer", name = "micrometer-registry-prometheus", version.ref = "micrometer" }
 spring-boot-starter-data-jpa = { group = "org.springframework.boot", name = "spring-boot-starter-data-jpa" }
 spring-boot-starter-data-redis = { group = "org.springframework.boot", name = "spring-boot-starter-data-redis" }
 spring-boot-starter-websocket = { group = "org.springframework.boot", name = "spring-boot-starter-websocket" }

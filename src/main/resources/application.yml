@@ -103,7 +103,8 @@ management:
   endpoints:
     web:
       exposure:
-        include: health
+        # REQ-OBSV-001/002: health + prometheus(VM 호환)만 노출, 그 외 actuator 엔드포인트 미노출
+        include: health,prometheus
   endpoint:
     health:
       show-details: never
