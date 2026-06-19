@@ -12,6 +12,8 @@ import com.aaa.collector.stock.FinancialRepository;
 import com.aaa.collector.stock.InvestorTrendRepository;
 import com.aaa.collector.stock.ShortSaleDomesticRepository;
 import com.aaa.collector.stock.StockRepository;
+import com.aaa.collector.stock.daily.OverseasDailyOhlcvCollectionService;
+import com.aaa.collector.stock.daily.OverseasDailyOhlcvScheduler;
 import com.aaa.collector.stock.etf.EtfMetadataRepository;
 import com.aaa.collector.stock.etf.EtfRepresentativeHistoryRepository;
 import com.aaa.collector.stock.grade.StockGradeRepository;
@@ -41,7 +43,11 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
             CorporateEventRepository.class,
             NewsHeadlineRepository.class,
             FinancialRepository.class,
-            AnalystEstimateRepository.class
+            AnalystEstimateRepository.class,
+            // SPEC-COLLECTOR-OVERSEAS-OHLCV-001 REQ-OVOH-043: 신규 미국 일봉 서비스/스케줄러 빈 모킹 (BATCH-003 회귀
+            // 방지)
+            OverseasDailyOhlcvCollectionService.class,
+            OverseasDailyOhlcvScheduler.class
         })
 class AaaCollectorApplicationTests {
 
