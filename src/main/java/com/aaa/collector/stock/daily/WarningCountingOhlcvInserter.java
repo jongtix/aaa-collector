@@ -14,12 +14,18 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
 
 /**
- * 일봉 INSERT IGNORE를 단일 JDBC 커넥션 배치로 실행하고 침묵 드롭 경고를 캡처한다 (REQ-OBSV-023, AC-5).
+ * 일봉 INSERT IGNORE를 단일 JDBC 커넥션에서 행별 실행하고 침묵 드롭 경고를 캡처한다 (REQ-OBSV-023, AC-5).
  *
  * <p>{@code daily_ohlcv}는 Tier-1 테이블이라 멱등 삽입에 {@code INSERT IGNORE}를 사용한다(ADR-026). INSERT IGNORE는
- * 영향 행 수로 정상 중복과 오류 드롭을 구분할 수 없으므로(둘 다 0행), 한 종목의 행들을 동일 {@link Connection}에서 배치 실행한 뒤 {@link
- * Connection#getWarnings()} 경고 체인을 {@link SilentDropWarningCounter}로 분석해 중복(1062) 외 침묵 드롭만 {@link
- * BatchMetrics}에 기록한다.
+ * 영향 행 수로 정상 중복과 오류 드롭을 구분할 수 없으므로(둘 다 0행), 한 종목의 행들을 {@link
+ * SilentDropWarningCounter#countDropsPerRow}로 행별 실행하며 각 행의 {@link PreparedStatement#getWarnings()}
+ * 경고 체인을 분석해 중복(1062) 외 침묵 드롭만 {@link BatchMetrics}에 기록한다.
+ *
+ * <p><b>경고 출처 — Statement.getWarnings() + 행별 executeUpdate</b>: MySQL Connector/J는 INSERT IGNORE가
+ * 강등한 경고(FK 위반 1452, 데이터 절단 1265 등)를 {@link Connection#getWarnings()}로는 전파하지 않고 실행 {@link
+ * PreparedStatement}에만 보고하며, 게다가 {@code executeBatch()}는 그 경고를 보존하지 않는다(실측 — 배치 실행 시 FK 위반 행도 경고
+ * 0). 따라서 행을 배치가 아닌 {@code executeUpdate()}로 하나씩 실행하고 각 행 직후 {@code ps.getWarnings()}를 읽어야 진짜 드롭이
+ * 집계된다 — 자세한 실측 근거는 {@link SilentDropWarningCounter} 참조.
  *
  * <p>{@code prepareStatement}는 본 클래스의 {@code private static final} 상수 {@link #INSERT_IGNORE_SQL}을
  * 직접 참조한다 — SQL 문자열이 메서드 파라미터·반환으로 흐르지 않아 정적 분석이 상수임을 증명할 수 있다(SQL 인젝션 오탐 차단). Tier-1 INSERT
@@ -48,7 +54,7 @@ public class WarningCountingOhlcvInserter {
     private final BatchMetrics batchMetrics;
 
     /**
-     * 한 종목의 검증된 일봉 행들을 단일 커넥션 배치로 멱등 삽입하고 침묵 드롭 경고를 기록한다.
+     * 한 종목의 검증된 일봉 행들을 단일 커넥션에서 행별로 멱등 삽입하고 침묵 드롭 경고를 기록한다.
      *
      * <p>KIS 행→DB 파라미터 매핑(파싱)을 본 클래스가 소유하여 호출 서비스의 결합도를 낮춘다(REQ-OBSV-023). 빈 목록이면 JDBC를 사용하지 않는다.
      *
@@ -64,15 +70,10 @@ public class WarningCountingOhlcvInserter {
         Long drops =
                 jdbcTemplate.execute(
                         (Connection conn) -> {
-                            conn.clearWarnings();
                             try (PreparedStatement ps = conn.prepareStatement(INSERT_IGNORE_SQL)) {
-                                for (KisDailyOhlcvResponse.DailyOhlcvRow row : rows) {
-                                    bindRow(ps, stockId, row, fmt);
-                                    ps.addBatch();
-                                }
-                                ps.executeBatch();
+                                return SilentDropWarningCounter.countDropsPerRow(
+                                        ps, rows, (s, row) -> bindRow(s, stockId, row, fmt));
                             }
-                            return SilentDropWarningCounter.countGenuineDrops(conn.getWarnings());
                         });
         batchMetrics.recordSilentDrops(drops == null ? 0L : drops);
     }

@@ -99,6 +99,29 @@ class WarningCountingOhlcvInserterIntegrationTest {
     }
 
     @Test
+    @DisplayName("FK 위반(1452) 배치 삽입 — 행이 드롭되고 침묵 드롭 ≥1로 집계된다 (진짜 데이터 유실)")
+    void genuineNonDuplicateDropIsCounted() {
+        // Arrange — stocks에 존재하지 않는 stock_id로 INSERT IGNORE → FK 위반 1452가 경고로 강등되고 행이 드롭
+        SimpleMeterRegistry registry = new SimpleMeterRegistry();
+        WarningCountingOhlcvInserter inserter = buildInserter(registry);
+        long missingStockId = 9_999_999L;
+
+        // Act
+        inserter.insertBatch(missingStockId, List.of(rowFor(LocalDate.of(2026, 6, 5))), DATE_FMT);
+
+        // Assert — 행은 드롭되어 0행, 침묵 드롭 카운터는 1062가 아닌 진짜 드롭으로 ≥1
+        Integer count =
+                new JdbcTemplate(dataSource)
+                        .queryForObject(
+                                "SELECT COUNT(*) FROM daily_ohlcv WHERE stock_id = ?",
+                                Integer.class,
+                                missingStockId);
+        assertThat(count).isZero();
+        assertThat(registry.get("aaa_collector_batch_silent_drops_total").counter().count())
+                .isGreaterThanOrEqualTo(1.0);
+    }
+
+    @Test
     @DisplayName("중복 키(1062) 배치 삽입 — 행 수 불변·침묵 드롭 미집계 (정상 멱등 중복)")
     void duplicateInsertDoesNotCountAsSilentDrop() {
         // Arrange

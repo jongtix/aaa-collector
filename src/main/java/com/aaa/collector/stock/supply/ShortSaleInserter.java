@@ -15,9 +15,15 @@ import org.springframework.stereotype.Component;
  * 공매도 일별추이 INSERT IGNORE를 단일 JDBC 커넥션 배치로 실행하고 침묵 드롭 경고를 캡처한다 (REQ-OBSV-023, AC-5).
  *
  * <p>{@code short_sale_domestic}은 Tier-1 테이블이라 멱등 삽입에 {@code INSERT IGNORE}를 사용한다(ADR-026). INSERT
- * IGNORE는 영향 행 수로 정상 중복과 오류 드롭을 구분할 수 없으므로(둘 다 0행), 한 종목의 검증 통과 행들을 동일 {@link Connection}에서 배치 실행한
- * 뒤 {@link Connection#getWarnings()} 경고 체인을 {@link SilentDropWarningCounter}로 분석해 중복(1062) 외 침묵 드롭만
- * {@link BatchMetrics}에 기록한다.
+ * IGNORE는 영향 행 수로 정상 중복과 오류 드롭을 구분할 수 없으므로(둘 다 0행), 한 종목의 검증 통과 행들을 {@link
+ * SilentDropWarningCounter#countDropsPerRow}로 행별 실행하며 각 행의 {@link PreparedStatement#getWarnings()}
+ * 경고 체인을 분석해 중복(1062) 외 침묵 드롭만 {@link BatchMetrics}에 기록한다.
+ *
+ * <p><b>경고 출처 — Statement.getWarnings() + 행별 executeUpdate</b>: MySQL Connector/J는 INSERT IGNORE가
+ * 강등한 경고(FK 위반 1452, 데이터 절단 1265 등)를 {@link Connection#getWarnings()}로는 전파하지 않고 실행 {@link
+ * PreparedStatement}에만 보고하며, {@code executeBatch()}는 그 경고를 보존하지 않는다(실측). 따라서 행을 배치가 아닌 {@code
+ * executeUpdate()}로 하나씩 실행하고 각 행 직후 {@code ps.getWarnings()}를 읽어야 진짜 드롭이 집계된다 — 자세한 실측 근거는 {@link
+ * SilentDropWarningCounter} 참조.
  *
  * <p>{@code prepareStatement}는 본 클래스의 {@code private static final} 상수 {@link #INSERT_IGNORE_SQL}을
  * 직접 참조한다 — SQL 문자열이 메서드 파라미터·반환으로 흐르지 않아 정적 분석이 상수임을 증명할 수 있다(SQL 인젝션 오탐 차단). 행→파라미터 바인딩을 본 클래스가
@@ -60,15 +66,10 @@ public class ShortSaleInserter {
         Long drops =
                 jdbcTemplate.execute(
                         (Connection conn) -> {
-                            conn.clearWarnings();
                             try (PreparedStatement ps = conn.prepareStatement(INSERT_IGNORE_SQL)) {
-                                for (ShortSaleDomestic row : rows) {
-                                    bindRow(ps, row);
-                                    ps.addBatch();
-                                }
-                                ps.executeBatch();
+                                return SilentDropWarningCounter.countDropsPerRow(
+                                        ps, rows, this::bindRow);
                             }
-                            return SilentDropWarningCounter.countGenuineDrops(conn.getWarnings());
                         });
         batchMetrics.recordSilentDrops(drops == null ? 0L : drops);
     }

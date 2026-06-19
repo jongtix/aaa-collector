@@ -23,6 +23,7 @@ import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import org.springframework.test.util.ReflectionTestUtils;
 import org.testcontainers.containers.MySQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
@@ -98,6 +99,37 @@ class ShortSaleInserterIntegrationTest {
         assertThat(count).isEqualTo(2);
         assertThat(registry.get("aaa_collector_batch_silent_drops_total").counter().count())
                 .isEqualTo(0.0);
+    }
+
+    @Test
+    @DisplayName("FK 위반(1452) 배치 삽입 — 행이 드롭되고 침묵 드롭 ≥1로 집계된다 (진짜 데이터 유실)")
+    void genuineNonDuplicateDropIsCounted() {
+        // Arrange — stocks에 존재하지 않는 stock_id로 INSERT IGNORE → FK 위반 1452가 경고로 강등되고 행이 드롭
+        SimpleMeterRegistry registry = new SimpleMeterRegistry();
+        ShortSaleInserter inserter = buildInserter(registry);
+        Stock detached =
+                Stock.builder()
+                        .symbol("999999")
+                        .nameKo("존재하지않는종목")
+                        .market(Market.KOSPI)
+                        .assetType(AssetType.STOCK)
+                        .listedDate(LocalDate.of(2015, 1, 1))
+                        .build();
+        ReflectionTestUtils.setField(detached, "id", 9_999_999L);
+
+        // Act
+        inserter.insertBatch(List.of(entity(detached, LocalDate.of(2026, 6, 5))));
+
+        // Assert — 행은 드롭되어 0행, 침묵 드롭 카운터는 1062가 아닌 진짜 드롭으로 ≥1
+        Integer count =
+                new JdbcTemplate(dataSource)
+                        .queryForObject(
+                                "SELECT COUNT(*) FROM short_sale_domestic WHERE stock_id = ?",
+                                Integer.class,
+                                9_999_999L);
+        assertThat(count).isZero();
+        assertThat(registry.get("aaa_collector_batch_silent_drops_total").counter().count())
+                .isGreaterThanOrEqualTo(1.0);
     }
 
     @Test

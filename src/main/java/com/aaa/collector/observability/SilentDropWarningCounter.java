@@ -1,15 +1,30 @@
 package com.aaa.collector.observability;
 
+import java.sql.PreparedStatement;
+import java.sql.SQLException;
 import java.sql.SQLWarning;
+import java.util.List;
 
 /**
  * INSERT IGNORE 실행 후 MySQL JDBC 경고 체인에서 침묵 드롭(중복 외 사유로 흡수된 행)을 판정한다 (REQ-OBSV-023, AC-5).
  *
  * <p>근본 원인 정합: INSERT IGNORE는 영향 행 수(affected-rows)로 정상 중복(0행)과 오류 드롭(0행)을 구분할 수 없다. 대신 실제 MySQL이
  * 발생시킨 경고(SQLWarning) 체인을 검사하여, 중복 키 경고({@value #ER_DUP_ENTRY}, ER_DUP_ENTRY)를 제외한 비-중복 경고만 침묵 드롭으로
- * 센다 — 데이터 절단(1265)·잘못된 값(1366) 등 진짜 데이터 유실을 가시화한다.
+ * 센다 — FK 위반(1452)·데이터 절단(1265)·잘못된 값(1366) 등 진짜 데이터 유실을 가시화한다.
  *
- * <p>순수 유틸 — 상태 없음. INSERT IGNORE 직후 동일 JDBC {@code Connection}/{@code Statement}의 경고 체인을 인자로 받는다.
+ * <p><b>경고 출처 — Statement.getWarnings() + 행별 executeUpdate (실측 근거)</b>: MySQL Connector/J 8.x를
+ * mysql:8.4에서 실측한 결과(SPEC-COLLECTOR-OBSV-001 검증), INSERT IGNORE가 강등한 경고는 다음 두 제약을 동시에 만족해야 캡처된다.
+ *
+ * <ol>
+ *   <li>{@link java.sql.Connection#getWarnings()}로는 전파되지 않고 오직 실행 {@link PreparedStatement}의 {@link
+ *       PreparedStatement#getWarnings()}에만 보고된다(JDBC 명세상 Connection 경고와 Statement 경고는 별개 체인).
+ *   <li>{@code executeBatch()}는 강등 경고를 statement에 보존하지 않는다(드라이버가 배치 실행 후 경고를 폐기 — 실측상 FK 위반 행도 경고
+ *       0). 행별 {@code executeUpdate()} 직후에만 {@code ps.getWarnings()}로 노출된다.
+ * </ol>
+ *
+ * <p>따라서 침묵 드롭을 신뢰성 있게 세려면 행을 배치가 아닌 {@code executeUpdate()}로 하나씩 실행하고, 각 행 직후 {@code
+ * ps.getWarnings()}를 읽어 누적해야 한다. {@link #countDropsPerRow}가 이 실행·누적 루프를 공유 제공하고, {@link
+ * #countGenuineDrops}가 한 체인의 비-1062 경고를 세는 순수 분류기다. 두 메서드 모두 상태 없음.
  */
 public final class SilentDropWarningCounter {
 
@@ -32,5 +47,37 @@ public final class SilentDropWarningCounter {
             }
         }
         return count;
+    }
+
+    /**
+     * 한 종목의 행들을 {@link PreparedStatement}로 하나씩 INSERT IGNORE 실행하고, 각 행 직후 statement 경고에서 침묵 드롭을
+     * 누적한다.
+     *
+     * <p>행별 {@code executeUpdate()} 직후에만 강등 경고가 노출되는 드라이버 제약(클래스 Javadoc 참조) 때문에 배치 대신 행 단위로 실행한다.
+     * 각 행 실행 전 {@code ps.clearWarnings()}로 이전 경고를 비워 행별로 정확히 분류한다.
+     *
+     * @param ps 바인딩 가능한 INSERT IGNORE PreparedStatement(호출자가 SQL을 상수로 준비)
+     * @param rows 삽입할 행 목록
+     * @param binder 한 행을 {@code ps}에 바인딩하는 콜백(파라미터 인덱스 1부터 설정)
+     * @param <T> 행 타입
+     * @return 전체 행에서 누적된 침묵 드롭(비-1062 경고) 수
+     * @throws SQLException JDBC 바인딩/실행 실패
+     */
+    public static <T> long countDropsPerRow(PreparedStatement ps, List<T> rows, RowBinder<T> binder)
+            throws SQLException {
+        long drops = 0L;
+        for (T row : rows) {
+            ps.clearWarnings();
+            binder.bind(ps, row);
+            ps.executeUpdate();
+            drops += countGenuineDrops(ps.getWarnings());
+        }
+        return drops;
+    }
+
+    /** 한 행을 {@link PreparedStatement}에 바인딩하는 콜백(인서터별 컬럼 매핑을 위임). */
+    @FunctionalInterface
+    public interface RowBinder<T> {
+        void bind(PreparedStatement ps, T row) throws SQLException;
     }
 }
