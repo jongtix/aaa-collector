@@ -8,7 +8,9 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-import com.aaa.collector.kis.KisApiExecutor;
+import com.aaa.collector.kis.gate.GuardedKisExecutor;
+import com.aaa.collector.kis.gate.KeyLeaseRegistry;
+import com.aaa.collector.kis.gate.KeyLeaseRegistry.LeaseSession;
 import com.aaa.collector.stock.enums.AssetType;
 import com.aaa.collector.stock.enums.EventType;
 import com.aaa.collector.stock.enums.Market;
@@ -24,19 +26,27 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
+import org.mockito.Mockito;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.dao.DataIntegrityViolationException;
 
-/** RevSplitCollectionService 단위 테스트 (T6/T7/T8/T9). */
+/**
+ * SPEC-COLLECTOR-KISGATE-001 M6(T20) — {@link RevSplitCollectionService} 게이트 경유 단위 테스트.
+ *
+ * <p>패턴 A는 Behavior:Changed이므로 신규 게이트 라우팅(throttle-on 4-arg 경유·단일 페이지 = 1 batch이므로 세션 1회 open)과 기존
+ * 수집 의미(분할/병합 분류·degenerate skip·비관심종목 skip·멱등·독성 행 흡수)를 함께 검증한다.
+ */
 @ExtendWith(MockitoExtension.class)
-@DisplayName("RevSplitCollectionService 단위 테스트")
+@DisplayName("RevSplitCollectionService — 게이트 경유 단위 테스트")
 class RevSplitCollectionServiceTest {
 
     private static final String TR_ID = "HHKDB669105C0";
 
-    @Mock private KisApiExecutor kisApiExecutor;
+    @Mock private GuardedKisExecutor guardedKisExecutor;
+    @Mock private KeyLeaseRegistry keyLeaseRegistry;
     @Mock private StockRepository stockRepository;
     @Mock private CorporateEventRepository corporateEventRepository;
+    @Mock private LeaseSession session;
 
     private RevSplitCollectionService service;
 
@@ -44,7 +54,11 @@ class RevSplitCollectionServiceTest {
     void setUp() {
         service =
                 new RevSplitCollectionService(
-                        kisApiExecutor, stockRepository, corporateEventRepository);
+                        guardedKisExecutor,
+                        keyLeaseRegistry,
+                        stockRepository,
+                        corporateEventRepository);
+        Mockito.lenient().when(keyLeaseRegistry.openSession()).thenReturn(session);
     }
 
     private Stock watchlistStock(String symbol) {
@@ -97,11 +111,12 @@ class RevSplitCollectionServiceTest {
         @SuppressWarnings("PMD.UnitTestContainsTooManyAsserts")
         @DisplayName(
                 "AC-MAP-1: 액면분할(af<bf) → event_subtype='분할', stock_rate=5.0000, face_value=100")
-        void splitRow_mappedAsSplit() {
+        void splitRow_mappedAsSplit() throws Exception {
             // Arrange
             Stock stock = watchlistStock("096960");
             when(stockRepository.findAllActive()).thenReturn(List.of(stock));
-            when(kisApiExecutor.executeGet(any(), eq(TR_ID), eq(KisRevSplitResponse.class)))
+            when(guardedKisExecutor.execute(
+                            eq(session), any(), eq(TR_ID), eq(KisRevSplitResponse.class)))
                     .thenReturn(singlePageResponse(List.of(splitRow("096960"))));
 
             // Act
@@ -131,11 +146,12 @@ class RevSplitCollectionServiceTest {
         @SuppressWarnings("PMD.UnitTestContainsTooManyAsserts")
         @DisplayName(
                 "AC-MAP-2: 액면병합(af>bf, bf>0) → event_subtype='병합', stock_rate=0.2000, face_value=2500")
-        void mergeRow_mappedAsMerge() {
+        void mergeRow_mappedAsMerge() throws Exception {
             // Arrange
             Stock stock = watchlistStock("025440");
             when(stockRepository.findAllActive()).thenReturn(List.of(stock));
-            when(kisApiExecutor.executeGet(any(), eq(TR_ID), eq(KisRevSplitResponse.class)))
+            when(guardedKisExecutor.execute(
+                            eq(session), any(), eq(TR_ID), eq(KisRevSplitResponse.class)))
                     .thenReturn(singlePageResponse(List.of(mergeRow("025440"))));
 
             // Act
@@ -158,11 +174,12 @@ class RevSplitCollectionServiceTest {
 
         @Test
         @DisplayName("AC-MAP-3: 무변동(af==bf==0) → graceful skip, skippedValidation 집계")
-        void noChangeRow_gracefulSkip() {
+        void noChangeRow_gracefulSkip() throws Exception {
             // Arrange
             Stock stock = watchlistStock("900100");
             when(stockRepository.findAllActive()).thenReturn(List.of(stock));
-            when(kisApiExecutor.executeGet(any(), eq(TR_ID), eq(KisRevSplitResponse.class)))
+            when(guardedKisExecutor.execute(
+                            eq(session), any(), eq(TR_ID), eq(KisRevSplitResponse.class)))
                     .thenReturn(singlePageResponse(List.of(noChangeRow("900100"))));
 
             // Act
@@ -179,11 +196,12 @@ class RevSplitCollectionServiceTest {
         @Test
         @DisplayName(
                 "AC-MAP-3b: degenerate(bf=0, af>0) — CR-01 회귀 방지: '병합' 오분류 차단, stock_rate=0.0000 저장 안 됨")
-        void degenerateRow_gracefulSkipNotMappedAsMerge() {
+        void degenerateRow_gracefulSkipNotMappedAsMerge() throws Exception {
             // Arrange — 실측 900250(bf=0/af=2) 케이스
             Stock stock = watchlistStock("900250");
             when(stockRepository.findAllActive()).thenReturn(List.of(stock));
-            when(kisApiExecutor.executeGet(any(), eq(TR_ID), eq(KisRevSplitResponse.class)))
+            when(guardedKisExecutor.execute(
+                            eq(session), any(), eq(TR_ID), eq(KisRevSplitResponse.class)))
                     .thenReturn(singlePageResponse(List.of(degenerateRow("900250"))));
 
             // Act
@@ -199,11 +217,12 @@ class RevSplitCollectionServiceTest {
 
         @Test
         @DisplayName("9자리 zero-pad 면액 파싱 정상 처리 — 앞 0 흡수")
-        void zeroPadAmount_parsedCorrectly() {
+        void zeroPadAmount_parsedCorrectly() throws Exception {
             // Arrange — "000000500" → 500, "000002500" → 2500
             Stock stock = watchlistStock("096960");
             when(stockRepository.findAllActive()).thenReturn(List.of(stock));
-            when(kisApiExecutor.executeGet(any(), eq(TR_ID), eq(KisRevSplitResponse.class)))
+            when(guardedKisExecutor.execute(
+                            eq(session), any(), eq(TR_ID), eq(KisRevSplitResponse.class)))
                     .thenReturn(singlePageResponse(List.of(splitRow("096960"))));
 
             // Act
@@ -217,7 +236,7 @@ class RevSplitCollectionServiceTest {
 
         @Test
         @DisplayName("비종료 소수 비율(100/300=0.3333) — divide(4,HALF_UP) ArithmeticException 없음 (MA-01)")
-        void nonTerminatingRatio_noArithmeticException() {
+        void nonTerminatingRatio_noArithmeticException() throws Exception {
             // Arrange — bf=300, af=100 → 300/100 = 3.0000 (종료 소수)
             //           bf=100, af=300 → 100/300 = 0.3333... (비종료 소수 — HALF_UP으로 0.3333)
             KisRevSplitResponse.RevSplitRow row =
@@ -225,7 +244,8 @@ class RevSplitCollectionServiceTest {
                             "20260613", "096960", "테스트", "000000100", "000000300", "", "");
             Stock stock = watchlistStock("096960");
             when(stockRepository.findAllActive()).thenReturn(List.of(stock));
-            when(kisApiExecutor.executeGet(any(), eq(TR_ID), eq(KisRevSplitResponse.class)))
+            when(guardedKisExecutor.execute(
+                            eq(session), any(), eq(TR_ID), eq(KisRevSplitResponse.class)))
                     .thenReturn(singlePageResponse(List.of(row)));
 
             // Act — ArithmeticException 없이 완료
@@ -243,11 +263,12 @@ class RevSplitCollectionServiceTest {
         @Test
         @DisplayName(
                 "미저장 필드(td_stop_dt/list_dt/isin_name) — corporate_events에 저장 안 됨, SPLIT 행 미사용 컬럼 null")
-        void unusedFields_notStored() {
+        void unusedFields_notStored() throws Exception {
             // Arrange
             Stock stock = watchlistStock("096960");
             when(stockRepository.findAllActive()).thenReturn(List.of(stock));
-            when(kisApiExecutor.executeGet(any(), eq(TR_ID), eq(KisRevSplitResponse.class)))
+            when(guardedKisExecutor.execute(
+                            eq(session), any(), eq(TR_ID), eq(KisRevSplitResponse.class)))
                     .thenReturn(singlePageResponse(List.of(splitRow("096960"))));
 
             // Act
@@ -279,11 +300,12 @@ class RevSplitCollectionServiceTest {
 
         @Test
         @DisplayName("동일 행 재수집 시 insertIgnoreDuplicate 재호출 (DB가 중복 무시)")
-        void idempotentRerun() {
+        void idempotentRerun() throws Exception {
             // Arrange
             Stock stock = watchlistStock("096960");
             when(stockRepository.findAllActive()).thenReturn(List.of(stock));
-            when(kisApiExecutor.executeGet(any(), eq(TR_ID), eq(KisRevSplitResponse.class)))
+            when(guardedKisExecutor.execute(
+                            eq(session), any(), eq(TR_ID), eq(KisRevSplitResponse.class)))
                     .thenReturn(singlePageResponse(List.of(splitRow("096960"))));
 
             // Act — 2회 실행
@@ -304,27 +326,31 @@ class RevSplitCollectionServiceTest {
     class PathAndPagingTests {
 
         @Test
-        @DisplayName("AC-PATH-1: 단일키(isa) KisApiExecutor 경로 사용 — TR_ID=HHKDB669105C0")
-        void singleKeyPath_kisApiExecutorUsed() {
+        @DisplayName(
+                "AC-PATH-1: 게이트 경유 — 단일 페이지 = 1 batch, 세션 1회 open, throttle-on 경유 TR_ID=HHKDB669105C0")
+        void gatePath_routedThroughGuardedExecutor() throws Exception {
             // Arrange
             when(stockRepository.findAllActive()).thenReturn(List.of());
-            when(kisApiExecutor.executeGet(any(), eq(TR_ID), eq(KisRevSplitResponse.class)))
+            when(guardedKisExecutor.execute(
+                            eq(session), any(), eq(TR_ID), eq(KisRevSplitResponse.class)))
                     .thenReturn(singlePageResponse(List.of()));
 
             // Act
             service.collect(LocalDate.of(2026, 5, 30), LocalDate.of(2026, 8, 15));
 
-            // Assert — KisApiExecutor 1회 호출, TR_ID=HHKDB669105C0
-            verify(kisApiExecutor, times(1))
-                    .executeGet(any(), eq(TR_ID), eq(KisRevSplitResponse.class));
+            // Assert — 게이트 1회 경유(throttle-on 4-arg), per-batch 스냅샷 1회
+            verify(keyLeaseRegistry, times(1)).openSession();
+            verify(guardedKisExecutor, times(1))
+                    .execute(eq(session), any(), eq(TR_ID), eq(KisRevSplitResponse.class));
         }
 
         @Test
         @DisplayName("AC-PATH-5: 빈 output1 → 단일 페이지 종료, 저장 없음 (0건 정상 집계)")
-        void emptyOutput1_zeroSuccess() {
+        void emptyOutput1_zeroSuccess() throws Exception {
             // Arrange
             when(stockRepository.findAllActive()).thenReturn(List.of());
-            when(kisApiExecutor.executeGet(any(), eq(TR_ID), eq(KisRevSplitResponse.class)))
+            when(guardedKisExecutor.execute(
+                            eq(session), any(), eq(TR_ID), eq(KisRevSplitResponse.class)))
                     .thenReturn(singlePageResponse(List.of()));
 
             // Act
@@ -339,7 +365,7 @@ class RevSplitCollectionServiceTest {
 
         @Test
         @DisplayName("100건 캡 도달 시 WARN 로그 경로 실행 — capReached=true, 정상 집계 (PROBE-1)")
-        void hundredRowCap_warnLogged_normalResult() {
+        void hundredRowCap_warnLogged_normalResult() throws Exception {
             // Arrange — 정확히 100개 행 (캡 도달 조건: >= 100)
             Stock stock = watchlistStock("096960");
             when(stockRepository.findAllActive()).thenReturn(List.of(stock));
@@ -349,7 +375,8 @@ class RevSplitCollectionServiceTest {
             rows.add(splitRow("096960"));
             IntStream.range(1, 100).forEach(i -> rows.add(splitRow(String.format("%06d", i))));
 
-            when(kisApiExecutor.executeGet(any(), eq(TR_ID), eq(KisRevSplitResponse.class)))
+            when(guardedKisExecutor.execute(
+                            eq(session), any(), eq(TR_ID), eq(KisRevSplitResponse.class)))
                     .thenReturn(singlePageResponse(rows));
 
             // Act
@@ -364,19 +391,20 @@ class RevSplitCollectionServiceTest {
 
         @Test
         @DisplayName("단일 페이지만 호출 — 연속조회 없음 (PROBE-1 확정: CTS 구조적 불가)")
-        void singlePage_noFollowUpCall() {
+        void singlePage_noFollowUpCall() throws Exception {
             // Arrange
             Stock stock = watchlistStock("096960");
             when(stockRepository.findAllActive()).thenReturn(List.of(stock));
-            when(kisApiExecutor.executeGet(any(), eq(TR_ID), eq(KisRevSplitResponse.class)))
+            when(guardedKisExecutor.execute(
+                            eq(session), any(), eq(TR_ID), eq(KisRevSplitResponse.class)))
                     .thenReturn(singlePageResponse(List.of(splitRow("096960"))));
 
             // Act
             service.collect(LocalDate.of(2026, 5, 30), LocalDate.of(2026, 8, 15));
 
-            // Assert — 정확히 1회만 호출
-            verify(kisApiExecutor, times(1))
-                    .executeGet(any(), eq(TR_ID), eq(KisRevSplitResponse.class));
+            // Assert — 게이트 정확히 1회만 경유(단일 페이지)
+            verify(guardedKisExecutor, times(1))
+                    .execute(eq(session), any(), eq(TR_ID), eq(KisRevSplitResponse.class));
         }
     }
 
@@ -390,11 +418,12 @@ class RevSplitCollectionServiceTest {
 
         @Test
         @DisplayName("AC-FILTER-1: 비관심종목 skip — 개별 WARN 없음, 집계 카운트만")
-        void nonWatchlistRows_skipped_aggregateCounted() {
+        void nonWatchlistRows_skipped_aggregateCounted() throws Exception {
             // Arrange — 관심: 096960, 비관심: 000001, 000002
             Stock watchlistStock = watchlistStock("096960");
             when(stockRepository.findAllActive()).thenReturn(List.of(watchlistStock));
-            when(kisApiExecutor.executeGet(any(), eq(TR_ID), eq(KisRevSplitResponse.class)))
+            when(guardedKisExecutor.execute(
+                            eq(session), any(), eq(TR_ID), eq(KisRevSplitResponse.class)))
                     .thenReturn(
                             singlePageResponse(
                                     List.of(
@@ -415,13 +444,14 @@ class RevSplitCollectionServiceTest {
 
         @Test
         @DisplayName("sht_cd null 행 → skippedValidation, 다음 행 계속")
-        void nullShtCd_skippedValidation() {
+        void nullShtCd_skippedValidation() throws Exception {
             // Arrange
             KisRevSplitResponse.RevSplitRow nullShtCd =
                     new KisRevSplitResponse.RevSplitRow(
                             "20260613", null, "테스트", "000000500", "000000100", "", "");
             when(stockRepository.findAllActive()).thenReturn(List.of());
-            when(kisApiExecutor.executeGet(any(), eq(TR_ID), eq(KisRevSplitResponse.class)))
+            when(guardedKisExecutor.execute(
+                            eq(session), any(), eq(TR_ID), eq(KisRevSplitResponse.class)))
                     .thenReturn(singlePageResponse(List.of(nullShtCd)));
 
             // Act
@@ -435,14 +465,15 @@ class RevSplitCollectionServiceTest {
 
         @Test
         @DisplayName("record_date 파싱 불가 행 → skippedValidation")
-        void invalidRecordDate_skippedValidation() {
+        void invalidRecordDate_skippedValidation() throws Exception {
             // Arrange
             KisRevSplitResponse.RevSplitRow badDate =
                     new KisRevSplitResponse.RevSplitRow(
                             "invalid-date", "096960", "테스트", "000000500", "000000100", "", "");
             Stock stock = watchlistStock("096960");
             when(stockRepository.findAllActive()).thenReturn(List.of(stock));
-            when(kisApiExecutor.executeGet(any(), eq(TR_ID), eq(KisRevSplitResponse.class)))
+            when(guardedKisExecutor.execute(
+                            eq(session), any(), eq(TR_ID), eq(KisRevSplitResponse.class)))
                     .thenReturn(singlePageResponse(List.of(badDate)));
 
             // Act
@@ -456,14 +487,15 @@ class RevSplitCollectionServiceTest {
 
         @Test
         @DisplayName("AC-VAL-1: degenerate(bf<=0) → skippedValidation (분류 이전 skip)")
-        void degenerateAfLessOrEqualZero_skippedValidation() {
+        void degenerateAfLessOrEqualZero_skippedValidation() throws Exception {
             // Arrange — af=-1 degenerate
             KisRevSplitResponse.RevSplitRow row =
                     new KisRevSplitResponse.RevSplitRow(
                             "20260601", "900250", "외국주", "000000000", "-000000001", "", "");
             Stock stock = watchlistStock("900250");
             when(stockRepository.findAllActive()).thenReturn(List.of(stock));
-            when(kisApiExecutor.executeGet(any(), eq(TR_ID), eq(KisRevSplitResponse.class)))
+            when(guardedKisExecutor.execute(
+                            eq(session), any(), eq(TR_ID), eq(KisRevSplitResponse.class)))
                     .thenReturn(singlePageResponse(List.of(row)));
 
             // Act
@@ -478,11 +510,12 @@ class RevSplitCollectionServiceTest {
         @Test
         @DisplayName(
                 "AC-VAL-4: 4항 불변식 — attempted = succeeded + skippedNonWatchlist + skippedValidation")
-        void fourFieldInvariant() {
+        void fourFieldInvariant() throws Exception {
             // Arrange — 관심 1(분할성공) + 비관심 2 + degenerate 1(skippedValidation)
             Stock stock = watchlistStock("096960");
             when(stockRepository.findAllActive()).thenReturn(List.of(stock));
-            when(kisApiExecutor.executeGet(any(), eq(TR_ID), eq(KisRevSplitResponse.class)))
+            when(guardedKisExecutor.execute(
+                            eq(session), any(), eq(TR_ID), eq(KisRevSplitResponse.class)))
                     .thenReturn(
                             singlePageResponse(
                                     List.of(
@@ -509,10 +542,11 @@ class RevSplitCollectionServiceTest {
 
         @Test
         @DisplayName("AC-VAL-3: 빈 output1 → 0건 성공 집계 (skip/실패 아님)")
-        void emptyOutput1_zeroSuccessNormal() {
+        void emptyOutput1_zeroSuccessNormal() throws Exception {
             // Arrange
             when(stockRepository.findAllActive()).thenReturn(List.of());
-            when(kisApiExecutor.executeGet(any(), eq(TR_ID), eq(KisRevSplitResponse.class)))
+            when(guardedKisExecutor.execute(
+                            eq(session), any(), eq(TR_ID), eq(KisRevSplitResponse.class)))
                     .thenReturn(singlePageResponse(List.of()));
 
             // Act
@@ -528,14 +562,15 @@ class RevSplitCollectionServiceTest {
 
         @Test
         @DisplayName("DECIMAL(12,4) 정수부 경계 초과 비율 → skippedValidation")
-        void ratioExceedsDecimalBound_skippedValidation() {
+        void ratioExceedsDecimalBound_skippedValidation() throws Exception {
             // Arrange — bf=10^9, af=1 → ratio=10^9 (정수부 9자리 > 8자리 초과)
             KisRevSplitResponse.RevSplitRow row =
                     new KisRevSplitResponse.RevSplitRow(
                             "20260613", "096960", "테스트", "1000000000", "000000001", "", "");
             Stock stock = watchlistStock("096960");
             when(stockRepository.findAllActive()).thenReturn(List.of(stock));
-            when(kisApiExecutor.executeGet(any(), eq(TR_ID), eq(KisRevSplitResponse.class)))
+            when(guardedKisExecutor.execute(
+                            eq(session), any(), eq(TR_ID), eq(KisRevSplitResponse.class)))
                     .thenReturn(singlePageResponse(List.of(row)));
 
             // Act
@@ -550,7 +585,7 @@ class RevSplitCollectionServiceTest {
         @Test
         @DisplayName(
                 "분할/병합 혼재 + degenerate/무변동 skip — skippedValidation에 degenerate/무변동 흡수 (MA-02)")
-        void mixedRows_degenerateAndNoChangeAbsorbedInSkippedValidation() {
+        void mixedRows_degenerateAndNoChangeAbsorbedInSkippedValidation() throws Exception {
             // Arrange — 4종목 모두 관심종목으로 등록하여 watchlist skip이 아닌 validation skip 검증
             Stock stock1 = watchlistStock("096960"); // 분할
             Stock stock2 = watchlistStock("025440"); // 병합
@@ -558,7 +593,8 @@ class RevSplitCollectionServiceTest {
             Stock stock4 = watchlistStock("900100"); // 무변동(af==bf==0) → skippedValidation
             when(stockRepository.findAllActive())
                     .thenReturn(List.of(stock1, stock2, stock3, stock4));
-            when(kisApiExecutor.executeGet(any(), eq(TR_ID), eq(KisRevSplitResponse.class)))
+            when(guardedKisExecutor.execute(
+                            eq(session), any(), eq(TR_ID), eq(KisRevSplitResponse.class)))
                     .thenReturn(
                             singlePageResponse(
                                     List.of(
@@ -583,10 +619,11 @@ class RevSplitCollectionServiceTest {
 
         @Test
         @DisplayName("윈도우 파라미터 — 서비스 메서드가 LocalDate from/to를 YYYYMMDD로 변환해 전달")
-        void windowParams_convertedToYyyyMmDd() {
+        void windowParams_convertedToYyyyMmDd() throws Exception {
             // Arrange
             when(stockRepository.findAllActive()).thenReturn(List.of());
-            when(kisApiExecutor.executeGet(any(), eq(TR_ID), eq(KisRevSplitResponse.class)))
+            when(guardedKisExecutor.execute(
+                            eq(session), any(), eq(TR_ID), eq(KisRevSplitResponse.class)))
                     .thenReturn(singlePageResponse(List.of()));
 
             LocalDate from = LocalDate.of(2026, 6, 3); // today-14
@@ -595,20 +632,22 @@ class RevSplitCollectionServiceTest {
             // Act
             service.collect(from, to);
 
-            // Assert — executeGet이 호출되었음 (파라미터 검증은 캡처로)
-            verify(kisApiExecutor).executeGet(any(), eq(TR_ID), eq(KisRevSplitResponse.class));
+            // Assert — 게이트가 경유되었음 (파라미터 검증은 캡처로)
+            verify(guardedKisExecutor)
+                    .execute(eq(session), any(), eq(TR_ID), eq(KisRevSplitResponse.class));
         }
 
         @Test
         @DisplayName("record_date 빈 문자열 행 → skippedValidation")
-        void blankRecordDate_skippedValidation() {
+        void blankRecordDate_skippedValidation() throws Exception {
             // Arrange
             KisRevSplitResponse.RevSplitRow blankDate =
                     new KisRevSplitResponse.RevSplitRow(
                             "   ", "096960", "테스트", "000000500", "000000100", "", "");
             Stock stock = watchlistStock("096960");
             when(stockRepository.findAllActive()).thenReturn(List.of(stock));
-            when(kisApiExecutor.executeGet(any(), eq(TR_ID), eq(KisRevSplitResponse.class)))
+            when(guardedKisExecutor.execute(
+                            eq(session), any(), eq(TR_ID), eq(KisRevSplitResponse.class)))
                     .thenReturn(singlePageResponse(List.of(blankDate)));
 
             // Act
@@ -621,14 +660,15 @@ class RevSplitCollectionServiceTest {
 
         @Test
         @DisplayName("면액 파싱 실패(null 값) → skippedValidation")
-        void faceAmountParseFailure_skippedValidation() {
+        void faceAmountParseFailure_skippedValidation() throws Exception {
             // Arrange — interAfFaceAmt에 null 전달
             KisRevSplitResponse.RevSplitRow row =
                     new KisRevSplitResponse.RevSplitRow(
                             "20260613", "096960", "테스트", "000000500", null, "", "");
             Stock stock = watchlistStock("096960");
             when(stockRepository.findAllActive()).thenReturn(List.of(stock));
-            when(kisApiExecutor.executeGet(any(), eq(TR_ID), eq(KisRevSplitResponse.class)))
+            when(guardedKisExecutor.execute(
+                            eq(session), any(), eq(TR_ID), eq(KisRevSplitResponse.class)))
                     .thenReturn(singlePageResponse(List.of(row)));
 
             // Act
@@ -641,13 +681,14 @@ class RevSplitCollectionServiceTest {
 
         @Test
         @DisplayName("독성 행 insertIgnoreDuplicate 예외 → skippedValidation, 나머지 행 계속 처리")
-        void poisonRowInsertException_otherRowsProcessed() {
+        void poisonRowInsertException_otherRowsProcessed() throws Exception {
             // Arrange
             Stock stock = watchlistStock("096960");
             when(stockRepository.findAllActive()).thenReturn(List.of(stock));
-            when(kisApiExecutor.executeGet(any(), eq(TR_ID), eq(KisRevSplitResponse.class)))
+            when(guardedKisExecutor.execute(
+                            eq(session), any(), eq(TR_ID), eq(KisRevSplitResponse.class)))
                     .thenReturn(singlePageResponse(List.of(splitRow("096960"))));
-            org.mockito.Mockito.doThrow(new DataIntegrityViolationException("dup"))
+            Mockito.doThrow(new DataIntegrityViolationException("dup"))
                     .when(corporateEventRepository)
                     .insertIgnoreDuplicate(any());
 
@@ -663,14 +704,15 @@ class RevSplitCollectionServiceTest {
 
         @Test
         @DisplayName("parseLongOrNull — 빈 문자열 → null (면액 파싱 실패 → skip)")
-        void blankFaceAmount_parseLongOrNullReturnsNull() {
+        void blankFaceAmount_parseLongOrNullReturnsNull() throws Exception {
             // Arrange — interBfFaceAmt 빈 문자열 → parseLongOrNull null → skip
             KisRevSplitResponse.RevSplitRow row =
                     new KisRevSplitResponse.RevSplitRow(
                             "20260613", "096960", "테스트", "", "000000100", "", "");
             Stock stock = watchlistStock("096960");
             when(stockRepository.findAllActive()).thenReturn(List.of(stock));
-            when(kisApiExecutor.executeGet(any(), eq(TR_ID), eq(KisRevSplitResponse.class)))
+            when(guardedKisExecutor.execute(
+                            eq(session), any(), eq(TR_ID), eq(KisRevSplitResponse.class)))
                     .thenReturn(singlePageResponse(List.of(row)));
 
             // Act

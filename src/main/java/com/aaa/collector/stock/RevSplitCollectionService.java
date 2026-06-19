@@ -1,6 +1,8 @@
 package com.aaa.collector.stock;
 
-import com.aaa.collector.kis.KisApiExecutor;
+import com.aaa.collector.kis.gate.GuardedKisExecutor;
+import com.aaa.collector.kis.gate.KeyLeaseRegistry;
+import com.aaa.collector.kis.gate.KeyLeaseRegistry.LeaseSession;
 import com.aaa.collector.stock.enums.EventType;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
@@ -19,8 +21,11 @@ import org.springframework.stereotype.Service;
 /**
  * 예탁원정보 액면교체일정 수집 서비스 (TR HHKDB669105C0, REQ-BATCH5-010~073).
  *
- * <p>단일키(isa) 단일 호출, {@code SHT_CD=공백}(전체 종목), {@code MARKET_GB=0}(전체), 단일 페이지(PROBE-1: CTS 연속조회
- * 구조적 불가 확정 — top-level cts 필드 없음, 동일 범위 재호출 시 동일 100건).
+ * <p>단일 호출, {@code SHT_CD=공백}(전체 종목), {@code MARKET_GB=0}(전체), 단일 페이지(PROBE-1: CTS 연속조회 구조적 불가 확정 —
+ * top-level cts 필드 없음, 동일 범위 재호출 시 동일 100건). 호출은 단일 보호 게이트 {@link GuardedKisExecutor}를
+ * 경유한다(SPEC-COLLECTOR-KISGATE-001 REQ-KISGATE-001) — 기존 3-arg 맨몸 호출(throttle❌·재시도❌·isa 단일키)에서
+ * throttle✅·재시도✅·멀티키 lease✅로 바뀐 의도된 동작 변경(패턴 A). 단일 페이지 = 1 batch이므로 자체 {@link LeaseSession}을 1회
+ * 연다(REQ-KISGATE-006a). 소진 시 게이트가 예외를 전파한다(패턴 A 종단 = 예외 전파, REQ-KISGATE-022).
  *
  * <p>관심종목만 저장(REQ-BATCH5-050): {@code sht_cd}가 활성 관심종목에 없는 행은 건별 skip + 집계 카운트 로깅(개별 WARN 남발 금지).
  *
@@ -53,7 +58,8 @@ public class RevSplitCollectionService {
     private static final String TR_ID = "HHKDB669105C0";
     private static final String PATH = "/uapi/domestic-stock/v1/ksdinfo/rev-split";
 
-    private final KisApiExecutor kisApiExecutor;
+    private final GuardedKisExecutor guardedKisExecutor;
+    private final KeyLeaseRegistry keyLeaseRegistry;
     private final StockRepository stockRepository;
     private final CorporateEventRepository corporateEventRepository;
 
@@ -71,21 +77,13 @@ public class RevSplitCollectionService {
         // 관심종목 맵 — 심볼 기준 조회 (비관심종목 skip 판단용)
         Map<String, Stock> watchlistMap = buildWatchlistMap();
 
+        // REQ-KISGATE-006a: 단일 페이지 = 1 batch — per-batch 헬스 스냅샷 1회 고정
+        LeaseSession session = keyLeaseRegistry.openSession();
+
         // REQ-BATCH5-011: SHT_CD=공백(전체), MARKET_GB=0(전체), F_DT/T_DT 윈도우
         String fromDate = from.format(DATE_FMT);
         String toDate = to.format(DATE_FMT);
-        KisRevSplitResponse response =
-                kisApiExecutor.executeGet(
-                        uri ->
-                                uri.path(PATH)
-                                        .queryParam("SHT_CD", "")
-                                        .queryParam("MARKET_GB", "0")
-                                        .queryParam("F_DT", fromDate)
-                                        .queryParam("T_DT", toDate)
-                                        .queryParam("CTS", "")
-                                        .build(),
-                        TR_ID,
-                        KisRevSplitResponse.class);
+        KisRevSplitResponse response = fetch(session, fromDate, toDate);
 
         List<KisRevSplitResponse.RevSplitRow> rows = response.output1();
 
@@ -121,6 +119,31 @@ public class RevSplitCollectionService {
                 result.skippedNonWatchlist(),
                 result.skippedValidation());
         return result;
+    }
+
+    /**
+     * 게이트를 경유해 액면교체 단일 페이지 조회를 수행한다(REQ-BATCH5-011).
+     *
+     * <p>인터럽트 수신 시 플래그를 복원한 뒤 {@link IllegalStateException}으로 전파한다(패턴 A 종단 = 예외 전파).
+     */
+    private KisRevSplitResponse fetch(LeaseSession session, String fromDate, String toDate) {
+        try {
+            return guardedKisExecutor.execute(
+                    session,
+                    uri ->
+                            uri.path(PATH)
+                                    .queryParam("SHT_CD", "")
+                                    .queryParam("MARKET_GB", "0")
+                                    .queryParam("F_DT", fromDate)
+                                    .queryParam("T_DT", toDate)
+                                    .queryParam("CTS", "")
+                                    .build(),
+                    TR_ID,
+                    KisRevSplitResponse.class);
+        } catch (InterruptedException ie) {
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException("rev-split 수집 중 인터럽트", ie);
+        }
     }
 
     private RowCounts processRows(
