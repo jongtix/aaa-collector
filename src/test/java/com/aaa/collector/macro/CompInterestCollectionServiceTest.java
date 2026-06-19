@@ -8,7 +8,9 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-import com.aaa.collector.kis.KisApiExecutor;
+import com.aaa.collector.kis.gate.GuardedKisExecutor;
+import com.aaa.collector.kis.gate.KeyLeaseRegistry;
+import com.aaa.collector.kis.gate.KeyLeaseRegistry.LeaseSession;
 import com.aaa.collector.macro.enums.MacroSource;
 import java.math.BigDecimal;
 import java.time.LocalDate;
@@ -20,20 +22,42 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
+import org.mockito.Mockito;
 import org.mockito.junit.jupiter.MockitoExtension;
 
+/**
+ * SPEC-COLLECTOR-KISGATE-001 M6(T16) — {@link CompInterestCollectionService} 게이트 경유 단위 테스트.
+ *
+ * <p>패턴 A는 Behavior:Changed이므로 신규 게이트 라우팅(throttle-on 4-arg 경유·단발 collect()당 세션 1회 open)과 기존 수집
+ * 의미(malformed graceful skip·멱등·null 키 skip)를 함께 검증한다. 게이트의 매 시도 재경유·재시도는 {@code
+ * GuardedKisExecutorTest}가 담당하므로 본 테스트는 응답 매핑·집계에 집중한다.
+ */
 @ExtendWith(MockitoExtension.class)
-@DisplayName("CompInterestCollectionService 단위 테스트")
+@DisplayName("CompInterestCollectionService — 게이트 경유 단위 테스트")
 class CompInterestCollectionServiceTest {
 
-    @Mock private KisApiExecutor kisApiExecutor;
+    private static final String TR_ID = "FHPST07020000";
+
+    @Mock private GuardedKisExecutor guardedKisExecutor;
+    @Mock private KeyLeaseRegistry keyLeaseRegistry;
     @Mock private MacroIndicatorRepository macroIndicatorRepository;
+    @Mock private LeaseSession session;
 
     private CompInterestCollectionService service;
 
     @BeforeEach
     void setUp() {
-        service = new CompInterestCollectionService(kisApiExecutor, macroIndicatorRepository);
+        service =
+                new CompInterestCollectionService(
+                        guardedKisExecutor, keyLeaseRegistry, macroIndicatorRepository);
+        Mockito.lenient().when(keyLeaseRegistry.openSession()).thenReturn(session);
+    }
+
+    /** 게이트가 주어진 응답을 반환하도록 stub한다(throttle-on 4-arg 경유). */
+    private void stubGate(KisCompInterestResponse response) throws InterruptedException {
+        when(guardedKisExecutor.execute(
+                        eq(session), any(), eq(TR_ID), eq(KisCompInterestResponse.class)))
+                .thenReturn(response);
     }
 
     private KisCompInterestResponse response(List<KisCompInterestResponse.CompInterestRow> rows) {
@@ -60,6 +84,30 @@ class CompInterestCollectionServiceTest {
     }
 
     // ────────────────────────────────────────────────────────────────────
+    // 신규 게이트 라우팅 (Behavior:Changed)
+    // ────────────────────────────────────────────────────────────────────
+
+    @Nested
+    @DisplayName("게이트 경유 — 패턴 A 신규 동작 (REQ-KISGATE-001/006a)")
+    class GateRouting {
+
+        @Test
+        @DisplayName("단발 collect() = 1 batch — 세션 1회 open 후 게이트를 throttle-on(4-arg)으로 1회 경유")
+        void collect_routesThroughGateOnceWithOwnSession() throws Exception {
+            // Arrange
+            stubGate(response(List.of(cleanRow("Y0112", "3.72", "20260613"))));
+
+            // Act
+            service.collect();
+
+            // Assert: per-batch 스냅샷 1회 + 게이트 throttle-on 4-arg 정확히 1회 경유
+            verify(keyLeaseRegistry, times(1)).openSession();
+            verify(guardedKisExecutor, times(1))
+                    .execute(eq(session), any(), eq(TR_ID), eq(KisCompInterestResponse.class));
+        }
+    }
+
+    // ────────────────────────────────────────────────────────────────────
     // 정상 수집
     // ────────────────────────────────────────────────────────────────────
 
@@ -81,11 +129,9 @@ class CompInterestCollectionServiceTest {
 
         @Test
         @DisplayName("유효 8종 행 → 8건 시도·성공·skip=0, 8회 insertIgnoreDuplicate 호출")
-        void stores8CleanRows_resultCounts() {
+        void stores8CleanRows_resultCounts() throws Exception {
             // Arrange
-            when(kisApiExecutor.executeGet(
-                            any(), eq("FHPST07020000"), eq(KisCompInterestResponse.class)))
-                    .thenReturn(response(eightCleanRows()));
+            stubGate(response(eightCleanRows()));
 
             // Act
             MacroCollectionResult result = service.collect();
@@ -99,11 +145,9 @@ class CompInterestCollectionServiceTest {
 
         @Test
         @DisplayName("유효 8종 행 → indicator_code=KIS_RATE_{bcdt_code}, source=KIS, tradeDate 정확")
-        void stores8CleanRows_withCorrectIndicatorCode() {
+        void stores8CleanRows_withCorrectIndicatorCode() throws Exception {
             // Arrange
-            when(kisApiExecutor.executeGet(
-                            any(), eq("FHPST07020000"), eq(KisCompInterestResponse.class)))
-                    .thenReturn(response(eightCleanRows()));
+            stubGate(response(eightCleanRows()));
 
             // Act
             service.collect();
@@ -130,11 +174,9 @@ class CompInterestCollectionServiceTest {
 
         @Test
         @DisplayName("value는 % 무정규화 — 3.72 그대로 저장")
-        void storesValueWithoutNormalization() {
+        void storesValueWithoutNormalization() throws Exception {
             // Arrange
-            when(kisApiExecutor.executeGet(
-                            any(), eq("FHPST07020000"), eq(KisCompInterestResponse.class)))
-                    .thenReturn(response(List.of(cleanRow("Y0112", "3.72", "20260613"))));
+            stubGate(response(List.of(cleanRow("Y0112", "3.72", "20260613"))));
 
             // Act
             service.collect();
@@ -156,7 +198,7 @@ class CompInterestCollectionServiceTest {
 
         @Test
         @DisplayName("hts_kor_isnm이 ^Y0\\d{3}$ 패턴인 행은 skip")
-        void skipsRowWithCodePatternInIsnm() {
+        void skipsRowWithCodePatternInIsnm() throws Exception {
             // Arrange — 8개 clean + 10개 malformed(Y0101,Y0103~Y0111)
             List<KisCompInterestResponse.CompInterestRow> rows =
                     List.of(
@@ -178,9 +220,7 @@ class CompInterestCollectionServiceTest {
                             cleanRow("Y0117", "3.95", "20260613"),
                             cleanRow("Y0198", "3.61", "20260613"),
                             cleanRow("Y0199", "3.74", "20260613"));
-            when(kisApiExecutor.executeGet(
-                            any(), eq("FHPST07020000"), eq(KisCompInterestResponse.class)))
-                    .thenReturn(response(rows));
+            stubGate(response(rows));
 
             // Act
             MacroCollectionResult result = service.collect();
@@ -193,15 +233,13 @@ class CompInterestCollectionServiceTest {
 
         @Test
         @DisplayName("bond_mnrt_prpr이 비숫자인 행은 skip")
-        void skipsRowWithNonNumericValue() {
+        void skipsRowWithNonNumericValue() throws Exception {
             // Arrange
-            when(kisApiExecutor.executeGet(
-                            any(), eq("FHPST07020000"), eq(KisCompInterestResponse.class)))
-                    .thenReturn(
-                            response(
-                                    List.of(
-                                            malformedValueRow("Y0103"),
-                                            cleanRow("Y0112", "3.72", "20260613"))));
+            stubGate(
+                    response(
+                            List.of(
+                                    malformedValueRow("Y0103"),
+                                    cleanRow("Y0112", "3.72", "20260613"))));
 
             // Act
             MacroCollectionResult result = service.collect();
@@ -222,10 +260,8 @@ class CompInterestCollectionServiceTest {
 
         @Test
         @DisplayName("빈 output2 → 저장 없음, 0건 성공")
-        void emptyOutput2_zeroSuccess() {
-            when(kisApiExecutor.executeGet(
-                            any(), eq("FHPST07020000"), eq(KisCompInterestResponse.class)))
-                    .thenReturn(response(List.of()));
+        void emptyOutput2_zeroSuccess() throws Exception {
+            stubGate(response(List.of()));
 
             MacroCollectionResult result = service.collect();
 
@@ -245,17 +281,16 @@ class CompInterestCollectionServiceTest {
 
         @Test
         @DisplayName("동일 행 재수집 시 insertIgnoreDuplicate 재호출 (DB가 중복 무시)")
-        void idempotentRerun_insertIgnoreCalledTwice() {
-            when(kisApiExecutor.executeGet(
-                            any(), eq("FHPST07020000"), eq(KisCompInterestResponse.class)))
-                    .thenReturn(response(List.of(cleanRow("Y0112", "3.72", "20260613"))));
+        void idempotentRerun_insertIgnoreCalledTwice() throws Exception {
+            stubGate(response(List.of(cleanRow("Y0112", "3.72", "20260613"))));
 
             // Act — 2회 실행
             service.collect();
             service.collect();
 
-            // Assert — 2번 insertIgnoreDuplicate 호출 (DB가 IGNORE 처리)
+            // Assert — 2번 insertIgnoreDuplicate 호출 (DB가 IGNORE 처리), 게이트도 2회·세션 2회 open
             verify(macroIndicatorRepository, times(2)).insertIgnoreDuplicate(any());
+            verify(keyLeaseRegistry, times(2)).openSession();
         }
     }
 
@@ -269,13 +304,11 @@ class CompInterestCollectionServiceTest {
 
         @Test
         @DisplayName("bcdtCode null 행 skip")
-        void nullBcdtCode_skip() {
+        void nullBcdtCode_skip() throws Exception {
             KisCompInterestResponse.CompInterestRow nullCode =
                     new KisCompInterestResponse.CompInterestRow(
                             null, "CD(91일)", "3.72", "2", "0.01", "-0.005", "20260613");
-            when(kisApiExecutor.executeGet(
-                            any(), eq("FHPST07020000"), eq(KisCompInterestResponse.class)))
-                    .thenReturn(response(List.of(nullCode)));
+            stubGate(response(List.of(nullCode)));
 
             MacroCollectionResult result = service.collect();
 
@@ -285,13 +318,11 @@ class CompInterestCollectionServiceTest {
 
         @Test
         @DisplayName("stckBsopDate null 행 skip")
-        void nullDate_skip() {
+        void nullDate_skip() throws Exception {
             KisCompInterestResponse.CompInterestRow nullDate =
                     new KisCompInterestResponse.CompInterestRow(
                             "Y0112", "CD(91일)", "3.72", "2", "0.01", "-0.005", null);
-            when(kisApiExecutor.executeGet(
-                            any(), eq("FHPST07020000"), eq(KisCompInterestResponse.class)))
-                    .thenReturn(response(List.of(nullDate)));
+            stubGate(response(List.of(nullDate)));
 
             MacroCollectionResult result = service.collect();
 

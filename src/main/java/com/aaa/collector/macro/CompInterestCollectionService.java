@@ -1,6 +1,8 @@
 package com.aaa.collector.macro;
 
-import com.aaa.collector.kis.KisApiExecutor;
+import com.aaa.collector.kis.gate.GuardedKisExecutor;
+import com.aaa.collector.kis.gate.KeyLeaseRegistry;
+import com.aaa.collector.kis.gate.KeyLeaseRegistry.LeaseSession;
 import com.aaa.collector.macro.enums.MacroSource;
 import java.math.BigDecimal;
 import java.time.LocalDate;
@@ -14,8 +16,11 @@ import org.springframework.stereotype.Service;
 /**
  * 국내 채권금리종합 수집 서비스 (TR FHPST07020000).
  *
- * <p>단일키(isa) 단일 호출로 output2(국내 한국 채권금리 8종, bcdt_code Y01xx) 전부를 {@code
- * MacroIndicator(source=KIS)}로 멱등 저장한다.
+ * <p>단일 호출로 output2(국내 한국 채권금리 8종, bcdt_code Y01xx) 전부를 {@code MacroIndicator(source=KIS)}로 멱등
+ * 저장한다. 호출은 단일 보호 게이트 {@link GuardedKisExecutor}를 경유한다(SPEC-COLLECTOR-KISGATE-001 REQ-KISGATE-001)
+ * — 기존 3-arg 맨몸 호출(throttle❌·재시도❌·isa 단일키)에서 throttle✅·재시도✅·멀티키 lease✅로 바뀐 의도된 동작 변경(패턴 A). 단발
+ * collect() = 1 batch이므로 자체 {@link LeaseSession}을 1회 연다(REQ-KISGATE-006a). 소진 시 게이트가 예외를 전파한다(패턴 A
+ * 종단 = 예외 전파, REQ-KISGATE-022).
  *
  * <p>T0 실측 확정(v0.5.0, MA-01 해소): output2=국내 채권금리(Y01xx), output1=해외(Y02xx). 파라미터 라벨("해외금리지표")과 무관.
  * 유효 8종: Y0112/Y0113/Y0114/Y0115/Y0116/Y0117/Y0198/Y0199.
@@ -42,7 +47,8 @@ public class CompInterestCollectionService {
     private static final String TR_ID = "FHPST07020000";
     private static final String PATH = "/uapi/domestic-stock/v1/quotations/comp-interest";
 
-    private final KisApiExecutor kisApiExecutor;
+    private final GuardedKisExecutor guardedKisExecutor;
+    private final KeyLeaseRegistry keyLeaseRegistry;
     private final MacroIndicatorRepository macroIndicatorRepository;
 
     /**
@@ -51,18 +57,9 @@ public class CompInterestCollectionService {
      * @return attempted/succeeded/skipped 행 수 집계
      */
     public MacroCollectionResult collect() {
-        // REQ-BATCH3-030: 파라미터 FIXED
-        KisCompInterestResponse response =
-                kisApiExecutor.executeGet(
-                        uri ->
-                                uri.path(PATH)
-                                        .queryParam("FID_COND_MRKT_DIV_CODE", "I")
-                                        .queryParam("FID_COND_SCR_DIV_CODE", "20702")
-                                        .queryParam("FID_DIV_CLS_CODE", "1")
-                                        .queryParam("FID_DIV_CLS_CODE1", "")
-                                        .build(),
-                        TR_ID,
-                        KisCompInterestResponse.class);
+        // REQ-KISGATE-006a: 단발 collect() = 1 batch — per-batch 헬스 스냅샷 1회 고정
+        LeaseSession session = keyLeaseRegistry.openSession();
+        KisCompInterestResponse response = fetch(session);
 
         // REQ-BATCH3-073: 빈 output2 → 0건 성공
         if (response.output2().isEmpty()) {
@@ -90,6 +87,30 @@ public class CompInterestCollectionService {
                 result.succeeded(),
                 result.skipped());
         return result;
+    }
+
+    /**
+     * 게이트를 경유해 채권금리 단발 조회를 수행한다(REQ-BATCH3-030: 파라미터 FIXED).
+     *
+     * <p>인터럽트 수신 시 플래그를 복원한 뒤 {@link IllegalStateException}으로 전파한다(패턴 A 종단 = 예외 전파).
+     */
+    private KisCompInterestResponse fetch(LeaseSession session) {
+        try {
+            return guardedKisExecutor.execute(
+                    session,
+                    uri ->
+                            uri.path(PATH)
+                                    .queryParam("FID_COND_MRKT_DIV_CODE", "I")
+                                    .queryParam("FID_COND_SCR_DIV_CODE", "20702")
+                                    .queryParam("FID_DIV_CLS_CODE", "1")
+                                    .queryParam("FID_DIV_CLS_CODE1", "")
+                                    .build(),
+                    TR_ID,
+                    KisCompInterestResponse.class);
+        } catch (InterruptedException ie) {
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException("comp-interest 수집 중 인터럽트", ie);
+        }
     }
 
     private boolean saveIfValid(KisCompInterestResponse.CompInterestRow row) {
