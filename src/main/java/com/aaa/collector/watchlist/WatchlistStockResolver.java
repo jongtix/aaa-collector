@@ -27,7 +27,7 @@ import org.springframework.web.client.RestClientException;
 import org.springframework.web.util.UriBuilder;
 
 /**
- * ②단계 종목 해석 조율자 — 종목별 기본정보를 건강 키 라운드로빈 멀티키 경로로 조회하여 {@link ResolvedStock} 목록을 산출한다
+ * ②단계 종목 해석 조율자 — 종목별 기본정보를 건강 키 least-busy lease 멀티키 경로로 조회하여 {@link ResolvedStock} 목록을 산출한다
  * (WatchlistSyncService에서 추출, SPEC-COLLECTOR-WLSYNC-007 행위 보존).
  *
  * <p>SPEC-COLLECTOR-KISGATE-001: 건강한 키 집합을 {@link KeyLeaseRegistry#openSession()} per-batch 스냅샷으로
@@ -45,7 +45,7 @@ public class WatchlistStockResolver {
     private final KeyLeaseRegistry keyLeaseRegistry;
 
     /**
-     * ②단계: 종목별 기본정보를 건강한 키 라운드로빈 멀티키 경로로 조회하여 {@link ResolvedStock} 목록을 산출한다
+     * ②단계: 종목별 기본정보를 건강한 키 least-busy lease 멀티키 경로로 조회하여 {@link ResolvedStock} 목록을 산출한다
      * (REQ-WLSYNC-120,130~134).
      *
      * <p>입력 종목이 비어있으면 게이트 세션을 열지 않고 빈 목록을 반환한다(무로그, 레거시 보존). 건강 키 스냅샷은 {@link

@@ -32,9 +32,9 @@ import org.springframework.web.util.UriBuilder;
  * com.aaa.collector.stock.supply.InvestorTrendCollectionService} 패턴 답습: STOCK-only 조회→건강 키 분산→VT
  * executor→종목당 연간(0)+분기(1) 2회 호출→파싱·검증·매핑→멱등 저장→집계.
  *
- * <p>대상은 {@code asset_type = STOCK} 한정(REQ-BATCH4-013). 멀티키 라운드로빈 경로만 사용하며 단일키 경로를 사용하지 않는다
- * (REQ-BATCH4-010). 모든 키 죽음 시 호출 0회·전체 skip·ERROR 1회(REQ-BATCH4-011). 완료 이벤트를 발행하지 않고 자기 완료 로깅만
- * 한다(REQ-BATCH4-012).
+ * <p>대상은 {@code asset_type = STOCK} 한정(REQ-BATCH4-013). 건강 키 least-busy lease 멀티키 경로만 사용하며 단일키 경로를
+ * 사용하지 않는다 (REQ-BATCH4-010). 모든 키 죽음 시 호출 0회·전체 skip·ERROR 1회(REQ-BATCH4-011). 완료 이벤트를 발행하지 않고 자기
+ * 완료 로깅만 한다(REQ-BATCH4-012).
  *
  * <p>검증(REQ-BATCH4-070a): 행 단위 try/catch로 파싱 실패·DECIMAL 정수부 경계 초과·BIGINT 비0 소수부를 건별 skip한다. 증가율 음수는
  * 정상값이므로 거부하지 않는다. eps/sps/bps는 {@code new BigDecimal}→{@code longValueExact()}로 무손실 정수 변환한다({@code

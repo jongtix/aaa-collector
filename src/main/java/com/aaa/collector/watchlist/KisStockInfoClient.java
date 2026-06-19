@@ -13,8 +13,8 @@ import org.springframework.web.util.UriBuilder;
  * KIS 종목 기본정보 API 클라이언트.
  *
  * <p>SPEC-COLLECTOR-WLSYNC-006: ②단계 멀티키 전환에 따라 단일키 직접 호출 책임을 제거하고, URI 빌드 + 응답 파싱 위임만 담당한다. 실제 HTTP
- * 호출(멀티키 + per-key rate limiter + EGW00201 재시도)은 호출부({@code WatchlistSyncService})가 {@link
- * StockInfoFetcher}로 주입하는 {@code BatchRestExecutor} 경유로 수행되며, 응답 파싱은 {@link StockInfoParser}가
+ * 호출(멀티키 + per-key rate limiter + EGW00201 재시도)은 호출부({@code WatchlistStockResolver})가 {@link
+ * StockInfoFetcher}로 주입하는 {@code GuardedKisExecutor} 경유로 수행되며, 응답 파싱은 {@link StockInfoParser}가
  * 담당한다(C2 (b)안).
  */
 @Component
@@ -29,8 +29,8 @@ public class KisStockInfoClient {
     /**
      * 종목 기본정보 REST 호출 전략. URI 커스터마이저 + TR ID + 응답 타입을 받아 {@link BatchResult}를 반환한다.
      *
-     * <p>호출부가 {@code BatchRestExecutor.execute(credential, ...)}를 백킹하여 멀티키 경로(per-key rate limiter
-     * + EGW00201 재시도 + graceful skip)를 적용한다.
+     * <p>호출부({@code WatchlistStockResolver.gateFetcher})가 {@code GuardedKisExecutor}를 백킹하여 멀티키
+     * 경로(per-key rate limiter + EGW00201 재시도 + graceful skip)를 적용한다.
      */
     @FunctionalInterface
     public interface StockInfoFetcher {
