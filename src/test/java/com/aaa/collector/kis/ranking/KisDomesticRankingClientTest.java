@@ -1,21 +1,19 @@
 package com.aaa.collector.kis.ranking;
 
-import static com.github.tomakehurst.wiremock.client.WireMock.aResponse;
-import static com.github.tomakehurst.wiremock.client.WireMock.equalTo;
-import static com.github.tomakehurst.wiremock.client.WireMock.get;
-import static com.github.tomakehurst.wiremock.client.WireMock.urlPathEqualTo;
-import static com.github.tomakehurst.wiremock.core.WireMockConfiguration.wireMockConfig;
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
-import com.aaa.collector.kis.KisApiExecutor;
-import com.aaa.collector.kis.token.KisAccountCredential;
-import com.aaa.collector.kis.token.KisProperties;
-import com.aaa.collector.kis.token.KisTokenService;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.PropertyNamingStrategies;
-import com.github.tomakehurst.wiremock.WireMockServer;
+import com.aaa.collector.kis.KisApiBusinessException;
+import com.aaa.collector.kis.KisRateLimitException;
+import com.aaa.collector.kis.gate.GuardedKisExecutor;
+import com.aaa.collector.kis.gate.KeyLeaseRegistry;
+import com.aaa.collector.kis.gate.KeyLeaseRegistry.LeaseSession;
 import java.util.List;
-import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -24,136 +22,142 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.Mockito;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.http.converter.json.MappingJackson2HttpMessageConverter;
-import org.springframework.web.client.RestClient;
 
+/**
+ * SPEC-COLLECTOR-KISGATE-001 M6(T21) — {@link KisDomesticRankingClient} 게이트 경유 단위 테스트.
+ *
+ * <p>패턴 A는 Behavior:Changed이므로 신규 게이트 라우팅(throttle-on 4-arg 경유·단발 호출당 세션 1회 open·예외 전파)과 기존 응답 매핑을
+ * 함께 검증한다. 게이트의 재시도·재경유는 {@code GuardedKisExecutorTest}가 담당한다.
+ */
 @ExtendWith(MockitoExtension.class)
-@DisplayName("KisDomesticRankingClient 단위 테스트")
+@DisplayName("KisDomesticRankingClient — 게이트 경유 단위 테스트")
 class KisDomesticRankingClientTest {
 
-    private static final String RANKING_PATH = "/uapi/domestic-stock/v1/quotations/volume-rank";
+    private static final String TR_ID = "FHPST01710000";
 
-    private WireMockServer wireMockServer;
+    @Mock private GuardedKisExecutor guardedKisExecutor;
+    @Mock private KeyLeaseRegistry keyLeaseRegistry;
+    @Mock private LeaseSession session;
+
     private KisDomesticRankingClient client;
-
-    @Mock private KisTokenService kisTokenService;
-    @Mock private KisProperties kisProperties;
 
     @BeforeEach
     void setUp() {
-        wireMockServer = new WireMockServer(wireMockConfig().dynamicPort());
-        wireMockServer.start();
-
-        ObjectMapper objectMapper =
-                new ObjectMapper().setPropertyNamingStrategy(PropertyNamingStrategies.SNAKE_CASE);
-        RestClient restClient =
-                RestClient.builder()
-                        .baseUrl(wireMockServer.baseUrl())
-                        .messageConverters(
-                                converters -> {
-                                    converters.clear();
-                                    converters.add(
-                                            new MappingJackson2HttpMessageConverter(objectMapper));
-                                })
-                        .build();
-
-        KisAccountCredential credential =
-                new KisAccountCredential("test", "12345678", "test-app-key", "test-app-secret");
-        KisApiExecutor kisApiExecutor =
-                new KisApiExecutor(restClient, kisProperties, kisTokenService);
-        client = new KisDomesticRankingClient(kisApiExecutor);
-
-        Mockito.lenient().when(kisProperties.accounts()).thenReturn(List.of(credential));
-        Mockito.lenient().when(kisTokenService.getValidToken("test")).thenReturn("test-token");
+        client = new KisDomesticRankingClient(guardedKisExecutor, keyLeaseRegistry);
+        Mockito.lenient().when(keyLeaseRegistry.openSession()).thenReturn(session);
     }
 
-    @AfterEach
-    void tearDown() {
-        wireMockServer.stop();
-    }
-
-    private void stubRanking(String responseBody) {
-        wireMockServer.stubFor(
-                get(urlPathEqualTo(RANKING_PATH))
-                        .withQueryParam("FID_BLNG_CLS_CODE", equalTo("3"))
-                        .withQueryParam("FID_COND_MRKT_DIV_CODE", equalTo("J"))
-                        .withQueryParam("FID_COND_SCR_DIV_CODE", equalTo("20171"))
-                        .withQueryParam("FID_INPUT_ISCD", equalTo("0000"))
-                        .withHeader("tr_id", equalTo("FHPST01710000"))
-                        .willReturn(
-                                aResponse()
-                                        .withStatus(200)
-                                        .withHeader("Content-Type", "application/json")
-                                        .withBody(responseBody)));
+    private void stubGate(KisDomesticRankingResponse response) throws InterruptedException {
+        when(guardedKisExecutor.execute(
+                        eq(session), any(), eq(TR_ID), eq(KisDomesticRankingResponse.class)))
+                .thenReturn(response);
     }
 
     @Nested
-    @DisplayName("fetchRanking — 국내 거래금액 순위 조회")
+    @DisplayName("fetchRanking — 국내 거래금액 순위 조회 (게이트 경유)")
     class FetchRanking {
 
         @Test
-        @DisplayName("정상 응답 — output 목록 반환")
-        void fetchRanking_normalResponse_returnsOutput() {
-            String body =
-                    """
-                    {
-                        "rt_cd": "0",
-                        "msg_cd": "MCA00000",
-                        "msg1": "조회되었습니다.",
-                        "output": [
-                            {"mksc_shrn_iscd": "005930", "data_rank": "1", "hts_kor_isnm": "삼성전자"},
-                            {"mksc_shrn_iscd": "000660", "data_rank": "2", "hts_kor_isnm": "SK하이닉스"}
-                        ]
-                    }
-                    """;
-            stubRanking(body);
+        @DisplayName("단발 호출 = 1 batch — 세션 1회 open 후 게이트를 throttle-on(4-arg)으로 1회 경유, output 반환")
+        void fetchRanking_routesThroughGateOnce_returnsOutput() throws Exception {
+            // Arrange
+            KisDomesticRankingResponse response =
+                    new KisDomesticRankingResponse(
+                            "0",
+                            "MCA00000",
+                            "조회되었습니다.",
+                            List.of(
+                                    new KisDomesticRankingResponse.RankedStock(
+                                            "005930", "1", "삼성전자"),
+                                    new KisDomesticRankingResponse.RankedStock(
+                                            "000660", "2", "SK하이닉스")));
+            stubGate(response);
 
+            // Act
             List<KisDomesticRankingResponse.RankedStock> result = client.fetchRanking();
 
+            // Assert
             assertThat(result).hasSize(2);
             assertThat(result.getFirst().mkscShrnIscd()).isEqualTo("005930");
             assertThat(result.get(1).mkscShrnIscd()).isEqualTo("000660");
+            verify(keyLeaseRegistry, times(1)).openSession();
+            verify(guardedKisExecutor, times(1))
+                    .execute(eq(session), any(), eq(TR_ID), eq(KisDomesticRankingResponse.class));
         }
 
         @Test
         @DisplayName("빈 output 배열 — 빈 목록 반환")
-        void fetchRanking_emptyOutput_returnsEmptyList() {
-            String body =
-                    """
-                    {
-                        "rt_cd": "0",
-                        "msg_cd": "MCA00000",
-                        "msg1": "조회되었습니다.",
-                        "output": []
-                    }
-                    """;
-            stubRanking(body);
+        void fetchRanking_emptyOutput_returnsEmptyList() throws Exception {
+            stubGate(new KisDomesticRankingResponse("0", "MCA00000", "조회되었습니다.", List.of()));
 
-            List<KisDomesticRankingResponse.RankedStock> result = client.fetchRanking();
+            assertThat(client.fetchRanking()).isEmpty();
+        }
 
-            assertThat(result).isEmpty();
+        @Test
+        @DisplayName("null output — 빈 목록 반환")
+        void fetchRanking_nullOutput_returnsEmptyList() throws Exception {
+            stubGate(new KisDomesticRankingResponse("0", "MCA00000", "조회되었습니다.", null));
+
+            assertThat(client.fetchRanking()).isEmpty();
         }
 
         @Test
         @DisplayName("dataRank 순서 확인 — 1위 종목이 첫 번째")
-        void fetchRanking_ranksAreOrdered() {
-            String body =
-                    """
-                    {
-                        "rt_cd": "0",
-                        "msg_cd": "MCA00000",
-                        "msg1": "조회되었습니다.",
-                        "output": [
-                            {"mksc_shrn_iscd": "005930", "data_rank": "1", "hts_kor_isnm": "삼성전자"},
-                            {"mksc_shrn_iscd": "035420", "data_rank": "2", "hts_kor_isnm": "NAVER"}
-                        ]
-                    }
-                    """;
-            stubRanking(body);
+        void fetchRanking_ranksAreOrdered() throws Exception {
+            stubGate(
+                    new KisDomesticRankingResponse(
+                            "0",
+                            "MCA00000",
+                            "조회되었습니다.",
+                            List.of(
+                                    new KisDomesticRankingResponse.RankedStock(
+                                            "005930", "1", "삼성전자"),
+                                    new KisDomesticRankingResponse.RankedStock(
+                                            "035420", "2", "NAVER"))));
 
             List<KisDomesticRankingResponse.RankedStock> result = client.fetchRanking();
 
             assertThat(result.getFirst().dataRank()).isEqualTo("1");
+        }
+    }
+
+    @Nested
+    @DisplayName("종단 동작 — 패턴 A = 예외 전파 (REQ-KISGATE-022)")
+    class Terminal {
+
+        @Test
+        @DisplayName("게이트 소진(EGW00201) — 예외가 상위로 전파(호출부 시장별 보류)")
+        void fetchRanking_gateExhausted_propagates() throws Exception {
+            KisRateLimitException egw = new KisRateLimitException("test", "EGW00201 소진");
+            when(guardedKisExecutor.execute(
+                            eq(session), any(), eq(TR_ID), eq(KisDomesticRankingResponse.class)))
+                    .thenThrow(egw);
+
+            assertThatThrownBy(client::fetchRanking).isSameAs(egw);
+        }
+
+        @Test
+        @DisplayName("비즈니스 오류(KisApiBusinessException) — non-retryable 즉시 전파")
+        void fetchRanking_businessError_propagates() throws Exception {
+            KisApiBusinessException biz = new KisApiBusinessException("1", "EGW00123", "인증 오류");
+            when(guardedKisExecutor.execute(
+                            eq(session), any(), eq(TR_ID), eq(KisDomesticRankingResponse.class)))
+                    .thenThrow(biz);
+
+            assertThatThrownBy(client::fetchRanking).isSameAs(biz);
+        }
+
+        @Test
+        @DisplayName("게이트 인터럽트 — 플래그 복원 후 IllegalStateException 전파")
+        void fetchRanking_interrupted_restoresFlagAndWraps() throws Exception {
+            when(guardedKisExecutor.execute(
+                            eq(session), any(), eq(TR_ID), eq(KisDomesticRankingResponse.class)))
+                    .thenThrow(new InterruptedException());
+
+            assertThatThrownBy(client::fetchRanking)
+                    .isInstanceOf(IllegalStateException.class)
+                    .hasMessageContaining("인터럽트");
+            assertThat(Thread.interrupted()).isTrue();
         }
     }
 }
