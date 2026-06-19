@@ -16,9 +16,9 @@ spring:
     password: ${MYSQL_COLLECTOR_PASSWORD}
     driver-class-name: com.mysql.cj.jdbc.Driver
     hikari:
-      maximum-pool-size: 5        # 4서비스×5=최대 20커넥션 (단일 MySQL 제약, ADR-001 참조)
-      minimum-idle: 2             # 배치 서비스 — 유휴 시 자원 절감
-      connection-timeout: 5000    # 5s (기본값 30s) — Docker 내부 네트워크, 빠른 실패
+      maximum-pool-size: 10       # HikariCP 공식 (4코어×2)+1≈10 (prod Intel N100 4코어). 풀=세마포어, 추가 throttle 없음 (ADR-027)
+      minimum-idle: 4             # 배치 cold start 워밍업 커넥션 확보 (max의 40%)
+      connection-timeout: 20000   # 20s — 풀 슬롯 대기를 실패가 아닌 큐잉으로 흡수. 단 무한 아님(실제 DB 장애는 20s 내 가시화, ADR-027)
       idle-timeout: 600000        # 10m (기본값)
       max-lifetime: 1800000       # 30m (기본값) — MySQL wait_timeout(8h)보다 충분히 짧음
   jpa:
