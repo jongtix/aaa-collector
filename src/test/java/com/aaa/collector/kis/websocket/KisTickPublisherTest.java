@@ -2,6 +2,7 @@ package com.aaa.collector.kis.websocket;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -37,7 +38,7 @@ class KisTickPublisherTest {
 
     @BeforeEach
     void setUp() {
-        streamOps = org.mockito.Mockito.mock(StreamOperations.class);
+        streamOps = mock(StreamOperations.class);
         when(redisTemplate.opsForStream()).thenReturn(streamOps);
         meterRegistry = new SimpleMeterRegistry();
         TickMetrics tickMetrics = new TickMetrics(meterRegistry, Clock.systemDefaultZone());

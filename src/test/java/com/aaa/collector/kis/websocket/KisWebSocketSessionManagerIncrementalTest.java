@@ -1,7 +1,11 @@
 package com.aaa.collector.kis.websocket;
 
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.mockingDetails;
 import static org.mockito.Mockito.when;
 
 import com.aaa.collector.common.retry.Sleeper;
@@ -98,12 +102,12 @@ class KisWebSocketSessionManagerIncrementalTest {
             int totalSubscribeCalls = 0;
             for (KisWebSocketSession session : mockSessions) {
                 totalSubscribeCalls +=
-                        org.mockito.Mockito.mockingDetails(session).getInvocations().stream()
+                        mockingDetails(session).getInvocations().stream()
                                 .filter(inv -> "subscribe".equals(inv.getMethod().getName()))
                                 .mapToInt(inv -> 1)
                                 .sum();
             }
-            org.assertj.core.api.Assertions.assertThat(totalSubscribeCalls).isEqualTo(2);
+            assertThat(totalSubscribeCalls).isEqualTo(2);
         }
 
         @Test
@@ -115,8 +119,7 @@ class KisWebSocketSessionManagerIncrementalTest {
             }
 
             // Act & Assert — 예외 없이 처리됨
-            org.assertj.core.api.Assertions.assertThatCode(() -> manager.addSymbol("005930"))
-                    .doesNotThrowAnyException();
+            assertThatCode(() -> manager.addSymbol("005930")).doesNotThrowAnyException();
         }
     }
 
@@ -141,12 +144,12 @@ class KisWebSocketSessionManagerIncrementalTest {
             int totalUnsubscribeCalls = 0;
             for (KisWebSocketSession session : mockSessions) {
                 totalUnsubscribeCalls +=
-                        org.mockito.Mockito.mockingDetails(session).getInvocations().stream()
+                        mockingDetails(session).getInvocations().stream()
                                 .filter(inv -> "unsubscribe".equals(inv.getMethod().getName()))
                                 .mapToInt(inv -> 1)
                                 .sum();
             }
-            org.assertj.core.api.Assertions.assertThat(totalUnsubscribeCalls).isEqualTo(2);
+            assertThat(totalUnsubscribeCalls).isEqualTo(2);
         }
     }
 
@@ -168,7 +171,7 @@ class KisWebSocketSessionManagerIncrementalTest {
                 KisWebSocketSession s = mockSessions.get(i);
                 when(s.getSubscriptionCount()).thenAnswer(inv -> counts[idx]);
                 when(s.isInSafeMode()).thenReturn(false);
-                org.mockito.Mockito.doAnswer(
+                doAnswer(
                                 inv -> {
                                     counts[idx]++;
                                     return null;
@@ -189,7 +192,7 @@ class KisWebSocketSessionManagerIncrementalTest {
             for (int count : counts) {
                 total += count;
             }
-            org.assertj.core.api.Assertions.assertThat(total).isEqualTo(200);
+            assertThat(total).isEqualTo(200);
         }
     }
 

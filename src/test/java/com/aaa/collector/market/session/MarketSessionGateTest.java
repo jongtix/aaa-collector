@@ -1,6 +1,7 @@
 package com.aaa.collector.market.session;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
@@ -266,7 +267,7 @@ class MarketSessionGateTest {
         void constructorDoesNotCallKisApi() {
             // Arrange — schedule mock (network call은 KisHolidayClient가 담당, 생성자에서 호출하면 안 됨)
             KisMarketSchedule schedule = mock(KisMarketSchedule.class);
-            when(schedule.isDomesticOpen(org.mockito.ArgumentMatchers.any())).thenReturn(false);
+            when(schedule.isDomesticOpen(any())).thenReturn(false);
 
             // Act — 생성자만 호출 (KisHolidayClient 미포함: 게이트 생성자에 KisHolidayClient 의존 없음)
             Clock clock = clockAt(TRADING_HOURS_INSTANT);

@@ -6,8 +6,11 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.aaa.collector.kis.KisApiBusinessException;
+import com.aaa.collector.kis.KisRateLimitException;
 import com.aaa.collector.kis.holiday.KisHolidayClient;
 import com.aaa.collector.kis.holiday.KisHolidayResponse.HolidayRow;
+import com.aaa.collector.kis.websocket.KisMarketSchedule;
 import io.micrometer.core.instrument.Gauge;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.time.Clock;
@@ -23,6 +26,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.web.client.ResourceAccessException;
 
 @ExtendWith(MockitoExtension.class)
 @DisplayName("MarketSessionGateRefresher — 일 1회 cron 갱신 (REQ-OBSV-031/032/033)")
@@ -129,9 +133,7 @@ class MarketSessionGateRefresherTest {
             LocalDate today = LocalDate.of(2026, 6, 19);
 
             when(kisHolidayClient.fetchCalendar(today))
-                    .thenThrow(
-                            new org.springframework.web.client.ResourceAccessException(
-                                    "connection refused"));
+                    .thenThrow(new ResourceAccessException("connection refused"));
 
             // Act — 예외가 전파되지 않아야 한다
             makeRefresher(clock).refresh();
@@ -147,8 +149,7 @@ class MarketSessionGateRefresherTest {
             LocalDate today = LocalDate.of(2026, 6, 19);
 
             when(kisHolidayClient.fetchCalendar(today))
-                    .thenThrow(
-                            new com.aaa.collector.kis.KisApiBusinessException("1", "MSG001", "오류"));
+                    .thenThrow(new KisApiBusinessException("1", "MSG001", "오류"));
 
             makeRefresher(clock).refresh();
 
@@ -162,8 +163,7 @@ class MarketSessionGateRefresherTest {
             LocalDate today = LocalDate.of(2026, 6, 19);
 
             when(kisHolidayClient.fetchCalendar(today))
-                    .thenThrow(
-                            new com.aaa.collector.kis.KisRateLimitException("alias", "rate limit"));
+                    .thenThrow(new KisRateLimitException("alias", "rate limit"));
 
             // 예외 전파 없이 정상 반환 검증 (예외가 전파되면 테스트 자체가 실패)
             makeRefresher(clock).refresh();
@@ -184,8 +184,7 @@ class MarketSessionGateRefresherTest {
             Clock clock = Clock.fixed(REFRESH_INSTANT, KST);
             LocalDate today = LocalDate.of(2026, 6, 19);
             SimpleMeterRegistry registry = new SimpleMeterRegistry();
-            com.aaa.collector.kis.websocket.KisMarketSchedule schedule =
-                    new com.aaa.collector.kis.websocket.KisMarketSchedule(clock);
+            KisMarketSchedule schedule = new KisMarketSchedule(clock);
             MarketSessionGate realGate = new MarketSessionGate(registry, schedule, clock);
 
             when(kisHolidayClient.fetchCalendar(today)).thenReturn(List.of(row("20260619", "Y")));
@@ -207,13 +206,11 @@ class MarketSessionGateRefresherTest {
             Clock clock = Clock.fixed(REFRESH_INSTANT, KST);
             LocalDate today = LocalDate.of(2026, 6, 19);
             SimpleMeterRegistry registry = new SimpleMeterRegistry();
-            com.aaa.collector.kis.websocket.KisMarketSchedule schedule =
-                    new com.aaa.collector.kis.websocket.KisMarketSchedule(clock);
+            KisMarketSchedule schedule = new KisMarketSchedule(clock);
             MarketSessionGate realGate = new MarketSessionGate(registry, schedule, clock);
 
             when(kisHolidayClient.fetchCalendar(today))
-                    .thenThrow(
-                            new org.springframework.web.client.ResourceAccessException("refused"));
+                    .thenThrow(new ResourceAccessException("refused"));
 
             new MarketSessionGateRefresher(kisHolidayClient, realGate, clock).refresh();
 
