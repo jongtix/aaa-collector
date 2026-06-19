@@ -1,6 +1,7 @@
 package com.aaa.collector.stock.shortsale.overseas;
 
 import com.aaa.collector.stock.ShortSaleOverseasRepository;
+import com.aaa.collector.stock.ShortSaleOverseasRepository.ShortInterestSnapshot;
 import com.aaa.collector.stock.Stock;
 import com.aaa.collector.stock.StockRepository;
 import java.math.BigDecimal;
@@ -10,6 +11,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
@@ -68,12 +70,22 @@ public class ShortSaleOverseasCollectionService {
                                         LinkedHashMap::new,
                                         Collectors.toList()));
 
+        // D5: 종목별 단건 forward 루프 금지 — 매칭 종목 stockId 집합으로 배치 1쿼리(N+1 회피)
+        Set<Long> matchedStockIds =
+                matchedRowsBySymbol.keySet().stream()
+                        .map(symbol -> stockBySymbol.get(symbol).getId())
+                        .collect(Collectors.toSet());
+        Map<Long, ShortInterestSnapshot> forwardByStockId =
+                shortSaleOverseasRepository.findLatestShortInterestByStockIds(
+                        matchedStockIds, tradeReportDate);
+
         int succeeded = 0;
         int skipped = 0;
         for (Map.Entry<String, List<FinraRegShoDailyResponse>> entry :
                 matchedRowsBySymbol.entrySet()) {
             Stock stock = stockBySymbol.get(entry.getKey());
-            if (upsertAggregated(stock, tradeReportDate, entry.getValue())) {
+            ShortInterestSnapshot forward = forwardByStockId.get(stock.getId());
+            if (upsertAggregated(stock, tradeReportDate, entry.getValue(), forward)) {
                 succeeded++;
             } else {
                 skipped++;
@@ -103,7 +115,10 @@ public class ShortSaleOverseasCollectionService {
      * @return 적재했으면 {@code true}, skip이면 {@code false}
      */
     private boolean upsertAggregated(
-            Stock stock, LocalDate tradeReportDate, List<FinraRegShoDailyResponse> facilityRows) {
+            Stock stock,
+            LocalDate tradeReportDate,
+            List<FinraRegShoDailyResponse> facilityRows,
+            ShortInterestSnapshot forward) {
         long shortVolume = 0;
         long totalVolume = 0;
         List<String> reasons = new ArrayList<>();
@@ -127,15 +142,17 @@ public class ShortSaleOverseasCollectionService {
             return false;
         }
 
-        // T5에서 forward(LOCF) 매칭값을 주입한다 — 현재는 null로 interest 컬럼 미변경(REQ-SSO-013a)
+        // REQ-SSO-013/-013a(LOCF): forward 매칭이 있으면 short_interest 동반 적재, 없으면 null로 interest 컬럼 미변경
+        Long forwardInterest = forward == null ? null : forward.shortInterest();
+        LocalDate forwardInterestDate = forward == null ? null : forward.shortInterestDate();
         shortSaleOverseasRepository.upsertDaily(
                 stock.getId(),
                 tradeReportDate,
                 shortVolume,
                 totalVolume,
                 LocalDateTime.now(),
-                null,
-                null);
+                forwardInterest,
+                forwardInterestDate);
         return true;
     }
 

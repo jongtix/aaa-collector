@@ -2,6 +2,7 @@ package com.aaa.collector.stock.shortsale.overseas;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyCollection;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
@@ -18,12 +19,14 @@ import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Map;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
+import org.mockito.Mockito;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.test.util.ReflectionTestUtils;
 
@@ -44,6 +47,12 @@ class ShortSaleOverseasCollectionServiceDailyTest {
         service =
                 new ShortSaleOverseasCollectionService(
                         finraClient, stockRepository, shortSaleOverseasRepository);
+        // T5 LOCF forward 배치 조회 — Daily 테스트는 forward 매칭 없음(빈 Map) 기본값으로 둔다(lenient)
+        Mockito.lenient()
+                .when(
+                        shortSaleOverseasRepository.findLatestShortInterestByStockIds(
+                                anyCollection(), any()))
+                .thenReturn(Map.of());
     }
 
     private static Stock stock(long id, String symbol, Market market, AssetType assetType) {
