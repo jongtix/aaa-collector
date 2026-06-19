@@ -1,6 +1,8 @@
 package com.aaa.collector.market;
 
-import com.aaa.collector.kis.KisApiExecutor;
+import com.aaa.collector.kis.gate.GuardedKisExecutor;
+import com.aaa.collector.kis.gate.KeyLeaseRegistry;
+import com.aaa.collector.kis.gate.KeyLeaseRegistry.LeaseSession;
 import com.aaa.collector.stock.DailyOhlcvRepository;
 import com.aaa.collector.stock.Stock;
 import com.aaa.collector.stock.StockRepository;
@@ -21,6 +23,12 @@ import org.springframework.stereotype.Service;
  *
  * <p>watchlist sync가 등록한 INDEX 행({@code asset_type=INDEX, market=KRX, symbol IN ('0001','1001')})을
  * 조회하여 U 전용 API({@code inquire-daily-indexchartprice})로 일봉을 수집하고 {@code daily_ohlcv}에 멱등 저장한다.
+ *
+ * <p>호출은 단일 보호 게이트 {@link GuardedKisExecutor}를 경유한다(SPEC-COLLECTOR-KISGATE-001 REQ-KISGATE-001) —
+ * 기존 3-arg 맨몸 호출(throttle❌·재시도❌·isa 단일키)에서 throttle✅·재시도✅·멀티키 lease✅로 바뀐 의도된 동작 변경(패턴 A). 2개 종목 순회
+ * 전체 = 1 batch이므로 루프 전 {@link LeaseSession}을 1회 연다(REQ-KISGATE-006a). 종목별 게이트 예외(재시도 소진 포함)는 기존
+ * per-symbol graceful skip이 흡수하므로 패턴 A 종단(예외 전파)이 종목 단위 skip으로 흡수된다(보존, REQ-KISGATE-022). 전 키 사망 시도
+ * 동일 세션이므로 두 종목 모두 graceful skip 처리된다.
  *
  * <p>신규 stocks 등록 없음(CR-02). J 주식 API 사용 금지(REQ-BATCH3-021b — 지수코드에 빈 output2).
  * stream:daily:complete 미발행(REQ-BATCH3-011). 백필 미수행(REQ-BATCH3-012).
@@ -55,7 +63,8 @@ public class SectorIndexCollectionService {
 
     private final StockRepository stockRepository;
     private final DailyOhlcvRepository dailyOhlcvRepository;
-    private final KisApiExecutor kisApiExecutor;
+    private final GuardedKisExecutor guardedKisExecutor;
+    private final KeyLeaseRegistry keyLeaseRegistry;
 
     /**
      * 국내 종합지수 일봉 수집을 실행하고 집계 결과를 반환한다.
@@ -73,6 +82,9 @@ public class SectorIndexCollectionService {
         Map<String, Stock> symbolToStock =
                 indexStocks.stream()
                         .collect(Collectors.toMap(Stock::getSymbol, Function.identity()));
+
+        // REQ-KISGATE-006a: 종목 순회 전체 = 1 batch — 루프 전 per-batch 헬스 스냅샷 1회 고정
+        LeaseSession session = keyLeaseRegistry.openSession();
 
         int attempted = 0;
         int succeeded = 0;
@@ -92,10 +104,17 @@ public class SectorIndexCollectionService {
             }
 
             try {
-                int saved = collectSymbol(stock, symbol, today);
+                int saved = collectSymbol(stock, symbol, session, today);
                 succeeded++;
                 log.info("[sector-index] 수집 완료 — symbol={}, saved={}", symbol, saved);
+            } catch (InterruptedException e) {
+                // 인터럽트 플래그 복원 후 종목 graceful skip (REQ-KISGATE-022 보존, 전파 아님)
+                Thread.currentThread().interrupt();
+                log.error("[sector-index] 인터럽트 — skip. symbol={}", symbol);
+                skipped++;
             } catch (Exception e) {
+                // REQ-KISGATE-022 보존: 게이트 재시도 소진·전 키 사망(NoHealthyKeyException) 등 모든 종목별 예외를
+                // graceful skip으로 흡수한다(패턴 A 종단 = 예외 전파가 종목 단위 skip으로 흡수됨).
                 log.error(
                         "[sector-index] 수집 예외 — skip. symbol={}, error={}", symbol, e.getMessage());
                 skipped++;
@@ -112,14 +131,16 @@ public class SectorIndexCollectionService {
         return result;
     }
 
-    private int collectSymbol(Stock stock, String symbol, LocalDate today) {
+    private int collectSymbol(Stock stock, String symbol, LeaseSession session, LocalDate today)
+            throws InterruptedException {
         LocalDate fromDate = today.minusDays(LOOKBACK_CALENDAR_DAYS);
         String from = fromDate.format(DATE_FMT);
         String to = today.format(DATE_FMT);
 
-        // REQ-BATCH3-020: U 전용 API (J 주식 API 사용 금지 — REQ-BATCH3-021b)
+        // REQ-BATCH3-020: U 전용 API (J 주식 API 사용 금지 — REQ-BATCH3-021b). 게이트 경유(REQ-KISGATE-001).
         KisSectorIndexResponse response =
-                kisApiExecutor.executeGet(
+                guardedKisExecutor.execute(
+                        session,
                         uri ->
                                 uri.path(PATH)
                                         .queryParam("FID_COND_MRKT_DIV_CODE", "U")
