@@ -296,6 +296,9 @@ class GuardedKisExecutorTest {
             // consume() 실패 → executeGet 미도달 → limiter.release()는 호출되지 않음(acquire/release 페어링 보존).
             verify(kisApiExecutor, never()).executeGet(any(), any(), anyString(), any());
             verify(limiter, never()).release();
+            // RetryExecutor가 복원한 interrupt 플래그를 빌린 JUnit 스레드에서 클리어한다.
+            // 검증(플래그 복원 확인)과 정리(후속 테스트 오염 방지)를 겸한다 — 단일 포크 JVM 공유 스레드 보호.
+            assertThat(Thread.interrupted()).isTrue();
         }
     }
 
