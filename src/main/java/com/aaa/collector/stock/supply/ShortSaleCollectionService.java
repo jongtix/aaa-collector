@@ -1,26 +1,30 @@
 package com.aaa.collector.stock.supply;
 
-import com.aaa.collector.kis.batch.BatchRestExecutor;
-import com.aaa.collector.kis.batch.BatchResult;
-import com.aaa.collector.kis.batch.HealthyKeyRoundRobinDistributor;
-import com.aaa.collector.kis.token.KisAccountCredential;
+import com.aaa.collector.kis.KisRateLimitException;
+import com.aaa.collector.kis.gate.GuardedKisExecutor;
+import com.aaa.collector.kis.gate.KeyLeaseRegistry;
+import com.aaa.collector.kis.gate.KeyLeaseRegistry.LeaseSession;
+import com.aaa.collector.kis.gate.NoHealthyKeyException;
 import com.aaa.collector.kis.token.KisTokenIssueException;
 import com.aaa.collector.stock.ShortSaleDomestic;
 import com.aaa.collector.stock.ShortSaleDomesticRepository;
 import com.aaa.collector.stock.Stock;
 import com.aaa.collector.stock.StockRepository;
 import java.math.BigDecimal;
+import java.net.URI;
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.Function;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
+import org.springframework.web.client.RestClientException;
+import org.springframework.web.util.UriBuilder;
 
 /**
  * 종목별 공매도 일별추이 수집 서비스 (TR FHPST04830000).
@@ -36,9 +40,10 @@ import org.springframework.stereotype.Service;
 @Slf4j
 @Service
 @RequiredArgsConstructor
-// @MX:ANCHOR: [AUTO] 공매도 일별추이 수집 진입점 — 기간 조회·매핑·비율 경계 검증·멱등 저장·skip 집계 담당
-// @MX:REASON: SPEC-COLLECTOR-BATCH-002 REQ-BATCH2-010~012,-020,-040~042,-060~063 — 통합 진입점·스케줄러에서 호출
-// @MX:SPEC: SPEC-COLLECTOR-BATCH-002
+// @MX:ANCHOR: [AUTO] 공매도 일별추이 수집 진입점 — 게이트 경유 키 lease·매핑·비율 경계 검증·멱등 저장·skip 집계 담당
+// @MX:REASON: SPEC-COLLECTOR-BATCH-002 REQ-BATCH2-010~012,-040~042,-060~063,
+// SPEC-COLLECTOR-KISGATE-001 REQ-KISGATE-001,-020,-024 — 게이트 경유 통합 진입점
+// @MX:SPEC: SPEC-COLLECTOR-BATCH-002, SPEC-COLLECTOR-KISGATE-001
 public class ShortSaleCollectionService {
 
     static final int LOOKBACK_CALENDAR_DAYS = 14;
@@ -49,8 +54,8 @@ public class ShortSaleCollectionService {
 
     private final StockRepository stockRepository;
     private final ShortSaleDomesticRepository shortSaleDomesticRepository;
-    private final BatchRestExecutor batchRestExecutor;
-    private final HealthyKeyRoundRobinDistributor distributor;
+    private final GuardedKisExecutor guardedKisExecutor;
+    private final KeyLeaseRegistry keyLeaseRegistry;
 
     /**
      * 공매도 일별추이 수집을 실행하고 집계 결과를 반환한다 (활성종목 자체 조회).
@@ -75,10 +80,12 @@ public class ShortSaleCollectionService {
             return new SupplyDemandResult(0, 0, 0);
         }
 
-        Map<KisAccountCredential, List<Stock>> allocation = distributor.distribute(activeStocks);
+        // REQ-KISGATE-006a: per-batch 헬스 스냅샷 1회 고정
+        LeaseSession session = keyLeaseRegistry.openSession();
         int total = activeStocks.size();
 
-        if (allocation.isEmpty()) {
+        // REQ-KISGATE-024, REQ-KEYDIST-020 보존: 빈 스냅샷 = 전 키 사망 → skip-all + ERROR + no fallback
+        if (session.isEmpty()) {
             log.error(
                     "[short-sale] 모든 키 죽음 — per-stock 수집 0회, 전체 skip. attempted={}, succeeded=0, skipped={}",
                     total,
@@ -90,20 +97,11 @@ public class ShortSaleCollectionService {
         AtomicInteger succeeded = new AtomicInteger();
         AtomicInteger skipped = new AtomicInteger();
 
+        // 키 선택은 게이트가 세션 스냅샷에서 동적 lease한다(REQ-KISGATE-020). 모든 종목이 동일 세션 공유(REQ-KISGATE-031).
         try (ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor()) {
-            for (Map.Entry<KisAccountCredential, List<Stock>> entry : allocation.entrySet()) {
-                KisAccountCredential credential = entry.getKey();
-                for (Stock stock : entry.getValue()) {
-                    executor.submit(
-                            () ->
-                                    collectStock(
-                                            stock,
-                                            credential,
-                                            today,
-                                            windowStart,
-                                            succeeded,
-                                            skipped));
-                }
+            for (Stock stock : activeStocks) {
+                executor.submit(
+                        () -> collectStock(stock, session, today, windowStart, succeeded, skipped));
             }
         }
 
@@ -118,7 +116,7 @@ public class ShortSaleCollectionService {
 
     private void collectStock(
             Stock stock,
-            KisAccountCredential credential,
+            LeaseSession session,
             LocalDate today,
             LocalDate windowStart,
             AtomicInteger succeeded,
@@ -126,42 +124,43 @@ public class ShortSaleCollectionService {
 
         String symbol = stock.getSymbol();
         try {
-            BatchResult<KisShortSaleResponse> batchResult =
-                    fetch(credential, symbol, windowStart, today);
-
-            if (!batchResult.isSuccess()) {
-                String reason = batchResult.getSkipReason().orElse("알 수 없음");
-                log.warn("[short-sale] skip (데이터 유실) — symbol={}, reason={}", symbol, reason);
-                skipped.incrementAndGet();
-                return;
-            }
-
-            KisShortSaleResponse response = batchResult.getValue().orElseThrow();
+            KisShortSaleResponse response = fetch(session, symbol, windowStart, today);
             saveValidRows(stock, symbol, response, today, windowStart);
             succeeded.incrementAndGet();
 
+        } catch (KisRateLimitException | RestClientException e) {
+            // REQ-KISGATE-022: retryable 재시도 소진 → graceful skip
+            log.warn("[short-sale] skip (재시도 소진) — symbol={}, reason={}", symbol, e.getMessage());
+            skipped.incrementAndGet();
+        } catch (InterruptedException e) {
+            // RETRY-001 REQ-RETRY-017 보존: 인터럽트 플래그 복원 후 skip
+            Thread.currentThread().interrupt();
+            log.warn("[short-sale] 인터럽트 — symbol={} skip", symbol);
+            skipped.incrementAndGet();
+        } catch (NoHealthyKeyException e) {
+            log.warn("[short-sale] 건강 키 0개로 skip — symbol={}", symbol);
+            skipped.incrementAndGet();
         } catch (KisTokenIssueException e) {
             log.warn("[short-sale] 토큰 발급 실패로 skip — symbol={}, error={}", symbol, e.getMessage());
             skipped.incrementAndGet();
         }
     }
 
-    private BatchResult<KisShortSaleResponse> fetch(
-            KisAccountCredential credential, String symbol, LocalDate from, LocalDate to) {
+    private KisShortSaleResponse fetch(
+            LeaseSession session, String symbol, LocalDate from, LocalDate to)
+            throws InterruptedException {
         String fromDate = from.format(DATE_FMT);
         String toDate = to.format(DATE_FMT);
-        return batchRestExecutor.execute(
-                credential,
+        Function<UriBuilder, URI> uriCustomizer =
                 uri ->
                         uri.path(PATH)
                                 .queryParam("FID_COND_MRKT_DIV_CODE", "J")
                                 .queryParam("FID_INPUT_ISCD", symbol)
                                 .queryParam("FID_INPUT_DATE_1", fromDate)
                                 .queryParam("FID_INPUT_DATE_2", toDate)
-                                .build(),
-                TR_ID,
-                KisShortSaleResponse.class,
-                symbol);
+                                .build();
+        return guardedKisExecutor.execute(
+                session, uriCustomizer, TR_ID, KisShortSaleResponse.class);
     }
 
     private void saveValidRows(

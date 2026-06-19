@@ -9,9 +9,11 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-import com.aaa.collector.kis.batch.BatchRestExecutor;
-import com.aaa.collector.kis.batch.BatchResult;
-import com.aaa.collector.kis.batch.HealthyKeyRoundRobinDistributor;
+import com.aaa.collector.kis.KisRateLimitException;
+import com.aaa.collector.kis.gate.GuardedKisExecutor;
+import com.aaa.collector.kis.gate.KeyLeaseRegistry;
+import com.aaa.collector.kis.gate.KeyLeaseRegistry.LeaseSession;
+import com.aaa.collector.kis.token.HealthyKeySelector;
 import com.aaa.collector.kis.token.KisAccountCredential;
 import com.aaa.collector.kis.token.KisTokenIssueException;
 import com.aaa.collector.stock.ShortSaleDomestic;
@@ -23,7 +25,6 @@ import com.aaa.collector.stock.enums.Market;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.List;
-import java.util.Map;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -32,9 +33,17 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.web.client.RestClientException;
 
+/**
+ * SPEC-COLLECTOR-KISGATE-001 M4(T06) — 게이트 이전 후 회귀 테스트.
+ *
+ * <p>{@code BatchRestExecutor}+{@code HealthyKeyRoundRobinDistributor} → {@code
+ * GuardedKisExecutor}+{@code KeyLeaseRegistry} 이전. 보존 종단 동작(skip on 소진/인터럽트/전 키 사망, per-batch
+ * selectHealthy 1회, 매핑·검증)을 고정한다.
+ */
 @ExtendWith(MockitoExtension.class)
-@DisplayName("ShortSaleCollectionService 단위 테스트")
+@DisplayName("ShortSaleCollectionService 단위 테스트 (게이트 이전)")
 class ShortSaleCollectionServiceTest {
 
     private static final KisAccountCredential ISA =
@@ -44,19 +53,20 @@ class ShortSaleCollectionServiceTest {
 
     @Mock private StockRepository stockRepository;
     @Mock private ShortSaleDomesticRepository shortSaleDomesticRepository;
-    @Mock private BatchRestExecutor batchRestExecutor;
-    @Mock private HealthyKeyRoundRobinDistributor distributor;
+    @Mock private GuardedKisExecutor guardedKisExecutor;
+    @Mock private HealthyKeySelector healthyKeySelector;
 
     private ShortSaleCollectionService service;
 
     @BeforeEach
     void setUp() {
+        KeyLeaseRegistry keyLeaseRegistry = new KeyLeaseRegistry(healthyKeySelector);
         service =
                 new ShortSaleCollectionService(
                         stockRepository,
                         shortSaleDomesticRepository,
-                        batchRestExecutor,
-                        distributor);
+                        guardedKisExecutor,
+                        keyLeaseRegistry);
     }
 
     private Stock stockOf(String symbol) {
@@ -78,27 +88,30 @@ class ShortSaleCollectionServiceTest {
         return new KisShortSaleResponse("0", "MCA00000", "정상", rows);
     }
 
-    private void stubFetch(String symbol, KisShortSaleResponse r) {
-        when(batchRestExecutor.execute(
-                        eq(ISA), any(), anyString(), eq(KisShortSaleResponse.class), eq(symbol)))
-                .thenReturn(BatchResult.success(r));
+    private void stubFetch(KisShortSaleResponse r) throws InterruptedException {
+        when(guardedKisExecutor.execute(
+                        any(LeaseSession.class),
+                        any(),
+                        anyString(),
+                        eq(KisShortSaleResponse.class)))
+                .thenReturn(r);
     }
 
     private void singleStock(Stock stock) {
         when(stockRepository.findAllActiveTradable()).thenReturn(List.of(stock));
-        when(distributor.distribute(List.of(stock))).thenReturn(Map.of(ISA, List.of(stock)));
+        when(healthyKeySelector.selectHealthy()).thenReturn(List.of(ISA));
     }
 
     @Nested
-    @DisplayName("collect — 성공 + 매핑 (REQ-041, -042)")
+    @DisplayName("collect — 성공 + 매핑 (REQ-041, -042 보존)")
     class CollectSuccess {
 
         @Test
         @DisplayName("매핑 + 금액 원 단위 무변환 (OI-2)")
-        void success_mapping_noConversion() {
+        void success_mapping_noConversion() throws Exception {
             Stock stock = stockOf("005930");
             singleStock(stock);
-            stubFetch("005930", response(List.of(row("20260612"))));
+            stubFetch(response(List.of(row("20260612"))));
 
             SupplyDemandResult result = service.collect(TODAY);
 
@@ -127,16 +140,18 @@ class ShortSaleCollectionServiceTest {
                             new BigDecimal("5.1"),
                             3_750_000_000L,
                             new BigDecimal("6.3"));
+            // REQ-KISGATE-006a: per-batch 스냅샷 1회
+            verify(healthyKeySelector, times(1)).selectHealthy();
         }
     }
 
     @Nested
-    @DisplayName("collect — 검증 (REQ-060 비율 경계 M-2, 음수, 윈도우)")
+    @DisplayName("collect — 검증 (REQ-060 비율 경계 M-2, 음수, 윈도우 보존)")
     class Validation {
 
         @Test
-        @DisplayName("비율 절댓값 ≥ 1000 행 — 저장 제외 (DECIMAL(7,4) 경계, AC-7 S7-1b)")
-        void rateOverBoundary_excluded() {
+        @DisplayName("비율 절댓값 ≥ 1000 행 — 저장 제외 (DECIMAL(7,4) 경계)")
+        void rateOverBoundary_excluded() throws Exception {
             Stock stock = stockOf("005930");
             singleStock(stock);
             KisShortSaleResponse.ShortSaleRow bad =
@@ -150,7 +165,7 @@ class ShortSaleCollectionServiceTest {
                             "5.1",
                             "3750000000",
                             "6.3");
-            stubFetch("005930", response(List.of(bad)));
+            stubFetch(response(List.of(bad)));
 
             service.collect(TODAY);
 
@@ -160,7 +175,7 @@ class ShortSaleCollectionServiceTest {
 
         @Test
         @DisplayName("비율 절댓값 < 1000 정상 — 저장됨")
-        void rateWithinBoundary_inserted() {
+        void rateWithinBoundary_inserted() throws Exception {
             Stock stock = stockOf("005930");
             singleStock(stock);
             KisShortSaleResponse.ShortSaleRow ok =
@@ -174,7 +189,7 @@ class ShortSaleCollectionServiceTest {
                             "5.1",
                             "3750000000",
                             "6.3");
-            stubFetch("005930", response(List.of(ok)));
+            stubFetch(response(List.of(ok)));
 
             service.collect(TODAY);
 
@@ -184,7 +199,7 @@ class ShortSaleCollectionServiceTest {
 
         @Test
         @DisplayName("음수 수량 행 — 저장 제외 (공매도는 음수 비정상)")
-        void negativeQty_excluded() {
+        void negativeQty_excluded() throws Exception {
             Stock stock = stockOf("005930");
             singleStock(stock);
             KisShortSaleResponse.ShortSaleRow bad =
@@ -198,7 +213,7 @@ class ShortSaleCollectionServiceTest {
                             "5.1",
                             "3750000000",
                             "6.3");
-            stubFetch("005930", response(List.of(bad)));
+            stubFetch(response(List.of(bad)));
 
             service.collect(TODAY);
 
@@ -208,10 +223,10 @@ class ShortSaleCollectionServiceTest {
 
         @Test
         @DisplayName("14일 윈도우 밖 행 — 저장 제외")
-        void outsideWindow_excluded() {
+        void outsideWindow_excluded() throws Exception {
             Stock stock = stockOf("005930");
             singleStock(stock);
-            stubFetch("005930", response(List.of(row("20260520"), row("20260612"))));
+            stubFetch(response(List.of(row("20260520"), row("20260612"))));
 
             service.collect(TODAY);
 
@@ -223,10 +238,10 @@ class ShortSaleCollectionServiceTest {
 
         @Test
         @DisplayName("빈 output2 — 0건 succeeded (REQ-063)")
-        void empty_succeeded() {
+        void empty_succeeded() throws Exception {
             Stock stock = stockOf("005930");
             singleStock(stock);
-            stubFetch("005930", response(List.of()));
+            stubFetch(response(List.of()));
 
             SupplyDemandResult result = service.collect(TODAY);
 
@@ -236,20 +251,19 @@ class ShortSaleCollectionServiceTest {
     }
 
     @Nested
-    @DisplayName("collect — 종목 skip")
+    @DisplayName("collect — 종목 skip (AC-6, REQ-KISGATE-009/022 보존)")
     class StockSkip {
 
         @Test
         @DisplayName("KisTokenIssueException — graceful skip")
-        void tokenIssue_skip() {
+        void tokenIssue_skip() throws Exception {
             Stock stock = stockOf("005930");
             singleStock(stock);
-            when(batchRestExecutor.execute(
-                            eq(ISA),
+            when(guardedKisExecutor.execute(
+                            any(LeaseSession.class),
                             any(),
                             anyString(),
-                            eq(KisShortSaleResponse.class),
-                            eq("005930")))
+                            eq(KisShortSaleResponse.class)))
                     .thenThrow(new KisTokenIssueException("isa", new RuntimeException("fail")));
 
             SupplyDemandResult result = service.collect(TODAY);
@@ -258,17 +272,16 @@ class ShortSaleCollectionServiceTest {
         }
 
         @Test
-        @DisplayName("BatchResult.skip — skip 집계")
-        void batchSkip_counted() {
+        @DisplayName("retryable 소진(KisRateLimitException) — skip 집계 (AC-6)")
+        void retryableExhausted_counted() throws Exception {
             Stock stock = stockOf("005930");
             singleStock(stock);
-            when(batchRestExecutor.execute(
-                            eq(ISA),
+            when(guardedKisExecutor.execute(
+                            any(LeaseSession.class),
                             any(),
                             anyString(),
-                            eq(KisShortSaleResponse.class),
-                            eq("005930")))
-                    .thenReturn(BatchResult.skip("005930", "테스트 skip"));
+                            eq(KisShortSaleResponse.class)))
+                    .thenThrow(new KisRateLimitException("isa", "EGW00201 소진"));
 
             SupplyDemandResult result = service.collect(TODAY);
 
@@ -277,8 +290,43 @@ class ShortSaleCollectionServiceTest {
         }
 
         @Test
+        @DisplayName("RestClientException 소진 — skip 집계 (AC-6)")
+        void restClientException_counted() throws Exception {
+            Stock stock = stockOf("005930");
+            singleStock(stock);
+            when(guardedKisExecutor.execute(
+                            any(LeaseSession.class),
+                            any(),
+                            anyString(),
+                            eq(KisShortSaleResponse.class)))
+                    .thenThrow(new RestClientException("네트워크 오류"));
+
+            SupplyDemandResult result = service.collect(TODAY);
+
+            assertThat(result.skipped()).isEqualTo(1);
+        }
+
+        @Test
+        @DisplayName("InterruptedException — skip 변환(전파 아님) (AC-6, REQ-RETRY-017)")
+        void interrupted_skip() throws Exception {
+            Stock stock = stockOf("005930");
+            singleStock(stock);
+            when(guardedKisExecutor.execute(
+                            any(LeaseSession.class),
+                            any(),
+                            anyString(),
+                            eq(KisShortSaleResponse.class)))
+                    .thenThrow(new InterruptedException("테스트 인터럽트"));
+
+            SupplyDemandResult result = service.collect(TODAY);
+
+            assertThat(result.attempted()).isEqualTo(1);
+            assertThat(result.skipped()).isEqualTo(1);
+        }
+
+        @Test
         @DisplayName("null trade_date 행 — 저장 제외, 종목은 succeeded")
-        void nullTradeDate_excluded() {
+        void nullTradeDate_excluded() throws Exception {
             Stock stock = stockOf("005930");
             singleStock(stock);
             KisShortSaleResponse.ShortSaleRow bad =
@@ -292,7 +340,7 @@ class ShortSaleCollectionServiceTest {
                             "5.1",
                             "3750000000",
                             "6.3");
-            stubFetch("005930", response(List.of(bad)));
+            stubFetch(response(List.of(bad)));
 
             SupplyDemandResult result = service.collect(TODAY);
 
@@ -303,7 +351,7 @@ class ShortSaleCollectionServiceTest {
 
         @Test
         @DisplayName("숫자 파싱 실패 행 — 저장 제외")
-        void unparseableRow_excluded() {
+        void unparseableRow_excluded() throws Exception {
             Stock stock = stockOf("005930");
             singleStock(stock);
             KisShortSaleResponse.ShortSaleRow bad =
@@ -317,7 +365,7 @@ class ShortSaleCollectionServiceTest {
                             "5.1",
                             "3750000000",
                             "6.3");
-            stubFetch("005930", response(List.of(bad)));
+            stubFetch(response(List.of(bad)));
 
             service.collect(TODAY);
 
@@ -327,60 +375,56 @@ class ShortSaleCollectionServiceTest {
     }
 
     @Nested
-    @DisplayName("collect — 대상 없음 / 모든 키 죽음")
+    @DisplayName("collect — 대상 없음 / 모든 키 죽음 (AC-5 보존)")
     class NoTargets {
 
         @Test
-        @DisplayName("활성 종목 없음 — 0/0/0, execute 미호출")
-        void noActiveStocks_zero() {
+        @DisplayName("활성 종목 없음 — 0/0/0, 게이트 미호출")
+        void noActiveStocks_zero() throws Exception {
             when(stockRepository.findAllActiveTradable()).thenReturn(List.of());
 
             SupplyDemandResult result = service.collect(TODAY);
 
             assertThat(result.attempted()).isEqualTo(0);
-            verify(batchRestExecutor, never())
-                    .execute(any(), any(), anyString(), any(), anyString());
+            verify(guardedKisExecutor, never())
+                    .execute(any(LeaseSession.class), any(), anyString(), any());
         }
 
         @Test
-        @DisplayName("빈 할당 — execute 0회, 전체 skip")
-        void emptyAllocation_skipAll() {
+        @DisplayName("빈 스냅샷 — 게이트 0회, 전체 skip (AC-5)")
+        void emptySnapshot_skipAll() throws Exception {
             Stock s1 = stockOf("005930");
             Stock s2 = stockOf("000660");
             List<Stock> stocks = List.of(s1, s2);
             when(stockRepository.findAllActiveTradable()).thenReturn(stocks);
-            when(distributor.distribute(stocks)).thenReturn(Map.of());
+            when(healthyKeySelector.selectHealthy()).thenReturn(List.of());
 
             SupplyDemandResult result = service.collect(TODAY);
 
-            verify(batchRestExecutor, never())
-                    .execute(any(), any(), anyString(), any(), anyString());
+            verify(guardedKisExecutor, never())
+                    .execute(any(LeaseSession.class), any(), anyString(), any());
             assertThat(result.attempted()).isEqualTo(2);
             assertThat(result.skipped()).isEqualTo(2);
         }
     }
 
     @Nested
-    @DisplayName("T3a 회귀 — asset_type 필터 검증 (REQ-BATCH3-024)")
+    @DisplayName("T3a 회귀 — asset_type 필터 검증 (REQ-BATCH3-024 보존)")
     class AssetTypeFilter {
 
         @Test
         @DisplayName("findAllActiveTradable()으로 호출 — INDEX 제외는 StockRepository 계층이 보장")
         void collect_callsFindAllActiveTradable() {
-            // Arrange
             when(stockRepository.findAllActiveTradable()).thenReturn(List.of());
 
-            // Act
             service.collect(TODAY);
 
-            // Assert — INDEX 제외 캡슐화 진입점 호출 확인 (INDEX 제외 자체는 StockRepositoryTest가 검증)
             verify(stockRepository).findAllActiveTradable();
         }
 
         @Test
-        @DisplayName("INDEX 종목은 수집 대상 제외, STOCK+ETF만 API 호출")
-        void indexStock_excluded_stockEtf_included() {
-            // Arrange — 필터 결과로 STOCK+ETF만 반환
+        @DisplayName("STOCK+ETF 2건 모두 수집 시도")
+        void stockEtf_included() throws Exception {
             Stock stockRow = stockOf("005930");
             Stock etfRow =
                     Stock.builder()
@@ -392,14 +436,11 @@ class ShortSaleCollectionServiceTest {
                             .build();
             List<Stock> tradableStocks = List.of(stockRow, etfRow);
             when(stockRepository.findAllActiveTradable()).thenReturn(tradableStocks);
-            when(distributor.distribute(tradableStocks)).thenReturn(Map.of(ISA, tradableStocks));
-            stubFetch("005930", response(List.of(row("20260612"))));
-            stubFetch("069500", response(List.of(row("20260612"))));
+            when(healthyKeySelector.selectHealthy()).thenReturn(List.of(ISA));
+            stubFetch(response(List.of(row("20260612"))));
 
-            // Act
             SupplyDemandResult result = service.collect(TODAY);
 
-            // Assert — STOCK+ETF 2건 시도, INDEX 없음
             assertThat(result.attempted()).isEqualTo(2);
         }
     }
