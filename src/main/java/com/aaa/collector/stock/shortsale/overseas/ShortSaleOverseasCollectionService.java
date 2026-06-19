@@ -1,5 +1,6 @@
 package com.aaa.collector.stock.shortsale.overseas;
 
+import com.aaa.collector.observability.BatchMetrics;
 import com.aaa.collector.stock.ShortSaleOverseasRepository;
 import com.aaa.collector.stock.ShortSaleOverseasRepository.ShortInterestSnapshot;
 import com.aaa.collector.stock.Stock;
@@ -30,9 +31,9 @@ import org.springframework.stereotype.Service;
 @Slf4j
 @Service
 @RequiredArgsConstructor
-// @MX:ANCHOR: [AUTO] 미국 공매도 수집 진입점 — FINRA Daily 합산·심볼 정규화 매칭·검증·소스별 UPSERT 담당
-// @MX:REASON: SPEC-COLLECTOR-SHORTSALE-OVERSEAS-001 REQ-SSO-003,-011,-012,-020,-021 — FINRA 두 소스가
-// 수렴하는 수집 진입점
+// @MX:ANCHOR: [AUTO] 미국 공매도 수집 진입점 — FINRA Daily 합산·심볼 정규화 매칭·검증·소스별 UPSERT·집계 계측 담당
+// @MX:REASON: SPEC-COLLECTOR-SHORTSALE-OVERSEAS-001 REQ-SSO-003,-011,-012,-020,-021,-040 — FINRA 두
+// 소스가 수렴하는 수집 진입점
 // @MX:SPEC: SPEC-COLLECTOR-SHORTSALE-OVERSEAS-001
 public class ShortSaleOverseasCollectionService {
 
@@ -45,9 +46,16 @@ public class ShortSaleOverseasCollectionService {
     /** FINRA revisionFlag 값 — 직전 사이클 잔고 수정. */
     private static final String REVISION_FLAG = "R";
 
+    /** BatchMetrics 배치 라벨 — Daily 경로. */
+    private static final String BATCH_DAILY = "overseas-shortsale-daily";
+
+    /** BatchMetrics 배치 라벨 — Short Interest 경로. */
+    private static final String BATCH_INTEREST = "overseas-shortsale-interest";
+
     private final FinraShortSaleClient finraClient;
     private final StockRepository stockRepository;
     private final ShortSaleOverseasRepository shortSaleOverseasRepository;
+    private final BatchMetrics batchMetrics;
 
     /**
      * FINRA Daily 공매도 거래량을 수집한다. reportingFacility 다중 행을 종목·거래일당 합산(REQ-SSO-011)하고, 미국 활성 STOCK+ETF
@@ -60,8 +68,10 @@ public class ShortSaleOverseasCollectionService {
     public DailyResult collectDaily(LocalDate tradeReportDate) {
         List<FinraRegShoDailyResponse> rows = finraClient.fetchRegShoDaily(tradeReportDate);
         if (rows.isEmpty()) {
-            // REQ-SSO-020: 빈 응답(휴장일·미발표) — 적재 0건 정상 skip, 예외 없음
+            // REQ-SSO-020/-030: 내용까지 본 결과 빈 응답(휴장일·미발표) — 적재 0건 정상 skip, 예외 없음. 0건도
+            // 계측한다(REQ-SSO-040)
             log.info("[overseas-shortsale-daily] 빈 응답 — 적재 0건 skip, tradeDate={}", tradeReportDate);
+            batchMetrics.recordCompletion(BATCH_DAILY, 0L, 0L, 0L, 0L);
             return new DailyResult(0, 0, 0);
         }
 
@@ -103,6 +113,13 @@ public class ShortSaleOverseasCollectionService {
         }
 
         int attempted = matchedRowsBySymbol.size();
+        // REQ-SSO-040: 시도/성공/실패/skip 집계 계측. fail은 attempted-success-skip로 유도(BatchMetrics 컨벤션)
+        batchMetrics.recordCompletion(
+                BATCH_DAILY,
+                attempted,
+                succeeded,
+                Math.max(0L, (long) attempted - succeeded - skipped),
+                skipped);
         log.info(
                 "[overseas-shortsale-daily] 수집 완료 — attempted={}, succeeded={}, skipped={}, tradeDate={}",
                 attempted,
@@ -127,8 +144,9 @@ public class ShortSaleOverseasCollectionService {
         List<FinraConsolidatedShortInterestResponse> rows =
                 finraClient.fetchConsolidatedShortInterest(from, today);
         if (rows.isEmpty()) {
-            // REQ-SSO-020: 빈 응답 — 적재 0건 정상 skip, 예외 없음
+            // REQ-SSO-020/-030: 내용까지 본 결과 빈 응답 — 적재 0건 정상 skip. 0건도 계측한다(REQ-SSO-040)
             log.info("[overseas-shortsale-interest] 빈 응답 — 적재 0건 skip, range={}~{}", from, today);
+            batchMetrics.recordCompletion(BATCH_INTEREST, 0L, 0L, 0L, 0L);
             return new InterestResult(0, 0, 0);
         }
 
@@ -158,6 +176,13 @@ public class ShortSaleOverseasCollectionService {
             }
         }
 
+        // REQ-SSO-040: 시도/성공/실패/skip 집계 계측. fail은 attempted-success-skip로 유도
+        batchMetrics.recordCompletion(
+                BATCH_INTEREST,
+                attempted,
+                succeeded,
+                Math.max(0L, (long) attempted - succeeded - skipped),
+                skipped);
         log.info(
                 "[overseas-shortsale-interest] 수집 완료 — attempted={}, succeeded={}, skipped={}, range={}~{}",
                 attempted,
