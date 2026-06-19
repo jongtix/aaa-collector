@@ -1,25 +1,29 @@
 package com.aaa.collector.stock.fundamental;
 
-import com.aaa.collector.kis.batch.BatchRestExecutor;
-import com.aaa.collector.kis.batch.BatchResult;
-import com.aaa.collector.kis.batch.HealthyKeyRoundRobinDistributor;
-import com.aaa.collector.kis.token.KisAccountCredential;
+import com.aaa.collector.kis.KisRateLimitException;
+import com.aaa.collector.kis.gate.GuardedKisExecutor;
+import com.aaa.collector.kis.gate.KeyLeaseRegistry;
+import com.aaa.collector.kis.gate.KeyLeaseRegistry.LeaseSession;
+import com.aaa.collector.kis.gate.NoHealthyKeyException;
 import com.aaa.collector.kis.token.KisTokenIssueException;
 import com.aaa.collector.stock.AnalystEstimate;
 import com.aaa.collector.stock.AnalystEstimateRepository;
 import com.aaa.collector.stock.Stock;
 import com.aaa.collector.stock.StockRepository;
+import java.net.URI;
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
 import java.util.List;
-import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.Function;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
+import org.springframework.web.client.RestClientException;
+import org.springframework.web.util.UriBuilder;
 
 /**
  * 국내주식종목투자의견 수집 서비스 (TR FHKST663300C0 → analyst_estimates, SPEC-COLLECTOR-BATCH-004).
@@ -36,10 +40,10 @@ import org.springframework.stereotype.Service;
 @Slf4j
 @Service
 @RequiredArgsConstructor
-// @MX:ANCHOR: [AUTO] 국내 투자의견 수집 진입점 — STOCK-only 분산·14일 윈도우 호출·매핑·검증·멱등 저장·집계 담당
-// @MX:REASON: SPEC-COLLECTOR-BATCH-004 REQ-BATCH4-010,-011,-013,-030~033,-070,-070a,-072 — 스케줄러에서
-// 호출하는 단일 진입점
-// @MX:SPEC: SPEC-COLLECTOR-BATCH-004
+// @MX:ANCHOR: [AUTO] 국내 투자의견 수집 진입점 — STOCK-only 게이트 lease·14일 윈도우 호출·매핑·검증·멱등 저장·집계 담당
+// @MX:REASON: SPEC-COLLECTOR-BATCH-004 REQ-BATCH4-013,-030~033,-070,-070a,-072,
+// SPEC-COLLECTOR-KISGATE-001 REQ-KISGATE-001,-020,-024 — 게이트 경유 단일 진입점
+// @MX:SPEC: SPEC-COLLECTOR-BATCH-004, SPEC-COLLECTOR-KISGATE-001
 public class InvestOpinionCollectionService {
 
     /** 수집 윈도우 캘린더 일수 (확정 — BATCH-002 수급 14일 선례와 일관, REQ-BATCH4-031). */
@@ -57,8 +61,8 @@ public class InvestOpinionCollectionService {
 
     private final StockRepository stockRepository;
     private final AnalystEstimateRepository analystEstimateRepository;
-    private final BatchRestExecutor batchRestExecutor;
-    private final HealthyKeyRoundRobinDistributor distributor;
+    private final GuardedKisExecutor guardedKisExecutor;
+    private final KeyLeaseRegistry keyLeaseRegistry;
 
     /**
      * 투자의견 수집을 실행하고 집계 결과를 반환한다 (STOCK-only 자체 조회).
@@ -74,10 +78,12 @@ public class InvestOpinionCollectionService {
             return new FundamentalResult(0, 0, 0);
         }
 
-        Map<KisAccountCredential, List<Stock>> allocation = distributor.distribute(activeStocks);
+        // REQ-KISGATE-006a: per-batch 헬스 스냅샷 1회 고정
+        LeaseSession session = keyLeaseRegistry.openSession();
         int total = activeStocks.size();
 
-        if (allocation.isEmpty()) {
+        // REQ-KISGATE-024, REQ-KEYDIST-020 보존: 빈 스냅샷 = 전 키 사망 → skip-all + ERROR + no fallback
+        if (session.isEmpty()) {
             log.error(
                     "[invest-opinion] 모든 키 죽음 — per-stock 수집 0회, 전체 skip. attempted={}, succeeded=0, skipped={}",
                     total,
@@ -92,23 +98,21 @@ public class InvestOpinionCollectionService {
         AtomicInteger batchRowsSaved = new AtomicInteger();
         AtomicInteger batchRowsSkipped = new AtomicInteger();
 
+        // 키 선택은 게이트가 세션 스냅샷에서 동적 lease한다(REQ-KISGATE-020). 모든 종목이 동일 세션 공유(REQ-KISGATE-031).
         try (ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor()) {
-            allocation.forEach(
-                    (credential, stocks) -> {
-                        for (Stock stock : stocks) {
-                            executor.submit(
-                                    () ->
-                                            collectStock(
-                                                    stock,
-                                                    credential,
-                                                    today,
-                                                    windowStart,
-                                                    succeeded,
-                                                    skipped,
-                                                    batchRowsSaved,
-                                                    batchRowsSkipped));
-                        }
-                    });
+            for (Stock stock : activeStocks) {
+                executor.submit(
+                        () ->
+                                collectStock(
+                                        stock,
+                                        session,
+                                        today,
+                                        windowStart,
+                                        succeeded,
+                                        skipped,
+                                        batchRowsSaved,
+                                        batchRowsSkipped));
+            }
         }
 
         FundamentalResult result = new FundamentalResult(total, succeeded.get(), skipped.get());
@@ -124,7 +128,7 @@ public class InvestOpinionCollectionService {
 
     private void collectStock(
             Stock stock,
-            KisAccountCredential credential,
+            LeaseSession session,
             LocalDate today,
             LocalDate windowStart,
             AtomicInteger succeeded,
@@ -134,17 +138,7 @@ public class InvestOpinionCollectionService {
 
         String symbol = stock.getSymbol();
         try {
-            BatchResult<KisInvestOpinionResponse> batchResult =
-                    fetch(credential, symbol, windowStart, today);
-
-            if (!batchResult.isSuccess()) {
-                String reason = batchResult.getSkipReason().orElse("알 수 없음");
-                log.warn("[invest-opinion] skip (데이터 유실) — symbol={}, reason={}", symbol, reason);
-                skipped.incrementAndGet();
-                return;
-            }
-
-            KisInvestOpinionResponse response = batchResult.getValue().orElseThrow();
+            KisInvestOpinionResponse response = fetch(session, symbol, windowStart, today);
             // MI-01: per-stock 행 단위 결과 집계 (saveValidRows 내부는 순차 실행)
             int[] rowCounts = saveValidRows(stock, symbol, response);
             int rowsSaved = rowCounts[0];
@@ -158,6 +152,21 @@ public class InvestOpinionCollectionService {
                     rowsSkipped);
             succeeded.incrementAndGet();
 
+        } catch (KisRateLimitException | RestClientException e) {
+            // REQ-KISGATE-022: retryable 재시도 소진 → graceful skip
+            log.warn(
+                    "[invest-opinion] skip (재시도 소진) — symbol={}, reason={}",
+                    symbol,
+                    e.getMessage());
+            skipped.incrementAndGet();
+        } catch (InterruptedException e) {
+            // RETRY-001 REQ-RETRY-017 보존: 인터럽트 플래그 복원 후 skip
+            Thread.currentThread().interrupt();
+            log.warn("[invest-opinion] 인터럽트 — symbol={} skip", symbol);
+            skipped.incrementAndGet();
+        } catch (NoHealthyKeyException e) {
+            log.warn("[invest-opinion] 건강 키 0개로 skip — symbol={}", symbol);
+            skipped.incrementAndGet();
         } catch (KisTokenIssueException e) {
             log.warn(
                     "[invest-opinion] 토큰 발급 실패로 skip — symbol={}, error={}",
@@ -167,15 +176,12 @@ public class InvestOpinionCollectionService {
         }
     }
 
-    private BatchResult<KisInvestOpinionResponse> fetch(
-            KisAccountCredential credential,
-            String symbol,
-            LocalDate windowStart,
-            LocalDate today) {
+    private KisInvestOpinionResponse fetch(
+            LeaseSession session, String symbol, LocalDate windowStart, LocalDate today)
+            throws InterruptedException {
         String from = windowStart.format(REQUEST_DATE_FMT);
         String to = today.format(REQUEST_DATE_FMT);
-        return batchRestExecutor.execute(
-                credential,
+        Function<UriBuilder, URI> uriCustomizer =
                 uri ->
                         uri.path(PATH)
                                 .queryParam("FID_COND_MRKT_DIV_CODE", "J")
@@ -183,10 +189,9 @@ public class InvestOpinionCollectionService {
                                 .queryParam("FID_INPUT_ISCD", symbol)
                                 .queryParam("FID_INPUT_DATE_1", from)
                                 .queryParam("FID_INPUT_DATE_2", to)
-                                .build(),
-                TR_ID,
-                KisInvestOpinionResponse.class,
-                symbol);
+                                .build();
+        return guardedKisExecutor.execute(
+                session, uriCustomizer, TR_ID, KisInvestOpinionResponse.class);
     }
 
     /**

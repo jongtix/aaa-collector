@@ -13,9 +13,11 @@ import ch.qos.logback.classic.Level;
 import ch.qos.logback.classic.Logger;
 import ch.qos.logback.classic.spi.ILoggingEvent;
 import ch.qos.logback.core.read.ListAppender;
-import com.aaa.collector.kis.batch.BatchRestExecutor;
-import com.aaa.collector.kis.batch.BatchResult;
-import com.aaa.collector.kis.batch.HealthyKeyRoundRobinDistributor;
+import com.aaa.collector.kis.KisRateLimitException;
+import com.aaa.collector.kis.gate.GuardedKisExecutor;
+import com.aaa.collector.kis.gate.KeyLeaseRegistry;
+import com.aaa.collector.kis.gate.KeyLeaseRegistry.LeaseSession;
+import com.aaa.collector.kis.token.HealthyKeySelector;
 import com.aaa.collector.kis.token.KisAccountCredential;
 import com.aaa.collector.kis.token.KisTokenIssueException;
 import com.aaa.collector.stock.AnalystEstimate;
@@ -27,7 +29,6 @@ import com.aaa.collector.stock.enums.Market;
 import java.net.URI;
 import java.time.LocalDate;
 import java.util.List;
-import java.util.Map;
 import java.util.function.Function;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -39,11 +40,18 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.slf4j.LoggerFactory;
+import org.springframework.web.client.RestClientException;
 import org.springframework.web.util.DefaultUriBuilderFactory;
 import org.springframework.web.util.UriBuilder;
 
+/**
+ * SPEC-COLLECTOR-KISGATE-001 M4(T09) — 게이트 이전 후 회귀 테스트.
+ *
+ * <p>{@code BatchRestExecutor}+{@code HealthyKeyRoundRobinDistributor} → {@code
+ * GuardedKisExecutor}+{@code KeyLeaseRegistry} 이전. 보존 종단 동작·매핑·검증·행 단위 집계를 고정한다.
+ */
 @ExtendWith(MockitoExtension.class)
-@DisplayName("InvestOpinionCollectionService 단위 테스트")
+@DisplayName("InvestOpinionCollectionService 단위 테스트 (게이트 이전)")
 class InvestOpinionCollectionServiceTest {
 
     private static final KisAccountCredential ISA =
@@ -53,16 +61,20 @@ class InvestOpinionCollectionServiceTest {
 
     @Mock private StockRepository stockRepository;
     @Mock private AnalystEstimateRepository analystEstimateRepository;
-    @Mock private BatchRestExecutor batchRestExecutor;
-    @Mock private HealthyKeyRoundRobinDistributor distributor;
+    @Mock private GuardedKisExecutor guardedKisExecutor;
+    @Mock private HealthyKeySelector healthyKeySelector;
 
     private InvestOpinionCollectionService service;
 
     @BeforeEach
     void setUp() {
+        KeyLeaseRegistry keyLeaseRegistry = new KeyLeaseRegistry(healthyKeySelector);
         service =
                 new InvestOpinionCollectionService(
-                        stockRepository, analystEstimateRepository, batchRestExecutor, distributor);
+                        stockRepository,
+                        analystEstimateRepository,
+                        guardedKisExecutor,
+                        keyLeaseRegistry);
     }
 
     private Stock stockOf(String symbol) {
@@ -96,30 +108,29 @@ class InvestOpinionCollectionServiceTest {
         return new KisInvestOpinionResponse("0", "MCA00000", "정상", rows);
     }
 
-    private void stubFetch(KisAccountCredential cred, String symbol, KisInvestOpinionResponse r) {
-        when(batchRestExecutor.execute(
-                        eq(cred),
+    private void stubFetch(KisInvestOpinionResponse r) throws InterruptedException {
+        when(guardedKisExecutor.execute(
+                        any(LeaseSession.class),
                         any(),
                         anyString(),
-                        eq(KisInvestOpinionResponse.class),
-                        eq(symbol)))
-                .thenReturn(BatchResult.success(r));
+                        eq(KisInvestOpinionResponse.class)))
+                .thenReturn(r);
     }
 
     private void singleStock(Stock stock) {
         when(stockRepository.findAllActiveStock()).thenReturn(List.of(stock));
-        when(distributor.distribute(List.of(stock))).thenReturn(Map.of(ISA, List.of(stock)));
+        when(healthyKeySelector.selectHealthy()).thenReturn(List.of(ISA));
     }
 
     @Nested
-    @DisplayName("collect — 매핑 (AC-OPN-2/3)")
+    @DisplayName("collect — 매핑 (AC-OPN-2/3 보존)")
     class Mapping {
 
-        /** 단일 행 응답을 stub하고 저장된 엔티티를 캡처한다. */
-        private AnalystEstimate captureSaved(KisInvestOpinionResponse.InvestOpinionRow inputRow) {
+        private AnalystEstimate captureSaved(KisInvestOpinionResponse.InvestOpinionRow inputRow)
+                throws InterruptedException {
             Stock stock = stockOf("005930");
             singleStock(stock);
-            stubFetch(ISA, "005930", response(List.of(inputRow)));
+            stubFetch(response(List.of(inputRow)));
 
             service.collect(TODAY);
 
@@ -130,7 +141,7 @@ class InvestOpinionCollectionServiceTest {
 
         @Test
         @DisplayName("AC-OPN-2: 비-BigDecimal 8개 필드 매핑 + BIGINT 정수 변환")
-        void mapsNonDecimalFields() {
+        void mapsNonDecimalFields() throws Exception {
             AnalystEstimate saved = captureSaved(row("20260612", "OO증권"));
 
             assertThat(saved)
@@ -156,10 +167,9 @@ class InvestOpinionCollectionServiceTest {
 
         @Test
         @DisplayName("AC-OPN-2: 괴리도/괴리율 4개 DECIMAL 필드 매핑")
-        void mapsGapFields() {
+        void mapsGapFields() throws Exception {
             AnalystEstimate saved = captureSaved(row("20260612", "OO증권"));
 
-            // BigDecimal scale 비교(isEqualByComparingTo)
             assertThat(saved.getGapNDay()).isEqualByComparingTo("13000");
             assertThat(saved.getGapRateNDay()).isEqualByComparingTo("15.85");
             assertThat(saved.getGapFutures()).isEqualByComparingTo("500");
@@ -168,10 +178,10 @@ class InvestOpinionCollectionServiceTest {
 
         @Test
         @DisplayName("AC-OPN-3: 빈 회원사명 — institution_name='' 저장")
-        void emptyInstitution_storedAsEmpty() {
+        void emptyInstitution_storedAsEmpty() throws Exception {
             Stock stock = stockOf("005930");
             singleStock(stock);
-            stubFetch(ISA, "005930", response(List.of(row("20260612", ""))));
+            stubFetch(response(List.of(row("20260612", ""))));
 
             service.collect(TODAY);
 
@@ -182,7 +192,7 @@ class InvestOpinionCollectionServiceTest {
 
         @Test
         @DisplayName("BIGINT .00 소수 접미사 무손실 정수 변환 (target_price/prev_close)")
-        void bigIntDecimalSuffix_lossless() {
+        void bigIntDecimalSuffix_lossless() throws Exception {
             Stock stock = stockOf("005930");
             singleStock(stock);
             KisInvestOpinionResponse.InvestOpinionRow r =
@@ -199,7 +209,7 @@ class InvestOpinionCollectionServiceTest {
                             "15.85",
                             "500",
                             "0.61");
-            stubFetch(ISA, "005930", response(List.of(r)));
+            stubFetch(response(List.of(r)));
 
             service.collect(TODAY);
 
@@ -211,7 +221,7 @@ class InvestOpinionCollectionServiceTest {
 
         @Test
         @DisplayName("괴리도/괴리율 음수 정상 저장 (부호 무거부, REQ-070a)")
-        void negativeGaps_stored() {
+        void negativeGaps_stored() throws Exception {
             Stock stock = stockOf("005930");
             singleStock(stock);
             KisInvestOpinionResponse.InvestOpinionRow r =
@@ -228,7 +238,7 @@ class InvestOpinionCollectionServiceTest {
                             "-15.85",
                             "-500",
                             "-0.61");
-            stubFetch(ISA, "005930", response(List.of(r)));
+            stubFetch(response(List.of(r)));
 
             service.collect(TODAY);
 
@@ -240,54 +250,45 @@ class InvestOpinionCollectionServiceTest {
     }
 
     @Nested
-    @DisplayName("collect — 증분 윈도우 호출 (AC-OPN-1, AC-PATH-5)")
+    @DisplayName("collect — 증분 윈도우 호출 (AC-OPN-1 보존)")
     class WindowCall {
 
         @Test
         @DisplayName("날짜 포맷 = 10자 00+YYYYMMDD, 윈도우 폭 14일")
-        void dateFormat10Char_window14Days() {
+        @SuppressWarnings("unchecked")
+        void dateFormat10Char_window14Days() throws Exception {
             Stock stock = stockOf("005930");
             singleStock(stock);
             ArgumentCaptor<Function<UriBuilder, URI>> uriCaptor =
-                    captureUri("005930", response(List.of()));
+                    ArgumentCaptor.forClass(Function.class);
+            when(guardedKisExecutor.execute(
+                            any(LeaseSession.class),
+                            uriCaptor.capture(),
+                            anyString(),
+                            eq(KisInvestOpinionResponse.class)))
+                    .thenReturn(response(List.of()));
 
             service.collect(TODAY);
 
             UriBuilder builder = new DefaultUriBuilderFactory().builder();
             URI uri = uriCaptor.getValue().apply(builder);
             String query = uri.getQuery();
-            // 14일 전 = 2026-06-01 → 0020260601, 기준일 2026-06-15 → 0020260615
             assertThat(query).contains("FID_INPUT_DATE_1=0020260601");
             assertThat(query).contains("FID_INPUT_DATE_2=0020260615");
             assertThat(query).contains("FID_COND_SCR_DIV_CODE=16633");
         }
-
-        @SuppressWarnings("unchecked")
-        private ArgumentCaptor<Function<UriBuilder, URI>> captureUri(
-                String symbol, KisInvestOpinionResponse r) {
-            ArgumentCaptor<Function<UriBuilder, URI>> uriCaptor =
-                    ArgumentCaptor.forClass(Function.class);
-            when(batchRestExecutor.execute(
-                            eq(ISA),
-                            uriCaptor.capture(),
-                            anyString(),
-                            eq(KisInvestOpinionResponse.class),
-                            eq(symbol)))
-                    .thenReturn(BatchResult.success(r));
-            return uriCaptor;
-        }
     }
 
     @Nested
-    @DisplayName("collect — 검증 / skip / 집계 (AC-VAL-1/2/3)")
+    @DisplayName("collect — 검증 / skip / 집계 (AC-VAL-1/2/3 보존)")
     class Validation {
 
         @Test
         @DisplayName("AC-VAL-3: 빈 output — 0건 succeeded (skip 아님)")
-        void emptyOutput_zeroRowsSucceeded() {
+        void emptyOutput_zeroRowsSucceeded() throws Exception {
             Stock stock = stockOf("005930");
             singleStock(stock);
-            stubFetch(ISA, "005930", response(List.of()));
+            stubFetch(response(List.of()));
 
             FundamentalResult result = service.collect(TODAY);
 
@@ -299,13 +300,13 @@ class InvestOpinionCollectionServiceTest {
 
         @Test
         @DisplayName("숫자 파싱 실패 행 — skip, 같은 응답 정상 행 저장")
-        void unparseableRow_skipped_othersStored() {
+        void unparseableRow_skipped_othersStored() throws Exception {
             Stock stock = stockOf("005930");
             singleStock(stock);
             KisInvestOpinionResponse.InvestOpinionRow bad =
                     new KisInvestOpinionResponse.InvestOpinionRow(
                             "20260611", "매수", "2", "중립", "3", "OO증권", "x", "y", "z", "w", "v", "u");
-            stubFetch(ISA, "005930", response(List.of(bad, row("20260612", "OO증권"))));
+            stubFetch(response(List.of(bad, row("20260612", "OO증권"))));
 
             service.collect(TODAY);
 
@@ -316,10 +317,10 @@ class InvestOpinionCollectionServiceTest {
 
         @Test
         @DisplayName("trade_date 파싱 불가 행 — skip")
-        void unparseableDate_skipped() {
+        void unparseableDate_skipped() throws Exception {
             Stock stock = stockOf("005930");
             singleStock(stock);
-            stubFetch(ISA, "005930", response(List.of(row("INVALID", "OO증권"))));
+            stubFetch(response(List.of(row("INVALID", "OO증권"))));
 
             service.collect(TODAY);
 
@@ -329,15 +330,14 @@ class InvestOpinionCollectionServiceTest {
 
         @Test
         @DisplayName("AC-VAL-2: KisTokenIssueException — graceful skip")
-        void tokenIssue_gracefulSkip() {
+        void tokenIssue_gracefulSkip() throws Exception {
             Stock stock = stockOf("005930");
             singleStock(stock);
-            when(batchRestExecutor.execute(
-                            eq(ISA),
+            when(guardedKisExecutor.execute(
+                            any(LeaseSession.class),
                             any(),
                             anyString(),
-                            eq(KisInvestOpinionResponse.class),
-                            eq("005930")))
+                            eq(KisInvestOpinionResponse.class)))
                     .thenThrow(new KisTokenIssueException("isa", new RuntimeException("fail")));
 
             FundamentalResult result = service.collect(TODAY);
@@ -346,27 +346,60 @@ class InvestOpinionCollectionServiceTest {
         }
 
         @Test
-        @DisplayName("BatchResult.skip — skip 집계")
-        void batchSkip_counted() {
+        @DisplayName("retryable 소진(KisRateLimitException) — skip 집계 (AC-6)")
+        void retryableExhausted_counted() throws Exception {
             Stock stock = stockOf("005930");
             singleStock(stock);
-            when(batchRestExecutor.execute(
-                            eq(ISA),
+            when(guardedKisExecutor.execute(
+                            any(LeaseSession.class),
                             any(),
                             anyString(),
-                            eq(KisInvestOpinionResponse.class),
-                            eq("005930")))
-                    .thenReturn(BatchResult.skip("005930", "테스트 skip"));
+                            eq(KisInvestOpinionResponse.class)))
+                    .thenThrow(new KisRateLimitException("isa", "EGW00201 소진"));
 
             FundamentalResult result = service.collect(TODAY);
 
             assertThat(result.succeeded()).isEqualTo(0);
             assertThat(result.skipped()).isEqualTo(1);
         }
+
+        @Test
+        @DisplayName("RestClientException 소진 — skip 집계 (AC-6)")
+        void restClientException_counted() throws Exception {
+            Stock stock = stockOf("005930");
+            singleStock(stock);
+            when(guardedKisExecutor.execute(
+                            any(LeaseSession.class),
+                            any(),
+                            anyString(),
+                            eq(KisInvestOpinionResponse.class)))
+                    .thenThrow(new RestClientException("네트워크"));
+
+            FundamentalResult result = service.collect(TODAY);
+
+            assertThat(result.skipped()).isEqualTo(1);
+        }
+
+        @Test
+        @DisplayName("InterruptedException — skip 변환(전파 아님) (AC-6, REQ-RETRY-017)")
+        void interrupted_skip() throws Exception {
+            Stock stock = stockOf("005930");
+            singleStock(stock);
+            when(guardedKisExecutor.execute(
+                            any(LeaseSession.class),
+                            any(),
+                            anyString(),
+                            eq(KisInvestOpinionResponse.class)))
+                    .thenThrow(new InterruptedException("테스트 인터럽트"));
+
+            FundamentalResult result = service.collect(TODAY);
+
+            assertThat(result.skipped()).isEqualTo(1);
+        }
     }
 
     @Nested
-    @DisplayName("collect — 경로/대상 (AC-PATH-1/2/4)")
+    @DisplayName("collect — 경로/대상 (AC-PATH-1 보존)")
     class PathAndTarget {
 
         @Test
@@ -382,44 +415,47 @@ class InvestOpinionCollectionServiceTest {
         }
 
         @Test
-        @DisplayName("멀티키 분산 경로 사용 — distributor.distribute 경유")
-        void usesDistributor() {
+        @DisplayName("게이트 경유 + per-batch selectHealthy 1회 (AC-1, REQ-KISGATE-006a)")
+        void usesGateWithSingleSnapshot() throws Exception {
             Stock stock = stockOf("005930");
             singleStock(stock);
-            stubFetch(ISA, "005930", response(List.of(row("20260612", "OO증권"))));
+            stubFetch(response(List.of(row("20260612", "OO증권"))));
 
             service.collect(TODAY);
 
-            verify(distributor).distribute(List.of(stock));
+            verify(guardedKisExecutor, times(1))
+                    .execute(
+                            any(LeaseSession.class),
+                            any(),
+                            anyString(),
+                            eq(KisInvestOpinionResponse.class));
+            verify(healthyKeySelector, times(1)).selectHealthy();
         }
     }
 
     @Nested
-    @DisplayName("collect — 행 단위 집계 관측성 (MI-01)")
+    @DisplayName("collect — 행 단위 집계 관측성 (MI-01 보존)")
     class RowTally {
 
         @Test
-        @DisplayName("MI-01: 혼합 응답(유효 1행 + 파싱실패 1행) — insertIgnoreDuplicate 1회, skip 1건")
-        void mixedResponse_savedAndSkippedCounted() {
-            // Arrange
+        @DisplayName("MI-01: 혼합 응답(유효 1행 + 파싱실패 1행) — insertIgnoreDuplicate 1회")
+        void mixedResponse_savedAndSkippedCounted() throws Exception {
             Stock stock = stockOf("005930");
             singleStock(stock);
             KisInvestOpinionResponse.InvestOpinionRow invalidRow =
                     new KisInvestOpinionResponse.InvestOpinionRow(
                             "20260611", "매수", "2", "중립", "3", "OO증권", "x", "y", "z", "w", "v", "u");
-            stubFetch(ISA, "005930", response(List.of(invalidRow, row("20260612", "OO증권"))));
+            stubFetch(response(List.of(invalidRow, row("20260612", "OO증권"))));
 
-            // Act
             service.collect(TODAY);
 
-            // Assert — 저장 1행, skip 1행(파싱 실패)
             verify(analystEstimateRepository, times(1))
                     .insertIgnoreDuplicate(any(AnalystEstimate.class));
         }
     }
 
     @Nested
-    @DisplayName("collect — 모든 키 죽음 (AC-PATH-2)")
+    @DisplayName("collect — 모든 키 죽음 (AC-5, REQ-KISGATE-024 보존)")
     class AllKeysDead {
 
         private Logger serviceLogger;
@@ -440,18 +476,18 @@ class InvestOpinionCollectionServiceTest {
         }
 
         @Test
-        @DisplayName("빈 할당 — execute 0회, 전체 skip, ERROR 1회")
-        void emptyAllocation_skipAll_errorLog() {
+        @DisplayName("빈 스냅샷 — 게이트 0회, 전체 skip, ERROR 1회 (AC-5)")
+        void emptySnapshot_skipAll_errorLog() throws Exception {
             Stock s1 = stockOf("005930");
             Stock s2 = stockOf("000660");
             List<Stock> stocks = List.of(s1, s2);
             when(stockRepository.findAllActiveStock()).thenReturn(stocks);
-            when(distributor.distribute(stocks)).thenReturn(Map.of());
+            when(healthyKeySelector.selectHealthy()).thenReturn(List.of());
 
             FundamentalResult result = service.collect(TODAY);
 
-            verify(batchRestExecutor, never())
-                    .execute(any(), any(), anyString(), any(), anyString());
+            verify(guardedKisExecutor, never())
+                    .execute(any(LeaseSession.class), any(), anyString(), any());
             assertThat(result.attempted()).isEqualTo(2);
             assertThat(result.skipped()).isEqualTo(2);
             List<ILoggingEvent> errors =
