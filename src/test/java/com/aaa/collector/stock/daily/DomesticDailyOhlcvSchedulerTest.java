@@ -3,9 +3,13 @@ package com.aaa.collector.stock.daily;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.inOrder;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 
+import com.aaa.collector.observability.BatchMetrics;
 import com.aaa.collector.stock.supply.DomesticSupplyDemandCollectionService;
 import java.lang.reflect.Method;
 import java.time.LocalDate;
@@ -27,6 +31,7 @@ class DomesticDailyOhlcvSchedulerTest {
     @Mock private DomesticDailyOhlcvCollectionService collectionService;
     @Mock private DailyCompletePublisher publisher;
     @Mock private DomesticSupplyDemandCollectionService supplyDemandService;
+    @Mock private BatchMetrics batchMetrics;
 
     @InjectMocks private DomesticDailyOhlcvScheduler scheduler;
 
@@ -121,6 +126,37 @@ class DomesticDailyOhlcvSchedulerTest {
                     .collectAll(any(LocalDate.class));
 
             assertThatCode(scheduler::collectDaily).doesNotThrowAnyException();
+        }
+    }
+
+    @Nested
+    @DisplayName("collectDaily — 배치 계측 (REQ-OBSV-020/021)")
+    class BatchMetricsRecording {
+
+        @Test
+        @DisplayName("일봉 수집 완료 후 batch=domestic-daily 집계 기록 (fail = attempted-succeeded-skipped)")
+        void recordsBatchMetricsOnCompletion() {
+            // Arrange — 100 시도, 90 성공, 5 스킵 → fail = 100-90-5 = 5
+            CollectionResult result = new CollectionResult(100, 90, 5);
+            Mockito.when(collectionService.collect(any(LocalDate.class))).thenReturn(result);
+
+            // Act
+            scheduler.collectDaily();
+
+            // Assert
+            verify(batchMetrics).recordCompletion("domestic-daily", 100, 90, 5, 5);
+        }
+
+        @Test
+        @DisplayName("일봉 수집 예외 시 배치 계측을 기록하지 않는다")
+        void doesNotRecordOnException() {
+            Mockito.when(collectionService.collect(any(LocalDate.class)))
+                    .thenThrow(new RuntimeException("수집 중 예외"));
+
+            scheduler.collectDaily();
+
+            verify(batchMetrics, never())
+                    .recordCompletion(anyString(), anyLong(), anyLong(), anyLong(), anyLong());
         }
     }
 }

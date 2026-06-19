@@ -1,5 +1,6 @@
 package com.aaa.collector.stock.daily;
 
+import com.aaa.collector.observability.BatchMetrics;
 import com.aaa.collector.stock.supply.DomesticSupplyDemandCollectionService;
 import java.time.LocalDate;
 import java.time.ZoneId;
@@ -29,9 +30,13 @@ public class DomesticDailyOhlcvScheduler {
 
     private static final ZoneId KST = ZoneId.of("Asia/Seoul");
 
+    /** 국내 일봉 배치 계측 라벨 (REQ-OBSV-020/021). */
+    private static final String BATCH_LABEL = "domestic-daily";
+
     private final DomesticDailyOhlcvCollectionService collectionService;
     private final DailyCompletePublisher publisher;
     private final DomesticSupplyDemandCollectionService supplyDemandService;
+    private final BatchMetrics batchMetrics;
 
     /**
      * 국내 일봉 수집 배치 진입점 (REQ-BATCH-050, REQ-BATCH-051) + 수급 3종 인라인 체인(REQ-BATCH2-001~004).
@@ -54,6 +59,11 @@ public class DomesticDailyOhlcvScheduler {
         try {
             CollectionResult result = collectionService.collect(today);
             publisher.publish(result, "domestic");
+            // REQ-OBSV-020/021: 배치 집계 계측 — fail은 결과에 명시 카운트가 없어 attempted-succeeded-skipped로 유도.
+            long fail =
+                    Math.max(0L, (long) result.attempted() - result.succeeded() - result.skipped());
+            batchMetrics.recordCompletion(
+                    BATCH_LABEL, result.attempted(), result.succeeded(), fail, result.skipped());
             log.info(
                     "[domestic-daily] 수집 배치 완료 — attempted={}, succeeded={}, skipped={}",
                     result.attempted(),

@@ -6,7 +6,6 @@ import com.aaa.collector.kis.gate.KeyLeaseRegistry;
 import com.aaa.collector.kis.gate.KeyLeaseRegistry.LeaseSession;
 import com.aaa.collector.kis.gate.NoHealthyKeyException;
 import com.aaa.collector.kis.token.KisTokenIssueException;
-import com.aaa.collector.stock.DailyOhlcvRepository;
 import com.aaa.collector.stock.Stock;
 import com.aaa.collector.stock.StockRepository;
 import java.math.BigDecimal;
@@ -68,12 +67,19 @@ public class DomesticDailyOhlcvCollectionService {
     private static final long VOLUME_MAX = 10_000_000_000L;
 
     private final StockRepository stockRepository;
-    private final DailyOhlcvRepository dailyOhlcvRepository;
     private final GuardedKisExecutor guardedKisExecutor;
     private final KeyLeaseRegistry keyLeaseRegistry;
 
     /** 불일치 탐지 위임 — 동일 패키지 내 격리로 CouplingBetweenObjects 임계값 유지. */
     private final MismatchDetector mismatchDetector;
+
+    /**
+     * 일봉 INSERT IGNORE를 단일 커넥션 배치로 실행하고 침묵 드롭 경고를 캡처하는 경로 (REQ-OBSV-023).
+     *
+     * <p>JPA {@code DailyOhlcvRepository.insertIgnoreDuplicate}를 대체한다 — 동일한 INSERT IGNORE SQL이나
+     * JDBC 경고 체인을 노출해 중복 외 침묵 드롭을 가시화할 수 있다.
+     */
+    private final WarningCountingOhlcvInserter ohlcvInserter;
 
     /**
      * 국내 일봉 수집을 실행하고 집계 결과를 반환한다.
@@ -195,23 +201,9 @@ public class DomesticDailyOhlcvCollectionService {
         // REQ-OHLCV2-010,-011: 불일치 탐지 위임 (N+1 방지·BigDecimal compareTo·WARN 로그·행 수정 없음).
         mismatchDetector.detectAndLog(stock.getId(), symbol, validRows, DATE_FMT);
 
-        for (KisDailyOhlcvResponse.DailyOhlcvRow row : validRows) {
-            LocalDate tradeDate = LocalDate.parse(row.stckBsopDate(), DATE_FMT);
-            insertRow(stock, row, tradeDate);
-        }
-    }
-
-    private void insertRow(
-            Stock stock, KisDailyOhlcvResponse.DailyOhlcvRow row, LocalDate tradeDate) {
-        BigDecimal open = new BigDecimal(row.stckOprc());
-        BigDecimal high = new BigDecimal(row.stckHgpr());
-        BigDecimal low = new BigDecimal(row.stckLwpr());
-        BigDecimal close = new BigDecimal(row.stckClpr());
-        long volume = Long.parseLong(row.acmlVol());
-        long tradingValue = Long.parseLong(row.acmlTrPbmn());
-
-        dailyOhlcvRepository.insertIgnoreDuplicate(
-                stock.getId(), tradeDate, open, high, low, close, volume, tradingValue);
+        // REQ-OBSV-023: 한 종목의 유효 행들을 단일 커넥션 배치 INSERT IGNORE로 적재하고 침묵 드롭 경고를 캡처한다.
+        // 행→파라미터 매핑은 inserter가 소유하여 본 서비스의 결합도를 낮춘다.
+        ohlcvInserter.insertBatch(stock.getId(), validRows, DATE_FMT);
     }
 
     /**

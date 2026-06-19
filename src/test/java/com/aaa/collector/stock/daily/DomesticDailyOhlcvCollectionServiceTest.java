@@ -20,7 +20,6 @@ import com.aaa.collector.kis.gate.KeyLeaseRegistry.LeaseSession;
 import com.aaa.collector.kis.token.HealthyKeySelector;
 import com.aaa.collector.kis.token.KisAccountCredential;
 import com.aaa.collector.kis.token.KisTokenIssueException;
-import com.aaa.collector.stock.DailyOhlcvRepository;
 import com.aaa.collector.stock.Stock;
 import com.aaa.collector.stock.StockRepository;
 import com.aaa.collector.stock.enums.AssetType;
@@ -60,10 +59,10 @@ class DomesticDailyOhlcvCollectionServiceTest {
             new KisAccountCredential("gold", "22222222", "appkey-gold", "appsecret-gold");
 
     @Mock private StockRepository stockRepository;
-    @Mock private DailyOhlcvRepository dailyOhlcvRepository;
     @Mock private GuardedKisExecutor guardedKisExecutor;
     @Mock private HealthyKeySelector healthyKeySelector;
     @Mock private MismatchDetector mismatchDetector;
+    @Mock private WarningCountingOhlcvInserter ohlcvInserter;
 
     private DomesticDailyOhlcvCollectionService service;
 
@@ -75,10 +74,10 @@ class DomesticDailyOhlcvCollectionServiceTest {
         service =
                 new DomesticDailyOhlcvCollectionService(
                         stockRepository,
-                        dailyOhlcvRepository,
                         guardedKisExecutor,
                         keyLeaseRegistry,
-                        mismatchDetector);
+                        mismatchDetector,
+                        ohlcvInserter);
     }
 
     private Stock stockOf(String symbol) {
@@ -358,20 +357,37 @@ class DomesticDailyOhlcvCollectionServiceTest {
 
             service.collect(LocalDate.of(2026, 6, 5));
 
-            verify(dailyOhlcvRepository, never())
-                    .insertIgnoreDuplicate(
-                            any(),
-                            any(),
-                            any(),
-                            any(),
-                            any(),
-                            any(),
-                            any(Long.class),
-                            any(Long.class));
+            // Assert — 유효 행이 없으면 insertBatch가 호출되지 않는다 (REQ-OBSV-023 경고 캡처 경로)
+            verify(ohlcvInserter, never()).insertBatch(any(), any(), any());
         }
 
         @Test
-        @DisplayName("유효한 행 — insertIgnoreDuplicate 1회 호출")
+        @DisplayName("거래량 0 이하인 행 — insertBatch 미호출")
+        void collect_zeroVolumeRow_notInserted() throws Exception {
+            // Arrange
+            Stock stock = stockOf("005930");
+            when(stockRepository.findAllActiveTradable()).thenReturn(List.of(stock));
+            when(healthyKeySelector.selectHealthy()).thenReturn(List.of(ISA));
+
+            KisDailyOhlcvResponse.DailyOhlcvRow invalidRow =
+                    new KisDailyOhlcvResponse.DailyOhlcvRow(
+                            "20260605", "75000", "74000", "76000", "73000", "0", "0", "N");
+            when(guardedKisExecutor.execute(
+                            any(LeaseSession.class),
+                            any(),
+                            anyString(),
+                            eq(KisDailyOhlcvResponse.class)))
+                    .thenReturn(stubResponse(List.of(invalidRow)));
+
+            // Act
+            service.collect(LocalDate.of(2026, 6, 5));
+
+            // Assert
+            verify(ohlcvInserter, never()).insertBatch(any(), any(), any());
+        }
+
+        @Test
+        @DisplayName("유효한 행 — insertBatch 1회 호출(1행 배치)")
         void collect_validRow_insertsOnce() throws Exception {
             Stock stock = stockOf("005930");
             when(stockRepository.findAllActiveTradable()).thenReturn(List.of(stock));
@@ -386,16 +402,12 @@ class DomesticDailyOhlcvCollectionServiceTest {
 
             service.collect(LocalDate.of(2026, 6, 5));
 
-            verify(dailyOhlcvRepository, times(1))
-                    .insertIgnoreDuplicate(
-                            any(),
-                            any(),
-                            any(),
-                            any(),
-                            any(),
-                            any(),
-                            any(Long.class),
-                            any(Long.class));
+            // Assert — 유효 행 1개를 담은 배치로 1회 적재
+            @SuppressWarnings("unchecked")
+            ArgumentCaptor<List<KisDailyOhlcvResponse.DailyOhlcvRow>> captor =
+                    ArgumentCaptor.forClass(List.class);
+            verify(ohlcvInserter, times(1)).insertBatch(any(), captor.capture(), any());
+            assertThat(captor.getValue()).hasSize(1);
         }
     }
 
@@ -450,6 +462,10 @@ class DomesticDailyOhlcvCollectionServiceTest {
             CollectionResult result = service.collect(LocalDate.of(2026, 6, 5));
 
             verify(mismatchDetector, times(1)).detectAndLog(any(), eq("005930"), any(), any());
+
+            // No UPDATE/DELETE — INSERT IGNORE 배치가 유일한 쓰기 경로 (AC-4); 경고 캡처 inserter 1회 호출
+            verify(ohlcvInserter, times(1)).insertBatch(any(), any(), any());
+
             assertThat(result.succeeded()).isEqualTo(1);
         }
 
