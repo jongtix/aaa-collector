@@ -1,24 +1,28 @@
 package com.aaa.collector.stock.daily;
 
-import com.aaa.collector.kis.batch.BatchRestExecutor;
-import com.aaa.collector.kis.batch.BatchResult;
-import com.aaa.collector.kis.batch.HealthyKeyRoundRobinDistributor;
-import com.aaa.collector.kis.token.KisAccountCredential;
+import com.aaa.collector.kis.KisRateLimitException;
+import com.aaa.collector.kis.gate.GuardedKisExecutor;
+import com.aaa.collector.kis.gate.KeyLeaseRegistry;
+import com.aaa.collector.kis.gate.KeyLeaseRegistry.LeaseSession;
+import com.aaa.collector.kis.gate.NoHealthyKeyException;
 import com.aaa.collector.kis.token.KisTokenIssueException;
 import com.aaa.collector.stock.DailyOhlcvRepository;
 import com.aaa.collector.stock.Stock;
 import com.aaa.collector.stock.StockRepository;
 import java.math.BigDecimal;
+import java.net.URI;
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
 import java.util.List;
-import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.Function;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
+import org.springframework.web.client.RestClientException;
+import org.springframework.web.util.UriBuilder;
 
 /**
  * 국내 일봉 OHLCV 수집 서비스.
@@ -26,11 +30,12 @@ import org.springframework.stereotype.Service;
  * <p>활성 관심종목({@code watchlist_removed_at IS NULL})을 대상으로 KIS {@code FHKST03010100} API에서 최근 5거래일
  * 일봉을 수집하여 {@code daily_ohlcv}에 멱등 저장한다.
  *
- * <p>키 분산: {@link HealthyKeyRoundRobinDistributor}가 건강 키 집합을 산출하고, 결정적 라운드로빈으로 종목→키를 할당한다
- * (SPEC-COLLECTOR-KEYDIST-001 REQ-KEYDIST-001,-002,-003,-010).
+ * <p>키 선택: {@link GuardedKisExecutor} 단일 게이트를 경유한다. 배치 시작 시 {@link
+ * KeyLeaseRegistry#openSession()}으로 per-batch 헬스 스냅샷을 1회 고정(REQ-KISGATE-006a)하고, 종목별 게이트 호출이 그 세션에서
+ * least-busy 키를 동적 lease한다 (SPEC-COLLECTOR-KISGATE-001 REQ-KISGATE-001,-020).
  *
- * <p>모든 키 죽음(REQ-KEYDIST-020, D3): distributor 반환이 빈 할당이면, per-stock 수집 호출 0회 보장, 전체 skip, ERROR 로그
- * 1회 출력. 전체 키 폴백 없음.
+ * <p>모든 키 죽음(REQ-KISGATE-024, REQ-KEYDIST-020 보존): 세션 스냅샷이 비면, per-stock 수집 호출 0회 보장, 전체 skip,
+ * ERROR 로그 1회 출력. 전체 키 폴백 없음.
  *
  * <p>실패 경로(REQ-BATCH-025): 특정 키의 token 발급 실패({@link KisTokenIssueException})는 해당 종목을 graceful
  * skip하고 skip 카운터에 집계한다. 영구 비즈니스 오류(인증·파라미터)는 전파한다(REQ-BATCH-024).
@@ -41,10 +46,10 @@ import org.springframework.stereotype.Service;
 @Slf4j
 @Service
 @RequiredArgsConstructor
-// @MX:ANCHOR: [AUTO] 국내 일봉 수집 진입점 — 건강 키 분산·검증·멱등 저장·skip 집계 담당
+// @MX:ANCHOR: [AUTO] 국내 일봉 수집 진입점 — 게이트 경유 키 lease·검증·멱등 저장·skip 집계 담당
 // @MX:REASON: SPEC-COLLECTOR-BATCH-001 REQ-BATCH-030,-031,-032,-033,-025,-026,
-// SPEC-COLLECTOR-KEYDIST-001 REQ-KEYDIST-010,-020
-// @MX:SPEC: SPEC-COLLECTOR-BATCH-001, SPEC-COLLECTOR-KEYDIST-001
+// SPEC-COLLECTOR-KISGATE-001 REQ-KISGATE-001,-020,-024
+// @MX:SPEC: SPEC-COLLECTOR-BATCH-001, SPEC-COLLECTOR-KISGATE-001
 public class DomesticDailyOhlcvCollectionService {
 
     /**
@@ -64,8 +69,8 @@ public class DomesticDailyOhlcvCollectionService {
 
     private final StockRepository stockRepository;
     private final DailyOhlcvRepository dailyOhlcvRepository;
-    private final BatchRestExecutor batchRestExecutor;
-    private final HealthyKeyRoundRobinDistributor distributor;
+    private final GuardedKisExecutor guardedKisExecutor;
+    private final KeyLeaseRegistry keyLeaseRegistry;
 
     /** 불일치 탐지 위임 — 동일 패키지 내 격리로 CouplingBetweenObjects 임계값 유지. */
     private final MismatchDetector mismatchDetector;
@@ -85,13 +90,13 @@ public class DomesticDailyOhlcvCollectionService {
             return new CollectionResult(0, 0, 0);
         }
 
-        // REQ-KEYDIST-010: delegate stock→key assignment to distributor (healthy-key round-robin)
-        Map<KisAccountCredential, List<Stock>> allocation = distributor.distribute(activeStocks);
+        // REQ-KISGATE-006a: per-batch 헬스 스냅샷 1회 고정 (selectHealthy 배치당 1회 호출)
+        LeaseSession session = keyLeaseRegistry.openSession();
 
         int total = activeStocks.size();
 
-        // REQ-KEYDIST-020, D3: empty allocation = all keys dead → skip-all + ERROR + no fallback
-        if (allocation.isEmpty()) {
+        // REQ-KISGATE-024, REQ-KEYDIST-020 보존: 빈 스냅샷 = 전 키 사망 → skip-all + ERROR + no fallback
+        if (session.isEmpty()) {
             log.error(
                     "[domestic-daily] 모든 키 죽음 — per-stock 수집 0회, 전체 skip. attempted={}, succeeded=0, skipped={}",
                     total,
@@ -106,22 +111,12 @@ public class DomesticDailyOhlcvCollectionService {
 
         // Virtual Thread executor — each stock runs on its own VT, blocking in limiter.consume()
         // without tying up ForkJoinPool.commonPool() threads.
-        // Key assignment is determined by the distributor (healthy-key round-robin).
+        // 키 선택은 게이트가 세션 스냅샷에서 동적 lease한다(REQ-KISGATE-020). 모든 종목이 동일 세션을 공유한다(REQ-KISGATE-031).
         try (ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor()) {
-            allocation.forEach(
-                    (credential, stocks) -> {
-                        for (Stock stock : stocks) {
-                            executor.submit(
-                                    () ->
-                                            collectStock(
-                                                    stock,
-                                                    credential,
-                                                    fromDate,
-                                                    today,
-                                                    succeeded,
-                                                    skipped));
-                        }
-                    });
+            for (Stock stock : activeStocks) {
+                executor.submit(
+                        () -> collectStock(stock, session, fromDate, today, succeeded, skipped));
+            }
         } // close() blocks until all submitted tasks complete
 
         return new CollectionResult(total, succeeded.get(), skipped.get());
@@ -129,7 +124,7 @@ public class DomesticDailyOhlcvCollectionService {
 
     private void collectStock(
             Stock stock,
-            KisAccountCredential credential,
+            LeaseSession session,
             LocalDate fromDate,
             LocalDate toDate,
             AtomicInteger succeeded,
@@ -137,22 +132,28 @@ public class DomesticDailyOhlcvCollectionService {
 
         String symbol = stock.getSymbol();
         try {
-            BatchResult<KisDailyOhlcvResponse> batchResult =
-                    fetchBatch(credential, symbol, fromDate, toDate);
-
-            if (!batchResult.isSuccess()) {
-                String reason = batchResult.getSkipReason().orElse("알 수 없음");
-                log.warn("[domestic-daily] skip (데이터 유실) — symbol={}, reason={}", symbol, reason);
-                skipped.incrementAndGet();
-                return;
-            }
-
-            KisDailyOhlcvResponse response = batchResult.getValue().orElseThrow();
+            KisDailyOhlcvResponse response = fetch(session, symbol, fromDate, toDate);
             saveValidRows(stock, symbol, response);
             succeeded.incrementAndGet();
 
+        } catch (KisRateLimitException | RestClientException e) {
+            // REQ-KISGATE-022: retryable 재시도 소진 → graceful skip (기존 BatchResult.skip 등가 종단 동작)
+            log.warn(
+                    "[domestic-daily] skip (재시도 소진) — symbol={}, reason={}",
+                    symbol,
+                    e.getMessage());
+            skipped.incrementAndGet();
+        } catch (InterruptedException e) {
+            // RETRY-001 REQ-RETRY-017 보존: 인터럽트 플래그 복원 후 skip (전파 아님)
+            Thread.currentThread().interrupt();
+            log.warn("[domestic-daily] 인터럽트 — symbol={} skip", symbol);
+            skipped.incrementAndGet();
+        } catch (NoHealthyKeyException e) {
+            // 방어적: step 2에서 단락되므로 정상 운용에서는 도달하지 않음
+            log.warn("[domestic-daily] 건강 키 0개로 skip — symbol={}", symbol);
+            skipped.incrementAndGet();
         } catch (KisTokenIssueException e) {
-            // REQ-BATCH-025: token 발급 실패 → graceful skip
+            // REQ-BATCH-025 보존: token 발급 실패 → graceful skip
             log.warn(
                     "[domestic-daily] 토큰 발급 실패로 skip — symbol={}, error={}",
                     symbol,
@@ -161,12 +162,12 @@ public class DomesticDailyOhlcvCollectionService {
         }
     }
 
-    private BatchResult<KisDailyOhlcvResponse> fetchBatch(
-            KisAccountCredential credential, String symbol, LocalDate fromDate, LocalDate toDate) {
+    private KisDailyOhlcvResponse fetch(
+            LeaseSession session, String symbol, LocalDate fromDate, LocalDate toDate)
+            throws InterruptedException {
         String from = fromDate.format(DATE_FMT);
         String to = toDate.format(DATE_FMT);
-        return batchRestExecutor.execute(
-                credential,
+        Function<UriBuilder, URI> uriCustomizer =
                 uri ->
                         uri.path("/uapi/domestic-stock/v1/quotations/inquire-daily-itemchartprice")
                                 .queryParam("FID_COND_MRKT_DIV_CODE", "J")
@@ -175,10 +176,9 @@ public class DomesticDailyOhlcvCollectionService {
                                 .queryParam("FID_INPUT_DATE_2", to)
                                 .queryParam("FID_PERIOD_DIV_CODE", "D")
                                 .queryParam("FID_ORG_ADJ_PRC", "1")
-                                .build(),
-                "FHKST03010100",
-                KisDailyOhlcvResponse.class,
-                symbol);
+                                .build();
+        return guardedKisExecutor.execute(
+                session, uriCustomizer, "FHKST03010100", KisDailyOhlcvResponse.class);
     }
 
     private void saveValidRows(Stock stock, String symbol, KisDailyOhlcvResponse response) {
