@@ -1,5 +1,6 @@
 package com.aaa.collector.stock.supply;
 
+import com.aaa.collector.backfill.BackfillWindowResult;
 import com.aaa.collector.kis.KisRateLimitException;
 import com.aaa.collector.kis.gate.GuardedKisExecutor;
 import com.aaa.collector.kis.gate.KeyLeaseRegistry;
@@ -13,6 +14,7 @@ import java.net.URI;
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -62,6 +64,9 @@ public class InvestorTrendCollectionService {
      * 구현 진행용 기본 가정값이며, Run 단계 실데이터 1건으로 일봉 거래대금(원) 대비 자릿수 정합(AC-4 S4-3)을 검증한 후 확정해야 한다.
      */
     static final long MILLION_WON_TO_WON = 1_000_000L;
+
+    /** KIS API rt_cd 값 — 비영업일 anchor 거부 코드 (REQ-BACKFILL-016, MA-05 실측 2026-06-20). */
+    private static final String RT_CD_NON_BUSINESS_DAY = "2";
 
     private static final DateTimeFormatter DATE_FMT = DateTimeFormatter.BASIC_ISO_DATE;
     private static final String TR_ID = "FHPTJ04160001";
@@ -130,6 +135,53 @@ public class InvestorTrendCollectionService {
         return result;
     }
 
+    /**
+     * 백필용 윈도우 1구간 수집 — 당일 수집과 동일한 매핑·검증·INSERT IGNORE 경로를 재사용한다 (REQ-BACKFILL-002).
+     *
+     * <p>TR FHPTJ04160001은 비영업일 anchor 전달 시 {@code rt_cd="2"}를 반환한다(MA-05 실측 2026-06-20). 이 경우
+     * anchor를 −1 calendar day씩 당기며 최대 10회 재시도한다(REQ-BACKFILL-016). 10회 소진 후에도 {@code rt_cd="2"}이면
+     * {@link BackfillWindowResult#EMPTY}를 반환하고 WARN을 남긴다. 예외는 호출자(T6)가 상태 전이로 처리하도록 전파한다.
+     *
+     * @param stock 백필 대상 종목 (활성, REQ-BACKFILL-006)
+     * @param session 호출자가 1회 고정한 per-run 헬스 스냅샷 세션
+     * @param anchor 수집 기준일 (비영업일이면 anchor-skip 보정 적용)
+     * @return 적재 대상 행의 최소 거래일 + 행 수 (적재 대상 없으면 {@link BackfillWindowResult#EMPTY})
+     * @throws InterruptedException 게이트 호출 인터럽트 시 전파
+     */
+    public BackfillWindowResult collectWindow(Stock stock, LeaseSession session, LocalDate anchor)
+            throws InterruptedException {
+        String symbol = stock.getSymbol();
+        LocalDate effectiveAnchor = anchor;
+
+        KisInvestorTrendResponse response = fetch(session, symbol, effectiveAnchor);
+        for (int retry = 0; retry < 10 && RT_CD_NON_BUSINESS_DAY.equals(response.rtCd()); retry++) {
+            effectiveAnchor = effectiveAnchor.minusDays(1);
+            response = fetch(session, symbol, effectiveAnchor);
+        }
+
+        if (RT_CD_NON_BUSINESS_DAY.equals(response.rtCd())) {
+            log.warn(
+                    "[investor-trend][backfill] anchor-skip 10회 소진 — symbol={}, originalAnchor={}, effectiveAnchor={}",
+                    symbol,
+                    anchor,
+                    effectiveAnchor);
+            return BackfillWindowResult.EMPTY;
+        }
+
+        LocalDate windowStart = effectiveAnchor.minusDays(LOOKBACK_CALENDAR_DAYS);
+        List<InvestorTrend> validEntities =
+                saveValidRows(stock, symbol, response, effectiveAnchor, windowStart);
+        if (validEntities.isEmpty()) {
+            return BackfillWindowResult.EMPTY;
+        }
+        LocalDate oldest =
+                validEntities.stream()
+                        .map(InvestorTrend::getTradeDate)
+                        .min(Comparator.naturalOrder())
+                        .orElseThrow();
+        return new BackfillWindowResult(oldest, validEntities.size());
+    }
+
     private void collectStock(
             Stock stock,
             LeaseSession session,
@@ -141,7 +193,7 @@ public class InvestorTrendCollectionService {
         String symbol = stock.getSymbol();
         try {
             KisInvestorTrendResponse response = fetch(session, symbol, today);
-            saveValidRows(stock, symbol, response, today, windowStart);
+            saveValidRows(stock, symbol, response, today, windowStart); // 반환값 무시 — 당일 경로
             succeeded.incrementAndGet();
 
         } catch (KisRateLimitException | RestClientException e) {
@@ -185,12 +237,17 @@ public class InvestorTrendCollectionService {
     }
 
     /**
-     * 검증 통과 행만 수집하여 배치 삽입한다.
+     * 검증 통과 행만 수집하여 배치 삽입하고, 적재한 엔티티 목록을 반환한다.
      *
      * <p>{@code tradeDates}는 경계 커버리지 산정에 사용 — 파싱 성공한 날짜만 포함(NumberFormatException 제외, 윈도우 밖·검증 실패
      * 포함).
+     *
+     * <p>당일 경로({@link #collectStock})는 반환값을 무시하고, 백필 경로({@link #collectWindow})는 최소 거래일·행 수 도출에
+     * 사용한다 — 동일 매핑·검증·적재 경로를 공유한다(REQ-BACKFILL-002).
+     *
+     * @return 적재한 검증 통과 엔티티 목록 (없으면 빈 목록)
      */
-    private void saveValidRows(
+    private List<InvestorTrend> saveValidRows(
             Stock stock,
             String symbol,
             KisInvestorTrendResponse response,
@@ -224,9 +281,10 @@ public class InvestorTrendCollectionService {
         // REQ-BATCH2-025: 경계 커버리지 관측 (단일 응답 윈도우 하단 미커버 시 WARN)
         WindowCoverageChecker.check("investor", symbol, tradeDates, windowStart);
         if (validEntities.isEmpty()) {
-            return;
+            return validEntities;
         }
         inserter.insertBatch(validEntities);
+        return validEntities;
     }
 
     /**
