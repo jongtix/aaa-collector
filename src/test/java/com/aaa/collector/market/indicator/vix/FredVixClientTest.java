@@ -22,6 +22,7 @@ import org.springframework.web.client.RestClient;
 class FredVixClientTest {
 
     private static final String FRED_API_KEY = "test-key";
+    private static final String BLANK_API_KEY = "";
 
     private static final String SAMPLE_JSON =
             """
@@ -43,6 +44,34 @@ class FredVixClientTest {
         mockServer = MockRestServiceServer.bindTo(builder).build();
         RestClient fredRestClient = builder.baseUrl("https://api.stlouisfed.org").build();
         client = new FredVixClient(fredRestClient, FRED_API_KEY);
+    }
+
+    @Nested
+    @DisplayName("API Key 빈 문자열 — 즉시 빈 결과 반환 (W-5, MA-03)")
+    class BlankApiKey {
+
+        private FredVixClient blankKeyClient;
+
+        @BeforeEach
+        void setUpBlankKey() {
+            RestClient.Builder builder = RestClient.builder();
+            RestClient fredRestClient = builder.baseUrl("https://api.stlouisfed.org").build();
+            blankKeyClient = new FredVixClient(fredRestClient, BLANK_API_KEY);
+        }
+
+        @Test
+        @DisplayName("fetchHistory — apiKey 빈 문자열이면 API 호출 없이 빈 리스트 반환")
+        void fetchHistory_blankKey_returnsEmpty() {
+            List<MarketIndicatorRow> rows = blankKeyClient.fetchHistory();
+            assertThat(rows).isEmpty();
+        }
+
+        @Test
+        @DisplayName("fetchDaily — apiKey 빈 문자열이면 API 호출 없이 빈 리스트 반환")
+        void fetchDaily_blankKey_returnsEmpty() {
+            List<MarketIndicatorRow> rows = blankKeyClient.fetchDaily(LocalDate.of(2026, 1, 2));
+            assertThat(rows).isEmpty();
+        }
     }
 
     @Nested

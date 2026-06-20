@@ -36,6 +36,27 @@ class KoreaeximExchangeRateClientTest {
     }
 
     @Nested
+    @DisplayName("API Key 빈 문자열 — 즉시 빈 결과 반환 (W-5, MA-03)")
+    class BlankApiKey {
+
+        private KoreaeximExchangeRateClient blankKeyClient;
+
+        @BeforeEach
+        void setUpBlankKey() {
+            RestClient.Builder builder = RestClient.builder();
+            RestClient koreaeximRestClient = builder.baseUrl("https://www.koreaexim.go.kr").build();
+            blankKeyClient = new KoreaeximExchangeRateClient(koreaeximRestClient, "", 3);
+        }
+
+        @Test
+        @DisplayName("fetchDaily — apiKey 빈 문자열이면 API 호출 없이 빈 리스트 반환")
+        void fetchDaily_blankKey_returnsEmpty() {
+            List<MarketIndicatorRow> rows = blankKeyClient.fetchDaily(LocalDate.of(2026, 6, 20));
+            assertThat(rows).isEmpty();
+        }
+    }
+
+    @Nested
     @DisplayName("fetchDaily — USD 필터 + 쉼표 제거 + 4자리")
     class FetchDaily {
 

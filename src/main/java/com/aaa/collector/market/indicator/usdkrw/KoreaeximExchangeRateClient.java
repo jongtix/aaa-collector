@@ -62,6 +62,10 @@ public class KoreaeximExchangeRateClient implements MarketIndicatorSource {
      */
     @Override
     public List<MarketIndicatorRow> fetchDaily(LocalDate date) {
+        if (apiKey == null || apiKey.isBlank()) {
+            log.warn("[koreaexim] KOREAEXIM_API_KEY 미설정 — 빈 결과 반환 (W-5, MA-03)");
+            return List.of();
+        }
         LocalDate target = date;
         for (int attempt = 0; attempt <= emptyRetryMax; attempt++) {
             List<MarketIndicatorRow> rows = fetchOnDate(target);

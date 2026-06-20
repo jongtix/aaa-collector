@@ -59,6 +59,10 @@ public class FredVixClient implements MarketIndicatorSource {
 
     @Override
     public List<MarketIndicatorRow> fetchHistory() {
+        if (apiKey == null || apiKey.isBlank()) {
+            log.warn("[fred-vix] FRED_API_KEY 미설정 — 빈 결과 반환 (W-5, MA-03)");
+            return List.of();
+        }
         Map<String, Object> body =
                 fredRestClient
                         .get()
@@ -70,6 +74,10 @@ public class FredVixClient implements MarketIndicatorSource {
 
     @Override
     public List<MarketIndicatorRow> fetchDaily(LocalDate date) {
+        if (apiKey == null || apiKey.isBlank()) {
+            log.warn("[fred-vix] FRED_API_KEY 미설정 — 빈 결과 반환 (W-5, MA-03)");
+            return List.of();
+        }
         String dateStr = date.toString(); // ISO-8601: yyyy-MM-dd
         Map<String, Object> body =
                 fredRestClient

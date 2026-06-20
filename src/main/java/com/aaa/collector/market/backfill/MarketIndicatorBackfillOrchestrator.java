@@ -114,12 +114,6 @@ public class MarketIndicatorBackfillOrchestrator {
      * USDKRW 백필: staleWeekdayCount 기반 날짜 루프 (REQ-044).
      *
      * <p>평일 빈 배열 시 staleWeekdayCount++, 데이터 수신 시 0 리셋. N≥staleWeekdayThreshold → COMPLETED.
-     * last_collected_date = 최과거 저장 거래일(anchor).
-     */
-    /**
-     * USDKRW 백필: staleWeekdayCount 기반 날짜 루프 (REQ-044).
-     *
-     * <p>평일 빈 배열 시 staleWeekdayCount++, 데이터 수신 시 0 리셋. N≥staleWeekdayThreshold → COMPLETED.
      * last_collected_date = 최과거 저장 거래일(anchor). IN_PROGRESS DB 갱신은 PROGRESS_BATCH_SIZE(10)일마다 배칭하여
      * 불필요한 UPDATE를 줄인다(W-3, MA-01). 루프 종료 후 반드시 최종 updateProgress 호출.
      */
