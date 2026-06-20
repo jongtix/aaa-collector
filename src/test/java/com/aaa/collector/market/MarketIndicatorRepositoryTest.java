@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import com.aaa.collector.market.enums.IndicatorCode;
 import java.math.BigDecimal;
 import java.time.LocalDate;
+import java.util.Optional;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
@@ -165,7 +166,7 @@ class MarketIndicatorRepositoryTest {
             marketIndicatorRepository.insertIgnoreDuplicate(
                     buildVix(LocalDate.of(2000, 1, 20), new BigDecimal("28.0000")));
 
-            var result =
+            Optional<LocalDate> result =
                     marketIndicatorRepository.findMinTradeDateByIndicatorCode(IndicatorCode.VIX);
 
             assertThat(result).isPresent();
@@ -173,18 +174,13 @@ class MarketIndicatorRepositoryTest {
         }
 
         @Test
-        @DisplayName("USDKRW 데이터만 있을 때 VIX 쿼리 — Optional.empty()")
-        void noVixData_returnsEmpty() {
+        @DisplayName("USDKRW 코드별 minDate 독립성 확인 — 코드별 격리")
+        void minDate_isolatedByIndicatorCode() {
             marketIndicatorRepository.insertIgnoreDuplicate(
                     buildUsdkrw(LocalDate.of(2000, 2, 1), new BigDecimal("1380.0000")));
 
-            var result =
-                    marketIndicatorRepository.findMinTradeDateByIndicatorCode(IndicatorCode.VIX);
-
-            // VIX 데이터가 없으면 MIN(trade_date) = NULL → Optional.empty()
-            // 단, 다른 테스트에서 VIX를 삽입했을 수 있으므로 isPresent/isEmpty 양쪽 허용이 맞음.
-            // 격리 보장을 위한 실질적 테스트: USDKRW minDate는 VIX와 무관함을 확인
-            var usdkrwResult =
+            // USDKRW minDate는 VIX와 무관함을 확인
+            Optional<LocalDate> usdkrwResult =
                     marketIndicatorRepository.findMinTradeDateByIndicatorCode(IndicatorCode.USDKRW);
             assertThat(usdkrwResult).isPresent();
             assertThat(usdkrwResult.get()).isEqualTo(LocalDate.of(2000, 2, 1));
