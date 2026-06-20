@@ -124,4 +124,21 @@ public interface BackfillStatusRepository extends JpaRepository<BackfillStatus, 
             @Param("id") Long id,
             @Param("status") String status,
             @Param("lastError") String lastError);
+
+    /**
+     * 대상 유형 기준 전체 항목 수를 반환한다 (T9 BackfillMetrics 진행률 분모).
+     *
+     * @param targetType 대상 유형 (예: {@code "STOCK"})
+     * @return 전체 항목 수
+     */
+    long countByTargetType(String targetType);
+
+    /**
+     * 상태·대상 유형 기준 항목 수를 반환한다 (T9 BackfillMetrics 진행률 분자).
+     *
+     * @param status 상태 필터 (예: {@code "COMPLETED"})
+     * @param targetType 대상 유형 (예: {@code "STOCK"})
+     * @return 해당 상태·유형 항목 수
+     */
+    long countByStatusAndTargetType(String status, String targetType);
 }

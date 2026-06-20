@@ -1,6 +1,7 @@
 package com.aaa.collector.stock.backfill;
 
 import com.aaa.collector.backfill.BackfillGroup;
+import com.aaa.collector.backfill.BackfillMetrics;
 import com.aaa.collector.backfill.BackfillStatus;
 import com.aaa.collector.backfill.BackfillStatusRepository;
 import com.aaa.collector.backfill.BackfillTerminationPolicy;
@@ -55,6 +56,7 @@ public class BackfillWindowExecutor {
     private final CreditBalanceCollectionService creditBalanceService;
     private final BackfillTerminationPolicy terminationPolicy;
     private final BackfillWindowAdvancer windowAdvancer;
+    private final BackfillMetrics backfillMetrics;
 
     /**
      * 한 백필 항목의 윈도우 1구간을 수집하고, 동일 트랜잭션에서 status를 갱신한다 (REQ-BACKFILL-011, AC-4.1/4.2).
@@ -84,7 +86,10 @@ public class BackfillWindowExecutor {
                     symbol,
                     dataTable,
                     result.oldestTradeDate());
+            backfillMetrics.recordClampSuspected();
         }
+
+        backfillMetrics.recordWindow(result.rowCount());
 
         String newStatus = decision.completed() ? "COMPLETED" : "IN_PROGRESS";
         LocalDate newDate =

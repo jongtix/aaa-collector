@@ -11,6 +11,7 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.aaa.collector.backfill.BackfillMetrics;
 import com.aaa.collector.backfill.BackfillProperties;
 import com.aaa.collector.backfill.BackfillStatus;
 import com.aaa.collector.backfill.BackfillStatusRepository;
@@ -44,6 +45,7 @@ class BackfillOrchestratorTest {
     @Mock private KeyLeaseRegistry keyLeaseRegistry;
     @Mock private StockRepository stockRepository;
     @Mock private BackfillProperties properties;
+    @Mock private BackfillMetrics backfillMetrics;
 
     @InjectMocks private BackfillOrchestrator orchestrator;
 

@@ -1,5 +1,6 @@
 package com.aaa.collector.stock.backfill;
 
+import com.aaa.collector.backfill.BackfillMetrics;
 import com.aaa.collector.backfill.BackfillProperties;
 import com.aaa.collector.backfill.BackfillStatus;
 import com.aaa.collector.backfill.BackfillStatusRepository;
@@ -44,6 +45,7 @@ public class BackfillOrchestrator {
     private final KeyLeaseRegistry keyLeaseRegistry;
     private final StockRepository stockRepository;
     private final BackfillProperties properties;
+    private final BackfillMetrics backfillMetrics;
 
     /**
      * 백필 1 cron 회차를 실행한다.
@@ -78,6 +80,12 @@ public class BackfillOrchestrator {
 
         // Step 5: throttle·처리
         int[] counters = processItems(pending, activeStockBySymbol, session);
+
+        // Step 6: 진행률 gauge 갱신 (REQ-BACKFILL-040)
+        long completedCount =
+                backfillStatusRepository.countByStatusAndTargetType("COMPLETED", TARGET_TYPE_STOCK);
+        long totalCount = backfillStatusRepository.countByTargetType(TARGET_TYPE_STOCK);
+        backfillMetrics.recordProgress(completedCount, totalCount);
 
         log.info(
                 "[backfill-orchestrator] 백필 cron 완료 — processedWindows={}, processedStocks={}",
