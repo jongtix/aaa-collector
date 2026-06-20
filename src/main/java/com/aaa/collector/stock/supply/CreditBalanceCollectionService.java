@@ -1,5 +1,6 @@
 package com.aaa.collector.stock.supply;
 
+import com.aaa.collector.backfill.BackfillWindowResult;
 import com.aaa.collector.kis.KisRateLimitException;
 import com.aaa.collector.kis.gate.GuardedKisExecutor;
 import com.aaa.collector.kis.gate.KeyLeaseRegistry;
@@ -12,6 +13,7 @@ import com.aaa.collector.stock.StockRepository;
 import java.net.URI;
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
+import java.util.Comparator;
 import java.util.List;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -129,7 +131,7 @@ public class CreditBalanceCollectionService {
         String symbol = stock.getSymbol();
         try {
             KisCreditBalanceResponse response = fetch(session, symbol, today);
-            saveValidRows(stock, symbol, response, today, windowStart);
+            saveValidRows(stock, symbol, response, today, windowStart); // 반환값 무시 — 당일 경로
             succeeded.incrementAndGet();
 
         } catch (KisRateLimitException | RestClientException e) {
@@ -172,8 +174,44 @@ public class CreditBalanceCollectionService {
                 session, uriCustomizer, TR_ID, KisCreditBalanceResponse.class);
     }
 
-    /** 검증·매핑·윈도우 필터·경계 커버리지 관측은 mapper에 위임하고, 결과 엔티티만 배치 삽입한다. */
-    private void saveValidRows(
+    /**
+     * 백필용 윈도우 1구간 수집 — 당일 수집과 동일한 매핑·검증·INSERT IGNORE 경로를 재사용한다 (REQ-BACKFILL-002).
+     *
+     * <p>TR FHPST04760000은 주말 anchor에도 {@code rt_cd="0"}을 반환한다(MA-05 실측 2026-06-20). anchor-skip 보정
+     * 없음 — 단일 anchor 1회 호출. 종료 판정은 stale-count 기반으로 호출자(T5/T6)가 판단한다. 예외는 호출자가 상태 전이로 처리하도록 전파한다.
+     *
+     * @param stock 백필 대상 종목 (활성, REQ-BACKFILL-006)
+     * @param session 호출자가 1회 고정한 per-run 헬스 스냅샷 세션
+     * @param anchor 수집 기준일
+     * @return 적재 대상 행의 최소 거래일 + 행 수 (적재 대상 없으면 {@link BackfillWindowResult#EMPTY})
+     * @throws InterruptedException 게이트 호출 인터럽트 시 전파
+     */
+    public BackfillWindowResult collectWindow(Stock stock, LeaseSession session, LocalDate anchor)
+            throws InterruptedException {
+        LocalDate windowStart = anchor.minusDays(LOOKBACK_CALENDAR_DAYS);
+        KisCreditBalanceResponse response = fetch(session, stock.getSymbol(), anchor);
+        List<CreditBalance> validEntities =
+                saveValidRows(stock, stock.getSymbol(), response, anchor, windowStart);
+        if (validEntities.isEmpty()) {
+            return BackfillWindowResult.EMPTY;
+        }
+        LocalDate oldest =
+                validEntities.stream()
+                        .map(CreditBalance::getTradeDate)
+                        .min(Comparator.naturalOrder())
+                        .orElseThrow();
+        return new BackfillWindowResult(oldest, validEntities.size());
+    }
+
+    /**
+     * 검증·매핑·윈도우 필터·경계 커버리지 관측은 mapper에 위임하고, 결과 엔티티를 배치 삽입한 뒤 반환한다.
+     *
+     * <p>당일 경로({@link #collectStock})는 반환값을 무시하고, 백필 경로({@link #collectWindow})는 최소 거래일·행 수 도출에
+     * 사용한다 — 동일 매핑·검증·적재 경로를 공유한다(REQ-BACKFILL-002).
+     *
+     * @return 적재한 검증 통과 엔티티 목록 (없으면 빈 목록)
+     */
+    private List<CreditBalance> saveValidRows(
             Stock stock,
             String symbol,
             KisCreditBalanceResponse response,
@@ -182,8 +220,9 @@ public class CreditBalanceCollectionService {
         List<CreditBalance> validEntities =
                 mapper.collectValid(stock, symbol, response, today, windowStart);
         if (validEntities.isEmpty()) {
-            return;
+            return validEntities;
         }
         inserter.insertBatch(validEntities);
+        return validEntities;
     }
 }
