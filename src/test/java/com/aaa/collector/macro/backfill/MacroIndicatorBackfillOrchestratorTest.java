@@ -24,6 +24,8 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
@@ -213,6 +215,80 @@ class MacroIndicatorBackfillOrchestratorTest {
             verify(backfillStatusRepository)
                     .updateProgress(eq(11L), eq("COMPLETED"), dateCaptor.capture(), eq(0), eq(0));
             assertThat(dateCaptor.getValue()).isEqualTo(LocalDate.now());
+        }
+    }
+
+    // ────────────────────────────────────────────────────────────────────
+    // W-2: FRED 경로 파라미터 테스트 (AC-4.2)
+    // ────────────────────────────────────────────────────────────────────
+
+    @Nested
+    @DisplayName("W-2: AC-4.2 FRED 지표 코드 — fredCollectionService 분기 검증")
+    class FredRoutingParameterized {
+
+        @ParameterizedTest(name = "FRED 코드={0} → fredCollectionService.collectAll() 호출")
+        @ValueSource(
+                strings = {
+                    "FRED_DFF",
+                    "FRED_DGS10",
+                    "FRED_CPIAUCSL",
+                    "FRED_A191RL1Q225SBEA",
+                    "FRED_UNRATE"
+                })
+        @DisplayName("FRED indicator_code 5개 전체 — fredCollectionService.collectAll() 라우팅")
+        void fredIndicatorCode_routesToFredCollectionService(String indicatorCode) {
+            // Arrange
+            BackfillStatus status = mockStatus(20L, indicatorCode);
+            when(backfillStatusRepository.findByStatusInAndTargetTypeOrderById(
+                            any(), eq("MACRO_INDICATOR")))
+                    .thenReturn(List.of(status));
+            when(fredCollectionService.collectAll())
+                    .thenReturn(new MacroCollectionResult(100, 100, 0));
+            when(macroIndicatorRepository.findMinTradeDateByIndicatorCode(indicatorCode))
+                    .thenReturn(Optional.of(LocalDate.of(2000, 1, 3)));
+
+            // Act
+            orchestrator.run();
+
+            // Assert
+            verify(fredCollectionService).collectAll();
+            verify(ecosCollectionService, never()).collectAll();
+            verify(backfillStatusRepository)
+                    .updateProgress(eq(20L), eq("COMPLETED"), any(LocalDate.class), eq(0), eq(100));
+        }
+
+        @ParameterizedTest(name = "ECOS 코드={0} → ecosCollectionService.collectAll() 호출")
+        @ValueSource(
+                strings = {
+                    "ECOS_BASE_RATE",
+                    "ECOS_GOV_BOND_3Y",
+                    "ECOS_GOV_BOND_5Y",
+                    "ECOS_GOV_BOND_10Y",
+                    "ECOS_CORP_BOND",
+                    "ECOS_CPI",
+                    "ECOS_GDP_QOQ",
+                    "ECOS_CURRENT_ACCOUNT"
+                })
+        @DisplayName("ECOS indicator_code 8개 전체 — ecosCollectionService.collectAll() 라우팅")
+        void ecosIndicatorCode_routesToEcosCollectionService(String indicatorCode) {
+            // Arrange
+            BackfillStatus status = mockStatus(21L, indicatorCode);
+            when(backfillStatusRepository.findByStatusInAndTargetTypeOrderById(
+                            any(), eq("MACRO_INDICATOR")))
+                    .thenReturn(List.of(status));
+            when(ecosCollectionService.collectAll())
+                    .thenReturn(new MacroCollectionResult(80, 80, 0));
+            when(macroIndicatorRepository.findMinTradeDateByIndicatorCode(indicatorCode))
+                    .thenReturn(Optional.of(LocalDate.of(2005, 1, 4)));
+
+            // Act
+            orchestrator.run();
+
+            // Assert
+            verify(ecosCollectionService).collectAll();
+            verify(fredCollectionService, never()).collectAll();
+            verify(backfillStatusRepository)
+                    .updateProgress(eq(21L), eq("COMPLETED"), any(LocalDate.class), eq(0), eq(80));
         }
     }
 
