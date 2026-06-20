@@ -20,7 +20,13 @@ public record EcosStatisticSearchResponse(
     @JsonIgnoreProperties(ignoreUnknown = true)
     public record StatisticSearch(
             @JsonProperty("list_total_count") int listTotalCount,
-            @JsonProperty("row") List<Row> row) {}
+            @JsonProperty("row") List<Row> row) {
+
+        /** 방어적 복사 — row 필드를 불변 리스트로 변환. */
+        public StatisticSearch {
+            row = row != null ? List.copyOf(row) : List.of();
+        }
+    }
 
     /** 개별 관측 행. */
     @JsonIgnoreProperties(ignoreUnknown = true)

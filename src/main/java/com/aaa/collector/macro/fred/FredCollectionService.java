@@ -110,6 +110,7 @@ public class FredCollectionService {
         return new MacroCollectionResult(attempted, succeeded, skipped);
     }
 
+    @SuppressWarnings("PMD.AvoidCatchingGenericException") // 파싱 실패 graceful skip
     private boolean saveIfValid(
             FredSeriesConfig.Series series, FredObservationsResponse.Observation obs) {
         String dateStr = obs.date();
@@ -117,8 +118,12 @@ public class FredCollectionService {
 
         // REQ-MACRO-EXT-032: value="." → skip
         if (valueStr == null || ".".equals(valueStr) || valueStr.isBlank()) {
-            log.debug(
-                    "[fred] value='.' skip — series={}, date={}", series.indicatorCode(), dateStr);
+            if (log.isDebugEnabled()) {
+                log.debug(
+                        "[fred] value='.' skip — series={}, date={}",
+                        series.indicatorCode(),
+                        dateStr);
+            }
             return false;
         }
 

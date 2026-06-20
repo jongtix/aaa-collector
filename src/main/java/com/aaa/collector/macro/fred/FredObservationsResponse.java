@@ -16,6 +16,11 @@ public record FredObservationsResponse(
         @JsonProperty("count") int count,
         @JsonProperty("observations") List<Observation> observations) {
 
+    /** 방어적 복사 — observations 필드를 불변 리스트로 변환. */
+    public FredObservationsResponse {
+        observations = observations != null ? List.copyOf(observations) : List.of();
+    }
+
     /** 개별 관측 행. */
     @JsonIgnoreProperties(ignoreUnknown = true)
     public record Observation(

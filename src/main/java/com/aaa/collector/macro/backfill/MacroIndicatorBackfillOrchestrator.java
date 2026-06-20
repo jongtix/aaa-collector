@@ -111,7 +111,9 @@ public class MacroIndicatorBackfillOrchestrator {
     }
 
     private static String truncate(String msg, int maxLen) {
-        if (msg == null) return "";
+        if (msg == null) {
+            return "";
+        }
         return msg.length() > maxLen ? msg.substring(0, maxLen) : msg;
     }
 }
