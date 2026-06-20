@@ -52,12 +52,12 @@ class MarketIndicatorSourceChainTest {
         return new MarketIndicatorSource() {
             @Override
             public List<MarketIndicatorRow> fetchDaily(LocalDate date) {
-                throw new RuntimeException(name + " 호출 실패");
+                throw new IllegalStateException(name + " 호출 실패");
             }
 
             @Override
             public List<MarketIndicatorRow> fetchHistory() {
-                throw new RuntimeException(name + " 호출 실패");
+                throw new IllegalStateException(name + " 호출 실패");
             }
 
             @Override
@@ -146,7 +146,7 @@ class MarketIndicatorSourceChainTest {
             List<MarketIndicatorRow> result = chain.fetchDaily(DATE);
 
             assertThat(result).hasSize(1);
-            assertThat(result.get(0).source()).isEqualTo("PRIMARY");
+            assertThat(result.getFirst().source()).isEqualTo("PRIMARY");
         }
 
         @Test

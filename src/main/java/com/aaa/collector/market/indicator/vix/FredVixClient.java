@@ -29,6 +29,9 @@ public class FredVixClient implements MarketIndicatorSource {
     private static final String PATH =
             "/fred/series/observations?series_id=VIXCLS&file_type=json&limit=100000&api_key={apiKey}";
 
+    /** FRED 결측값 표시 (REQ-023). */
+    private static final String MISSING_VALUE = ".";
+
     private final RestClient fredRestClient;
     private final String apiKey;
 
@@ -73,27 +76,31 @@ public class FredVixClient implements MarketIndicatorSource {
         }
         List<MarketIndicatorRow> rows = new ArrayList<>();
         for (Map<String, String> obs : observations) {
-            try {
-                String value = obs.get("value");
-                if (".".equals(value)) {
-                    continue; // 결측 — REQ-023
-                }
-                if (value == null || value.isBlank()) {
-                    continue;
-                }
-                LocalDate date = LocalDate.parse(obs.get("date"));
-                BigDecimal close = new BigDecimal(value);
-                if (close.compareTo(BigDecimal.ZERO) <= 0) {
-                    log.warn("[fred-vix] close 0 이하 — skip: {}", obs);
-                    continue;
-                }
-                rows.add(
-                        new MarketIndicatorRow(
-                                IndicatorCode.VIX, date, null, null, null, close, SOURCE));
-            } catch (Exception e) {
-                log.warn("[fred-vix] 행 파싱 실패 — skip: {}, 오류: {}", obs, e.getMessage());
+            MarketIndicatorRow row = parseObservation(obs);
+            if (row != null) {
+                rows.add(row);
             }
         }
         return rows;
+    }
+
+    @SuppressWarnings("PMD.AvoidCatchingGenericException")
+    private MarketIndicatorRow parseObservation(Map<String, String> obs) {
+        try {
+            String value = obs.get("value");
+            if (MISSING_VALUE.equals(value) || value == null || value.isBlank()) {
+                return null; // 결측 — REQ-023
+            }
+            LocalDate date = LocalDate.parse(obs.get("date"));
+            BigDecimal close = new BigDecimal(value);
+            if (close.compareTo(BigDecimal.ZERO) <= 0) {
+                log.warn("[fred-vix] close 0 이하 — skip: {}", obs);
+                return null;
+            }
+            return new MarketIndicatorRow(IndicatorCode.VIX, date, null, null, null, close, SOURCE);
+        } catch (Exception e) {
+            log.warn("[fred-vix] 행 파싱 실패 — skip: {}, 오류: {}", obs, e.getMessage());
+            return null;
+        }
     }
 }

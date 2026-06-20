@@ -21,6 +21,8 @@ class KoreaeximExchangeRateClientTest {
 
     private static final String API_KEY = "test-key";
     private static final int EMPTY_RETRY_MAX = 3;
+    private static final String SAMPLE_RESPONSE =
+            "[{\"cur_unit\":\"USD\",\"deal_bas_r\":\"1,523.40\",\"cur_nm\":\"미국 달러\"},{\"cur_unit\":\"EUR\",\"deal_bas_r\":\"1,650.00\",\"cur_nm\":\"유로\"}]";
 
     private MockRestServiceServer mockServer;
     private KoreaeximExchangeRateClient client;
@@ -33,16 +35,12 @@ class KoreaeximExchangeRateClientTest {
         client = new KoreaeximExchangeRateClient(koreaeximRestClient, API_KEY, EMPTY_RETRY_MAX);
     }
 
-    private static final String SAMPLE_RESPONSE =
-            """
-            [{"cur_unit":"USD","deal_bas_r":"1,523.40","cur_nm":"미국 달러"},{"cur_unit":"EUR","deal_bas_r":"1,650.00","cur_nm":"유로"}]
-            """;
-
     @Nested
     @DisplayName("fetchDaily — USD 필터 + 쉼표 제거 + 4자리")
     class FetchDaily {
 
         @Test
+        @SuppressWarnings("PMD.UnitTestContainsTooManyAsserts") // USD 행 전체 필드 검증
         @DisplayName("정상 응답 — USD 필터, 쉼표 제거 후 4자리 BigDecimal, source=KOREAEXIM (REQ-010/011)")
         void parsesUsdAndRemovesComma() {
             mockServer
@@ -52,7 +50,7 @@ class KoreaeximExchangeRateClientTest {
             List<MarketIndicatorRow> rows = client.fetchDaily(LocalDate.of(2026, 6, 20));
 
             assertThat(rows).hasSize(1);
-            MarketIndicatorRow row = rows.get(0);
+            MarketIndicatorRow row = rows.getFirst();
             assertThat(row.closeValue()).isEqualByComparingTo("1523.40");
             assertThat(row.closeValue().scale()).isEqualTo(4);
             assertThat(row.openValue()).isNull();
@@ -75,7 +73,7 @@ class KoreaeximExchangeRateClientTest {
             List<MarketIndicatorRow> rows = client.fetchDaily(LocalDate.of(2026, 6, 20));
 
             assertThat(rows).hasSize(1);
-            assertThat(rows.get(0).closeValue()).isEqualByComparingTo("1523.40");
+            assertThat(rows.getFirst().closeValue()).isEqualByComparingTo("1523.40");
         }
 
         @Test

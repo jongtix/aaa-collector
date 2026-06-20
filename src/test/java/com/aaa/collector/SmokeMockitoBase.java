@@ -2,6 +2,15 @@ package com.aaa.collector;
 
 import com.aaa.collector.backfill.BackfillStatusRepository;
 import com.aaa.collector.macro.MacroIndicatorRepository;
+import com.aaa.collector.market.MarketIndicatorRepository;
+import com.aaa.collector.market.backfill.MarketIndicatorBackfillOrchestrator;
+import com.aaa.collector.market.backfill.MarketIndicatorBackfillScheduler;
+import com.aaa.collector.market.indicator.YahooFinanceClient;
+import com.aaa.collector.market.indicator.usdkrw.KoreaeximExchangeRateClient;
+import com.aaa.collector.market.indicator.usdkrw.UsdkrwCollectionService;
+import com.aaa.collector.market.indicator.vix.CboeVixClient;
+import com.aaa.collector.market.indicator.vix.FredVixClient;
+import com.aaa.collector.market.indicator.vix.VixCollectionService;
 import com.aaa.collector.news.NewsHeadlineRepository;
 import com.aaa.collector.stock.AnalystEstimateRepository;
 import com.aaa.collector.stock.CorporateEventRepository;
@@ -36,6 +45,7 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
  * 설정(webEnvironment, @TestPropertySource 등)을 독립적으로 보유한다.
  */
 // 컨텍스트 로드를 위해 DB/Redis/외부 HTTP 의존 빈을 일괄 모킹한다. 클래스 레벨 types 배열로 중복 필드 선언을 회피한다.
+@SuppressWarnings("PMD.ExcessiveImports") // 신규 빈 추가로 import 수 증가 — 불가피
 @MockitoBean(
         types = {
             StringRedisTemplate.class,
@@ -70,7 +80,17 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
             BackfillStatusRepository.class,
             BackfillOrchestrator.class,
             BackfillWindowExecutor.class,
-            BackfillScheduler.class
+            BackfillScheduler.class,
+            // SPEC-COLLECTOR-MARKETIND-001: 시장 지표 신규 빈 모킹 (smoke 회귀 방지)
+            MarketIndicatorRepository.class,
+            VixCollectionService.class,
+            UsdkrwCollectionService.class,
+            MarketIndicatorBackfillOrchestrator.class,
+            MarketIndicatorBackfillScheduler.class,
+            CboeVixClient.class,
+            FredVixClient.class,
+            YahooFinanceClient.class,
+            KoreaeximExchangeRateClient.class
         })
 class SmokeMockitoBase {
 

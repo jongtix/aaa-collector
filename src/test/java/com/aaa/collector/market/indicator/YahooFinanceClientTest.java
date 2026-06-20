@@ -20,17 +20,6 @@ import org.springframework.web.client.RestClient;
 @DisplayName("YahooFinanceClient 단위 테스트")
 class YahooFinanceClientTest {
 
-    private MockRestServiceServer mockServer;
-    private YahooFinanceClient client;
-
-    @BeforeEach
-    void setUp() {
-        RestClient.Builder builder = RestClient.builder();
-        mockServer = MockRestServiceServer.bindTo(builder).build();
-        RestClient yahooRestClient = builder.baseUrl("https://query1.finance.yahoo.com").build();
-        client = new YahooFinanceClient(yahooRestClient);
-    }
-
     // 2026-01-02 00:00:00 ET (UTC-5) = 2026-01-02T05:00:00Z = 1767330000 UTC epoch
     // 2026-01-05 00:00:00 ET (UTC-5) = 2026-01-05T05:00:00Z = 1767589200 UTC epoch
     private static final String SAMPLE_VIX_JSON =
@@ -71,6 +60,17 @@ class YahooFinanceClientTest {
             }
             """;
 
+    private MockRestServiceServer mockServer;
+    private YahooFinanceClient client;
+
+    @BeforeEach
+    void setUp() {
+        RestClient.Builder builder = RestClient.builder();
+        mockServer = MockRestServiceServer.bindTo(builder).build();
+        RestClient yahooRestClient = builder.baseUrl("https://query1.finance.yahoo.com").build();
+        client = new YahooFinanceClient(yahooRestClient);
+    }
+
     @Nested
     @DisplayName("fetchHistory — VIX (^VIX / %5EVIX)")
     class FetchHistoryVix {
@@ -86,7 +86,7 @@ class YahooFinanceClientTest {
             List<MarketIndicatorRow> rows = client.fetchHistory(IndicatorCode.VIX);
 
             assertThat(rows).hasSize(2);
-            MarketIndicatorRow first = rows.get(0);
+            MarketIndicatorRow first = rows.getFirst();
             assertThat(first.indicatorCode()).isEqualTo(IndicatorCode.VIX);
             assertThat(first.tradeDate()).isEqualTo(LocalDate.of(2026, 1, 2));
             assertThat(first.source()).isEqualTo("YAHOO");
@@ -101,7 +101,7 @@ class YahooFinanceClientTest {
 
             List<MarketIndicatorRow> rows = client.fetchHistory(IndicatorCode.VIX);
 
-            assertThat(rows.get(0).closeValue().scale()).isEqualTo(4);
+            assertThat(rows.getFirst().closeValue().scale()).isEqualTo(4);
         }
     }
 
@@ -119,9 +119,9 @@ class YahooFinanceClientTest {
             List<MarketIndicatorRow> rows = client.fetchHistory(IndicatorCode.USDKRW);
 
             assertThat(rows).hasSize(1);
-            assertThat(rows.get(0).indicatorCode()).isEqualTo(IndicatorCode.USDKRW);
-            assertThat(rows.get(0).closeValue().scale()).isEqualTo(4);
-            assertThat(rows.get(0).source()).isEqualTo("YAHOO");
+            assertThat(rows.getFirst().indicatorCode()).isEqualTo(IndicatorCode.USDKRW);
+            assertThat(rows.getFirst().closeValue().scale()).isEqualTo(4);
+            assertThat(rows.getFirst().source()).isEqualTo("YAHOO");
         }
     }
 
@@ -140,7 +140,7 @@ class YahooFinanceClientTest {
                     client.fetchDaily(IndicatorCode.VIX, LocalDate.of(2026, 1, 2));
 
             assertThat(rows).hasSize(1);
-            assertThat(rows.get(0).tradeDate()).isEqualTo(LocalDate.of(2026, 1, 2));
+            assertThat(rows.getFirst().tradeDate()).isEqualTo(LocalDate.of(2026, 1, 2));
         }
     }
 

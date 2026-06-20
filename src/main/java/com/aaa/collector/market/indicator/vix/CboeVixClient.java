@@ -28,6 +28,7 @@ public class CboeVixClient implements MarketIndicatorSource {
     static final String CSV_PATH = "/api/global/us_indices/daily_prices/VIX_History.csv";
     private static final DateTimeFormatter DATE_FMT = DateTimeFormatter.ofPattern("MM/dd/yyyy");
     private static final String SOURCE = "CBOE";
+    private static final int EXPECTED_COLUMNS = 5;
 
     private final RestClient cboeRestClient;
 
@@ -59,29 +60,34 @@ public class CboeVixClient implements MarketIndicatorSource {
             if (line.isEmpty()) {
                 continue;
             }
-            try {
-                String[] cols = line.split(",");
-                if (cols.length < 5) {
-                    log.warn("[cboe-vix] 컬럼 수 부족 — skip: {}", line);
-                    continue;
-                }
-                LocalDate date = LocalDate.parse(cols[0].trim(), DATE_FMT);
-                BigDecimal open = new BigDecimal(cols[1].trim());
-                BigDecimal high = new BigDecimal(cols[2].trim());
-                BigDecimal low = new BigDecimal(cols[3].trim());
-                BigDecimal close = new BigDecimal(cols[4].trim());
-
-                if (close.compareTo(BigDecimal.ZERO) <= 0) {
-                    log.warn("[cboe-vix] close 0 이하 — skip: {}", line);
-                    continue;
-                }
-                rows.add(
-                        new MarketIndicatorRow(
-                                IndicatorCode.VIX, date, open, high, low, close, SOURCE));
-            } catch (Exception e) {
-                log.warn("[cboe-vix] 행 파싱 실패 — skip: {}, 오류: {}", line, e.getMessage());
-            }
+            parseRow(line, rows);
         }
         return rows;
+    }
+
+    @SuppressWarnings("PMD.AvoidCatchingGenericException")
+    private void parseRow(String line, List<MarketIndicatorRow> rows) {
+        try {
+            String[] cols = line.split(",");
+            if (cols.length < EXPECTED_COLUMNS) {
+                log.warn("[cboe-vix] 컬럼 수 부족 — skip: {}", line);
+                return;
+            }
+            LocalDate date = LocalDate.parse(cols[0].trim(), DATE_FMT);
+            BigDecimal open = new BigDecimal(cols[1].trim());
+            BigDecimal high = new BigDecimal(cols[2].trim());
+            BigDecimal low = new BigDecimal(cols[3].trim());
+            BigDecimal close = new BigDecimal(cols[4].trim());
+
+            if (close.compareTo(BigDecimal.ZERO) <= 0) {
+                log.warn("[cboe-vix] close 0 이하 — skip: {}", line);
+                return;
+            }
+            rows.add(
+                    new MarketIndicatorRow(
+                            IndicatorCode.VIX, date, open, high, low, close, SOURCE));
+        } catch (Exception e) {
+            log.warn("[cboe-vix] 행 파싱 실패 — skip: {}, 오류: {}", line, e.getMessage());
+        }
     }
 }

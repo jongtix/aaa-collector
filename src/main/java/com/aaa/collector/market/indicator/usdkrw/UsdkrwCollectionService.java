@@ -49,10 +49,24 @@ public class UsdkrwCollectionService {
     /**
      * 전체 이력 수집 (백필용).
      *
+     * <p>KOREAEXIM은 전체 이력 단일 호출 미지원(fetchHistory()=빈 리스트)이므로 백필은 날짜 루프({@link
+     * #collectDailyForBackfill})로 수행한다.
+     *
      * @return 저장된 행 수
      */
     public int collectHistory() {
         List<MarketIndicatorRow> rows = usdkrwChain.fetchHistory();
+        return saveRows(rows);
+    }
+
+    /**
+     * 백필용 단일 날짜 수집.
+     *
+     * @param date 수집 대상 날짜
+     * @return 저장된 행 수
+     */
+    public int collectDailyForBackfill(LocalDate date) {
+        List<MarketIndicatorRow> rows = usdkrwChain.fetchDaily(date);
         return saveRows(rows);
     }
 
@@ -70,13 +84,7 @@ public class UsdkrwCollectionService {
     }
 
     private boolean isValid(MarketIndicatorRow row) {
-        if (row.closeValue() == null) {
-            return false;
-        }
-        if (row.closeValue().signum() <= 0) {
-            return false;
-        }
-        return true;
+        return row.closeValue() != null && row.closeValue().signum() > 0;
     }
 
     private MarketIndicator toEntity(MarketIndicatorRow row) {

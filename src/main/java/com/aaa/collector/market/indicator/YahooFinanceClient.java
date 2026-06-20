@@ -79,7 +79,11 @@ public class YahooFinanceClient {
         };
     }
 
-    @SuppressWarnings("unchecked")
+    @SuppressWarnings({
+        "unchecked",
+        "PMD.AvoidCatchingGenericException",
+        "PMD.UnnecessaryCast"
+    }) // Yahoo Finance v8 JSON → 제네릭 타입 안전 캐스트 불가
     private List<MarketIndicatorRow> parseChart(
             Map<String, Object> body, IndicatorCode indicatorCode) {
         if (body == null) {
@@ -93,17 +97,17 @@ public class YahooFinanceClient {
         if (results == null || results.isEmpty()) {
             return List.of();
         }
-        Map<String, Object> result = results.get(0);
-        List<Number> timestamps = (List<Number>) result.get("timestamp");
+        Map<String, Object> result = results.getFirst();
         Map<String, Object> indicators = (Map<String, Object>) result.get("indicators");
         List<Map<String, List<Number>>> quoteList =
                 (List<Map<String, List<Number>>>) indicators.get("quote");
-        Map<String, List<Number>> quote = quoteList.get(0);
+        Map<String, List<Number>> quote = quoteList.getFirst();
 
         List<Number> opens = (List<Number>) quote.get("open");
         List<Number> highs = (List<Number>) quote.get("high");
         List<Number> lows = (List<Number>) quote.get("low");
         List<Number> closes = (List<Number>) quote.get("close");
+        List<Number> timestamps = (List<Number>) result.get("timestamp");
 
         List<MarketIndicatorRow> rows = new ArrayList<>();
         for (int i = 0; i < timestamps.size(); i++) {

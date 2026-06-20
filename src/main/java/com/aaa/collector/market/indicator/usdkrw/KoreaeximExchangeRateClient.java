@@ -103,6 +103,7 @@ public class KoreaeximExchangeRateClient implements MarketIndicatorSource {
                 .toList();
     }
 
+    @SuppressWarnings("PMD.AvoidCatchingGenericException") // 행별 파싱 실패 격리
     private MarketIndicatorRow toRow(Map<String, String> m, LocalDate date) {
         try {
             String raw = m.get("deal_bas_r");

@@ -103,6 +103,7 @@ class MarketBatchSchedulerTest {
     class NormalFlow {
 
         @Test
+        @SuppressWarnings("PMD.UnitTestContainsTooManyAsserts") // 7종 고정 순서 전체 검증
         @DisplayName(
                 "7종 모두 호출 — sectorIndex → compInterest → marketFunds → dividendSchedule → revSplit → usdkrw → vix")
         void collectMarket_callsAllSevenServicesInOrder() {

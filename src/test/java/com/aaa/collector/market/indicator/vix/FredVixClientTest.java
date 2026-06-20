@@ -22,17 +22,6 @@ class FredVixClientTest {
 
     private static final String FRED_API_KEY = "test-key";
 
-    private MockRestServiceServer mockServer;
-    private FredVixClient client;
-
-    @BeforeEach
-    void setUp() {
-        RestClient.Builder builder = RestClient.builder();
-        mockServer = MockRestServiceServer.bindTo(builder).build();
-        RestClient fredRestClient = builder.baseUrl("https://api.stlouisfed.org").build();
-        client = new FredVixClient(fredRestClient, FRED_API_KEY);
-    }
-
     private static final String SAMPLE_JSON =
             """
             {
@@ -44,11 +33,23 @@ class FredVixClientTest {
             }
             """;
 
+    private MockRestServiceServer mockServer;
+    private FredVixClient client;
+
+    @BeforeEach
+    void setUp() {
+        RestClient.Builder builder = RestClient.builder();
+        mockServer = MockRestServiceServer.bindTo(builder).build();
+        RestClient fredRestClient = builder.baseUrl("https://api.stlouisfed.org").build();
+        client = new FredVixClient(fredRestClient, FRED_API_KEY);
+    }
+
     @Nested
     @DisplayName("fetchHistory — FRED JSON 파싱")
     class FetchHistory {
 
         @Test
+        @SuppressWarnings("PMD.UnitTestContainsTooManyAsserts") // OHLC null 포함 전체 필드 검증
         @DisplayName("정상 응답 — date 파싱, close만/open_high_low=NULL, source=FRED (REQ-023)")
         void parsesDateAndClose() {
             mockServer
@@ -59,7 +60,7 @@ class FredVixClientTest {
 
             // '.' 결측 행 제외 — 2건
             assertThat(rows).hasSize(2);
-            MarketIndicatorRow first = rows.get(0);
+            MarketIndicatorRow first = rows.getFirst();
             assertThat(first.indicatorCode()).isEqualTo(IndicatorCode.VIX);
             assertThat(first.tradeDate()).isEqualTo(LocalDate.of(2026, 1, 2));
             assertThat(first.closeValue()).isEqualByComparingTo("17.20");
@@ -113,7 +114,7 @@ class FredVixClientTest {
             List<MarketIndicatorRow> rows = client.fetchDaily(LocalDate.of(2026, 1, 2));
 
             assertThat(rows).hasSize(1);
-            assertThat(rows.get(0).tradeDate()).isEqualTo(LocalDate.of(2026, 1, 2));
+            assertThat(rows.getFirst().tradeDate()).isEqualTo(LocalDate.of(2026, 1, 2));
         }
     }
 }

@@ -70,13 +70,7 @@ public class VixCollectionService {
     }
 
     private boolean isValid(MarketIndicatorRow row) {
-        if (row.closeValue() == null) {
-            return false;
-        }
-        if (row.closeValue().signum() <= 0) {
-            return false;
-        }
-        return true;
+        return row.closeValue() != null && row.closeValue().signum() > 0;
     }
 
     private MarketIndicator toEntity(MarketIndicatorRow row) {

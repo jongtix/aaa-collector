@@ -19,7 +19,7 @@ public class MarketIndicatorSourceChain {
     private final List<MarketIndicatorSource> sources;
 
     public MarketIndicatorSourceChain(List<MarketIndicatorSource> sources) {
-        this.sources = sources;
+        this.sources = List.copyOf(sources);
     }
 
     /**
@@ -28,6 +28,7 @@ public class MarketIndicatorSourceChain {
      * @param date 수집 대상 날짜
      * @return 행 목록 (전부 실패 시 빈 리스트)
      */
+    @SuppressWarnings("PMD.AvoidCatchingGenericException") // Fallback 체인 — 소스별 예외 격리 필요
     public List<MarketIndicatorRow> fetchDaily(LocalDate date) {
         for (MarketIndicatorSource source : sources) {
             try {
@@ -51,6 +52,7 @@ public class MarketIndicatorSourceChain {
      *
      * @return 행 목록 (전부 실패 시 빈 리스트)
      */
+    @SuppressWarnings("PMD.AvoidCatchingGenericException") // Fallback 체인 — 소스별 예외 격리 필요
     public List<MarketIndicatorRow> fetchHistory() {
         for (MarketIndicatorSource source : sources) {
             try {

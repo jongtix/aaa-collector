@@ -100,6 +100,18 @@ kis:
       app-secret: ${KIS_ACCT_DC_APP_SECRET}
 
 aaa:
+  market-indicator:
+    usdkrw:
+      # 빈 배열 재시도 상한 (REQ-012)
+      empty-retry-max: 5
+    backfill:
+      # cron 표현식 (기본: 02:00 KST 매일). fixedDelay 금지 — Virtual Threads 버그(ADR-008, REQ-046)
+      cron: "0 0 2 * * *"
+      usdkrw:
+        # KOREAEXIM 백필 연속 평일 빈 결과 종료 임계 (REQ-044)
+        stale-weekday-threshold: 7
+    koreaexim-api-key: ${KOREAEXIM_API_KEY:}
+    fred-api-key: ${FRED_API_KEY:}
   backfill:
     # cron 표현식 (기본: 02:00 KST 매일). fixedDelay 금지 — Virtual Threads 버그(CLAUDE.md)
     cron: "0 0 2 * * *"
