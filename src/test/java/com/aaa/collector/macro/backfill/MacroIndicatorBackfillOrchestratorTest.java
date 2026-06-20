@@ -12,12 +12,14 @@ import static org.mockito.Mockito.when;
 import com.aaa.collector.backfill.BackfillStatus;
 import com.aaa.collector.backfill.BackfillStatusRepository;
 import com.aaa.collector.macro.MacroCollectionResult;
+import com.aaa.collector.macro.MacroIndicatorRepository;
 import com.aaa.collector.macro.ecos.EcosCollectionService;
 import com.aaa.collector.macro.ecos.EcosSeriesConfig;
 import com.aaa.collector.macro.fred.FredCollectionService;
 import com.aaa.collector.macro.fred.FredSeriesConfig;
 import java.time.LocalDate;
 import java.util.List;
+import java.util.Optional;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
@@ -37,6 +39,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 class MacroIndicatorBackfillOrchestratorTest {
 
     @Mock private BackfillStatusRepository backfillStatusRepository;
+    @Mock private MacroIndicatorRepository macroIndicatorRepository;
     @Mock private EcosCollectionService ecosCollectionService;
     @Mock private FredCollectionService fredCollectionService;
 
@@ -107,6 +110,8 @@ class MacroIndicatorBackfillOrchestratorTest {
                     .thenReturn(List.of(status));
             when(ecosCollectionService.collectAll())
                     .thenReturn(new MacroCollectionResult(100, 95, 5));
+            when(macroIndicatorRepository.findMinTradeDateByIndicatorCode("ECOS_BASE_RATE"))
+                    .thenReturn(Optional.of(LocalDate.of(2020, 1, 2)));
 
             // Act
             orchestrator.run();
@@ -127,6 +132,8 @@ class MacroIndicatorBackfillOrchestratorTest {
                     .thenReturn(List.of(status));
             when(fredCollectionService.collectAll())
                     .thenReturn(new MacroCollectionResult(50, 48, 2));
+            when(macroIndicatorRepository.findMinTradeDateByIndicatorCode("FRED_DFF"))
+                    .thenReturn(Optional.of(LocalDate.of(2019, 6, 1)));
 
             // Act
             orchestrator.run();
@@ -151,6 +158,61 @@ class MacroIndicatorBackfillOrchestratorTest {
             // Assert — collectAll 호출 없음
             verify(ecosCollectionService, never()).collectAll();
             verify(fredCollectionService, never()).collectAll();
+        }
+    }
+
+    // ────────────────────────────────────────────────────────────────────
+    // W-1: minDate — 실제 최소 거래일로 updateProgress 호출 (REQ-MACRO-EXT-072)
+    // ────────────────────────────────────────────────────────────────────
+
+    @Nested
+    @DisplayName("W-1: minDate — last_collected_date 갱신 (REQ-MACRO-EXT-072)")
+    class MinDateUpdate {
+
+        @Test
+        @DisplayName("수집 후 findMinTradeDateByIndicatorCode 반환값으로 updateProgress 호출")
+        void processEntry_usesActualMinDateFromRepository() {
+            // Arrange
+            LocalDate expectedMin = LocalDate.of(2015, 3, 20);
+            BackfillStatus status = mockStatus(10L, "ECOS_BASE_RATE");
+            when(backfillStatusRepository.findByStatusInAndTargetTypeOrderById(
+                            any(), eq("MACRO_INDICATOR")))
+                    .thenReturn(List.of(status));
+            when(ecosCollectionService.collectAll())
+                    .thenReturn(new MacroCollectionResult(200, 200, 0));
+            when(macroIndicatorRepository.findMinTradeDateByIndicatorCode("ECOS_BASE_RATE"))
+                    .thenReturn(Optional.of(expectedMin));
+
+            // Act
+            orchestrator.run();
+
+            // Assert — minDate가 오늘이 아닌 실제 최소 거래일
+            ArgumentCaptor<LocalDate> dateCaptor = ArgumentCaptor.forClass(LocalDate.class);
+            verify(backfillStatusRepository)
+                    .updateProgress(eq(10L), eq("COMPLETED"), dateCaptor.capture(), eq(0), eq(200));
+            assertThat(dateCaptor.getValue()).isEqualTo(expectedMin);
+        }
+
+        @Test
+        @DisplayName("findMinTradeDateByIndicatorCode가 empty 반환 시 LocalDate.now() fallback")
+        void processEntry_fallsBackToTodayWhenRepositoryReturnsEmpty() {
+            // Arrange
+            BackfillStatus status = mockStatus(11L, "ECOS_BASE_RATE");
+            when(backfillStatusRepository.findByStatusInAndTargetTypeOrderById(
+                            any(), eq("MACRO_INDICATOR")))
+                    .thenReturn(List.of(status));
+            when(ecosCollectionService.collectAll()).thenReturn(new MacroCollectionResult(0, 0, 0));
+            when(macroIndicatorRepository.findMinTradeDateByIndicatorCode("ECOS_BASE_RATE"))
+                    .thenReturn(Optional.empty());
+
+            // Act
+            orchestrator.run();
+
+            // Assert — empty 시 오늘 날짜로 fallback (오늘과 동일한 날짜여야 함)
+            ArgumentCaptor<LocalDate> dateCaptor = ArgumentCaptor.forClass(LocalDate.class);
+            verify(backfillStatusRepository)
+                    .updateProgress(eq(11L), eq("COMPLETED"), dateCaptor.capture(), eq(0), eq(0));
+            assertThat(dateCaptor.getValue()).isEqualTo(LocalDate.now());
         }
     }
 
