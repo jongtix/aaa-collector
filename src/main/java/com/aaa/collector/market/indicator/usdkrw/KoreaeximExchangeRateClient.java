@@ -3,6 +3,7 @@ package com.aaa.collector.market.indicator.usdkrw;
 import com.aaa.collector.market.enums.IndicatorCode;
 import com.aaa.collector.market.indicator.MarketIndicatorRow;
 import com.aaa.collector.market.indicator.MarketIndicatorSource;
+import com.aaa.collector.market.indicator.SensitiveDataSanitizer;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.DayOfWeek;
@@ -119,7 +120,10 @@ public class KoreaeximExchangeRateClient implements MarketIndicatorSource {
             return new MarketIndicatorRow(
                     IndicatorCode.USDKRW, date, null, null, null, close, SOURCE);
         } catch (Exception e) {
-            log.warn("[koreaexim] 행 파싱 실패 — skip: {}, 오류: {}", m, e.getMessage());
+            log.warn(
+                    "[koreaexim] 행 파싱 실패 — skip: {}, 오류: {}",
+                    m,
+                    SensitiveDataSanitizer.sanitize(e.getMessage()));
             return null;
         }
     }

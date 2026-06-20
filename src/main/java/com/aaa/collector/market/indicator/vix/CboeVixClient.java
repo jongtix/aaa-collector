@@ -3,6 +3,7 @@ package com.aaa.collector.market.indicator.vix;
 import com.aaa.collector.market.enums.IndicatorCode;
 import com.aaa.collector.market.indicator.MarketIndicatorRow;
 import com.aaa.collector.market.indicator.MarketIndicatorSource;
+import com.aaa.collector.market.indicator.SensitiveDataSanitizer;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
@@ -87,7 +88,10 @@ public class CboeVixClient implements MarketIndicatorSource {
                     new MarketIndicatorRow(
                             IndicatorCode.VIX, date, open, high, low, close, SOURCE));
         } catch (Exception e) {
-            log.warn("[cboe-vix] 행 파싱 실패 — skip: {}, 오류: {}", line, e.getMessage());
+            log.warn(
+                    "[cboe-vix] 행 파싱 실패 — skip: {}, 오류: {}",
+                    line,
+                    SensitiveDataSanitizer.sanitize(e.getMessage()));
         }
     }
 }

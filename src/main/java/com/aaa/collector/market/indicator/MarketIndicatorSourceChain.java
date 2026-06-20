@@ -1,5 +1,7 @@
 package com.aaa.collector.market.indicator;
 
+import static com.aaa.collector.market.indicator.SensitiveDataSanitizer.sanitize;
+
 import java.time.LocalDate;
 import java.util.List;
 import lombok.extern.slf4j.Slf4j;
@@ -41,7 +43,7 @@ public class MarketIndicatorSourceChain {
                 log.warn(
                         "[market-ind-chain] {} fetchDaily 예외 — 다음 소스로: {}",
                         source.sourceName(),
-                        e.getMessage());
+                        sanitize(e.getMessage()));
             }
         }
         return List.of();
@@ -65,7 +67,7 @@ public class MarketIndicatorSourceChain {
                 log.warn(
                         "[market-ind-chain] {} fetchHistory 예외 — 다음 소스로: {}",
                         source.sourceName(),
-                        e.getMessage());
+                        sanitize(e.getMessage()));
             }
         }
         return List.of();

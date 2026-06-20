@@ -136,7 +136,10 @@ public class YahooFinanceClient {
                         new MarketIndicatorRow(
                                 indicatorCode, date, open, high, low, close, SOURCE));
             } catch (Exception e) {
-                log.warn("[yahoo] 행 파싱 실패 — skip: idx={}, 오류: {}", i, e.getMessage());
+                log.warn(
+                        "[yahoo] 행 파싱 실패 — skip: idx={}, 오류: {}",
+                        i,
+                        SensitiveDataSanitizer.sanitize(e.getMessage()));
             }
         }
         return rows;

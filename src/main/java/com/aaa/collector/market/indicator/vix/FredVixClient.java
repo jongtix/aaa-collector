@@ -3,6 +3,7 @@ package com.aaa.collector.market.indicator.vix;
 import com.aaa.collector.market.enums.IndicatorCode;
 import com.aaa.collector.market.indicator.MarketIndicatorRow;
 import com.aaa.collector.market.indicator.MarketIndicatorSource;
+import com.aaa.collector.market.indicator.SensitiveDataSanitizer;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.ArrayList;
@@ -99,7 +100,10 @@ public class FredVixClient implements MarketIndicatorSource {
             }
             return new MarketIndicatorRow(IndicatorCode.VIX, date, null, null, null, close, SOURCE);
         } catch (Exception e) {
-            log.warn("[fred-vix] 행 파싱 실패 — skip: {}, 오류: {}", obs, e.getMessage());
+            log.warn(
+                    "[fred-vix] 행 파싱 실패 — skip: {}, 오류: {}",
+                    obs,
+                    SensitiveDataSanitizer.sanitize(e.getMessage()));
             return null;
         }
     }
