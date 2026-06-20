@@ -13,6 +13,7 @@ import ch.qos.logback.classic.Level;
 import ch.qos.logback.classic.Logger;
 import ch.qos.logback.classic.spi.ILoggingEvent;
 import ch.qos.logback.core.read.ListAppender;
+import com.aaa.collector.backfill.BackfillWindowResult;
 import com.aaa.collector.kis.KisRateLimitException;
 import com.aaa.collector.kis.gate.GuardedKisExecutor;
 import com.aaa.collector.kis.gate.KeyLeaseRegistry;
@@ -511,6 +512,107 @@ class DomesticDailyOhlcvCollectionServiceTest {
             service.collect(LocalDate.of(2026, 6, 13));
 
             verify(stockRepository).findAllActiveTradable();
+        }
+    }
+
+    @Nested
+    @DisplayName("collectWindow — 백필 윈도우 메서드 (REQ-BACKFILL-002, T3)")
+    class BackfillWindow {
+
+        private LeaseSession openSession() {
+            when(healthyKeySelector.selectHealthy()).thenReturn(List.of(ISA, GOLD));
+            return new KeyLeaseRegistry(healthyKeySelector).openSession();
+        }
+
+        @Test
+        @DisplayName("주어진 from/to 날짜를 KIS 파라미터로 전송 (당일 14일 윈도우와 무관)")
+        @SuppressWarnings("unchecked")
+        void collectWindow_sendsGivenDateParams() throws Exception {
+            ArgumentCaptor<Function<UriBuilder, URI>> uriCaptor =
+                    ArgumentCaptor.forClass(Function.class);
+            when(guardedKisExecutor.execute(
+                            any(LeaseSession.class),
+                            uriCaptor.capture(),
+                            eq("FHKST03010100"),
+                            eq(KisDailyOhlcvResponse.class)))
+                    .thenReturn(stubResponse(List.of(validRow("20260101"))));
+
+            service.collectWindow(
+                    stockOf("005930"),
+                    openSession(),
+                    LocalDate.of(2026, 1, 1),
+                    LocalDate.of(2026, 5, 30));
+
+            URI built = uriCaptor.getValue().apply(UriComponentsBuilder.newInstance());
+            assertThat(built.toString()).contains("FID_INPUT_DATE_1=20260101");
+            assertThat(built.toString()).contains("FID_INPUT_DATE_2=20260530");
+        }
+
+        @Test
+        @DisplayName("당일 수집과 동일한 검증·INSERT IGNORE 경로 재사용 (insertBatch 1회)")
+        void collectWindow_reusesValidateInsertPath() throws Exception {
+            when(guardedKisExecutor.execute(
+                            any(LeaseSession.class),
+                            any(),
+                            anyString(),
+                            eq(KisDailyOhlcvResponse.class)))
+                    .thenReturn(stubResponse(List.of(validRow("20260102"), validRow("20260101"))));
+
+            service.collectWindow(
+                    stockOf("005930"),
+                    openSession(),
+                    LocalDate.of(2026, 1, 1),
+                    LocalDate.of(2026, 5, 30));
+
+            verify(ohlcvInserter, times(1)).insertBatch(any(), any(), any());
+        }
+
+        @Test
+        @DisplayName("반환 결과 — 최소 거래일과 행 수를 노출 (종료 판정 입력)")
+        void collectWindow_returnsOldestAndRowCount() throws Exception {
+            when(guardedKisExecutor.execute(
+                            any(LeaseSession.class),
+                            any(),
+                            anyString(),
+                            eq(KisDailyOhlcvResponse.class)))
+                    .thenReturn(
+                            stubResponse(
+                                    List.of(
+                                            validRow("20260103"),
+                                            validRow("20260101"),
+                                            validRow("20260102"))));
+
+            BackfillWindowResult result =
+                    service.collectWindow(
+                            stockOf("005930"),
+                            openSession(),
+                            LocalDate.of(2026, 1, 1),
+                            LocalDate.of(2026, 5, 30));
+
+            assertThat(result.oldestTradeDate()).isEqualTo(LocalDate.of(2026, 1, 1));
+            assertThat(result.rowCount()).isEqualTo(3);
+        }
+
+        @Test
+        @DisplayName("0건 응답 — oldest=null, rowCount=0 (REQ-BACKFILL-012 입력)")
+        void collectWindow_emptyResponse_zeroResult() throws Exception {
+            when(guardedKisExecutor.execute(
+                            any(LeaseSession.class),
+                            any(),
+                            anyString(),
+                            eq(KisDailyOhlcvResponse.class)))
+                    .thenReturn(stubResponse(List.of()));
+
+            BackfillWindowResult result =
+                    service.collectWindow(
+                            stockOf("005930"),
+                            openSession(),
+                            LocalDate.of(2026, 1, 1),
+                            LocalDate.of(2026, 5, 30));
+
+            assertThat(result.oldestTradeDate()).isNull();
+            assertThat(result.rowCount()).isZero();
+            verify(ohlcvInserter, never()).insertBatch(any(), any(), any());
         }
     }
 }

@@ -14,6 +14,7 @@ import ch.qos.logback.classic.Level;
 import ch.qos.logback.classic.Logger;
 import ch.qos.logback.classic.spi.ILoggingEvent;
 import ch.qos.logback.core.read.ListAppender;
+import com.aaa.collector.backfill.BackfillWindowResult;
 import com.aaa.collector.kis.KisRateLimitException;
 import com.aaa.collector.kis.gate.GuardedKisExecutor;
 import com.aaa.collector.kis.gate.KeyLeaseRegistry;
@@ -604,6 +605,117 @@ class OverseasDailyOhlcvCollectionServiceTest {
             assertThat(result.succeeded() + result.skipped()).isEqualTo(result.attempted());
             assertThat(result.succeeded()).isEqualTo(1);
             assertThat(result.skipped()).isEqualTo(1);
+        }
+    }
+
+    @Nested
+    @DisplayName("collectWindow — 백필 윈도우 메서드 (REQ-BACKFILL-002, T3)")
+    class BackfillWindow {
+
+        private static final LocalDate ANCHOR = LocalDate.of(2026, 1, 31);
+
+        private LeaseSession openSession() {
+            when(healthyKeySelector.selectHealthy()).thenReturn(List.of(ISA, GOLD));
+            return new KeyLeaseRegistry(healthyKeySelector).openSession();
+        }
+
+        @Test
+        @DisplayName("주어진 anchor를 BYMD 파라미터로 전송 (당일 ET 거래일과 무관)")
+        @SuppressWarnings("unchecked")
+        void collectWindow_sendsGivenAnchorAsBymd() throws Exception {
+            ArgumentCaptor<Function<UriBuilder, URI>> uriCaptor =
+                    ArgumentCaptor.forClass(Function.class);
+            when(guardedKisExecutor.execute(
+                            any(LeaseSession.class),
+                            uriCaptor.capture(),
+                            eq("HHDFS76240000"),
+                            eq(KisOverseasDailyOhlcvResponse.class)))
+                    .thenReturn(response("4", List.of(row("20260130", "100", "1000", "1000"))));
+
+            service.collectWindow(
+                    stockOf("AAPL", Market.NASDAQ, AssetType.STOCK), openSession(), ANCHOR);
+
+            String uri = uriCaptor.getValue().apply(UriComponentsBuilder.newInstance()).toString();
+            assertThat(uri).contains("BYMD=20260131");
+            assertThat(uri).contains("MODP=0");
+        }
+
+        @Test
+        @DisplayName("당일 수집과 동일한 검증·INSERT IGNORE 경로 재사용 (insertIgnoreDuplicate 호출)")
+        void collectWindow_reusesValidateInsertPath() throws Exception {
+            when(guardedKisExecutor.execute(
+                            any(LeaseSession.class),
+                            any(),
+                            anyString(),
+                            eq(KisOverseasDailyOhlcvResponse.class)))
+                    .thenReturn(
+                            response(
+                                    "4",
+                                    List.of(
+                                            row(
+                                                    "20260130",
+                                                    "296.9200",
+                                                    "42745060",
+                                                    "12697950974"))));
+
+            service.collectWindow(
+                    stockOf("AAPL", Market.NASDAQ, AssetType.STOCK), openSession(), ANCHOR);
+
+            verify(dailyOhlcvRepository, times(1))
+                    .insertIgnoreDuplicate(
+                            any(),
+                            eq(LocalDate.of(2026, 1, 30)),
+                            any(),
+                            any(),
+                            any(),
+                            any(),
+                            any(Long.class),
+                            any(Long.class));
+        }
+
+        @Test
+        @DisplayName("반환 결과 — 최소 거래일과 행 수를 노출")
+        void collectWindow_returnsOldestAndRowCount() throws Exception {
+            when(guardedKisExecutor.execute(
+                            any(LeaseSession.class),
+                            any(),
+                            anyString(),
+                            eq(KisOverseasDailyOhlcvResponse.class)))
+                    .thenReturn(
+                            response(
+                                    "4",
+                                    List.of(
+                                            row("20260130", "100", "1000", "1000"),
+                                            row("20260128", "100", "1000", "1000"),
+                                            row("20260129", "100", "1000", "1000"))));
+
+            BackfillWindowResult result =
+                    service.collectWindow(
+                            stockOf("AAPL", Market.NASDAQ, AssetType.STOCK), openSession(), ANCHOR);
+
+            assertThat(result.oldestTradeDate()).isEqualTo(LocalDate.of(2026, 1, 28));
+            assertThat(result.rowCount()).isEqualTo(3);
+        }
+
+        @Test
+        @DisplayName("빈 응답 — oldest=null, rowCount=0 (REQ-BACKFILL-012 입력)")
+        void collectWindow_emptyResponse_zeroResult() throws Exception {
+            when(guardedKisExecutor.execute(
+                            any(LeaseSession.class),
+                            any(),
+                            anyString(),
+                            eq(KisOverseasDailyOhlcvResponse.class)))
+                    .thenReturn(
+                            new KisOverseasDailyOhlcvResponse(
+                                    "0", "MCA00000", "정상", null, List.of()));
+
+            BackfillWindowResult result =
+                    service.collectWindow(
+                            stockOf("AAPL", Market.NASDAQ, AssetType.STOCK), openSession(), ANCHOR);
+
+            assertThat(result.oldestTradeDate()).isNull();
+            assertThat(result.rowCount()).isZero();
+            verifyNoInsert();
         }
     }
 
