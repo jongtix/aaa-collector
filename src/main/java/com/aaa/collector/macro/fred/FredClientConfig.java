@@ -28,7 +28,7 @@ public class FredClientConfig {
      * @return FRED 호출용 RestClient
      */
     @Bean
-    RestClient fredRestClient(RestClient.Builder restClientBuilder) {
+    RestClient macroFredRestClient(RestClient.Builder restClientBuilder) {
         ClientHttpRequestFactorySettings settings =
                 ClientHttpRequestFactorySettings.defaults()
                         .withConnectTimeout(CONNECT_TIMEOUT)
