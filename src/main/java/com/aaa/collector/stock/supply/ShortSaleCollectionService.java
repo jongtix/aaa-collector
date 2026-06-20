@@ -1,5 +1,6 @@
 package com.aaa.collector.stock.supply;
 
+import com.aaa.collector.backfill.BackfillWindowResult;
 import com.aaa.collector.kis.KisRateLimitException;
 import com.aaa.collector.kis.gate.GuardedKisExecutor;
 import com.aaa.collector.kis.gate.KeyLeaseRegistry;
@@ -12,6 +13,7 @@ import com.aaa.collector.stock.StockRepository;
 import java.net.URI;
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
+import java.util.Comparator;
 import java.util.List;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -148,6 +150,41 @@ public class ShortSaleCollectionService {
         }
     }
 
+    /**
+     * 백필용 윈도우 1구간 수집 — 당일 수집과 동일한 매핑·검증·INSERT IGNORE 경로를 재사용한다 (REQ-BACKFILL-002).
+     *
+     * <p>당일 경로({@link #collect(LocalDate)})와 차이는 두 가지뿐이다: (1) {@code (from, to)} 기간을 호출자가 직접 지정해 과거
+     * 윈도우를 요청할 수 있고, (2) 종료 판정 입력인 {@link BackfillWindowResult}를 반환한다. {@link ShortSaleRowMapper}의
+     * 윈도우 필터·검증·매핑을 그대로 거치므로 새 파싱 분기를 만들지 않는다.
+     *
+     * <p>[CR-02] 공매도는 fetch가 기간 윈도우(그룹 A식)이나 종료 판정은 그룹 B(0건/연속 무전진)다 — 종료는 T5/T6 책임이며 본 메서드는 최소
+     * 거래일·행 수만 노출한다. 예외는 호출자(T6)가 상태 전이로 처리하도록 전파한다.
+     *
+     * @param stock 백필 대상 종목 (활성, REQ-BACKFILL-006)
+     * @param session 호출자가 1회 고정한 per-run 헬스 스냅샷 세션
+     * @param from 윈도우 하단 조회 시작일 ({@code FID_INPUT_DATE_1})
+     * @param to 윈도우 상단 조회 종료일 ({@code FID_INPUT_DATE_2}, anchor)
+     * @return 적재 대상 행의 최소 거래일 + 행 수 (적재 대상 없으면 {@link BackfillWindowResult#EMPTY})
+     * @throws InterruptedException 게이트 호출 인터럽트 시 전파
+     */
+    public BackfillWindowResult collectWindow(
+            Stock stock, LeaseSession session, LocalDate from, LocalDate to)
+            throws InterruptedException {
+        String symbol = stock.getSymbol();
+        KisShortSaleResponse response = fetch(session, symbol, from, to);
+        List<ShortSaleDomestic> validEntities = saveValidRows(stock, symbol, response, to, from);
+        if (validEntities.isEmpty()) {
+            return BackfillWindowResult.EMPTY;
+        }
+        // 매퍼가 이미 LocalDate로 파싱한 거래일에서 최소값을 직접 도출한다 — 2차 재파싱 없음.
+        LocalDate oldest =
+                validEntities.stream()
+                        .map(ShortSaleDomestic::getTradeDate)
+                        .min(Comparator.naturalOrder())
+                        .orElseThrow();
+        return new BackfillWindowResult(oldest, validEntities.size());
+    }
+
     private KisShortSaleResponse fetch(
             LeaseSession session, String symbol, LocalDate from, LocalDate to)
             throws InterruptedException {
@@ -165,8 +202,15 @@ public class ShortSaleCollectionService {
                 session, uriCustomizer, TR_ID, KisShortSaleResponse.class);
     }
 
-    /** 검증·매핑·윈도우 필터·경계 커버리지 관측은 mapper에 위임하고, 결과 엔티티만 배치 삽입한다. */
-    private void saveValidRows(
+    /**
+     * 검증·매핑·윈도우 필터·경계 커버리지 관측은 mapper에 위임하고, 결과 엔티티를 배치 삽입한 뒤 반환한다.
+     *
+     * <p>당일 경로({@link #collectStock})는 반환값을 무시하고, 백필 경로({@link #collectWindow})는 최소 거래일·행 수 도출에
+     * 사용한다 — 동일 매핑·검증·적재 경로를 공유한다(REQ-BACKFILL-002).
+     *
+     * @return 적재한 검증 통과 엔티티 목록 (없으면 빈 목록)
+     */
+    private List<ShortSaleDomestic> saveValidRows(
             Stock stock,
             String symbol,
             KisShortSaleResponse response,
@@ -175,8 +219,9 @@ public class ShortSaleCollectionService {
         List<ShortSaleDomestic> validEntities =
                 mapper.collectValid(stock, symbol, response, today, windowStart);
         if (validEntities.isEmpty()) {
-            return;
+            return validEntities;
         }
         inserter.insertBatch(validEntities);
+        return validEntities;
     }
 }

@@ -10,6 +10,7 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.aaa.collector.backfill.BackfillWindowResult;
 import com.aaa.collector.kis.KisRateLimitException;
 import com.aaa.collector.kis.gate.GuardedKisExecutor;
 import com.aaa.collector.kis.gate.KeyLeaseRegistry;
@@ -23,8 +24,10 @@ import com.aaa.collector.stock.StockRepository;
 import com.aaa.collector.stock.enums.AssetType;
 import com.aaa.collector.stock.enums.Market;
 import java.math.BigDecimal;
+import java.net.URI;
 import java.time.LocalDate;
 import java.util.List;
+import java.util.function.Function;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -34,6 +37,8 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.web.client.RestClientException;
+import org.springframework.web.util.UriBuilder;
+import org.springframework.web.util.UriComponentsBuilder;
 
 /**
  * SPEC-COLLECTOR-KISGATE-001 M4(T06) — 게이트 이전 후 회귀 테스트.
@@ -443,6 +448,74 @@ class ShortSaleCollectionServiceTest {
             SupplyDemandResult result = service.collect(TODAY);
 
             assertThat(result.attempted()).isEqualTo(2);
+        }
+    }
+
+    @Nested
+    @DisplayName("collectWindow — 백필 윈도우 메서드 (REQ-BACKFILL-002, T3 그룹A fetch)")
+    class BackfillWindow {
+
+        private static final LocalDate FROM = LocalDate.of(2026, 1, 1);
+        private static final LocalDate TO = LocalDate.of(2026, 5, 30);
+
+        private LeaseSession openSession() {
+            when(healthyKeySelector.selectHealthy()).thenReturn(List.of(ISA));
+            return new KeyLeaseRegistry(healthyKeySelector).openSession();
+        }
+
+        @Test
+        @DisplayName("주어진 from/to를 KIS 기간 파라미터로 전송 (당일 14일 윈도우와 무관)")
+        @SuppressWarnings("unchecked")
+        void collectWindow_sendsGivenDateParams() throws Exception {
+            ArgumentCaptor<Function<UriBuilder, URI>> uriCaptor =
+                    ArgumentCaptor.forClass(Function.class);
+            when(guardedKisExecutor.execute(
+                            any(LeaseSession.class),
+                            uriCaptor.capture(),
+                            anyString(),
+                            eq(KisShortSaleResponse.class)))
+                    .thenReturn(response(List.of(row("20260102"))));
+
+            service.collectWindow(stockOf("005930"), openSession(), FROM, TO);
+
+            String uri = uriCaptor.getValue().apply(UriComponentsBuilder.newInstance()).toString();
+            assertThat(uri).contains("FID_INPUT_DATE_1=20260101");
+            assertThat(uri).contains("FID_INPUT_DATE_2=20260530");
+        }
+
+        @Test
+        @DisplayName("당일 수집과 동일한 매핑·INSERT IGNORE 경로 재사용 (insertBatch 1회)")
+        void collectWindow_reusesMapInsertPath() throws Exception {
+            stubFetch(response(List.of(row("20260103"), row("20260102"))));
+
+            service.collectWindow(stockOf("005930"), openSession(), FROM, TO);
+
+            verify(inserter, times(1)).insertBatch(anyList());
+        }
+
+        @Test
+        @DisplayName("반환 결과 — 최소 거래일과 행 수를 노출 (이미 파싱된 엔티티 거래일에서 도출)")
+        void collectWindow_returnsOldestAndRowCount() throws Exception {
+            stubFetch(response(List.of(row("20260103"), row("20260101"), row("20260102"))));
+
+            BackfillWindowResult result =
+                    service.collectWindow(stockOf("005930"), openSession(), FROM, TO);
+
+            assertThat(result.oldestTradeDate()).isEqualTo(LocalDate.of(2026, 1, 1));
+            assertThat(result.rowCount()).isEqualTo(3);
+        }
+
+        @Test
+        @DisplayName("0건 응답 — oldest=null, rowCount=0 (REQ-BACKFILL-012 입력)")
+        void collectWindow_emptyResponse_zeroResult() throws Exception {
+            stubFetch(response(List.of()));
+
+            BackfillWindowResult result =
+                    service.collectWindow(stockOf("005930"), openSession(), FROM, TO);
+
+            assertThat(result.oldestTradeDate()).isNull();
+            assertThat(result.rowCount()).isZero();
+            verify(inserter, never()).insertBatch(anyList());
         }
     }
 }

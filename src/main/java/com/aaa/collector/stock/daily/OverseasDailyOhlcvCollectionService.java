@@ -1,5 +1,6 @@
 package com.aaa.collector.stock.daily;
 
+import com.aaa.collector.backfill.BackfillWindowResult;
 import com.aaa.collector.kis.KisRateLimitException;
 import com.aaa.collector.kis.gate.GuardedKisExecutor;
 import com.aaa.collector.kis.gate.KeyLeaseRegistry;
@@ -14,6 +15,8 @@ import java.net.URI;
 import java.time.LocalDate;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -182,6 +185,49 @@ public class OverseasDailyOhlcvCollectionService {
         }
     }
 
+    /**
+     * 백필용 윈도우 1구간 수집 — 당일 수집과 동일한 EXCD 라우팅·검증·INSERT IGNORE 경로를 재사용한다 (REQ-BACKFILL-002).
+     *
+     * <p>당일 경로({@link #collect(LocalDate)})와 차이는 두 가지뿐이다: (1) {@code anchor}({@code BYMD})를 호출자가 직접
+     * 지정해 과거 100영업일 윈도우를 받을 수 있고(REQ-BACKFILL-013a — 해외는 anchor 전진만으로 충분), (2) 종료 판정 입력인 {@link
+     * BackfillWindowResult}를 반환한다. ET 당일 행 가드({@link #isEtToday})는 anchor 기준 그대로 적용되며, 백필 anchor는
+     * 과거일이라 반환 행이 anchor보다 과거이므로 가드가 자연히 발동하지 않는다.
+     *
+     * <p>EXCD 미매핑·예외는 호출자(T6)가 상태 전이로 처리하도록 전파한다.
+     *
+     * @param stock 백필 대상 미국 종목 (활성, REQ-BACKFILL-006)
+     * @param session 호출자가 1회 고정한 per-run 헬스 스냅샷 세션
+     * @param anchor 윈도우 기준일 ({@code BYMD})
+     * @return 적재 대상 행의 최소 거래일 + 행 수 (적재 대상 없으면 {@link BackfillWindowResult#EMPTY})
+     * @throws InterruptedException 게이트 호출 인터럽트 시 전파
+     */
+    public BackfillWindowResult collectWindow(Stock stock, LeaseSession session, LocalDate anchor)
+            throws InterruptedException {
+        String symbol = stock.getSymbol();
+        String excd = stock.getMarket().toDailyPriceExcd();
+        KisOverseasDailyOhlcvResponse response = fetch(session, excd, symbol, anchor);
+
+        if (response.output1() == null || response.output2().isEmpty()) {
+            return BackfillWindowResult.EMPTY;
+        }
+        if (parseZdiv(response.output1().zdiv()) > ZDIV_MAX) {
+            return BackfillWindowResult.EMPTY;
+        }
+
+        List<KisOverseasDailyOhlcvResponse.OverseasDailyOhlcvRow> kept =
+                keepAndInsertRows(stock, symbol, response, anchor);
+        if (kept.isEmpty()) {
+            return BackfillWindowResult.EMPTY;
+        }
+        // 이미 검증·적재된 행에서 최소 거래일을 도출한다(2차 재파싱 없음) — xymd(yyyyMMdd)는 사전식=연대순.
+        String oldest =
+                kept.stream()
+                        .map(KisOverseasDailyOhlcvResponse.OverseasDailyOhlcvRow::xymd)
+                        .min(Comparator.naturalOrder())
+                        .orElseThrow();
+        return new BackfillWindowResult(LocalDate.parse(oldest, DATE_FMT), kept.size());
+    }
+
     private KisOverseasDailyOhlcvResponse fetch(
             LeaseSession session, String excd, String symbol, LocalDate today)
             throws InterruptedException {
@@ -222,6 +268,21 @@ public class OverseasDailyOhlcvCollectionService {
             return false;
         }
 
+        keepAndInsertRows(stock, symbol, response, today);
+        return true;
+    }
+
+    /**
+     * ET 당일 행 제외·검증 통과 행을 멱등 적재하고, 적재한 행 목록을 반환한다(REQ-OVOH-015, -012).
+     *
+     * <p>당일 경로({@link #saveValidRows})는 반환값을 무시하고, 백필 경로({@link #collectWindow})는 최소 거래일·행 수 도출에
+     * 사용한다 — 동일 ET 가드·검증·적재 경로를 공유한다(REQ-BACKFILL-002). 호출자는 빈응답·zdiv 가드를 사전에 통과시킨 뒤 호출한다.
+     *
+     * @return 적재한 행 목록 (없으면 빈 목록)
+     */
+    private List<KisOverseasDailyOhlcvResponse.OverseasDailyOhlcvRow> keepAndInsertRows(
+            Stock stock, String symbol, KisOverseasDailyOhlcvResponse response, LocalDate today) {
+        List<KisOverseasDailyOhlcvResponse.OverseasDailyOhlcvRow> kept = new ArrayList<>();
         for (KisOverseasDailyOhlcvResponse.OverseasDailyOhlcvRow row : response.output2()) {
             // REQ-OVOH-015: ET 거래일 기준 당일 행 제외(미마감/장중 스냅샷). KST 비교 금지.
             if (isEtToday(row.xymd(), today)) {
@@ -231,8 +292,9 @@ public class OverseasDailyOhlcvCollectionService {
                 continue;
             }
             insertRow(stock, row);
+            kept.add(row);
         }
-        return true;
+        return kept;
     }
 
     private int parseZdiv(String zdiv) {

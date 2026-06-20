@@ -1,5 +1,6 @@
 package com.aaa.collector.stock.daily;
 
+import com.aaa.collector.backfill.BackfillWindowResult;
 import com.aaa.collector.kis.KisRateLimitException;
 import com.aaa.collector.kis.gate.GuardedKisExecutor;
 import com.aaa.collector.kis.gate.KeyLeaseRegistry;
@@ -12,6 +13,7 @@ import java.math.BigDecimal;
 import java.net.URI;
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
+import java.util.Comparator;
 import java.util.List;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -168,6 +170,44 @@ public class DomesticDailyOhlcvCollectionService {
         }
     }
 
+    /**
+     * 백필용 윈도우 1구간 수집 — 당일 수집과 동일한 검증·매핑·INSERT IGNORE 경로를 재사용한다 (REQ-BACKFILL-002).
+     *
+     * <p>당일 경로({@link #collect(LocalDate)})와 차이는 두 가지뿐이다: (1) {@code (from, to)} 기간을 호출자가 직접 지정해 그룹
+     * A 윈도우 SPAN(≥150 달력일, REQ-BACKFILL-013a)을 요청할 수 있고, (2) 종료 판정 입력인 {@link
+     * BackfillWindowResult}(최소 거래일 + 행 수)를 반환한다. 검증·매핑·적재 로직은 {@link #fetch}와 {@link
+     * #saveValidRows}를 그대로 거치므로 새 파싱 분기를 만들지 않는다.
+     *
+     * <p>예외는 호출자(T6 오케스트레이터)가 상태 전이(REQ-BACKFILL-030)·항목 격리(REQ-BACKFILL-033)로 처리하도록 전파한다 — 당일 경로처럼
+     * skip 카운터로 흡수하지 않는다.
+     *
+     * @param stock 백필 대상 종목 (활성 관심종목, REQ-BACKFILL-006)
+     * @param session 호출자가 1회 고정한 per-run 헬스 스냅샷 세션 (REQ-KISGATE-006a)
+     * @param from 윈도우 하단 조회 시작일 ({@code FID_INPUT_DATE_1})
+     * @param to 윈도우 상단 조회 종료일 ({@code FID_INPUT_DATE_2}, anchor)
+     * @return 적재 대상 행의 최소 거래일 + 행 수 (적재 대상 없으면 {@link BackfillWindowResult#EMPTY})
+     * @throws InterruptedException 게이트 호출이 인터럽트되면 전파 (호출자가 복원·처리)
+     */
+    public BackfillWindowResult collectWindow(
+            Stock stock, LeaseSession session, LocalDate from, LocalDate to)
+            throws InterruptedException {
+        String symbol = stock.getSymbol();
+        KisDailyOhlcvResponse response = fetch(session, symbol, from, to);
+        List<KisDailyOhlcvResponse.DailyOhlcvRow> validRows =
+                saveValidRows(stock, symbol, response);
+        if (validRows.isEmpty()) {
+            return BackfillWindowResult.EMPTY;
+        }
+        // 이미 검증·선별된 행에서 최소 거래일을 도출한다(2차 재파싱 없음) — BASIC_ISO_DATE(yyyyMMdd)는 사전식=연대순이므로
+        // 문자열 최소 = 최과거일. 승자 1건만 LocalDate로 파싱한다.
+        String oldest =
+                validRows.stream()
+                        .map(KisDailyOhlcvResponse.DailyOhlcvRow::stckBsopDate)
+                        .min(Comparator.naturalOrder())
+                        .orElseThrow();
+        return new BackfillWindowResult(LocalDate.parse(oldest, DATE_FMT), validRows.size());
+    }
+
     private KisDailyOhlcvResponse fetch(
             LeaseSession session, String symbol, LocalDate fromDate, LocalDate toDate)
             throws InterruptedException {
@@ -187,7 +227,16 @@ public class DomesticDailyOhlcvCollectionService {
                 session, uriCustomizer, "FHKST03010100", KisDailyOhlcvResponse.class);
     }
 
-    private void saveValidRows(Stock stock, String symbol, KisDailyOhlcvResponse response) {
+    /**
+     * 검증 통과 행을 멱등 적재하고 그 행들을 반환한다.
+     *
+     * <p>당일 경로({@link #collectStock})는 반환값을 무시하고, 백필 경로({@link #collectWindow})는 최소 거래일·행 수 도출에
+     * 사용한다 — 동일 검증·매핑·적재 경로를 공유한다(REQ-BACKFILL-002).
+     *
+     * @return 적재한 검증 통과 행 목록 (없으면 빈 목록)
+     */
+    private List<KisDailyOhlcvResponse.DailyOhlcvRow> saveValidRows(
+            Stock stock, String symbol, KisDailyOhlcvResponse response) {
         List<KisDailyOhlcvResponse.DailyOhlcvRow> rows =
                 response.output2().stream().filter(row -> !"Y".equals(row.modYn())).toList();
 
@@ -195,7 +244,7 @@ public class DomesticDailyOhlcvCollectionService {
                 rows.stream().filter(row -> isValid(symbol, row)).toList();
 
         if (validRows.isEmpty()) {
-            return;
+            return validRows;
         }
 
         // REQ-OHLCV2-010,-011: 불일치 탐지 위임 (N+1 방지·BigDecimal compareTo·WARN 로그·행 수정 없음).
@@ -204,6 +253,7 @@ public class DomesticDailyOhlcvCollectionService {
         // REQ-OBSV-023: 한 종목의 유효 행들을 단일 커넥션 배치 INSERT IGNORE로 적재하고 침묵 드롭 경고를 캡처한다.
         // 행→파라미터 매핑은 inserter가 소유하여 본 서비스의 결합도를 낮춘다.
         ohlcvInserter.insertBatch(stock.getId(), validRows, DATE_FMT);
+        return validRows;
     }
 
     /**
