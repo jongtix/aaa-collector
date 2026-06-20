@@ -1,0 +1,111 @@
+package com.aaa.collector.backfill;
+
+import com.aaa.collector.common.entity.BaseEntity;
+import jakarta.persistence.Column;
+import jakarta.persistence.Entity;
+import jakarta.persistence.GeneratedValue;
+import jakarta.persistence.GenerationType;
+import jakarta.persistence.Id;
+import jakarta.persistence.Index;
+import jakarta.persistence.Table;
+import jakarta.persistence.UniqueConstraint;
+import java.time.LocalDate;
+import lombok.AccessLevel;
+import lombok.Builder;
+import lombok.Getter;
+import lombok.NoArgsConstructor;
+
+/**
+ * 과거 데이터 백필 진행 상태 엔티티 (SPEC-COLLECTOR-BACKFILL-001 §4).
+ *
+ * <p>{@code (target_type, target_code, data_table)} 단위로 슬라이딩 윈도우 백필의 진행점·상태를
+ * 관리한다(REQ-BACKFILL-005). 시딩(INSERT)은 Tier-1 권한으로 충분하고, 진행점 전진(UPDATE)만 Tier-2 권한이
+ * 필요하다(REQ-BACKFILL-007).
+ *
+ * <p>T1 범위에서는 매핑·리포지토리만 제공하며, 상태 전이/진행점 갱신 로직은 후속 Task(T5/T6)에서 추가한다.
+ */
+@Entity
+@Table(
+        name = "backfill_status",
+        uniqueConstraints =
+                @UniqueConstraint(
+                        name = "uk_backfill_status",
+                        columnNames = {"target_type", "target_code", "data_table"}),
+        indexes = @Index(name = "idx_backfill_status_status", columnList = "status"))
+@Getter
+@NoArgsConstructor(access = AccessLevel.PROTECTED, force = true)
+public class BackfillStatus extends BaseEntity {
+
+    @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    private Long id;
+
+    /** 대상 유형. 본 SPEC은 {@code STOCK} 고정 (forward-compat: {@code MACRO}, {@code FX} 등). */
+    @Column(name = "target_type", length = 32)
+    private final String targetType;
+
+    /** 대상 코드 = 종목 symbol. */
+    @Column(name = "target_code", length = 32)
+    private final String targetCode;
+
+    /**
+     * 대상 데이터 테이블명.
+     *
+     * <p>{@code daily_ohlcv} / {@code investor_trend} / {@code short_sale_domestic} / {@code
+     * credit_balance}.
+     */
+    @Column(name = "data_table", length = 64)
+    private final String dataTable;
+
+    /**
+     * 진행 상태.
+     *
+     * <p>{@code PENDING} / {@code IN_PROGRESS} / {@code COMPLETED} / {@code FAILED}. DB DEFAULT
+     * {@code 'PENDING'}은 Flyway DDL이 단독 관리한다.
+     */
+    @Column(name = "status", length = 16)
+    private final String status;
+
+    /** 지금까지 도달한 최소(가장 과거) 거래일 = 재개 anchor. NULL=미착수. */
+    @Column(name = "last_collected_date")
+    private final LocalDate lastCollectedDate;
+
+    /** 그룹 B(공매도·investor·credit) 연속 무전진 횟수(REQ-BACKFILL-014). 전진 시 0 리셋. */
+    @Column(name = "stale_count")
+    private final int staleCount;
+
+    /** 직전 윈도우 응답 행 수. {@code last_collected_date}와 함께 동일하면 클램프 의심(REQ-BACKFILL-014a). */
+    @Column(name = "last_row_count")
+    private final Integer lastRowCount;
+
+    /** 누적 윈도우 시도 횟수(관측용). */
+    @Column(name = "attempt_count")
+    private final int attemptCount;
+
+    /** 마지막 실패 사유(REQ-BACKFILL-030). */
+    @Column(name = "last_error", length = 512)
+    private final String lastError;
+
+    @Builder
+    private BackfillStatus(
+            String targetType,
+            String targetCode,
+            String dataTable,
+            String status,
+            LocalDate lastCollectedDate,
+            int staleCount,
+            Integer lastRowCount,
+            int attemptCount,
+            String lastError) {
+        super();
+        this.targetType = targetType;
+        this.targetCode = targetCode;
+        this.dataTable = dataTable;
+        this.status = status;
+        this.lastCollectedDate = lastCollectedDate;
+        this.staleCount = staleCount;
+        this.lastRowCount = lastRowCount;
+        this.attemptCount = attemptCount;
+        this.lastError = lastError;
+    }
+}
