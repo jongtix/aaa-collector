@@ -107,8 +107,8 @@ jobs:
         # 자동 차단 대신 알림으로 운영자에게 위임: 수신 시 Redis Streams 메시지 포맷 변경 여부를 수동 확인.
         if: always() && (failure() || steps.rollback.outcome != 'skipped')
         env:
-          BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          BOT_TOKEN: ${{ secrets.TELEGRAM_SYSTEM_BOT_TOKEN }}
+          CHAT_ID: ${{ secrets.TELEGRAM_OPERATOR_CHAT_ID }}
           HAS_MIGRATIONS: ${{ steps.migration_check.outputs.has_migrations }}
           MIGRATION_DETAIL: ${{ steps.migration_check.outputs.detail }}
           ROLLBACK_OUTCOME: ${{ steps.rollback.outcome }}
