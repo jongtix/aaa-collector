@@ -96,22 +96,23 @@
 - [x] Rate Limit 준수: 초당 20건/계좌 × 5계좌 = 100건 — 멀티키 라운드로빈 분산 (`HealthyKeyRoundRobinDistributor`/`BatchRestExecutor`, SPEC-COLLECTOR-KEYDIST-001). 완료분 배치에 적용, 잔여 배치 추가 시 동일 메커니즘 사용
 - [x] `@Scheduled` cron 표현식만 사용 (`fixedDelay` 금지) — 국내 일봉/수급 스케줄러 (`DomesticDailyOhlcvScheduler`, `cron = "0 0 16 * * MON-FRI"`)
 - [x] 일봉 수집 완료 시 `stream:daily:complete` 이벤트 발행 (`market` 필드) (`DailyCompletePublisher`, SPEC-COLLECTOR-BATCH-001) — 국내(`domestic`)만 발행, 해외(`overseas`) 미구현
-- [ ] 과거 데이터 백필: 일봉 OHLCV, 수급 데이터를 종목별 최대 과거까지 수집
-- [ ] `backfill_status` 테이블 관리: (대상, 데이터 테이블) 단위로 백필 상태 추적, 미완료 항목 대상 하루 1회 스케줄 실행
+- [x] 과거 데이터 백필: 일봉 OHLCV, 수급 데이터를 종목별 최대 과거까지 수집 (SPEC-COLLECTOR-BACKFILL-001, v1.25.x)
+- [x] `backfill_status` 테이블 관리: (대상, 데이터 테이블) 단위로 백필 상태 추적, 미완료 항목 대상 하루 1회 스케줄 실행 (V24 migration, T6 오케스트레이터, T7 스케줄러)
 - [x] 외부 API 응답 검증: null/0 이하/극단값 필터 적용, 검증 실패 건 저장 제외 + 로그 기록 — 완료분 배치에 적용 (`SupplyDemandValidator`, `DomesticDailyOhlcvCollectionService` 검증, BATCH-003 금리/뉴스 poison-row graceful skip), 잔여 배치 추가 시 동일 정책 적용
 
 ### 1-8. 외부 API 수집
 - [x] 환율 USDKRW 일봉 Fallback 체인: 한국수출입은행 → (ECOS 포트만, 어댑터 미구현) → Yahoo USDKRW=X (SPEC-COLLECTOR-MARKETIND-001, v1.26.x)
 - [x] VIX 일봉 Fallback 체인: CBOE CSV → FRED VIXCLS → Yahoo ^VIX (SPEC-COLLECTOR-MARKETIND-001, v1.26.x)
 - [x] 환율·VIX 과거 데이터 백필: `MarketIndicatorBackfillOrchestrator` — VIX 단일 호출, USDKRW 날짜 루프(연속 7 빈 평일 → COMPLETED) (SPEC-COLLECTOR-MARKETIND-001, v1.26.x)
+- [x] FINRA Daily Short Volume, FINRA Short Interest 수집 (SPEC-COLLECTOR-SHORTSALE-OVERSEAS-001, v1.24.x)
+- [x] 한국은행 ECOS 수집 서비스 (SPEC-COLLECTOR-MACRO-EXT-001, T1~T2 — 시리즈 설정 + 클라이언트)
+- [x] FRED API 수집 서비스 — GDP, CPI, DFF, UNRATE, DGS10 (SPEC-COLLECTOR-MACRO-EXT-001, T3~T4; VIXCLS는 MARKETIND-001 완료)
+- [x] 거시경제 외부 배치 스케줄러: `MacroExternalScheduler` 19:00 KST (SPEC-COLLECTOR-MACRO-EXT-001, T5)
+- [x] 거시경제(ECOS/FRED) 과거 데이터 백필: `MacroExternalBackfillOrchestrator` (SPEC-COLLECTOR-MACRO-EXT-001, T6)
 - [ ] Pre/After-Hours 1분봉: yfinance → Alpaca → Polygon.io (스냅샷 2~3회/일)
-- [ ] FINRA Daily Short Volume, FINRA Short Interest 수집 (SPEC-COLLECTOR-SHORTSALE-OVERSEAS-001 구현 보류)
 - [ ] DART OpenAPI 공시 폴링 (분당 1000회 제한) + `disclosures` 테이블 추가 (API 스펙 확인 후)
 - [ ] `extended_hours` 테이블 추가 (yfinance/Alpaca/Polygon.io 응답 스펙 확인 후)
-- [ ] 한국은행 ECOS: 기준금리, CPI, GDP, 경상수지 (ECOS 어댑터 구현 포함)
-- [ ] FRED API: GDP, CPI, DFF, UNRATE, DGS10 (VIXCLS는 MARKETIND-001에서 완료)
 - [ ] Fallback 전환 시 Redis 카운터 기록
-- [ ] 거시경제(ECOS/FRED macro) 과거 데이터 백필
 
 ### 1-9. 장애 감지 및 시스템 알림
 - [ ] 수집 정상 여부 Redis 카운터 추적 (마지막 수집 타임스탬프 또는 분당 수집 건수)
