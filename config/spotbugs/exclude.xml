@@ -51,6 +51,25 @@
     </Match>
 
     <!--
+        EI_EXPOSE_REP2: Spring DI 생성자 주입 패턴 (kis.token/kis.websocket과 동일).
+        RestClient, JpaRepository, MarketIndicatorSourceChain 등 싱글톤 Bean을
+        final 필드에 저장하는 표준 패턴이며, 방어적 복사가 불필요·불가능.
+        (SPEC-COLLECTOR-MARKETIND-001, user-approved 2026-06-20)
+    -->
+    <Match>
+        <Package name="com.aaa.collector.market.indicator"/>
+        <Bug pattern="EI_EXPOSE_REP2"/>
+    </Match>
+    <Match>
+        <Package name="com.aaa.collector.market.indicator.usdkrw"/>
+        <Bug pattern="EI_EXPOSE_REP2"/>
+    </Match>
+    <Match>
+        <Package name="com.aaa.collector.market.indicator.vix"/>
+        <Bug pattern="EI_EXPOSE_REP2"/>
+    </Match>
+
+    <!--
         CIPHER_INTEGRITY / PADDING_ORACLE: KIS Open API 프로토콜 강제 사양.
         KIS WebSocket은 AES-256-CBC + PKCS5Padding을 서버가 지정하므로 알고리즘 변경 불가.
         외부 네트워크에서 수신한 암호문을 신뢰 채널(KIS 서버 직접 연결)에서만 처리함.
