@@ -11,7 +11,7 @@ import java.util.Set;
  *
  * <ol>
  *   <li>스키마 레벨: {@code SELECT}, {@code INSERT} on {@code aaa.*}
- *   <li>테이블 레벨: {@link #TIER2_TABLES} 4개 테이블에 {@code UPDATE}
+ *   <li>테이블 레벨: {@link #TIER2_TABLES} 5개 테이블에 {@code UPDATE}
  * </ol>
  *
  * <p>I/O가 없는 순수 로직 컴포넌트다. 권한 집합을 인자로 받아 검증하므로 단위 테스트가 용이하다.
@@ -25,9 +25,18 @@ public class DbGrantVerifier {
      * ADR-026 결정 2 — Tier-2 테이블 집합 (UPDATE 권한이 요구되는 마스터/상태 테이블).
      *
      * <p>Tier-1(INSERT 전용) 테이블은 이 목록에 포함되지 않는다. 목록 변경은 ADR-026 개정과 함께 이루어져야 한다.
+     *
+     * <p>{@code backfill_status}는 SPEC-COLLECTOR-BACKFILL-001(CR-01)에서 추가됐다. 시딩은 INSERT
+     * IGNORE(Tier-1로 충분)지만 백필 진행점 전진은 {@code UPDATE}를 사용하므로 Tier-2다. 이 집합에서 누락하면 root 수동 GRANT가 빠져도
+     * 기동 self-check가 통과(PASS)하고 진행점 UPDATE만 SQL 1142로 침묵 실패해 침묵 무한루프가 발생한다(REQ-BACKFILL-035a).
      */
     static final Set<String> TIER2_TABLES =
-            Set.of("stocks", "stock_grades", "short_sale_overseas", "etf_metadata");
+            Set.of(
+                    "stocks",
+                    "stock_grades",
+                    "short_sale_overseas",
+                    "etf_metadata",
+                    "backfill_status");
 
     private static final Set<String> REQUIRED_SCHEMA_PRIVS = Set.of("SELECT", "INSERT");
 
