@@ -2,13 +2,16 @@ package com.aaa.collector.stock.supply;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.aaa.collector.backfill.BackfillWindowAdvancer;
 import com.aaa.collector.backfill.BackfillWindowResult;
 import com.aaa.collector.kis.gate.GuardedKisExecutor;
 import com.aaa.collector.kis.gate.KeyLeaseRegistry;
@@ -50,6 +53,7 @@ class InvestorTrendCollectionServiceWindowTest {
     @Mock private HealthyKeySelector healthyKeySelector;
 
     private InvestorTrendCollectionService service;
+    private BackfillWindowAdvancer windowAdvancer;
     private LeaseSession session;
 
     @BeforeEach
@@ -57,9 +61,15 @@ class InvestorTrendCollectionServiceWindowTest {
         when(healthyKeySelector.selectHealthy()).thenReturn(List.of(ISA));
         KeyLeaseRegistry keyLeaseRegistry = new KeyLeaseRegistry(healthyKeySelector);
         session = keyLeaseRegistry.openSession();
+        // anchorSkipMax=10 (BackfillProperties 기본값과 동일, REQ-BACKFILL-016)
+        windowAdvancer = new BackfillWindowAdvancer(150, 10);
         service =
                 new InvestorTrendCollectionService(
-                        stockRepository, inserter, guardedKisExecutor, keyLeaseRegistry);
+                        stockRepository,
+                        inserter,
+                        guardedKisExecutor,
+                        keyLeaseRegistry,
+                        windowAdvancer);
     }
 
     private Stock stockOf(String symbol) {
@@ -168,7 +178,9 @@ class InvestorTrendCollectionServiceWindowTest {
         }
 
         @Test
-        @DisplayName("rt_cd=2 연속 — 소진 후 EMPTY 반환 (최초 1회 + 최대 10회 재시도 = 11회 총 호출)")
+        @DisplayName(
+                "rt_cd=2 연속 — 소진 후 EMPTY 반환"
+                        + " (최초 1회 + anchorSkipMax-1회 재시도 = 10회 총 호출, attempts=10에서 fetch 전 종료)")
         void collectWindow_rt_cd2_exhaustedRetries_returnsEmpty() throws Exception {
             when(guardedKisExecutor.execute(
                             any(LeaseSession.class),
@@ -180,13 +192,48 @@ class InvestorTrendCollectionServiceWindowTest {
             BackfillWindowResult result = service.collectWindow(stockOf("005930"), session, ANCHOR);
 
             assertThat(result).isEqualTo(BackfillWindowResult.EMPTY);
-            // 최초 호출 1회 + 재시도 10회 = 총 11회
-            verify(guardedKisExecutor, times(11))
+            // correctRejectedAnchor(anchor, 9) → attempts=10 = anchorSkipMax → exhausted=true.
+            // exhausted 시 fetch를 하지 않고 즉시 EMPTY 반환 → 총 10회 (최초 1 + 재시도 9)
+            verify(guardedKisExecutor, times(10))
                     .execute(
                             any(LeaseSession.class),
                             any(),
                             anyString(),
                             eq(KisInvestorTrendResponse.class));
+        }
+
+        @Test
+        @DisplayName(
+                "rt_cd=2 시 windowAdvancer.correctRejectedAnchor()가 호출됨을 검증 (W-5, REQ-BACKFILL-016)")
+        void collectWindow_rt_cd2_invokesWindowAdvancer() throws Exception {
+            // Arrange — spy로 advancer 호출 횟수 검증
+            BackfillWindowAdvancer spyAdvancer = spy(windowAdvancer);
+            InvestorTrendCollectionService spyService =
+                    new InvestorTrendCollectionService(
+                            stockRepository,
+                            inserter,
+                            guardedKisExecutor,
+                            new KeyLeaseRegistry(healthyKeySelector),
+                            spyAdvancer);
+
+            // ANCHOR=2026-06-13, rt_cd=2 → effectiveAnchor → 2026-06-12.
+            // 두 번째 호출 시 윈도우: 2026-06-12 이전 14일 이내 날짜만 유효.
+            // 2026-06-11·2026-06-12 모두 windowStart(2026-05-29)~effectiveAnchor(2026-06-12) 범위.
+            when(guardedKisExecutor.execute(
+                            any(LeaseSession.class),
+                            any(),
+                            anyString(),
+                            eq(KisInvestorTrendResponse.class)))
+                    .thenReturn(rtCd2Response())
+                    .thenReturn(successResponse(List.of("20260611", "20260612")));
+
+            // Act
+            BackfillWindowResult result =
+                    spyService.collectWindow(stockOf("005930"), session, ANCHOR);
+
+            // Assert — correctRejectedAnchor가 1회 호출됨
+            verify(spyAdvancer, times(1)).correctRejectedAnchor(any(), anyInt());
+            assertThat(result.rowCount()).isEqualTo(2);
         }
     }
 
