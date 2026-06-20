@@ -35,7 +35,7 @@ import org.springframework.web.client.RestClient.ResponseSpec;
 @DisplayName("FredCollectionService — 단위 테스트")
 class FredCollectionServiceTest {
 
-    @Mock private RestClient fredRestClient;
+    @Mock private RestClient macroFredRestClient;
     @Mock private MacroIndicatorRepository macroIndicatorRepository;
 
     @Mock
@@ -48,12 +48,12 @@ class FredCollectionServiceTest {
 
     @BeforeEach
     void setUp() {
-        service = new FredCollectionService(fredRestClient, macroIndicatorRepository);
+        service = new FredCollectionService(macroFredRestClient, macroIndicatorRepository);
     }
 
     @SuppressWarnings("unchecked")
     private void stubRestClientChain() {
-        when(fredRestClient.get()).thenReturn(requestHeadersUriSpec);
+        when(macroFredRestClient.get()).thenReturn(requestHeadersUriSpec);
         when(requestHeadersUriSpec.uri(any(String.class))).thenReturn(requestHeadersUriSpec);
         when(requestHeadersUriSpec.retrieve()).thenReturn(responseSpec);
     }
@@ -87,7 +87,7 @@ class FredCollectionServiceTest {
             service.collect();
 
             // Assert
-            verify(fredRestClient, times(5)).get();
+            verify(macroFredRestClient, times(5)).get();
         }
 
         @Test
@@ -221,7 +221,7 @@ class FredCollectionServiceTest {
         @SuppressWarnings("unchecked")
         void firstSeriesException_remaining4Continue() {
             // Arrange
-            when(fredRestClient.get()).thenReturn(requestHeadersUriSpec);
+            when(macroFredRestClient.get()).thenReturn(requestHeadersUriSpec);
             when(requestHeadersUriSpec.uri(any(String.class))).thenReturn(requestHeadersUriSpec);
             when(requestHeadersUriSpec.retrieve())
                     .thenThrow(new RuntimeException("connection refused"))

@@ -34,7 +34,7 @@ public class FredCollectionService {
     // @MX:ANCHOR: [AUTO] FRED 수집 핵심 진입점 — 5개 시리즈 순차 처리
     // @MX:REASON: [AUTO] MacroExternalScheduler, MacroIndicatorBackfillOrchestrator 에서 호출됨
     // (fan_in=2)
-    private final RestClient fredRestClient;
+    private final RestClient macroFredRestClient;
     private final MacroIndicatorRepository macroIndicatorRepository;
 
     @Value("${aaa.fred.api-key:}")
@@ -87,7 +87,7 @@ public class FredCollectionService {
         String url = buildUrl(series, backfill);
 
         FredObservationsResponse response =
-                fredRestClient.get().uri(url).retrieve().body(FredObservationsResponse.class);
+                macroFredRestClient.get().uri(url).retrieve().body(FredObservationsResponse.class);
 
         if (response == null || response.observations() == null) {
             log.info("[fred] 빈 응답 — series={}", series.indicatorCode());
