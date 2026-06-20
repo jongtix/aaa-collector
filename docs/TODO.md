@@ -101,16 +101,17 @@
 - [x] 외부 API 응답 검증: null/0 이하/극단값 필터 적용, 검증 실패 건 저장 제외 + 로그 기록 — 완료분 배치에 적용 (`SupplyDemandValidator`, `DomesticDailyOhlcvCollectionService` 검증, BATCH-003 금리/뉴스 poison-row graceful skip), 잔여 배치 추가 시 동일 정책 적용
 
 ### 1-8. 외부 API 수집
-- [ ] 환율 USDKRW 일봉 Fallback 체인: 한국수출입은행 → ECOS → yfinance
-- [ ] VIX 일봉 Fallback 체인: CBOE CDN → FRED → yfinance
+- [x] 환율 USDKRW 일봉 Fallback 체인: 한국수출입은행 → (ECOS 포트만, 어댑터 미구현) → Yahoo USDKRW=X (SPEC-COLLECTOR-MARKETIND-001, v1.26.x)
+- [x] VIX 일봉 Fallback 체인: CBOE CSV → FRED VIXCLS → Yahoo ^VIX (SPEC-COLLECTOR-MARKETIND-001, v1.26.x)
+- [x] 환율·VIX 과거 데이터 백필: `MarketIndicatorBackfillOrchestrator` — VIX 단일 호출, USDKRW 날짜 루프(연속 7 빈 평일 → COMPLETED) (SPEC-COLLECTOR-MARKETIND-001, v1.26.x)
 - [ ] Pre/After-Hours 1분봉: yfinance → Alpaca → Polygon.io (스냅샷 2~3회/일)
-- [ ] FINRA Daily Short Volume, FINRA Short Interest 수집
+- [ ] FINRA Daily Short Volume, FINRA Short Interest 수집 (SPEC-COLLECTOR-SHORTSALE-OVERSEAS-001 구현 보류)
 - [ ] DART OpenAPI 공시 폴링 (분당 1000회 제한) + `disclosures` 테이블 추가 (API 스펙 확인 후)
 - [ ] `extended_hours` 테이블 추가 (yfinance/Alpaca/Polygon.io 응답 스펙 확인 후)
-- [ ] 한국은행 ECOS: 기준금리, CPI, GDP, 경상수지
-- [ ] FRED API: GDP, CPI, DFF, UNRATE, DGS10, VIXCLS (120 req/min)
+- [ ] 한국은행 ECOS: 기준금리, CPI, GDP, 경상수지 (ECOS 어댑터 구현 포함)
+- [ ] FRED API: GDP, CPI, DFF, UNRATE, DGS10 (VIXCLS는 MARKETIND-001에서 완료)
 - [ ] Fallback 전환 시 Redis 카운터 기록
-- [ ] 거시경제/환율/VIX 과거 데이터 백필: 각 API 제공 범위 내 최대 과거까지 수집
+- [ ] 거시경제(ECOS/FRED macro) 과거 데이터 백필
 
 ### 1-9. 장애 감지 및 시스템 알림
 - [ ] 수집 정상 여부 Redis 카운터 추적 (마지막 수집 타임스탬프 또는 분당 수집 건수)
