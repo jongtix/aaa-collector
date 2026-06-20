@@ -3,6 +3,8 @@ package com.aaa.collector.market;
 import com.aaa.collector.macro.CompInterestCollectionService;
 import com.aaa.collector.macro.MacroCollectionResult;
 import com.aaa.collector.macro.MarketFundsCollectionService;
+import com.aaa.collector.market.indicator.usdkrw.UsdkrwCollectionService;
+import com.aaa.collector.market.indicator.vix.VixCollectionService;
 import com.aaa.collector.stock.DividendCollectionResult;
 import com.aaa.collector.stock.DividendScheduleCollectionService;
 import com.aaa.collector.stock.RevSplitCollectionResult;
@@ -51,6 +53,8 @@ public class MarketBatchScheduler {
     private final MarketFundsCollectionService marketFundsCollectionService;
     private final DividendScheduleCollectionService dividendScheduleCollectionService;
     private final RevSplitCollectionService revSplitCollectionService;
+    private final UsdkrwCollectionService usdkrwCollectionService;
+    private final VixCollectionService vixCollectionService;
 
     /**
      * 시장지표 묶음 배치 진입점 (REQ-BATCH3-001, REQ-BATCH3-005, REQ-BATCH3-006).
@@ -68,6 +72,8 @@ public class MarketBatchScheduler {
         collectMarketFunds(baseDate);
         collectDividendSchedule(today);
         collectRevSplit(today);
+        collectUsdkrw(today);
+        collectVix(today);
 
         log.info("[market-batch] 시장지표 묶음 배치 완료 — {}", today);
     }
@@ -129,6 +135,26 @@ public class MarketBatchScheduler {
                     result.skippedValidation());
         } catch (Exception e) {
             log.error("[dividend-schedule] 수집 예외 — 스케줄러 스레드 보호", e);
+        }
+    }
+
+    @SuppressWarnings("PMD.AvoidCatchingGenericException") // 스케줄러 스레드 종료 방지
+    private void collectUsdkrw(LocalDate today) {
+        try {
+            usdkrwCollectionService.collectDaily(today);
+            log.info("[usdkrw] 수집 완료 — {}", today);
+        } catch (Exception e) {
+            log.error("[usdkrw] 수집 예외 — 다음 종으로 계속", e);
+        }
+    }
+
+    @SuppressWarnings("PMD.AvoidCatchingGenericException") // 스케줄러 스레드 종료 방지
+    private void collectVix(LocalDate today) {
+        try {
+            vixCollectionService.collectDaily(today);
+            log.info("[vix] 수집 완료 — {}", today);
+        } catch (Exception e) {
+            log.error("[vix] 수집 예외 — 다음 종으로 계속", e);
         }
     }
 

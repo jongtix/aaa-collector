@@ -11,6 +11,8 @@ import static org.mockito.Mockito.when;
 import com.aaa.collector.macro.CompInterestCollectionService;
 import com.aaa.collector.macro.MacroCollectionResult;
 import com.aaa.collector.macro.MarketFundsCollectionService;
+import com.aaa.collector.market.indicator.usdkrw.UsdkrwCollectionService;
+import com.aaa.collector.market.indicator.vix.VixCollectionService;
 import com.aaa.collector.stock.DividendCollectionResult;
 import com.aaa.collector.stock.DividendScheduleCollectionService;
 import com.aaa.collector.stock.RevSplitCollectionResult;
@@ -40,6 +42,8 @@ class MarketBatchSchedulerTest {
     @Mock private MarketFundsCollectionService marketFundsCollectionService;
     @Mock private DividendScheduleCollectionService dividendScheduleCollectionService;
     @Mock private RevSplitCollectionService revSplitCollectionService;
+    @Mock private UsdkrwCollectionService usdkrwCollectionService;
+    @Mock private VixCollectionService vixCollectionService;
 
     @InjectMocks private MarketBatchScheduler scheduler;
 
@@ -95,40 +99,50 @@ class MarketBatchSchedulerTest {
     // ────────────────────────────────────────────────────────────────────
 
     @Nested
-    @DisplayName("정상 수집 흐름 — 5종 고정 순서 (REQ-BATCH3-005, REQ-BATCH5-001)")
+    @DisplayName("정상 수집 흐름 — 7종 고정 순서 (REQ-BATCH3-005, REQ-BATCH5-001, REQ-001)")
     class NormalFlow {
 
         @Test
         @DisplayName(
-                "5종 모두 호출 — sectorIndex → compInterest → marketFunds → dividendSchedule → revSplit")
-        void collectMarket_callsAllFiveServicesInOrder() {
+                "7종 모두 호출 — sectorIndex → compInterest → marketFunds → dividendSchedule → revSplit → usdkrw → vix")
+        void collectMarket_callsAllSevenServicesInOrder() {
             // Act
             scheduler.collectMarket();
 
-            // Assert — 고정 순서 검증 (배당 다음 액면교체)
+            // Assert — 고정 순서 검증
             InOrder inOrder =
                     inOrder(
                             sectorIndexCollectionService,
                             compInterestCollectionService,
                             marketFundsCollectionService,
                             dividendScheduleCollectionService,
-                            revSplitCollectionService);
+                            revSplitCollectionService,
+                            usdkrwCollectionService,
+                            vixCollectionService);
             inOrder.verify(sectorIndexCollectionService).collect(any(LocalDate.class));
             inOrder.verify(compInterestCollectionService).collect();
             inOrder.verify(marketFundsCollectionService).collect(anyString());
             inOrder.verify(dividendScheduleCollectionService).collect(anyString(), anyString());
             inOrder.verify(revSplitCollectionService)
                     .collect(any(LocalDate.class), any(LocalDate.class));
+            inOrder.verify(usdkrwCollectionService).collectDaily(any(LocalDate.class));
+            inOrder.verify(vixCollectionService).collectDaily(any(LocalDate.class));
         }
 
         @Test
-        @DisplayName("AC-SCHED-1: revSplit이 dividendSchedule 다음에 호출됨")
-        void collectMarket_revSplitCalledAfterDividend() {
-            // Act
+        @DisplayName("USDKRW(T8)가 revSplit(T7) 다음, VIX(T9) 앞에 호출됨 (REQ-001)")
+        void usdkrw_calledAfterRevSplit_beforeVix() {
             scheduler.collectMarket();
 
-            // Assert — revSplitCollectionService 호출 검증
-            verify(revSplitCollectionService).collect(any(LocalDate.class), any(LocalDate.class));
+            InOrder inOrder =
+                    inOrder(
+                            revSplitCollectionService,
+                            usdkrwCollectionService,
+                            vixCollectionService);
+            inOrder.verify(revSplitCollectionService)
+                    .collect(any(LocalDate.class), any(LocalDate.class));
+            inOrder.verify(usdkrwCollectionService).collectDaily(any(LocalDate.class));
+            inOrder.verify(vixCollectionService).collectDaily(any(LocalDate.class));
         }
     }
 
@@ -209,8 +223,8 @@ class MarketBatchSchedulerTest {
         }
 
         @Test
-        @DisplayName("모든 5종 예외 — 스케줄러 스레드 종료 없음")
-        void allFiveServicesException_schedulerThreadSurvives() {
+        @DisplayName("모든 7종 예외 — 스케줄러 스레드 종료 없음")
+        void allSevenServicesException_schedulerThreadSurvives() {
             // Arrange
             when(sectorIndexCollectionService.collect(any(LocalDate.class)))
                     .thenThrow(new RuntimeException("T3 실패"));
@@ -221,6 +235,12 @@ class MarketBatchSchedulerTest {
                     .thenThrow(new RuntimeException("T6 실패"));
             when(revSplitCollectionService.collect(any(LocalDate.class), any(LocalDate.class)))
                     .thenThrow(new RuntimeException("T7 실패"));
+            org.mockito.Mockito.doThrow(new RuntimeException("T8 실패"))
+                    .when(usdkrwCollectionService)
+                    .collectDaily(any(LocalDate.class));
+            org.mockito.Mockito.doThrow(new RuntimeException("T9 실패"))
+                    .when(vixCollectionService)
+                    .collectDaily(any(LocalDate.class));
 
             // Act & Assert
             assertThatCode(scheduler::collectMarket).doesNotThrowAnyException();
