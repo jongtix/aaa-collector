@@ -1,5 +1,7 @@
 package com.aaa.collector.stock.supply;
 
+import com.aaa.collector.backfill.AnchorCorrectionResult;
+import com.aaa.collector.backfill.BackfillWindowAdvancer;
 import com.aaa.collector.backfill.BackfillWindowResult;
 import com.aaa.collector.kis.KisRateLimitException;
 import com.aaa.collector.kis.gate.GuardedKisExecutor;
@@ -77,6 +79,7 @@ public class InvestorTrendCollectionService {
     private final InvestorTrendInserter inserter;
     private final GuardedKisExecutor guardedKisExecutor;
     private final KeyLeaseRegistry keyLeaseRegistry;
+    private final BackfillWindowAdvancer windowAdvancer;
 
     /**
      * 투자자 매매동향 수집을 실행하고 집계 결과를 반환한다 (활성종목 자체 조회).
@@ -154,18 +157,22 @@ public class InvestorTrendCollectionService {
         LocalDate effectiveAnchor = anchor;
 
         KisInvestorTrendResponse response = fetch(session, symbol, effectiveAnchor);
-        for (int retry = 0; retry < 10 && RT_CD_NON_BUSINESS_DAY.equals(response.rtCd()); retry++) {
-            effectiveAnchor = effectiveAnchor.minusDays(1);
+        int attempts = 0;
+        while (RT_CD_NON_BUSINESS_DAY.equals(response.rtCd())) {
+            AnchorCorrectionResult correction =
+                    windowAdvancer.correctRejectedAnchor(effectiveAnchor, attempts);
+            effectiveAnchor = correction.correctedAnchor();
+            attempts = correction.attempts();
+            if (correction.exhausted()) {
+                log.warn(
+                        "[investor-trend][backfill] anchor-skip 한도 소진 — symbol={}, originalAnchor={}, effectiveAnchor={}, attempts={}",
+                        symbol,
+                        anchor,
+                        effectiveAnchor,
+                        attempts);
+                return BackfillWindowResult.EMPTY;
+            }
             response = fetch(session, symbol, effectiveAnchor);
-        }
-
-        if (RT_CD_NON_BUSINESS_DAY.equals(response.rtCd())) {
-            log.warn(
-                    "[investor-trend][backfill] anchor-skip 10회 소진 — symbol={}, originalAnchor={}, effectiveAnchor={}",
-                    symbol,
-                    anchor,
-                    effectiveAnchor);
-            return BackfillWindowResult.EMPTY;
         }
 
         LocalDate windowStart = effectiveAnchor.minusDays(LOOKBACK_CALENDAR_DAYS);

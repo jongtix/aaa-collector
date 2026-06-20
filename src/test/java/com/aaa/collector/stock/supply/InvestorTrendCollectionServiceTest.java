@@ -14,6 +14,7 @@ import ch.qos.logback.classic.Level;
 import ch.qos.logback.classic.Logger;
 import ch.qos.logback.classic.spi.ILoggingEvent;
 import ch.qos.logback.core.read.ListAppender;
+import com.aaa.collector.backfill.BackfillWindowAdvancer;
 import com.aaa.collector.kis.KisRateLimitException;
 import com.aaa.collector.kis.gate.GuardedKisExecutor;
 import com.aaa.collector.kis.gate.KeyLeaseRegistry;
@@ -69,7 +70,11 @@ class InvestorTrendCollectionServiceTest {
         KeyLeaseRegistry keyLeaseRegistry = new KeyLeaseRegistry(healthyKeySelector);
         service =
                 new InvestorTrendCollectionService(
-                        stockRepository, inserter, guardedKisExecutor, keyLeaseRegistry);
+                        stockRepository,
+                        inserter,
+                        guardedKisExecutor,
+                        keyLeaseRegistry,
+                        new BackfillWindowAdvancer(150, 10));
     }
 
     private Stock stockOf(String symbol) {
