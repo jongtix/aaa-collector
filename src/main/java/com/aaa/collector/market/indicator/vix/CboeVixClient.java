@@ -44,6 +44,12 @@ public class CboeVixClient implements MarketIndicatorSource {
         return parseCsv(csv);
     }
 
+    /**
+     * 일봉 수집 — 전체 CSV 다운로드 후 날짜 필터 (W-2: CBOE CSV API는 날짜 범위 파라미터 미지원).
+     *
+     * <p>CBOE VIX History CSV 엔드포인트는 전체 이력만 제공하며 날짜 필터링을 지원하지 않는다. 일봉 빈도(하루 1회, ~9200행 ~300KB)를
+     * 고려하면 허용 가능한 수준이다.
+     */
     @Override
     public List<MarketIndicatorRow> fetchDaily(LocalDate date) {
         List<MarketIndicatorRow> all = fetchHistory();

@@ -3,10 +3,12 @@ package com.aaa.collector.market.indicator;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.header;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.method;
+import static org.springframework.test.web.client.match.MockRestRequestMatchers.requestToUriTemplate;
 import static org.springframework.test.web.client.response.MockRestResponseCreators.withSuccess;
 
 import com.aaa.collector.market.enums.IndicatorCode;
 import java.time.LocalDate;
+import java.time.ZoneOffset;
 import java.util.List;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -126,21 +128,49 @@ class YahooFinanceClientTest {
     }
 
     @Nested
-    @DisplayName("fetchDaily — 날짜 필터")
+    @DisplayName("fetchDaily — period1/period2 date-range 쿼리 (W-2, CR-02)")
     class FetchDailyVix {
 
         @Test
-        @DisplayName("지정 날짜 행 반환")
-        void returnsMatchingDate() {
+        @DisplayName("period1/period2 UTC epoch 파라미터 — 지정 날짜 행 반환")
+        void usesDateRangeParameters() {
+            LocalDate date = LocalDate.of(2026, 1, 2);
+            long period1 = date.atStartOfDay(ZoneOffset.UTC).toEpochSecond();
+            long period2 = date.plusDays(1).atStartOfDay(ZoneOffset.UTC).toEpochSecond();
+
             mockServer
                     .expect(method(HttpMethod.GET))
+                    .andExpect(
+                            requestToUriTemplate(
+                                    "https://query1.finance.yahoo.com/v8/finance/chart/{symbol}"
+                                            + "?period1={p1}&period2={p2}&interval=1d",
+                                    "%5EVIX",
+                                    period1,
+                                    period2))
                     .andRespond(withSuccess(SAMPLE_VIX_JSON, MediaType.APPLICATION_JSON));
 
-            List<MarketIndicatorRow> rows =
-                    client.fetchDaily(IndicatorCode.VIX, LocalDate.of(2026, 1, 2));
+            List<MarketIndicatorRow> rows = client.fetchDaily(IndicatorCode.VIX, date);
 
-            assertThat(rows).hasSize(1);
-            assertThat(rows.getFirst().tradeDate()).isEqualTo(LocalDate.of(2026, 1, 2));
+            assertThat(rows).isNotEmpty();
+            assertThat(rows.getFirst().tradeDate()).isEqualTo(date);
+            mockServer.verify();
+        }
+
+        @Test
+        @DisplayName("fetchHistory는 range=max URL 유지 (W-2: fetchDaily만 변경)")
+        void fetchHistory_usesRangeMax() {
+            mockServer
+                    .expect(method(HttpMethod.GET))
+                    .andExpect(
+                            requestToUriTemplate(
+                                    "https://query1.finance.yahoo.com/v8/finance/chart/{symbol}?range=max&interval=1d",
+                                    "%5EVIX"))
+                    .andRespond(withSuccess(SAMPLE_VIX_JSON, MediaType.APPLICATION_JSON));
+
+            List<MarketIndicatorRow> rows = client.fetchHistory(IndicatorCode.VIX);
+
+            assertThat(rows).hasSize(2);
+            mockServer.verify();
         }
     }
 

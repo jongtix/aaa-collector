@@ -2,6 +2,7 @@ package com.aaa.collector.market.indicator.vix;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.method;
+import static org.springframework.test.web.client.match.MockRestRequestMatchers.requestToUriTemplate;
 import static org.springframework.test.web.client.response.MockRestResponseCreators.withSuccess;
 
 import com.aaa.collector.market.enums.IndicatorCode;
@@ -101,20 +102,57 @@ class FredVixClientTest {
     }
 
     @Nested
-    @DisplayName("fetchDaily — 날짜 필터")
+    @DisplayName("fetchDaily — date-range 쿼리 (W-2, CR-02)")
     class FetchDaily {
 
+        private static final String SINGLE_DAY_JSON =
+                """
+                {
+                  "observations": [
+                    {"date":"2026-01-02","value":"17.20"}
+                  ]
+                }
+                """;
+
         @Test
-        @DisplayName("지정 날짜 행 반환")
-        void returnsMatchingDate() {
+        @DisplayName("observation_start/end 단일 날짜 쿼리 — 해당 날짜 행 반환")
+        void singleDateQuery_returnsMatchingRow() {
             mockServer
                     .expect(method(HttpMethod.GET))
-                    .andRespond(withSuccess(SAMPLE_JSON, MediaType.APPLICATION_JSON));
+                    .andExpect(
+                            requestToUriTemplate(
+                                    "https://api.stlouisfed.org/fred/series/observations"
+                                            + "?series_id=VIXCLS&file_type=json"
+                                            + "&observation_start={start}&observation_end={end}&api_key={key}",
+                                    "2026-01-02",
+                                    "2026-01-02",
+                                    FRED_API_KEY))
+                    .andRespond(withSuccess(SINGLE_DAY_JSON, MediaType.APPLICATION_JSON));
 
             List<MarketIndicatorRow> rows = client.fetchDaily(LocalDate.of(2026, 1, 2));
 
             assertThat(rows).hasSize(1);
             assertThat(rows.getFirst().tradeDate()).isEqualTo(LocalDate.of(2026, 1, 2));
+            assertThat(rows.getFirst().closeValue()).isEqualByComparingTo("17.20");
+            mockServer.verify();
+        }
+
+        @Test
+        @DisplayName("전체 이력(fetchHistory)은 limit=100000 URL 유지 (W-2: fetchDaily만 변경)")
+        void fetchHistory_usesFullHistoryPath() {
+            mockServer
+                    .expect(method(HttpMethod.GET))
+                    .andExpect(
+                            requestToUriTemplate(
+                                    "https://api.stlouisfed.org/fred/series/observations"
+                                            + "?series_id=VIXCLS&file_type=json&limit=100000&api_key={key}",
+                                    FRED_API_KEY))
+                    .andRespond(withSuccess(SAMPLE_JSON, MediaType.APPLICATION_JSON));
+
+            List<MarketIndicatorRow> rows = client.fetchHistory();
+
+            assertThat(rows).hasSize(2);
+            mockServer.verify();
         }
     }
 }

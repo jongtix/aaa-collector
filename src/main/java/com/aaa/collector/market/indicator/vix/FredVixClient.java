@@ -30,6 +30,15 @@ public class FredVixClient implements MarketIndicatorSource {
     private static final String PATH =
             "/fred/series/observations?series_id=VIXCLS&file_type=json&limit=100000&api_key={apiKey}";
 
+    /**
+     * 단일 날짜 스코프 쿼리 — 전체 이력 다운로드 없이 해당 날짜만 요청 (W-2, CR-02).
+     *
+     * <p>observation_start/end를 모두 같은 날짜로 설정하면 FRED는 해당 날짜 1건만 반환한다.
+     */
+    private static final String PATH_DAILY =
+            "/fred/series/observations?series_id=VIXCLS&file_type=json"
+                    + "&observation_start={startDate}&observation_end={endDate}&api_key={apiKey}";
+
     /** FRED 결측값 표시 (REQ-023). */
     private static final String MISSING_VALUE = ".";
 
@@ -61,8 +70,14 @@ public class FredVixClient implements MarketIndicatorSource {
 
     @Override
     public List<MarketIndicatorRow> fetchDaily(LocalDate date) {
-        List<MarketIndicatorRow> all = fetchHistory();
-        return all.stream().filter(r -> r.tradeDate().equals(date)).toList();
+        String dateStr = date.toString(); // ISO-8601: yyyy-MM-dd
+        Map<String, Object> body =
+                fredRestClient
+                        .get()
+                        .uri(PATH_DAILY, dateStr, dateStr, apiKey)
+                        .retrieve()
+                        .body(new ParameterizedTypeReference<>() {});
+        return parseObservations(body);
     }
 
     @SuppressWarnings("unchecked")

@@ -6,6 +6,7 @@ import java.math.RoundingMode;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.ZoneId;
+import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -60,16 +61,31 @@ public class YahooFinanceClient {
     }
 
     /**
-     * 일봉 수집 (지정 날짜 필터).
+     * 일봉 수집 — period1/period2 date-range 쿼리로 지정 날짜만 요청 (W-2, CR-02).
+     *
+     * <p>period1 = 해당 날짜 00:00:00 UTC epoch(초), period2 = 다음 날 00:00:00 UTC epoch(초). Yahoo v8은
+     * range=max 대신 period1/period2를 지원하며, 일봉 수집(하루 1회) 시 불필요한 전체 이력 다운로드를 방지한다.
      *
      * @param indicatorCode 수집 대상 지표 코드
-     * @param date 필터 날짜
+     * @param date 수집 날짜
      * @return 해당 날짜 행 목록
      */
     public List<MarketIndicatorRow> fetchDaily(IndicatorCode indicatorCode, LocalDate date) {
-        return fetchHistory(indicatorCode).stream()
-                .filter(r -> r.tradeDate().equals(date))
-                .toList();
+        String symbol = toSymbol(indicatorCode);
+        long period1 = date.atStartOfDay(ZoneOffset.UTC).toEpochSecond();
+        long period2 = date.plusDays(1).atStartOfDay(ZoneOffset.UTC).toEpochSecond();
+        Map<String, Object> body =
+                yahooRestClient
+                        .get()
+                        .uri(
+                                "/v8/finance/chart/{symbol}?period1={period1}&period2={period2}&interval=1d",
+                                symbol,
+                                period1,
+                                period2)
+                        .header("User-Agent", USER_AGENT)
+                        .retrieve()
+                        .body(new ParameterizedTypeReference<>() {});
+        return parseChart(body, indicatorCode);
     }
 
     private String toSymbol(IndicatorCode code) {
