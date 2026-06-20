@@ -115,6 +115,20 @@ aaa:
   backfill:
     # cron 표현식 (기본: 02:00 KST 매일). fixedDelay 금지 — Virtual Threads 버그(CLAUDE.md)
     cron: "0 0 2 * * *"
+  macro:
+    backfill:
+      # cron 표현식 (기본: 03:00 KST 매일). fixedDelay 금지 — Virtual Threads 버그(CLAUDE.md)
+      cron: "0 0 3 * * *"
+  ecos:
+    base-url: https://ecos.bok.or.kr
+    service-key: ${ECOS_API_KEY:}
+    connect-timeout: 5s
+    read-timeout: 30s
+  fred:
+    base-url: https://api.stlouisfed.org
+    api-key: ${FRED_API_KEY:}
+    connect-timeout: 5s
+    read-timeout: 30s
     # 한 cron 실행에서 처리할 최대 종목 수 (KIS rate-limit 보호, AC-7.2b)
     per-run-stock-cap: 50
     # 한 cron 실행에서 처리할 최대 윈도우 수 (DB 풀 점유 상한 ADR-027, AC-7.2b)

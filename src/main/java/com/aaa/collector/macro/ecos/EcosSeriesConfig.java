@@ -10,19 +10,22 @@ import java.util.List;
  */
 public final class EcosSeriesConfig {
 
-    private EcosSeriesConfig() {}
+    /** 국내 금리 통계표코드 (기준금리·국고채·회사채 공통). */
+    private static final String STAT_DOMESTIC_RATE = "817Y002";
 
     /** 수집 대상 시리즈 목록 (순서 고정). */
     public static final List<Series> ALL =
             List.of(
                     new Series("ECOS_BASE_RATE", "722Y001", "0101000", "D"),
-                    new Series("ECOS_GOV_BOND_3Y", "817Y002", "010200000", "D"),
-                    new Series("ECOS_GOV_BOND_5Y", "817Y002", "010200001", "D"),
-                    new Series("ECOS_GOV_BOND_10Y", "817Y002", "010210000", "D"),
-                    new Series("ECOS_CORP_BOND", "817Y002", "010300000", "D"),
+                    new Series("ECOS_GOV_BOND_3Y", STAT_DOMESTIC_RATE, "010200000", "D"),
+                    new Series("ECOS_GOV_BOND_5Y", STAT_DOMESTIC_RATE, "010200001", "D"),
+                    new Series("ECOS_GOV_BOND_10Y", STAT_DOMESTIC_RATE, "010210000", "D"),
+                    new Series("ECOS_CORP_BOND", STAT_DOMESTIC_RATE, "010300000", "D"),
                     new Series("ECOS_CPI", "901Y009", "0", "M"),
                     new Series("ECOS_GDP_QOQ", "200Y102", "10111", "Q"),
                     new Series("ECOS_CURRENT_ACCOUNT", "301Y013", "000000", "M"));
+
+    private EcosSeriesConfig() {}
 
     /**
      * ECOS 시리즈 설정.

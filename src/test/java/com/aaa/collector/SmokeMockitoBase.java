@@ -1,7 +1,12 @@
 package com.aaa.collector;
 
 import com.aaa.collector.backfill.BackfillStatusRepository;
+import com.aaa.collector.macro.MacroExternalScheduler;
 import com.aaa.collector.macro.MacroIndicatorRepository;
+import com.aaa.collector.macro.backfill.MacroIndicatorBackfillOrchestrator;
+import com.aaa.collector.macro.backfill.MacroIndicatorBackfillScheduler;
+import com.aaa.collector.macro.ecos.EcosCollectionService;
+import com.aaa.collector.macro.fred.FredCollectionService;
 import com.aaa.collector.market.MarketIndicatorRepository;
 import com.aaa.collector.market.backfill.MarketIndicatorBackfillOrchestrator;
 import com.aaa.collector.market.backfill.MarketIndicatorBackfillScheduler;
@@ -49,8 +54,6 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
 @MockitoBean(
         types = {
             StringRedisTemplate.class,
-            // smoke 프로파일은 DataSource AutoConfiguration을 exclude하므로 JdbcTemplate 빈이 없다.
-            // WarningCountingOhlcvInserter가 JdbcTemplate를 주입받으므로 모킹해 컨텍스트 로드를 보장한다.
             JdbcTemplate.class,
             StockRepository.class,
             EtfMetadataRepository.class,
@@ -66,17 +69,13 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
             NewsHeadlineRepository.class,
             FinancialRepository.class,
             AnalystEstimateRepository.class,
-            // SPEC-COLLECTOR-OVERSEAS-OHLCV-001 REQ-OVOH-043: 신규 미국 일봉 서비스/스케줄러 빈 모킹 (BATCH-003 회귀
-            // 방지)
             OverseasDailyOhlcvCollectionService.class,
             OverseasDailyOhlcvScheduler.class,
-            // REQ-SSO-041 — BATCH-003·GRADE-003 회귀 방지: 미국 공매도 신규 빈 모킹
             ShortSaleOverseasRepository.class,
             FinraShortSaleClient.class,
             ShortSaleOverseasDailyCollectionService.class,
             ShortSaleOverseasInterestCollectionService.class,
             ShortSaleOverseasScheduler.class,
-            // SPEC-COLLECTOR-BACKFILL-001: 백필 도메인 빈 모킹 (BATCH-003/GRADE-003 회귀 방지)
             BackfillStatusRepository.class,
             BackfillOrchestrator.class,
             BackfillWindowExecutor.class,
@@ -90,7 +89,13 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
             CboeVixClient.class,
             FredVixClient.class,
             YahooFinanceClient.class,
-            KoreaeximExchangeRateClient.class
+            KoreaeximExchangeRateClient.class,
+            // SPEC-COLLECTOR-MACRO-EXT-001: 외부 거시경제 지표 신규 빈 모킹 (smoke 회귀 방지)
+            EcosCollectionService.class,
+            FredCollectionService.class,
+            MacroExternalScheduler.class,
+            MacroIndicatorBackfillOrchestrator.class,
+            MacroIndicatorBackfillScheduler.class
         })
 class SmokeMockitoBase {
 

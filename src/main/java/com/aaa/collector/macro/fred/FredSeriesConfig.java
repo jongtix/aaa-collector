@@ -9,8 +9,6 @@ import java.util.List;
  */
 public final class FredSeriesConfig {
 
-    private FredSeriesConfig() {}
-
     /** 수집 대상 시리즈 목록 (순서 고정). */
     public static final List<Series> ALL =
             List.of(
@@ -19,6 +17,8 @@ public final class FredSeriesConfig {
                     new Series("FRED_CPIAUCSL", "CPIAUCSL"),
                     new Series("FRED_A191RL1Q225SBEA", "A191RL1Q225SBEA"),
                     new Series("FRED_UNRATE", "UNRATE"));
+
+    private FredSeriesConfig() {}
 
     /**
      * FRED 시리즈 설정.

@@ -43,7 +43,7 @@ class EcosStatisticSearchResponseTest {
             assertThat(response.statisticSearch().listTotalCount()).isEqualTo(1);
             assertThat(response.statisticSearch().row()).hasSize(1);
 
-            EcosStatisticSearchResponse.Row row = response.statisticSearch().row().get(0);
+            EcosStatisticSearchResponse.Row row = response.statisticSearch().row().getFirst();
             assertThat(row.time()).isEqualTo("20260620");
             assertThat(row.dataValue()).isEqualTo("3.50");
         }
@@ -91,7 +91,7 @@ class EcosStatisticSearchResponseTest {
             EcosStatisticSearchResponse response =
                     objectMapper.readValue(json, EcosStatisticSearchResponse.class);
 
-            assertThat(response.statisticSearch().row().get(0).time()).isEqualTo("202605");
+            assertThat(response.statisticSearch().row().getFirst().time()).isEqualTo("202605");
         }
 
         @Test
@@ -112,7 +112,7 @@ class EcosStatisticSearchResponseTest {
             EcosStatisticSearchResponse response =
                     objectMapper.readValue(json, EcosStatisticSearchResponse.class);
 
-            assertThat(response.statisticSearch().row().get(0).time()).isEqualTo("2026Q1");
+            assertThat(response.statisticSearch().row().getFirst().time()).isEqualTo("2026Q1");
         }
     }
 

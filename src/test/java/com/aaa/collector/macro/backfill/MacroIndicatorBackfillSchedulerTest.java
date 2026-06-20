@@ -1,5 +1,6 @@
 package com.aaa.collector.macro.backfill;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.verify;
@@ -37,10 +38,9 @@ class MacroIndicatorBackfillSchedulerTest {
             Method method = MacroIndicatorBackfillScheduler.class.getMethod("run");
             Scheduled scheduled = method.getAnnotation(Scheduled.class);
 
-            org.assertj.core.api.Assertions.assertThat(scheduled).isNotNull();
-            org.assertj.core.api.Assertions.assertThat(scheduled.cron())
-                    .isEqualTo("${aaa.macro.backfill.cron:0 0 3 * * *}");
-            org.assertj.core.api.Assertions.assertThat(scheduled.zone()).isEqualTo("Asia/Seoul");
+            assertThat(scheduled).isNotNull();
+            assertThat(scheduled.cron()).isEqualTo("${aaa.macro.backfill.cron:0 0 3 * * *}");
+            assertThat(scheduled.zone()).isEqualTo("Asia/Seoul");
         }
     }
 
@@ -59,7 +59,7 @@ class MacroIndicatorBackfillSchedulerTest {
         @DisplayName("orchestrator.run() 예외 — 예외 전파 없이 종료")
         void orchestratorException_noExceptionPropagated() {
             doThrow(new RuntimeException("DB error")).when(orchestrator).run();
-            assertThatCode(() -> scheduler.run()).doesNotThrowAnyException();
+            assertThatCode(scheduler::run).doesNotThrowAnyException();
         }
     }
 }

@@ -1,5 +1,6 @@
 package com.aaa.collector.macro;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.inOrder;
@@ -48,10 +49,9 @@ class MacroExternalSchedulerTest {
             Method method = MacroExternalScheduler.class.getMethod("collectExternal");
             Scheduled scheduled = method.getAnnotation(Scheduled.class);
 
-            org.assertj.core.api.Assertions.assertThat(scheduled).isNotNull();
-            org.assertj.core.api.Assertions.assertThat(scheduled.cron())
-                    .isEqualTo("0 0 19 * * MON-FRI");
-            org.assertj.core.api.Assertions.assertThat(scheduled.zone()).isEqualTo("Asia/Seoul");
+            assertThat(scheduled).isNotNull();
+            assertThat(scheduled.cron()).isEqualTo("0 0 19 * * MON-FRI");
+            assertThat(scheduled.zone()).isEqualTo("Asia/Seoul");
         }
 
         @Test
@@ -60,9 +60,9 @@ class MacroExternalSchedulerTest {
             Method method = MacroExternalScheduler.class.getMethod("collectExternal");
             Scheduled scheduled = method.getAnnotation(Scheduled.class);
 
-            org.assertj.core.api.Assertions.assertThat(scheduled).isNotNull();
-            org.assertj.core.api.Assertions.assertThat(scheduled.fixedDelay()).isEqualTo(-1L);
-            org.assertj.core.api.Assertions.assertThat(scheduled.fixedRate()).isEqualTo(-1L);
+            assertThat(scheduled).isNotNull();
+            assertThat(scheduled.fixedDelay()).isEqualTo(-1L);
+            assertThat(scheduled.fixedRate()).isEqualTo(-1L);
         }
     }
 
@@ -109,7 +109,7 @@ class MacroExternalSchedulerTest {
             when(fredCollectionService.collect()).thenReturn(new MacroCollectionResult(0, 0, 0));
 
             // Act — 예외가 collectExternal()로 전파되지 않아야 함
-            assertThatCode(() -> scheduler.collectExternal()).doesNotThrowAnyException();
+            assertThatCode(scheduler::collectExternal).doesNotThrowAnyException();
 
             // Assert — FRED는 계속 호출됨
             verify(fredCollectionService).collect();
@@ -125,7 +125,7 @@ class MacroExternalSchedulerTest {
                     .collect();
 
             // Act & Assert — 예외가 전파되지 않아야 함
-            assertThatCode(() -> scheduler.collectExternal()).doesNotThrowAnyException();
+            assertThatCode(scheduler::collectExternal).doesNotThrowAnyException();
         }
     }
 }

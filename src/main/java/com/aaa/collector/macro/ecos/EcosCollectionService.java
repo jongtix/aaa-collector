@@ -126,6 +126,7 @@ public class EcosCollectionService {
         return new MacroCollectionResult(attempted, succeeded, skipped);
     }
 
+    @SuppressWarnings("PMD.AvoidCatchingGenericException") // 파싱 실패 graceful skip
     private boolean saveIfValid(
             EcosSeriesConfig.Series series, EcosStatisticSearchResponse.Row row) {
         String time = row.time();
@@ -197,7 +198,7 @@ public class EcosCollectionService {
         if (backfill) {
             // 전체 이력: 아주 오래된 날짜부터 현재까지
             startDate = "19000101";
-            endNo = 99999;
+            endNo = 99_999;
         } else {
             // 당일 수집 윈도우
             LocalDate from =

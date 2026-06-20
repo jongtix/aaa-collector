@@ -18,8 +18,8 @@ class FredObservationsResponseTest {
     class NormalResponse {
 
         @Test
-        @DisplayName("복수 observation 포함 응답 역직렬화 — count, date, value 정확")
-        void deserializeMultipleObservations() throws Exception {
+        @DisplayName("복수 observation 포함 응답 역직렬화 — count, 목록 크기 정확")
+        void deserializeMultipleObservations_countAndSize() throws Exception {
             String json =
                     """
                     {
@@ -36,8 +36,26 @@ class FredObservationsResponseTest {
 
             assertThat(response.count()).isEqualTo(2);
             assertThat(response.observations()).hasSize(2);
+        }
 
-            FredObservationsResponse.Observation first = response.observations().get(0);
+        @Test
+        @DisplayName("복수 observation 포함 응답 역직렬화 — 개별 observation 필드 정확")
+        void deserializeMultipleObservations_fields() throws Exception {
+            String json =
+                    """
+                    {
+                      "count": 2,
+                      "observations": [
+                        {"date": "2026-06-17", "value": "3.63"},
+                        {"date": "2026-06-16", "value": "."}
+                      ]
+                    }
+                    """;
+
+            FredObservationsResponse response =
+                    objectMapper.readValue(json, FredObservationsResponse.class);
+
+            FredObservationsResponse.Observation first = response.observations().getFirst();
             assertThat(first.date()).isEqualTo("2026-06-17");
             assertThat(first.value()).isEqualTo("3.63");
 
@@ -62,7 +80,7 @@ class FredObservationsResponseTest {
             FredObservationsResponse response =
                     objectMapper.readValue(json, FredObservationsResponse.class);
 
-            assertThat(response.observations().get(0).value()).isEqualTo(".");
+            assertThat(response.observations().getFirst().value()).isEqualTo(".");
         }
 
         @Test
@@ -98,7 +116,7 @@ class FredObservationsResponseTest {
                     objectMapper.readValue(json, FredObservationsResponse.class);
 
             assertThat(response.count()).isEqualTo(1);
-            assertThat(response.observations().get(0).date()).isEqualTo("2026-06-17");
+            assertThat(response.observations().getFirst().date()).isEqualTo("2026-06-17");
         }
     }
 }
