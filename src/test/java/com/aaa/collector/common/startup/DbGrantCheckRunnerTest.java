@@ -33,7 +33,8 @@ class DbGrantCheckRunnerTest {
                                     "stocks",
                                     "stock_grades",
                                     "short_sale_overseas",
-                                    "etf_metadata"));
+                                    "etf_metadata",
+                                    "backfill_status"));
             DbGrantCheckRunner runner = new DbGrantCheckRunner(loader, new DbGrantVerifier());
 
             // Act & Assert
