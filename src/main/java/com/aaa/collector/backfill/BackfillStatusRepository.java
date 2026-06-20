@@ -1,5 +1,8 @@
 package com.aaa.collector.backfill;
 
+import java.time.LocalDate;
+import java.util.Collection;
+import java.util.List;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
@@ -52,4 +55,73 @@ public interface BackfillStatusRepository extends JpaRepository<BackfillStatus, 
             @Param("targetType") String targetType,
             @Param("targetCode") String targetCode,
             @Param("dataTable") String dataTable);
+
+    /**
+     * 처리 대상(PENDING 또는 IN_PROGRESS) 항목을 targetType 기준으로 id 순으로 조회한다 (T6 오케스트레이터 입력).
+     *
+     * <p>COMPLETED·FAILED 항목은 반환하지 않는다 — 오케스트레이터가 미완료 항목만 처리한다(AC-6.1/6.4).
+     *
+     * @param statuses 포함할 상태 집합 (예: {@code List.of("PENDING","IN_PROGRESS")})
+     * @param targetType 대상 유형 필터 (예: {@code "STOCK"})
+     * @return id 오름차순 정렬된 처리 대상 항목 목록
+     */
+    List<BackfillStatus> findByStatusInAndTargetTypeOrderById(
+            Collection<String> statuses, String targetType);
+
+    /**
+     * 윈도우 수집 성공 후 진행점·상태·stale_count·attempt_count를 갱신한다 (T6, REQ-BACKFILL-011, AC-4.1/4.2).
+     *
+     * <p>last_error를 NULL로 초기화하고 attempt_count를 1 증가시킨다. 데이터 INSERT IGNORE(수집 서비스)와 동일
+     * {@code @Transactional} 경계 안에서 호출한다 — 부분 커밋 방지(AC-4.2). Tier-2 UPDATE 권한 대상(ADR-026).
+     *
+     * @param id 갱신할 backfill_status.id
+     * @param status 새 상태 ({@code "IN_PROGRESS"} 또는 {@code "COMPLETED"})
+     * @param lastCollectedDate 이번 윈도우 최소 거래일
+     * @param staleCount 새 stale_count (전진 시 0, 무전진 시 현재값+1)
+     * @param lastRowCount 이번 윈도우 행 수 (0이면 직전값 유지)
+     */
+    @Modifying
+    @Transactional
+    @Query(
+            """
+            UPDATE BackfillStatus b SET
+                b.status = :status,
+                b.lastCollectedDate = :lastCollectedDate,
+                b.staleCount = :staleCount,
+                b.lastRowCount = :lastRowCount,
+                b.attemptCount = b.attemptCount + 1,
+                b.lastError = NULL
+            WHERE b.id = :id
+            """)
+    void updateProgress(
+            @Param("id") Long id,
+            @Param("status") String status,
+            @Param("lastCollectedDate") LocalDate lastCollectedDate,
+            @Param("staleCount") int staleCount,
+            @Param("lastRowCount") Integer lastRowCount);
+
+    /**
+     * 윈도우 수집 실패 시 오류 메시지와 상태를 갱신한다 (T6, REQ-BACKFILL-030).
+     *
+     * <p>last_collected_date는 갱신하지 않는다 — 실패한 윈도우의 anchor는 다음 cron에서 재시도한다. attempt_count를 1 증가시킨다.
+     * Tier-2 UPDATE 권한 대상(ADR-026).
+     *
+     * @param id 갱신할 backfill_status.id
+     * @param status 새 상태 ({@code "IN_PROGRESS"} 또는 {@code "FAILED"})
+     * @param lastError 오류 메시지 (최대 512자)
+     */
+    @Modifying
+    @Transactional
+    @Query(
+            """
+            UPDATE BackfillStatus b SET
+                b.lastError = :lastError,
+                b.status = :status,
+                b.attemptCount = b.attemptCount + 1
+            WHERE b.id = :id
+            """)
+    void updateError(
+            @Param("id") Long id,
+            @Param("status") String status,
+            @Param("lastError") String lastError);
 }
