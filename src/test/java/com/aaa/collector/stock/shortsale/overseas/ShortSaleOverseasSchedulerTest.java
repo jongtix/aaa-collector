@@ -28,7 +28,8 @@ class ShortSaleOverseasSchedulerTest {
     private static final ZoneId ET = ZoneId.of("America/New_York");
     private static final ZoneId KST = ZoneId.of("Asia/Seoul");
 
-    @Mock private ShortSaleOverseasCollectionService collectionService;
+    @Mock private ShortSaleOverseasDailyCollectionService dailyService;
+    @Mock private ShortSaleOverseasInterestCollectionService interestService;
 
     @Nested
     @DisplayName("cron 발화 트리거")
@@ -40,16 +41,16 @@ class ShortSaleOverseasSchedulerTest {
             // Arrange: 2026-01-06 10:00 ET 발화
             Clock clock = Clock.fixed(Instant.parse("2026-01-06T15:00:00Z"), ET);
             ShortSaleOverseasScheduler scheduler =
-                    new ShortSaleOverseasScheduler(collectionService, clock);
+                    new ShortSaleOverseasScheduler(dailyService, interestService, clock);
 
             // Act
             scheduler.collect();
 
             // Assert: Daily 먼저, Interest 다음 — 각 1회
-            InOrder order = inOrder(collectionService);
-            order.verify(collectionService).collectDaily(LocalDate.of(2026, 1, 6));
-            order.verify(collectionService).collectShortInterest(LocalDate.of(2026, 1, 6));
-            verifyNoMoreInteractions(collectionService);
+            InOrder order = inOrder(dailyService, interestService);
+            order.verify(dailyService).collectDaily(LocalDate.of(2026, 1, 6));
+            order.verify(interestService).collectShortInterest(LocalDate.of(2026, 1, 6));
+            verifyNoMoreInteractions(dailyService, interestService);
         }
     }
 
@@ -67,14 +68,14 @@ class ShortSaleOverseasSchedulerTest {
 
             Clock clock = Clock.fixed(instant, ET);
             ShortSaleOverseasScheduler scheduler =
-                    new ShortSaleOverseasScheduler(collectionService, clock);
+                    new ShortSaleOverseasScheduler(dailyService, interestService, clock);
 
             // Act
             scheduler.collect();
 
             // Assert: ET 거래일(01-06)로 호출 — KST(01-07)면 RED
-            verify(collectionService).collectDaily(LocalDate.of(2026, 1, 6));
-            verify(collectionService).collectShortInterest(LocalDate.of(2026, 1, 6));
+            verify(dailyService).collectDaily(LocalDate.of(2026, 1, 6));
+            verify(interestService).collectShortInterest(LocalDate.of(2026, 1, 6));
         }
     }
 
@@ -88,8 +89,8 @@ class ShortSaleOverseasSchedulerTest {
             // Arrange
             Clock clock = Clock.fixed(Instant.parse("2026-01-06T15:00:00Z"), ET);
             ShortSaleOverseasScheduler scheduler =
-                    new ShortSaleOverseasScheduler(collectionService, clock);
-            doThrow(new RuntimeException("FINRA 장애")).when(collectionService).collectDaily(any());
+                    new ShortSaleOverseasScheduler(dailyService, interestService, clock);
+            doThrow(new RuntimeException("FINRA 장애")).when(dailyService).collectDaily(any());
 
             // Act & Assert: 예외가 전파되지 않음(흡수)
             scheduler.collect();

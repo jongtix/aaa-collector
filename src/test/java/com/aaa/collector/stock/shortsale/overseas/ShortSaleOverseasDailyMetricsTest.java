@@ -2,7 +2,6 @@ package com.aaa.collector.stock.shortsale.overseas;
 
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyCollection;
-import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -27,23 +26,22 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.test.util.ReflectionTestUtils;
 
 @ExtendWith(MockitoExtension.class)
-@DisplayName("ShortSaleOverseasCollectionService — BatchMetrics 관측성 집계")
-class ShortSaleOverseasMetricsTest {
+@DisplayName("ShortSaleOverseasDailyCollectionService — BatchMetrics Daily 집계 (REQ-SSO-040)")
+class ShortSaleOverseasDailyMetricsTest {
 
     private static final LocalDate TRADE_DATE = LocalDate.of(2026, 1, 6);
-    private static final LocalDate TODAY = LocalDate.of(2026, 4, 20);
 
     @Mock private FinraShortSaleClient finraClient;
     @Mock private StockRepository stockRepository;
     @Mock private ShortSaleOverseasRepository shortSaleOverseasRepository;
     @Mock private BatchMetrics batchMetrics;
 
-    private ShortSaleOverseasCollectionService service;
+    private ShortSaleOverseasDailyCollectionService service;
 
     @BeforeEach
     void setUp() {
         service =
-                new ShortSaleOverseasCollectionService(
+                new ShortSaleOverseasDailyCollectionService(
                         finraClient, stockRepository, shortSaleOverseasRepository, batchMetrics);
         Mockito.lenient()
                 .when(
@@ -65,13 +63,8 @@ class ShortSaleOverseasMetricsTest {
         return s;
     }
 
-    private static FinraRegShoDailyResponse daily(String symbol, long shortQty, long totalQty) {
-        return new FinraRegShoDailyResponse(
-                TRADE_DATE, symbol, BigDecimal.valueOf(shortQty), BigDecimal.valueOf(totalQty));
-    }
-
     @Nested
-    @DisplayName("Daily 집계 — batch 라벨 overseas-shortsale-daily (REQ-SSO-040)")
+    @DisplayName("Daily 집계 — batch 라벨 overseas-shortsale-daily")
     class DailyMetrics {
 
         @Test
@@ -84,7 +77,11 @@ class ShortSaleOverseasMetricsTest {
             when(finraClient.fetchRegShoDaily(TRADE_DATE))
                     .thenReturn(
                             List.of(
-                                    daily("AAPL", 100, 200),
+                                    new FinraRegShoDailyResponse(
+                                            TRADE_DATE,
+                                            "AAPL",
+                                            BigDecimal.valueOf(100),
+                                            BigDecimal.valueOf(200)),
                                     new FinraRegShoDailyResponse(
                                             TRADE_DATE,
                                             "MSFT",
@@ -108,55 +105,6 @@ class ShortSaleOverseasMetricsTest {
 
             // Assert
             verify(batchMetrics).recordCompletion("overseas-shortsale-daily", 0L, 0L, 0L, 0L);
-        }
-    }
-
-    @Nested
-    @DisplayName("Interest 집계 — batch 라벨 overseas-shortsale-interest (REQ-SSO-040)")
-    class InterestMetrics {
-
-        @Test
-        @DisplayName("성공/skip을 recordCompletion으로 기록한다")
-        void recordsInterestCompletion() {
-            // Arrange: AAPL 신규 적재, MSFT 음수(skip)
-            Stock aapl = stock(1L, "AAPL");
-            Stock msft = stock(2L, "MSFT");
-            when(stockRepository.findAllActiveOverseasTradable()).thenReturn(List.of(aapl, msft));
-            when(shortSaleOverseasRepository.findExistingSettlementDates(any(), any()))
-                    .thenReturn(List.of());
-            when(finraClient.fetchConsolidatedShortInterest(any(), any()))
-                    .thenReturn(
-                            List.of(
-                                    new FinraConsolidatedShortInterestResponse(
-                                            "AAPL",
-                                            LocalDate.of(2026, 4, 15),
-                                            BigDecimal.valueOf(134_422_787L),
-                                            null),
-                                    new FinraConsolidatedShortInterestResponse(
-                                            "MSFT",
-                                            LocalDate.of(2026, 4, 15),
-                                            BigDecimal.valueOf(-1),
-                                            null)));
-
-            // Act
-            service.collectShortInterest(TODAY);
-
-            // Assert: attempted=2, success=1, skip=1, fail=0
-            verify(batchMetrics)
-                    .recordCompletion(
-                            eq("overseas-shortsale-interest"), eq(2L), eq(1L), eq(0L), eq(1L));
-        }
-
-        @Test
-        @DisplayName("빈 응답이면 0건으로 기록한다")
-        void recordsZeroOnEmpty() {
-            when(finraClient.fetchConsolidatedShortInterest(any(), any())).thenReturn(List.of());
-
-            // Act
-            service.collectShortInterest(TODAY);
-
-            // Assert
-            verify(batchMetrics).recordCompletion("overseas-shortsale-interest", 0L, 0L, 0L, 0L);
         }
     }
 }

@@ -28,7 +28,8 @@ public class ShortSaleOverseasScheduler {
 
     private static final ZoneId ET = ZoneId.of("America/New_York");
 
-    private final ShortSaleOverseasCollectionService collectionService;
+    private final ShortSaleOverseasDailyCollectionService dailyService;
+    private final ShortSaleOverseasInterestCollectionService interestService;
     private final Clock clock;
 
     /**
@@ -43,8 +44,8 @@ public class ShortSaleOverseasScheduler {
         LocalDate today = LocalDate.ofInstant(clock.instant(), ET);
         log.info("[overseas-shortsale] 수집 배치 시작 — {}", today);
         try {
-            collectionService.collectDaily(today);
-            collectionService.collectShortInterest(today);
+            dailyService.collectDaily(today);
+            interestService.collectShortInterest(today);
             log.info("[overseas-shortsale] 수집 배치 완료 — {}", today);
         } catch (Exception e) {
             log.error("[overseas-shortsale] 수집 배치 예외 — 다음 실행 때 재시도", e);
