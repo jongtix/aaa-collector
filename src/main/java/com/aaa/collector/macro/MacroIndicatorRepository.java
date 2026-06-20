@@ -1,5 +1,7 @@
 package com.aaa.collector.macro;
 
+import java.time.LocalDate;
+import java.util.Optional;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
@@ -43,4 +45,9 @@ public interface MacroIndicatorRepository extends JpaRepository<MacroIndicator, 
     /** 지표 코드별 저장 행 수 (멱등성 검증용). */
     @Query("SELECT COUNT(m) FROM MacroIndicator m WHERE m.indicatorCode = :indicatorCode")
     long countByIndicatorCode(@Param("indicatorCode") String indicatorCode);
+
+    /** 지표 코드별 최소 거래일 (백필 진행점 갱신용). */
+    @Query("SELECT MIN(m.tradeDate) FROM MacroIndicator m WHERE m.indicatorCode = :indicatorCode")
+    Optional<LocalDate> findMinTradeDateByIndicatorCode(
+            @Param("indicatorCode") String indicatorCode);
 }

@@ -3,6 +3,7 @@ package com.aaa.collector.macro.backfill;
 import com.aaa.collector.backfill.BackfillStatus;
 import com.aaa.collector.backfill.BackfillStatusRepository;
 import com.aaa.collector.macro.MacroCollectionResult;
+import com.aaa.collector.macro.MacroIndicatorRepository;
 import com.aaa.collector.macro.ecos.EcosCollectionService;
 import com.aaa.collector.macro.ecos.EcosSeriesConfig;
 import com.aaa.collector.macro.fred.FredCollectionService;
@@ -39,6 +40,7 @@ public class MacroIndicatorBackfillOrchestrator {
                     .collect(Collectors.toUnmodifiableSet());
 
     private final BackfillStatusRepository backfillStatusRepository;
+    private final MacroIndicatorRepository macroIndicatorRepository;
     private final EcosCollectionService ecosCollectionService;
     private final FredCollectionService fredCollectionService;
 
@@ -84,8 +86,10 @@ public class MacroIndicatorBackfillOrchestrator {
 
         try {
             MacroCollectionResult result = collectAll(indicatorCode);
-            // 수집한 최소 거래일: 결과가 있으면 최소 거래일, 없으면 오늘 날짜
-            LocalDate minDate = LocalDate.now();
+            LocalDate minDate =
+                    macroIndicatorRepository
+                            .findMinTradeDateByIndicatorCode(indicatorCode)
+                            .orElse(LocalDate.now());
 
             backfillStatusRepository.updateProgress(
                     status.getId(), "COMPLETED", minDate, 0, result.succeeded());
