@@ -14,6 +14,7 @@ import com.aaa.collector.stock.enums.Market;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.List;
+import java.util.Map;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -67,8 +68,9 @@ class ShortSaleOverseasInterestMetricsTest {
             Stock aapl = stock(1L, "AAPL");
             Stock msft = stock(2L, "MSFT");
             when(stockRepository.findAllActiveOverseasTradable()).thenReturn(List.of(aapl, msft));
-            when(shortSaleOverseasRepository.findExistingSettlementDates(any(), any()))
-                    .thenReturn(List.of());
+            when(shortSaleOverseasRepository.findExistingInterestPairsByStockIds(
+                            any(), any(), any()))
+                    .thenReturn(Map.of());
             when(finraClient.fetchConsolidatedShortInterest(any(), any()))
                     .thenReturn(
                             List.of(
