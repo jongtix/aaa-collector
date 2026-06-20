@@ -1,0 +1,99 @@
+package com.aaa.collector.market.indicator.vix;
+
+import com.aaa.collector.market.enums.IndicatorCode;
+import com.aaa.collector.market.indicator.MarketIndicatorRow;
+import com.aaa.collector.market.indicator.MarketIndicatorSource;
+import java.math.BigDecimal;
+import java.time.LocalDate;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.core.ParameterizedTypeReference;
+import org.springframework.stereotype.Component;
+import org.springframework.web.client.RestClient;
+
+/**
+ * FRED VIXCLS 시계열 수집 클라이언트 — VIX Fallback 1 (SPEC-COLLECTOR-MARKETIND-001, REQ-022/023).
+ *
+ * <p>URL: {@code
+ * /fred/series/observations?series_id=VIXCLS&file_type=json&limit=100000&api_key=...}. {@code
+ * value} == {@code "."} 행 skip, close만/open_high_low=NULL, {@code source="FRED"}(REQ-023).
+ */
+@Slf4j
+@Component
+public class FredVixClient implements MarketIndicatorSource {
+
+    private static final String SOURCE = "FRED";
+    private static final String PATH =
+            "/fred/series/observations?series_id=VIXCLS&file_type=json&limit=100000&api_key={apiKey}";
+
+    private final RestClient fredRestClient;
+    private final String apiKey;
+
+    public FredVixClient(
+            RestClient fredRestClient,
+            @Value("${aaa.market-indicator.fred-api-key:}") String apiKey) {
+        this.fredRestClient = fredRestClient;
+        this.apiKey = apiKey;
+    }
+
+    @Override
+    public String sourceName() {
+        return SOURCE;
+    }
+
+    @Override
+    public List<MarketIndicatorRow> fetchHistory() {
+        Map<String, Object> body =
+                fredRestClient
+                        .get()
+                        .uri(PATH, apiKey)
+                        .retrieve()
+                        .body(new ParameterizedTypeReference<>() {});
+        return parseObservations(body);
+    }
+
+    @Override
+    public List<MarketIndicatorRow> fetchDaily(LocalDate date) {
+        List<MarketIndicatorRow> all = fetchHistory();
+        return all.stream().filter(r -> r.tradeDate().equals(date)).toList();
+    }
+
+    @SuppressWarnings("unchecked")
+    private List<MarketIndicatorRow> parseObservations(Map<String, Object> body) {
+        if (body == null) {
+            return List.of();
+        }
+        List<Map<String, String>> observations =
+                (List<Map<String, String>>) body.get("observations");
+        if (observations == null || observations.isEmpty()) {
+            return List.of();
+        }
+        List<MarketIndicatorRow> rows = new ArrayList<>();
+        for (Map<String, String> obs : observations) {
+            try {
+                String value = obs.get("value");
+                if (".".equals(value)) {
+                    continue; // 결측 — REQ-023
+                }
+                if (value == null || value.isBlank()) {
+                    continue;
+                }
+                LocalDate date = LocalDate.parse(obs.get("date"));
+                BigDecimal close = new BigDecimal(value);
+                if (close.compareTo(BigDecimal.ZERO) <= 0) {
+                    log.warn("[fred-vix] close 0 이하 — skip: {}", obs);
+                    continue;
+                }
+                rows.add(
+                        new MarketIndicatorRow(
+                                IndicatorCode.VIX, date, null, null, null, close, SOURCE));
+            } catch (Exception e) {
+                log.warn("[fred-vix] 행 파싱 실패 — skip: {}, 오류: {}", obs, e.getMessage());
+            }
+        }
+        return rows;
+    }
+}
