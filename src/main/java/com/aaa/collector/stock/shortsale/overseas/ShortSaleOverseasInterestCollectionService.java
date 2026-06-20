@@ -7,7 +7,6 @@ import com.aaa.collector.stock.StockRepository;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -23,7 +22,8 @@ import org.springframework.stereotype.Service;
  * <p>FINRA {@code consolidatedShortInterest} 행을 미국 활성 STOCK+ETF 종목에 매칭하여 {@code
  * short_sale_overseas}의 interest 전용 컬럼({@code short_interest}, {@code short_interest_date}, {@code
  * interest_collected_at})을 UPSERT한다. {@code dateRangeFilters}(settlementDate, 오늘−40일~오늘) 범위로
- * 수집(D16)하고, 페이지(5000행) 단위 스트리밍 처리로 전 행 동시 상주를 피한다(D-NEW-6). Daily 컬럼은 보존한다(REQ-SSO-015/-022).
+ * 수집(D16)하고, FINRA 전량({@code fetchAllPages} 누적) 수신 후 5000행 단위로 청크 처리한다. Daily 컬럼은
+ * 보존한다(REQ-SSO-015/-022).
  */
 @Slf4j
 @Service
@@ -41,7 +41,7 @@ public class ShortSaleOverseasInterestCollectionService {
     /** Short Interest 범위 폴링 룩백 일수 — 반월 주기 + 발행 래그(~2주)를 덮는다(D16). */
     private static final int INTEREST_LOOKBACK_DAYS = 40;
 
-    /** Short Interest 페이지 단위 스트리밍 처리 크기(NAS 8GB 힙 보호, D19/D-NEW-6). */
+    /** Short Interest 청크 처리 크기 — 전량 누적 후 이 단위로 나눠 처리한다(D19). */
     private static final int INTEREST_PROCESS_BATCH_SIZE = 5000;
 
     /** FINRA revisionFlag 값 — 직전 사이클 잔고 수정. */
@@ -58,9 +58,8 @@ public class ShortSaleOverseasInterestCollectionService {
     /**
      * FINRA Short Interest 잔고를 {@code dateRangeFilters}(settlementDate, 오늘−40일~오늘) 범위로 수집한다(D16).
      * 미국 활성 STOCK+ETF 종목에 매칭(REQ-SSO-003)하여 {@code trade_date=settlementDate} 행으로 interest 전용 컬럼만
-     * UPSERT한다(REQ-SSO-015/-022). DB 미적재 settlementDate는 신규 적재하고, 이미 적재됐어도 {@code
-     * revisionFlag="R"}이면 갱신, {@code ≠"R"}이면 skip한다(REQ-SSO-014a/-014b/-014c). 페이지(5000행) 단위로 스트리밍
-     * 처리해 전 행 동시 상주를 피한다(D-NEW-6).
+     * UPSERT한다(REQ-SSO-015/-022). DB에 이미 적재된 {@code (stock_id, short_interest_date)} 쌍이 없으면 신규 적재,
+     * 있으면 {@code revisionFlag="R"}일 때만 갱신, {@code ≠"R"}이면 skip한다(REQ-SSO-014a/-014b/-014c).
      *
      * @param today 수집 기준일(범위 끝)
      * @return 시도/성공/skip 집계
@@ -77,14 +76,18 @@ public class ShortSaleOverseasInterestCollectionService {
         }
 
         Map<String, Stock> stockBySymbol = activeUsStocksBySymbol();
-        // REQ-SSO-014a: DB 기존 settlementDate 집합 — 미적재 차집합 + revision 판정에 사용
-        Set<LocalDate> existingSettlementDates =
-                new HashSet<>(shortSaleOverseasRepository.findExistingSettlementDates(from, today));
+        // REQ-SSO-014a: (stock_id, short_interest_date) 쌍 단위 존재 판정 — 전역 날짜 집합이면 교차 종목 침묵 드롭 발생
+        Set<Long> stockIds =
+                stockBySymbol.values().stream()
+                        .map(Stock::getId)
+                        .collect(Collectors.toUnmodifiableSet());
+        Map<Long, Set<LocalDate>> existingPairs =
+                shortSaleOverseasRepository.findExistingInterestPairsByStockIds(
+                        stockIds, from, today);
 
         int attempted = 0;
         int succeeded = 0;
         int skipped = 0;
-        // D-NEW-6: 페이지(5000행) 단위 스트리밍 처리 — 전 행 동시 적재 금지(NAS 8GB)
         for (int start = 0; start < rows.size(); start += INTEREST_PROCESS_BATCH_SIZE) {
             int end = Math.min(start + INTEREST_PROCESS_BATCH_SIZE, rows.size());
             for (FinraConsolidatedShortInterestResponse row : rows.subList(start, end)) {
@@ -94,7 +97,7 @@ public class ShortSaleOverseasInterestCollectionService {
                     continue;
                 }
                 attempted++;
-                if (upsertInterestRow(stock, row, existingSettlementDates)) {
+                if (upsertInterestRow(stock, row, existingPairs)) {
                     succeeded++;
                 } else {
                     skipped++;
@@ -120,14 +123,14 @@ public class ShortSaleOverseasInterestCollectionService {
     }
 
     /**
-     * Short Interest 한 행을 UPSERT 한다. 미적재 settlementDate는 신규 적재(REQ-SSO-014a), 이미 적재됐으면 {@code
-     * revisionFlag="R"}일 때만 갱신(REQ-SSO-014b), {@code ≠"R"}이면 skip(REQ-SSO-014c). 잔고가 null·음수·소수부면
-     * skip+WARN(REQ-SSO-021).
+     * Short Interest 한 행을 UPSERT 한다. {@code (stock_id, settlementDate)} 쌍이 미적재이면 신규
+     * 적재(REQ-SSO-014a), 이미 적재됐으면 {@code revisionFlag="R"}일 때만 갱신(REQ-SSO-014b), {@code ≠"R"}이면
+     * skip(REQ-SSO-014c). 잔고가 null·음수·소수부면 skip+WARN(REQ-SSO-021).
      */
     private boolean upsertInterestRow(
             Stock stock,
             FinraConsolidatedShortInterestResponse row,
-            Set<LocalDate> existingSettlementDates) {
+            Map<Long, Set<LocalDate>> existingPairs) {
         LocalDate settlementDate = row.settlementDate();
         if (settlementDate == null) {
             log.warn(
@@ -136,10 +139,12 @@ public class ShortSaleOverseasInterestCollectionService {
             return false;
         }
 
-        boolean alreadyExists = existingSettlementDates.contains(settlementDate);
+        // (stock_id, settlementDate) 쌍 단위 존재 판정 — 전역 날짜 집합이면 교차 종목 침묵 드롭 발생(MA-01)
+        Set<LocalDate> stockDates = existingPairs.get(stock.getId());
+        boolean alreadyExists = stockDates != null && stockDates.contains(settlementDate);
         boolean isRevision = REVISION_FLAG.equals(row.revisionFlag());
         if (alreadyExists && !isRevision) {
-            // REQ-SSO-014c: 기존 settlementDate + 비revision → 불필요 쓰기 회피
+            // REQ-SSO-014c: 기존 (stock_id, settlementDate) 쌍 + 비revision → 불필요 쓰기 회피
             return false;
         }
 

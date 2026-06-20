@@ -296,28 +296,45 @@ class ShortSaleOverseasRepositoryIT {
     }
 
     @Nested
-    @DisplayName("findExistingSettlementDates — 미적재 차집합용")
-    class FindExistingSettlementDates {
+    @DisplayName("findExistingInterestPairsByStockIds — 종목×날짜 쌍 단위 미적재 판정용 (REQ-SSO-014a)")
+    class FindExistingInterestPairs {
 
         @Test
-        @DisplayName("이미 적재된 settlementDate(short_interest_date) 집합을 반환한다 (REQ-SSO-014a)")
-        void returnsExistingSettlementDates() {
+        @DisplayName("적재된 (stock_id, short_interest_date) 쌍을 종목별 Set으로 반환한다")
+        void returnsPairsPerStock() {
             // Arrange
             Stock aapl = savedUsStock();
+            Stock msft = savedUsStock();
             repository.upsertInterest(
                     aapl.getId(), LocalDate.of(2026, 4, 15), 100L, LocalDateTime.now());
             repository.upsertInterest(
                     aapl.getId(), LocalDate.of(2026, 4, 30), 200L, LocalDateTime.now());
+            repository.upsertInterest(
+                    msft.getId(), LocalDate.of(2026, 4, 15), 300L, LocalDateTime.now());
 
             // Act
-            List<LocalDate> existing =
-                    repository.findExistingSettlementDates(
-                            LocalDate.of(2026, 4, 1), LocalDate.of(2026, 6, 19));
+            Map<Long, Set<LocalDate>> pairs =
+                    repository.findExistingInterestPairsByStockIds(
+                            Set.of(aapl.getId(), msft.getId()),
+                            LocalDate.of(2026, 4, 1),
+                            LocalDate.of(2026, 6, 19));
 
-            // Assert
-            assertThat(existing)
+            // Assert: 종목별 날짜 집합이 독립적으로 반환된다
+            assertThat(pairs.get(aapl.getId()))
                     .containsExactlyInAnyOrder(
                             LocalDate.of(2026, 4, 15), LocalDate.of(2026, 4, 30));
+            assertThat(pairs.get(msft.getId()))
+                    .containsExactlyInAnyOrder(LocalDate.of(2026, 4, 15));
+        }
+
+        @Test
+        @DisplayName("종목 집합이 비어 있으면 빈 Map을 반환한다 (IN 빈 절 회피)")
+        void returnsEmptyMapForEmptyStockIds() {
+            Map<Long, Set<LocalDate>> pairs =
+                    repository.findExistingInterestPairsByStockIds(
+                            Set.of(), LocalDate.of(2026, 4, 1), LocalDate.of(2026, 6, 19));
+
+            assertThat(pairs).isEmpty();
         }
     }
 }

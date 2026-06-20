@@ -49,14 +49,6 @@ class ShortSaleOverseasInterestIT {
     private static final AtomicInteger SYMBOL_SEQ = new AtomicInteger();
     private static final LocalDate TODAY = LocalDate.of(2026, 4, 20);
 
-    /**
-     * 메서드별 유니크 settlementDate. {@code findExistingSettlementDates}가 전역(stock 무관) 날짜 집합이라, 메서드 간 같은
-     * settlementDate를 쓰면 한 메서드의 적재가 다른 메서드에서 "기존 존재"로 오판된다(@Transactional 미사용, DB 공유).
-     */
-    private LocalDate uniqueSettlement() {
-        return LocalDate.of(2026, 4, 15).minusDays(SYMBOL_SEQ.get());
-    }
-
     private Stock savedUsStock() {
         String symbol = "US" + SYMBOL_SEQ.incrementAndGet();
         return stockRepository.save(
@@ -79,6 +71,14 @@ class ShortSaleOverseasInterestIT {
                 .orElseThrow();
     }
 
+    private boolean hasRowFor(Stock stock, LocalDate tradeDate) {
+        return repository.findAll().stream()
+                .anyMatch(
+                        r ->
+                                r.getStock().getId().equals(stock.getId())
+                                        && r.getTradeDate().equals(tradeDate));
+    }
+
     private static FinraConsolidatedShortInterestResponse siRow(
             String symbol, LocalDate settlementDate, long qty, String revisionFlag) {
         return new FinraConsolidatedShortInterestResponse(
@@ -91,7 +91,7 @@ class ShortSaleOverseasInterestIT {
     void insertsNewSettlementRow() {
         // Arrange
         Stock stock = savedUsStock();
-        LocalDate settlement = uniqueSettlement();
+        LocalDate settlement = LocalDate.of(2026, 4, 15).minusDays(SYMBOL_SEQ.get());
         when(finraClient.fetchConsolidatedShortInterest(any(), any()))
                 .thenReturn(List.of(siRow(stock.getSymbol(), settlement, 134_422_787L, null)));
 
@@ -119,9 +119,9 @@ class ShortSaleOverseasInterestIT {
     @Test
     @DisplayName("이미 적재된 settlementDate는 revisionFlag != R이면 갱신하지 않는다 (REQ-SSO-014c)")
     void skipsExistingNonRevision() {
-        // Arrange: 같은 settlementDate를 기존 잔고로 선적재
+        // Arrange: 같은 종목×날짜 쌍이 DB에 이미 존재
         Stock stock = savedUsStock();
-        LocalDate settlement = uniqueSettlement();
+        LocalDate settlement = LocalDate.of(2026, 4, 14).minusDays(SYMBOL_SEQ.get());
         repository.upsertInterest(stock.getId(), settlement, 100_000_000L, LocalDateTime.now());
         when(finraClient.fetchConsolidatedShortInterest(any(), any()))
                 .thenReturn(List.of(siRow(stock.getSymbol(), settlement, 999_999_999L, null)));
@@ -139,7 +139,7 @@ class ShortSaleOverseasInterestIT {
     void updatesExistingOnRevision() {
         // Arrange: Daily+SI가 채워진 기존 행
         Stock stock = savedUsStock();
-        LocalDate settlement = uniqueSettlement();
+        LocalDate settlement = LocalDate.of(2026, 4, 13).minusDays(SYMBOL_SEQ.get());
         LocalDateTime dailyAt = LocalDateTime.of(2026, 4, 16, 10, 0);
         repository.upsertDaily(stock.getId(), settlement, 7_000L, 12_000L, dailyAt, null, null);
         repository.upsertInterest(stock.getId(), settlement, 126_771_284L, LocalDateTime.now());
@@ -163,7 +163,7 @@ class ShortSaleOverseasInterestIT {
     void matchesUsStocksOnly() {
         // Arrange
         Stock stock = savedUsStock();
-        LocalDate settlement = uniqueSettlement();
+        LocalDate settlement = LocalDate.of(2026, 4, 12).minusDays(SYMBOL_SEQ.get());
         when(finraClient.fetchConsolidatedShortInterest(any(), any()))
                 .thenReturn(
                         List.of(
@@ -194,5 +194,32 @@ class ShortSaleOverseasInterestIT {
                         repository.findAll().stream()
                                 .filter(r -> r.getStock().getId().equals(stock.getId())))
                 .isEmpty();
+    }
+
+    @Test
+    @DisplayName(
+            "종목 A의 settlementDate X가 이미 적재된 상태에서 종목 B의 동일 날짜 X는 신규 적재된다 (MA-01 — 교차 종목 침묵 드롭 금지)")
+    void crossStockSameDateIsNotSilentlyDropped() {
+        // Arrange: 종목 A × settlementDate X 를 DB에 선적재
+        Stock stockA = savedUsStock();
+        Stock stockB = savedUsStock();
+        LocalDate settlement = LocalDate.of(2026, 4, 15);
+        repository.upsertInterest(stockA.getId(), settlement, 100_000_000L, LocalDateTime.now());
+
+        // 이번 수집에서 종목 B × 동일 날짜 X 를 받음 (revisionFlag=null)
+        when(finraClient.fetchConsolidatedShortInterest(any(), any()))
+                .thenReturn(List.of(siRow(stockB.getSymbol(), settlement, 200_000_000L, null)));
+
+        // Act
+        service.collectShortInterest(TODAY);
+
+        // Assert: 종목 B의 행이 신규 적재되어야 한다
+        // (전역 날짜 판정이면 종목 A가 적재한 X 때문에 종목 B가 skip되어 RED)
+        assertThat(hasRowFor(stockB, settlement))
+                .as("종목 B × settlementDate=%s 는 종목 A와 무관하게 신규 적재되어야 한다", settlement)
+                .isTrue();
+        assertThat(rowAt(stockB, settlement).getShortInterest()).isEqualTo(200_000_000L);
+        // 종목 A 기존값은 훼손되지 않음
+        assertThat(rowAt(stockA, settlement).getShortInterest()).isEqualTo(100_000_000L);
     }
 }

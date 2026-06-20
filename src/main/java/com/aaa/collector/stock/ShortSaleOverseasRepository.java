@@ -4,8 +4,10 @@ import java.sql.Date;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.Collection;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.stream.Collectors;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;
@@ -173,31 +175,51 @@ public interface ShortSaleOverseasRepository extends JpaRepository<ShortSaleOver
     }
 
     /**
-     * 주어진 범위 내 이미 적재된 settlementDate({@code short_interest_date})를 {@code java.sql.Date}로 조회한다. 공개
-     * API는 {@link #findExistingSettlementDates}가 {@code LocalDate}로 변환해 노출한다(native DATE →
-     * LocalDate 컨버터 미등록 회피).
+     * 주어진 종목 집합 + 범위 내 이미 적재된 {@code (stock_id, short_interest_date)} 쌍을 {@code java.sql.Date}로
+     * 조회한다. 공개 API는 {@link #findExistingInterestPairsByStockIds} default 메서드가 {@code Map<Long,
+     * Set<LocalDate>>}로 조립해 노출한다(native DATE → LocalDate 컨버터 미등록 회피).
+     *
+     * <p>종목 집합이 비어 있으면 호출하지 않는다(IN 빈 절 회피, 호출처 책임).
      */
     @Query(
             value =
                     """
-                    SELECT DISTINCT short_interest_date
+                    SELECT stock_id AS stockId, short_interest_date AS settlementDate
                     FROM short_sale_overseas
-                    WHERE short_interest_date IS NOT NULL
+                    WHERE stock_id IN (:stockIds)
+                      AND short_interest_date IS NOT NULL
                       AND short_interest_date BETWEEN :from AND :to
                     """,
             nativeQuery = true)
-    List<Date> findExistingSettlementDateValues(
-            @Param("from") LocalDate from, @Param("to") LocalDate to);
+    List<StockSettlementPairRow> findExistingInterestPairRows(
+            @Param("stockIds") Collection<Long> stockIds,
+            @Param("from") LocalDate from,
+            @Param("to") LocalDate to);
 
     /**
-     * 주어진 범위 내 이미 적재된 settlementDate 집합을 {@code LocalDate}로 반환한다(미적재 차집합 산출용, REQ-SSO-014a).
+     * 주어진 종목 집합 + 범위 내 이미 적재된 {@code (stock_id, short_interest_date)} 쌍을 {@code Map<stockId,
+     * Set<settlementDate>>}로 반환한다(미적재 차집합 산출용, REQ-SSO-014a). 종목×날짜 쌍 단위로 존재를 판정하여 교차 종목 침묵 드롭을
+     * 방지한다.
      *
+     * <p>종목 집합이 비어 있으면 빈 Map을 반환한다(IN 빈 절 회피).
+     *
+     * @param stockIds 조회 종목 PK 집합
      * @param from 범위 시작(포함)
      * @param to 범위 끝(포함)
-     * @return 적재된 서로 다른 settlementDate 목록
+     * @return 종목 PK → 이미 적재된 settlementDate 집합
      */
-    default List<LocalDate> findExistingSettlementDates(LocalDate from, LocalDate to) {
-        return findExistingSettlementDateValues(from, to).stream().map(Date::toLocalDate).toList();
+    default Map<Long, Set<LocalDate>> findExistingInterestPairsByStockIds(
+            Collection<Long> stockIds, LocalDate from, LocalDate to) {
+        if (stockIds.isEmpty()) {
+            return Map.of();
+        }
+        return findExistingInterestPairRows(stockIds, from, to).stream()
+                .collect(
+                        Collectors.groupingBy(
+                                StockSettlementPairRow::getStockId,
+                                Collectors.mapping(
+                                        row -> row.getSettlementDate().toLocalDate(),
+                                        Collectors.toCollection(HashSet::new))));
     }
 
     /** {@link #findLatestShortInterestRows} native 투영 인터페이스. */
@@ -207,6 +229,13 @@ public interface ShortSaleOverseasRepository extends JpaRepository<ShortSaleOver
         Long getShortInterest();
 
         LocalDate getShortInterestDate();
+    }
+
+    /** {@link #findExistingInterestPairRows} native 투영 인터페이스. */
+    interface StockSettlementPairRow {
+        Long getStockId();
+
+        Date getSettlementDate();
     }
 
     /**
