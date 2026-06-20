@@ -1,5 +1,6 @@
 package com.aaa.collector;
 
+import com.aaa.collector.backfill.BackfillStatusRepository;
 import com.aaa.collector.macro.MacroIndicatorRepository;
 import com.aaa.collector.news.NewsHeadlineRepository;
 import com.aaa.collector.stock.AnalystEstimateRepository;
@@ -11,6 +12,9 @@ import com.aaa.collector.stock.InvestorTrendRepository;
 import com.aaa.collector.stock.ShortSaleDomesticRepository;
 import com.aaa.collector.stock.ShortSaleOverseasRepository;
 import com.aaa.collector.stock.StockRepository;
+import com.aaa.collector.stock.backfill.BackfillOrchestrator;
+import com.aaa.collector.stock.backfill.BackfillScheduler;
+import com.aaa.collector.stock.backfill.BackfillWindowExecutor;
 import com.aaa.collector.stock.daily.OverseasDailyOhlcvCollectionService;
 import com.aaa.collector.stock.daily.OverseasDailyOhlcvScheduler;
 import com.aaa.collector.stock.etf.EtfMetadataRepository;
@@ -61,7 +65,12 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
             FinraShortSaleClient.class,
             ShortSaleOverseasDailyCollectionService.class,
             ShortSaleOverseasInterestCollectionService.class,
-            ShortSaleOverseasScheduler.class
+            ShortSaleOverseasScheduler.class,
+            // SPEC-COLLECTOR-BACKFILL-001: 백필 도메인 빈 모킹 (BATCH-003/GRADE-003 회귀 방지)
+            BackfillStatusRepository.class,
+            BackfillOrchestrator.class,
+            BackfillWindowExecutor.class,
+            BackfillScheduler.class
         })
 class SmokeMockitoBase {
 
