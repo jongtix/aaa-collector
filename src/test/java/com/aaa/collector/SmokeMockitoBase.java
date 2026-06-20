@@ -28,8 +28,7 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
 /**
  * 풀컨텍스트 smoke 테스트 공통 모킹 베이스.
  *
- * <p>DB/Redis/외부 HTTP 의존 빈을 일괄 모킹한다. 클래스명이 {@code Test}로 끝나므로 PMD ExcessiveImports 억제 XPath({@code
- * ends-with(@SimpleName,'Test')})가 적용된다. 각 서브클래스는 고유한 {@code @SpringBootTest}
+ * <p>DB/Redis/외부 HTTP 의존 빈을 일괄 모킹한다. 각 서브클래스는 고유한 {@code @SpringBootTest}
  * 설정(webEnvironment, @TestPropertySource 등)을 독립적으로 보유한다.
  */
 // 컨텍스트 로드를 위해 DB/Redis/외부 HTTP 의존 빈을 일괄 모킹한다. 클래스 레벨 types 배열로 중복 필드 선언을 회피한다.
@@ -64,4 +63,7 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
             ShortSaleOverseasInterestCollectionService.class,
             ShortSaleOverseasScheduler.class
         })
-abstract class SmokeContextTest {}
+class SmokeMockitoBase {
+
+    protected SmokeMockitoBase() {}
+}

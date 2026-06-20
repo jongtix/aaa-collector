@@ -19,7 +19,7 @@ import org.springframework.test.context.TestPropertySource;
 @TestPropertySource(
         properties = {"management.server.port=0", "management.health.redis.enabled=false"})
 @DisplayName("Actuator health 엔드포인트 통합 테스트")
-class ActuatorHealthIntegrationTest extends SmokeContextTest {
+class ActuatorHealthIntegrationTest extends SmokeMockitoBase {
 
     @LocalManagementPort private int managementPort;
 

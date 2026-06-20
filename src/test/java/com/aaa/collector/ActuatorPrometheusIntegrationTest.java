@@ -26,7 +26,7 @@ import org.springframework.test.context.TestPropertySource;
             "management.prometheus.metrics.export.enabled=true"
         })
 @DisplayName("Actuator prometheus 엔드포인트 통합 테스트 (REQ-OBSV-001/002)")
-class ActuatorPrometheusIntegrationTest extends SmokeContextTest {
+class ActuatorPrometheusIntegrationTest extends SmokeMockitoBase {
 
     @LocalManagementPort private int managementPort;
 

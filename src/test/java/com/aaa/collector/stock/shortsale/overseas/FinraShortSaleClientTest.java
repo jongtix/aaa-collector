@@ -49,7 +49,7 @@ class FinraShortSaleClientTest {
             //          (offset >= record-total 도달 시 종료, D13).
             String page0 = dailyRows("2026-01-06", "AAPL", 100, 200, "MSFT", 300, 400);
             String page1 = dailyRows("2026-01-06", "GOOG", 500, 600, "AMZN", 700, 800);
-            String page2 = dailyRows("2026-01-06", "TSLA", 900, 1000);
+            String page2 = dailyRows("2026-01-06", "TSLA", 900, 1_000);
 
             mockServer
                     .expect(requestTo(DAILY_URL))
@@ -57,19 +57,19 @@ class FinraShortSaleClientTest {
                     .andExpect(jsonPath("$.offset").value(0))
                     .andRespond(
                             withSuccess(page0, MediaType.APPLICATION_JSON)
-                                    .headers(recordTotal(10001)));
+                                    .header("record-total", "10001"));
             mockServer
                     .expect(requestTo(DAILY_URL))
-                    .andExpect(jsonPath("$.offset").value(5000))
+                    .andExpect(jsonPath("$.offset").value(5_000))
                     .andRespond(
                             withSuccess(page1, MediaType.APPLICATION_JSON)
-                                    .headers(recordTotal(10001)));
+                                    .header("record-total", "10001"));
             mockServer
                     .expect(requestTo(DAILY_URL))
-                    .andExpect(jsonPath("$.offset").value(10000))
+                    .andExpect(jsonPath("$.offset").value(10_000))
                     .andRespond(
                             withSuccess(page2, MediaType.APPLICATION_JSON)
-                                    .headers(recordTotal(10001)));
+                                    .header("record-total", "10001"));
 
             // Act
             List<FinraRegShoDailyResponse> rows = client.fetchRegShoDaily(LocalDate.of(2026, 1, 6));
@@ -91,13 +91,13 @@ class FinraShortSaleClientTest {
                     .andExpect(jsonPath("$.compareFilters[0].compareType").value("EQUAL"))
                     .andExpect(jsonPath("$.compareFilters[0].fieldName").value("tradeReportDate"))
                     .andExpect(jsonPath("$.compareFilters[0].fieldValue").value("2026-01-06"))
-                    .andExpect(jsonPath("$.limit").value(5000))
+                    .andExpect(jsonPath("$.limit").value(5_000))
                     .andExpect(jsonPath("$.offset").value(0))
                     .andRespond(
                             withSuccess(
                                             dailyRows("2026-01-06", "AAPL", 100, 200),
                                             MediaType.APPLICATION_JSON)
-                                    .headers(recordTotal(1)));
+                                    .header("record-total", "1"));
 
             // Act
             client.fetchRegShoDaily(LocalDate.of(2026, 1, 6));
@@ -117,7 +117,7 @@ class FinraShortSaleClientTest {
                             withSuccess(
                                             dailyRows("2026-01-06", "AAPL", 100, 200),
                                             MediaType.APPLICATION_JSON)
-                                    .headers(recordTotal(1)));
+                                    .header("record-total", "1"));
 
             // Act
             client.fetchRegShoDaily(LocalDate.of(2026, 1, 6));
@@ -132,7 +132,8 @@ class FinraShortSaleClientTest {
             mockServer
                     .expect(requestTo(DAILY_URL))
                     .andRespond(
-                            withSuccess("[]", MediaType.APPLICATION_JSON).headers(recordTotal(0)));
+                            withSuccess("[]", MediaType.APPLICATION_JSON)
+                                    .header("record-total", "0"));
 
             // Act
             List<FinraRegShoDailyResponse> rows = client.fetchRegShoDaily(LocalDate.of(2026, 1, 6));
@@ -157,13 +158,13 @@ class FinraShortSaleClientTest {
                     .andExpect(jsonPath("$.dateRangeFilters[0].fieldName").value("settlementDate"))
                     .andExpect(jsonPath("$.dateRangeFilters[0].startDate").value("2026-05-10"))
                     .andExpect(jsonPath("$.dateRangeFilters[0].endDate").value("2026-06-19"))
-                    .andExpect(jsonPath("$.limit").value(5000))
+                    .andExpect(jsonPath("$.limit").value(5_000))
                     .andExpect(jsonPath("$.offset").value(0))
                     .andRespond(
                             withSuccess(
-                                            interestRows("AAPL", "2026-04-15", 134422787),
+                                            interestRows("AAPL", "2026-04-15", 134_422_787),
                                             MediaType.APPLICATION_JSON)
-                                    .headers(recordTotal(1)));
+                                    .header("record-total", "1"));
 
             // Act
             List<FinraConsolidatedShortInterestResponse> rows =
@@ -173,8 +174,8 @@ class FinraShortSaleClientTest {
             // Assert
             mockServer.verify();
             assertThat(rows).hasSize(1);
-            assertThat(rows.get(0).symbolCode()).isEqualTo("AAPL");
-            assertThat(rows.get(0).currentShortPositionQuantity())
+            assertThat(rows.getFirst().symbolCode()).isEqualTo("AAPL");
+            assertThat(rows.getFirst().currentShortPositionQuantity())
                     .isEqualByComparingTo("134422787");
         }
 
@@ -182,21 +183,21 @@ class FinraShortSaleClientTest {
         @DisplayName("record-total을 읽어 offset을 limit(5000)씩 증가시키며 전 페이지를 누적한다 (AC-PAGE-1)")
         void pagesByRecordTotalHeader() {
             String page0 =
-                    interestRows("AAPL", "2026-04-15", 134422787, "MSFT", "2026-04-15", 50000);
-            String page1 = interestRows("GOOG", "2026-04-30", 60000);
+                    interestRows("AAPL", "2026-04-15", 134_422_787, "MSFT", "2026-04-15", 50_000);
+            String page1 = interestRows("GOOG", "2026-04-30", 60_000);
 
             mockServer
                     .expect(requestTo(INTEREST_URL))
                     .andExpect(jsonPath("$.offset").value(0))
                     .andRespond(
                             withSuccess(page0, MediaType.APPLICATION_JSON)
-                                    .headers(recordTotal(5001)));
+                                    .header("record-total", "5001"));
             mockServer
                     .expect(requestTo(INTEREST_URL))
-                    .andExpect(jsonPath("$.offset").value(5000))
+                    .andExpect(jsonPath("$.offset").value(5_000))
                     .andRespond(
                             withSuccess(page1, MediaType.APPLICATION_JSON)
-                                    .headers(recordTotal(5001)));
+                                    .header("record-total", "5001"));
 
             // Act
             List<FinraConsolidatedShortInterestResponse> rows =
@@ -217,7 +218,8 @@ class FinraShortSaleClientTest {
             mockServer
                     .expect(requestTo(INTEREST_URL))
                     .andRespond(
-                            withSuccess("[]", MediaType.APPLICATION_JSON).headers(recordTotal(0)));
+                            withSuccess("[]", MediaType.APPLICATION_JSON)
+                                    .header("record-total", "0"));
 
             // Act
             List<FinraConsolidatedShortInterestResponse> rows =
@@ -231,12 +233,6 @@ class FinraShortSaleClientTest {
     }
 
     // --- fixture helpers ---
-
-    private static HttpHeaders recordTotal(int total) {
-        HttpHeaders headers = new HttpHeaders();
-        headers.add("record-total", String.valueOf(total));
-        return headers;
-    }
 
     /** {@code (symbol, short, total)} 트리플의 가변 인자로 regShoDaily JSON 배열을 만든다. */
     private static String dailyRows(String tradeReportDate, Object... symbolShortTotalTriples) {

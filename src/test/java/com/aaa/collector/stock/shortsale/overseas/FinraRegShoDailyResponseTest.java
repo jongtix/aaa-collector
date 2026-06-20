@@ -40,7 +40,7 @@ class FinraRegShoDailyResponseTest {
 
             // Assert
             assertThat(rows).hasSize(3);
-            FinraRegShoDailyResponse first = rows.get(0);
+            FinraRegShoDailyResponse first = rows.getFirst();
             assertThat(first.tradeReportDate()).isEqualTo(LocalDate.of(2026, 1, 6));
             assertThat(first.symbol()).isEqualTo("AAPL");
             assertThat(first.shortParQuantity()).isEqualByComparingTo("69397");
@@ -62,7 +62,7 @@ class FinraRegShoDailyResponseTest {
             List<FinraRegShoDailyResponse> rows =
                     objectMapper.readValue(withExtraField, new FinraRegShoDailyResponseListType());
             assertThat(rows).hasSize(1);
-            assertThat(rows.get(0).shortParQuantity()).isEqualByComparingTo("4891733");
+            assertThat(rows.getFirst().shortParQuantity()).isEqualByComparingTo("4891733");
         }
     }
 

@@ -33,17 +33,6 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 @DisplayName("Short Interest 범위 폴링+소스별 UPSERT 통합 테스트")
 class ShortSaleOverseasInterestIT {
 
-    private static final AtomicInteger SYMBOL_SEQ = new AtomicInteger();
-    private static final LocalDate TODAY = LocalDate.of(2026, 4, 20);
-
-    /**
-     * 메서드별 유니크 settlementDate. {@code findExistingSettlementDates}가 전역(stock 무관) 날짜 집합이라, 메서드 간 같은
-     * settlementDate를 쓰면 한 메서드의 적재가 다른 메서드에서 "기존 존재"로 오판된다(@Transactional 미사용, DB 공유).
-     */
-    private LocalDate uniqueSettlement() {
-        return LocalDate.of(2026, 4, 15).minusDays(SYMBOL_SEQ.get());
-    }
-
     @Container @ServiceConnection
     static final MySQLContainer<?> MYSQL = new MySQLContainer<>("mysql:8.4");
 
@@ -56,6 +45,17 @@ class ShortSaleOverseasInterestIT {
     @Autowired private ShortSaleOverseasInterestCollectionService service;
     @Autowired private StockRepository stockRepository;
     @Autowired private ShortSaleOverseasRepository repository;
+
+    private static final AtomicInteger SYMBOL_SEQ = new AtomicInteger();
+    private static final LocalDate TODAY = LocalDate.of(2026, 4, 20);
+
+    /**
+     * 메서드별 유니크 settlementDate. {@code findExistingSettlementDates}가 전역(stock 무관) 날짜 집합이라, 메서드 간 같은
+     * settlementDate를 쓰면 한 메서드의 적재가 다른 메서드에서 "기존 존재"로 오판된다(@Transactional 미사용, DB 공유).
+     */
+    private LocalDate uniqueSettlement() {
+        return LocalDate.of(2026, 4, 15).minusDays(SYMBOL_SEQ.get());
+    }
 
     private Stock savedUsStock() {
         String symbol = "US" + SYMBOL_SEQ.incrementAndGet();
@@ -100,13 +100,20 @@ class ShortSaleOverseasInterestIT {
 
         // Assert
         ShortSaleOverseas row = rowAt(stock, settlement);
-        assertThat(row.getShortInterest()).isEqualTo(134_422_787L);
-        assertThat(row.getShortInterestDate()).isEqualTo(settlement);
-        assertThat(row.getInterestCollectedAt()).isNotNull();
-        assertThat(row.getDailyCollectedAt()).isNull();
-        assertThat(row.getShortVolume()).isZero();
-        assertThat(row.getFloatShares()).isNull();
-        assertThat(row.getSiPctFloat()).isNull();
+        assertThat(row)
+                .satisfies(
+                        r -> {
+                            assertThat(r.getShortInterest()).isEqualTo(134_422_787L);
+                            assertThat(r.getShortInterestDate()).isEqualTo(settlement);
+                            assertThat(r.getInterestCollectedAt()).isNotNull();
+                            assertThat(r.getDailyCollectedAt()).isNull();
+                            assertThat(r.getShortVolume()).isZero();
+                        })
+                .satisfies(
+                        r -> {
+                            assertThat(r.getFloatShares()).isNull();
+                            assertThat(r.getSiPctFloat()).isNull();
+                        });
     }
 
     @Test
@@ -134,7 +141,7 @@ class ShortSaleOverseasInterestIT {
         Stock stock = savedUsStock();
         LocalDate settlement = uniqueSettlement();
         LocalDateTime dailyAt = LocalDateTime.of(2026, 4, 16, 10, 0);
-        repository.upsertDaily(stock.getId(), settlement, 7000L, 12000L, dailyAt, null, null);
+        repository.upsertDaily(stock.getId(), settlement, 7_000L, 12_000L, dailyAt, null, null);
         repository.upsertInterest(stock.getId(), settlement, 126_771_284L, LocalDateTime.now());
 
         when(finraClient.fetchConsolidatedShortInterest(any(), any()))
@@ -146,8 +153,8 @@ class ShortSaleOverseasInterestIT {
         // Assert: interest 갱신, Daily 보존
         ShortSaleOverseas row = rowAt(stock, settlement);
         assertThat(row.getShortInterest()).isEqualTo(140_000_000L);
-        assertThat(row.getShortVolume()).isEqualTo(7000L);
-        assertThat(row.getTotalVolume()).isEqualTo(12000L);
+        assertThat(row.getShortVolume()).isEqualTo(7_000L);
+        assertThat(row.getTotalVolume()).isEqualTo(12_000L);
         assertThat(row.getDailyCollectedAt()).isEqualTo(dailyAt);
     }
 
