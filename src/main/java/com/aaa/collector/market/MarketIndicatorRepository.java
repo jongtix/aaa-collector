@@ -1,6 +1,8 @@
 package com.aaa.collector.market;
 
 import com.aaa.collector.market.enums.IndicatorCode;
+import java.time.LocalDate;
+import java.util.Optional;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
@@ -40,4 +42,14 @@ public interface MarketIndicatorRepository extends JpaRepository<MarketIndicator
     /** 지표 코드별 저장 행 수 (멱등성 검증용). */
     @Query("SELECT COUNT(m) FROM MarketIndicator m WHERE m.indicatorCode = :indicatorCode")
     long countByIndicatorCode(@Param("indicatorCode") IndicatorCode indicatorCode);
+
+    /**
+     * 지표 코드별 최소 거래일 조회 — VIX 백필 anchor 결정용 (REQ-042, W-4, MA-02).
+     *
+     * <p>VIX 전체 이력 수집 후 DB에 저장된 가장 과거 거래일을 anchor(last_collected_date)로 설정한다. 수집 데이터 없으면 {@code
+     * Optional.empty()} 반환.
+     */
+    @Query("SELECT MIN(m.tradeDate) FROM MarketIndicator m WHERE m.indicatorCode = :indicatorCode")
+    Optional<LocalDate> findMinTradeDateByIndicatorCode(
+            @Param("indicatorCode") IndicatorCode indicatorCode);
 }

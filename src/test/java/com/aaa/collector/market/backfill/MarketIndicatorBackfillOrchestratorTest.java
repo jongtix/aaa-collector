@@ -13,10 +13,13 @@ import static org.mockito.Mockito.when;
 
 import com.aaa.collector.backfill.BackfillStatus;
 import com.aaa.collector.backfill.BackfillStatusRepository;
+import com.aaa.collector.market.MarketIndicatorRepository;
+import com.aaa.collector.market.enums.IndicatorCode;
 import com.aaa.collector.market.indicator.usdkrw.UsdkrwCollectionService;
 import com.aaa.collector.market.indicator.vix.VixCollectionService;
 import java.time.LocalDate;
 import java.util.List;
+import java.util.Optional;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -32,6 +35,7 @@ import org.springframework.test.util.ReflectionTestUtils;
 class MarketIndicatorBackfillOrchestratorTest {
 
     @Mock private BackfillStatusRepository backfillStatusRepository;
+    @Mock private MarketIndicatorRepository marketIndicatorRepository;
     @Mock private VixCollectionService vixCollectionService;
     @Mock private UsdkrwCollectionService usdkrwCollectionService;
 
@@ -41,7 +45,10 @@ class MarketIndicatorBackfillOrchestratorTest {
     void setUp() {
         orchestrator =
                 new MarketIndicatorBackfillOrchestrator(
-                        backfillStatusRepository, vixCollectionService, usdkrwCollectionService);
+                        backfillStatusRepository,
+                        marketIndicatorRepository,
+                        vixCollectionService,
+                        usdkrwCollectionService);
         // @Value 필드는 DI가 없으므로 테스트용 값 직접 주입
         ReflectionTestUtils.setField(orchestrator, "staleWeekdayThreshold", 3);
     }
@@ -79,32 +86,38 @@ class MarketIndicatorBackfillOrchestratorTest {
     class RunBackfillVix {
 
         @Test
-        @DisplayName("VIX PENDING — collectHistory 호출 후 COMPLETED (REQ-041~043)")
+        @DisplayName(
+                "VIX PENDING — collectHistory 후 MIN(trade_date) anchor로 COMPLETED (REQ-041~043, W-4)")
         void vix_pending_collectHistoryAndComplete() {
             BackfillStatus vixStatus = buildStatus(1L, "VIX", "PENDING");
+            LocalDate minDate = LocalDate.of(1990, 1, 2);
             when(backfillStatusRepository.findByStatusInAndTargetTypeOrderById(any(), anyString()))
                     .thenReturn(List.of(vixStatus));
             when(vixCollectionService.collectHistory()).thenReturn(100);
+            when(marketIndicatorRepository.findMinTradeDateByIndicatorCode(IndicatorCode.VIX))
+                    .thenReturn(Optional.of(minDate));
 
             orchestrator.runBackfill();
 
             verify(vixCollectionService).collectHistory();
             verify(backfillStatusRepository)
-                    .updateProgress(eq(1L), eq("COMPLETED"), any(LocalDate.class), eq(0), eq(100));
+                    .updateProgress(eq(1L), eq("COMPLETED"), eq(minDate), eq(0), eq(100));
         }
 
         @Test
-        @DisplayName("VIX 수집 0건 — COMPLETED (빈 히스토리 허용)")
-        void vix_zeroRows_stillCompleted() {
+        @DisplayName("VIX 수집 0건 — anchor=today fallback, COMPLETED (W-4: DB empty → today)")
+        void vix_zeroRows_anchorFallbackToday() {
             BackfillStatus vixStatus = buildStatus(1L, "VIX", "PENDING");
             when(backfillStatusRepository.findByStatusInAndTargetTypeOrderById(any(), anyString()))
                     .thenReturn(List.of(vixStatus));
             when(vixCollectionService.collectHistory()).thenReturn(0);
+            when(marketIndicatorRepository.findMinTradeDateByIndicatorCode(IndicatorCode.VIX))
+                    .thenReturn(Optional.empty()); // DB에 VIX 데이터 없음
 
             orchestrator.runBackfill();
 
             verify(backfillStatusRepository)
-                    .updateProgress(eq(1L), eq("COMPLETED"), any(), eq(0), eq(0));
+                    .updateProgress(eq(1L), eq("COMPLETED"), any(LocalDate.class), eq(0), eq(0));
         }
     }
 

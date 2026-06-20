@@ -2,6 +2,8 @@ package com.aaa.collector.market.backfill;
 
 import com.aaa.collector.backfill.BackfillStatus;
 import com.aaa.collector.backfill.BackfillStatusRepository;
+import com.aaa.collector.market.MarketIndicatorRepository;
+import com.aaa.collector.market.enums.IndicatorCode;
 import com.aaa.collector.market.indicator.usdkrw.UsdkrwCollectionService;
 import com.aaa.collector.market.indicator.vix.VixCollectionService;
 import java.time.DayOfWeek;
@@ -36,6 +38,7 @@ public class MarketIndicatorBackfillOrchestrator {
     private static final int PROGRESS_BATCH_SIZE = 10;
 
     private final BackfillStatusRepository backfillStatusRepository;
+    private final MarketIndicatorRepository marketIndicatorRepository;
     private final VixCollectionService vixCollectionService;
     private final UsdkrwCollectionService usdkrwCollectionService;
 
@@ -94,13 +97,17 @@ public class MarketIndicatorBackfillOrchestrator {
     /**
      * VIX 백필: 전체 이력 단일 호출 후 COMPLETED (REQ-041~043).
      *
-     * <p>CBOE/FRED/Yahoo는 단일 호출 지원 소스이므로 1회 수신으로 완료한다.
+     * <p>CBOE/FRED/Yahoo는 단일 호출 지원 소스이므로 1회 수신으로 완료한다. anchor(last_collected_date)는 DB에 저장된
+     * MIN(trade_date) 로 결정 — REQ-042 준수 (W-4, MA-02). 수집 데이터 없으면 today fallback.
      */
     private void processVix(BackfillStatus target) {
         int saved = vixCollectionService.collectHistory();
-        LocalDate anchor = LocalDate.now(KST); // 최과거 대신 today — 단일 호출이므로 anchor 불필요
+        LocalDate anchor =
+                marketIndicatorRepository
+                        .findMinTradeDateByIndicatorCode(IndicatorCode.VIX)
+                        .orElseGet(() -> LocalDate.now(KST)); // 수집 데이터 없으면 today fallback
         backfillStatusRepository.updateProgress(target.getId(), "COMPLETED", anchor, 0, saved);
-        log.info("[market-ind-backfill] VIX 백필 완료 — saved={}", saved);
+        log.info("[market-ind-backfill] VIX 백필 완료 — saved={}, anchor={}", saved, anchor);
     }
 
     /**
