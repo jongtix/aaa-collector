@@ -54,7 +54,7 @@ class FinraConsolidatedShortInterestResponseTest {
 
             // Assert
             assertThat(rows).hasSize(1);
-            FinraConsolidatedShortInterestResponse row = rows.get(0);
+            FinraConsolidatedShortInterestResponse row = rows.getFirst();
             assertThat(row.symbolCode()).isEqualTo("AAPL");
             assertThat(row.settlementDate()).isEqualTo(LocalDate.of(2026, 4, 15));
             assertThat(row.currentShortPositionQuantity()).isEqualByComparingTo("134422787");
@@ -75,7 +75,7 @@ class FinraConsolidatedShortInterestResponseTest {
             List<FinraConsolidatedShortInterestResponse> rows =
                     objectMapper.readValue(
                             revisedRow, new FinraConsolidatedShortInterestResponseListType());
-            assertThat(rows.get(0).revisionFlag()).isEqualTo("R");
+            assertThat(rows.getFirst().revisionFlag()).isEqualTo("R");
         }
 
         @Test
@@ -86,7 +86,7 @@ class FinraConsolidatedShortInterestResponseTest {
                     objectMapper.readValue(
                             AAPL_SETTLEMENT_ROW,
                             new FinraConsolidatedShortInterestResponseListType());
-            assertThat(rows.get(0).symbolCode()).isEqualTo("AAPL");
+            assertThat(rows.getFirst().symbolCode()).isEqualTo("AAPL");
         }
     }
 

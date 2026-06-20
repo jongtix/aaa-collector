@@ -10,7 +10,7 @@ import org.springframework.test.context.ActiveProfiles;
 
 @SpringBootTest
 @ActiveProfiles({"test", "smoke"})
-class AaaCollectorApplicationTests extends SmokeContextTest {
+class AaaCollectorApplicationTests extends SmokeMockitoBase {
 
     @Autowired private ApplicationContext context;
 

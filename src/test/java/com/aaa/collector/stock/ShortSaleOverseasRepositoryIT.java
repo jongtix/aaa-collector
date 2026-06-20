@@ -163,14 +163,21 @@ class ShortSaleOverseasRepositoryIT {
 
             // Assert
             ShortSaleOverseas row = findRow(aapl.getId(), settlementDate);
-            assertThat(row.getShortInterest()).isEqualTo(134_422_787L);
-            assertThat(row.getShortInterestDate()).isEqualTo(settlementDate);
-            assertThat(row.getInterestCollectedAt()).isNotNull();
             // V7 NOT NULL DEFAULT 0이라 short_volume은 0이지만 daily_collected_at은 NULL → 미수집 구분
-            assertThat(row.getShortVolume()).isEqualTo(0L);
-            assertThat(row.getDailyCollectedAt()).isNull();
-            assertThat(row.getFloatShares()).isNull();
-            assertThat(row.getSiPctFloat()).isNull();
+            assertThat(row)
+                    .satisfies(
+                            r -> {
+                                assertThat(r.getShortInterest()).isEqualTo(134_422_787L);
+                                assertThat(r.getShortInterestDate()).isEqualTo(settlementDate);
+                                assertThat(r.getInterestCollectedAt()).isNotNull();
+                                assertThat(r.getShortVolume()).isEqualTo(0L);
+                                assertThat(r.getDailyCollectedAt()).isNull();
+                            })
+                    .satisfies(
+                            r -> {
+                                assertThat(r.getFloatShares()).isNull();
+                                assertThat(r.getSiPctFloat()).isNull();
+                            });
         }
 
         @Test
@@ -200,7 +207,7 @@ class ShortSaleOverseasRepositoryIT {
             Stock aapl = savedUsStock();
             LocalDate date = LocalDate.of(2026, 4, 15);
             LocalDateTime dailyAt = LocalDateTime.of(2026, 4, 16, 10, 0);
-            repository.upsertDaily(aapl.getId(), date, 7000L, 12000L, dailyAt, null, null);
+            repository.upsertDaily(aapl.getId(), date, 7_000L, 12_000L, dailyAt, null, null);
             repository.upsertInterest(aapl.getId(), date, 126_771_284L, LocalDateTime.now());
 
             // Act: revision 갱신값 UPSERT (같은 settlementDate, 수정 잔고)
@@ -209,8 +216,8 @@ class ShortSaleOverseasRepositoryIT {
             // Assert
             ShortSaleOverseas row = findRow(aapl.getId(), date);
             assertThat(row.getShortInterest()).isEqualTo(140_000_000L);
-            assertThat(row.getShortVolume()).isEqualTo(7000L);
-            assertThat(row.getTotalVolume()).isEqualTo(12000L);
+            assertThat(row.getShortVolume()).isEqualTo(7_000L);
+            assertThat(row.getTotalVolume()).isEqualTo(12_000L);
             assertThat(row.getDailyCollectedAt()).isEqualTo(dailyAt);
         }
     }

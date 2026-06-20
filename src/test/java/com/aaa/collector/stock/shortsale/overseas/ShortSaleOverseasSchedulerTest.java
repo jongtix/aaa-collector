@@ -1,6 +1,7 @@
 package com.aaa.collector.stock.shortsale.overseas;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.inOrder;
@@ -93,7 +94,7 @@ class ShortSaleOverseasSchedulerTest {
             doThrow(new RuntimeException("FINRA 장애")).when(dailyService).collectDaily(any());
 
             // Act & Assert: 예외가 전파되지 않음(흡수)
-            scheduler.collect();
+            assertThatCode(scheduler::collect).doesNotThrowAnyException();
         }
     }
 
