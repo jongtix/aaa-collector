@@ -1,0 +1,196 @@
+package com.aaa.collector.backfill;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+
+import java.time.LocalDate;
+import java.time.LocalDateTime;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Nested;
+import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
+import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.test.context.ActiveProfiles;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import org.testcontainers.containers.MySQLContainer;
+import org.testcontainers.junit.jupiter.Container;
+import org.testcontainers.junit.jupiter.Testcontainers;
+
+@SpringBootTest
+@ActiveProfiles({"test", "db-integration"})
+@Testcontainers
+@DisplayName("BackfillStatusRepository 통합 테스트 (V24 backfill_status DDL 매핑)")
+class BackfillStatusRepositoryTest {
+
+    @Container @ServiceConnection
+    static final MySQLContainer<?> MYSQL = new MySQLContainer<>("mysql:8.4");
+
+    @MockitoBean
+    @SuppressWarnings("unused")
+    private StringRedisTemplate redisTemplate;
+
+    @Autowired private BackfillStatusRepository backfillStatusRepository;
+    @Autowired private JdbcTemplate jdbcTemplate;
+
+    @BeforeEach
+    void cleanUp() {
+        // 공유 Testcontainers MySQL — 테스트 간 행 격리를 위해 매 테스트 전 비운다.
+        backfillStatusRepository.deleteAllInBatch();
+    }
+
+    private static BackfillStatus.BackfillStatusBuilder row(String targetCode, String dataTable) {
+        return BackfillStatus.builder()
+                .targetType("STOCK")
+                .targetCode(targetCode)
+                .dataTable(dataTable)
+                .status("PENDING");
+    }
+
+    @Nested
+    @DisplayName("UNIQUE 제약 uk_backfill_status (target_type, target_code, data_table)")
+    class UniqueConstraint {
+
+        @Test
+        @DisplayName("동일 (target_type, target_code, data_table) 중복 저장 — 제약 위반 예외")
+        void duplicateKey_throwsConstraintViolation() {
+            // Arrange
+            backfillStatusRepository.saveAndFlush(row("005930", "daily_ohlcv").build());
+
+            // Act & Assert
+            assertThatThrownBy(
+                            () ->
+                                    backfillStatusRepository.saveAndFlush(
+                                            row("005930", "daily_ohlcv").build()))
+                    .isInstanceOf(DataIntegrityViolationException.class);
+        }
+
+        @Test
+        @DisplayName("동일 종목·다른 data_table — 독립 행으로 저장됨")
+        void sameTargetDifferentTable_storedIndependently() {
+            backfillStatusRepository.saveAndFlush(row("005930", "daily_ohlcv").build());
+            backfillStatusRepository.saveAndFlush(row("005930", "investor_trend").build());
+
+            assertThat(backfillStatusRepository.count()).isEqualTo(2L);
+        }
+    }
+
+    @Nested
+    @DisplayName("DDL DEFAULT 값 (Flyway 단독 관리)")
+    class DefaultValues {
+
+        @Test
+        @DisplayName("status/stale_count/attempt_count 미지정 INSERT — DB DEFAULT 적용 (PENDING/0/0)")
+        void omittedColumns_applyDdlDefaults() {
+            // Arrange — status/stale_count/attempt_count/last_collected_date 컬럼을 생략한 네이티브 INSERT
+            LocalDateTime now = LocalDateTime.now();
+            jdbcTemplate.update(
+                    "INSERT INTO backfill_status "
+                            + "(target_type, target_code, data_table, created_at, updated_at) "
+                            + "VALUES (?, ?, ?, ?, ?)",
+                    "STOCK",
+                    "000660",
+                    "credit_balance",
+                    now,
+                    now);
+
+            // Act
+            BackfillStatus saved = backfillStatusRepository.findAll().getFirst();
+
+            // Assert
+            assertThat(saved.getStatus()).isEqualTo("PENDING");
+            assertThat(saved.getStaleCount()).isZero();
+            assertThat(saved.getAttemptCount()).isZero();
+        }
+
+        @Test
+        @DisplayName("last_collected_date 미지정 — NULL 허용")
+        void lastCollectedDate_isNullable() {
+            LocalDateTime now = LocalDateTime.now();
+            jdbcTemplate.update(
+                    "INSERT INTO backfill_status "
+                            + "(target_type, target_code, data_table, created_at, updated_at) "
+                            + "VALUES (?, ?, ?, ?, ?)",
+                    "STOCK",
+                    "035420",
+                    "short_sale_domestic",
+                    now,
+                    now);
+
+            BackfillStatus saved = backfillStatusRepository.findAll().getFirst();
+
+            assertThat(saved.getLastCollectedDate()).isNull();
+            assertThat(saved.getLastRowCount()).isNull();
+            assertThat(saved.getLastError()).isNull();
+        }
+    }
+
+    @Nested
+    @DisplayName("인덱스 idx_backfill_status_status")
+    class StatusIndex {
+
+        @Test
+        @DisplayName("status 컬럼 인덱스가 존재한다")
+        void statusIndex_exists() {
+            Integer indexCount =
+                    jdbcTemplate.queryForObject(
+                            "SELECT COUNT(*) FROM information_schema.statistics "
+                                    + "WHERE table_schema = DATABASE() "
+                                    + "AND table_name = 'backfill_status' "
+                                    + "AND index_name = 'idx_backfill_status_status'",
+                            Integer.class);
+
+            assertThat(indexCount).isNotNull().isPositive();
+        }
+    }
+
+    @Nested
+    @DisplayName("엔티티 매핑 round-trip")
+    class EntityMapping {
+
+        private BackfillStatus fullRow() {
+            return BackfillStatus.builder()
+                    .targetType("STOCK")
+                    .targetCode("AAPL")
+                    .dataTable("daily_ohlcv")
+                    .status("IN_PROGRESS")
+                    .lastCollectedDate(LocalDate.of(2024, 6, 7))
+                    .staleCount(2)
+                    .lastRowCount(61)
+                    .attemptCount(5)
+                    .lastError("timeout")
+                    .build();
+        }
+
+        @Test
+        @DisplayName("모든 비즈니스 필드 round-trip 저장·조회 일치")
+        void allBusinessFields_roundTrip() {
+            BackfillStatus persisted = backfillStatusRepository.saveAndFlush(fullRow());
+
+            BackfillStatus found =
+                    backfillStatusRepository.findById(persisted.getId()).orElseThrow();
+
+            // id/auditing 필드는 별도 테스트(auditing_populated)에서 검증 — 여기선 비즈니스 필드 일치만 본다.
+            assertThat(found)
+                    .usingRecursiveComparison()
+                    .ignoringFields("id", "createdAt", "updatedAt")
+                    .isEqualTo(fullRow());
+        }
+
+        @Test
+        @DisplayName("BaseEntity 감사 필드가 채워진다")
+        void auditing_populated() {
+            BackfillStatus persisted = backfillStatusRepository.saveAndFlush(fullRow());
+
+            BackfillStatus found =
+                    backfillStatusRepository.findById(persisted.getId()).orElseThrow();
+
+            assertThat(found.getCreatedAt()).isNotNull();
+            assertThat(found.getUpdatedAt()).isNotNull();
+        }
+    }
+}
