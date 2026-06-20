@@ -1,13 +1,19 @@
 package com.aaa.collector.stock.backfill;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.when;
 
 import com.aaa.collector.backfill.BackfillStatus;
 import com.aaa.collector.backfill.BackfillStatusRepository;
 import com.aaa.collector.backfill.BackfillWindowResult;
 import com.aaa.collector.kis.gate.KeyLeaseRegistry.LeaseSession;
+import com.aaa.collector.kis.token.KisTokenIssueException;
 import com.aaa.collector.stock.Stock;
 import com.aaa.collector.stock.daily.DomesticDailyOhlcvCollectionService;
 import com.aaa.collector.stock.daily.OverseasDailyOhlcvCollectionService;
@@ -27,6 +33,7 @@ import org.springframework.boot.testcontainers.service.connection.ServiceConnect
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 import org.testcontainers.containers.MySQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
@@ -52,7 +59,8 @@ class BackfillWindowExecutorTransactionTest {
     @MockitoBean private CreditBalanceCollectionService creditBalanceService;
 
     @Autowired private BackfillWindowExecutor windowExecutor;
-    @Autowired private BackfillStatusRepository backfillStatusRepository;
+    // SpyBean: 실제 구현 유지, updateProgress 선택적 stubbing 가능 (AC-4.2 롤백 테스트)
+    @MockitoSpyBean private BackfillStatusRepository backfillStatusRepository;
 
     private LeaseSession session;
     private Stock domesticStock;
@@ -123,6 +131,87 @@ class BackfillWindowExecutorTransactionTest {
             BackfillStatus updated =
                     backfillStatusRepository.findById(status.getId()).orElseThrow();
             assertThat(updated.getStatus()).isEqualTo("COMPLETED");
+        }
+    }
+
+    @Nested
+    @DisplayName("AC-4.2 트랜잭션 롤백")
+    class TransactionRollback {
+
+        @Test
+        @DisplayName(
+                "executeWindow() — updateProgress 예외 시 수집 데이터·status 변경 모두 롤백된다 (REQ-BACKFILL-031)")
+        void executeWindow_rollbackOnUpdateProgressFailure_neitherDataNorStatusPersists()
+                throws InterruptedException {
+            // Arrange
+            BackfillStatus status = seedPending("005930", "daily_ohlcv");
+            String originalStatus = status.getStatus(); // PENDING
+            LocalDate originalDate = status.getLastCollectedDate(); // null
+
+            LocalDate oldest = LocalDate.of(2025, 1, 1);
+            when(domesticOhlcvService.collectWindow(any(), any(), any(), any()))
+                    .thenReturn(new BackfillWindowResult(oldest, 50));
+
+            // updateProgress 호출 시 RuntimeException 발생 → 트랜잭션 롤백
+            doThrow(new RuntimeException("DB write failure — rollback trigger"))
+                    .when(backfillStatusRepository)
+                    .updateProgress(anyLong(), anyString(), any(), anyInt(), any());
+
+            // Act & Assert — 예외가 전파됨
+            assertThatThrownBy(() -> windowExecutor.executeWindow(status, domesticStock, session))
+                    .isInstanceOf(RuntimeException.class)
+                    .hasMessageContaining("DB write failure");
+
+            // Assert — 롤백: status 행은 원래 값 유지
+            BackfillStatus afterRollback =
+                    backfillStatusRepository.findById(status.getId()).orElseThrow();
+            assertThat(afterRollback.getStatus()).isEqualTo(originalStatus);
+            assertThat(afterRollback.getLastCollectedDate()).isEqualTo(originalDate);
+        }
+    }
+
+    @Nested
+    @DisplayName("AC-6.3 오류 분류 — retryable/non-retryable (REQ-BACKFILL-030)")
+    class ErrorClassification {
+
+        @Test
+        @DisplayName(
+                "executeWindowOnError() — retryable=true → status=IN_PROGRESS, last_error 기록 (AC-6.3a)")
+        void executeWindowOnError_retryableError_keepsInProgress() {
+            // Arrange
+            BackfillStatus status = seedPending("005930", "daily_ohlcv");
+            String errorMsg = "HTTP 500 Internal Server Error";
+
+            // Act
+            windowExecutor.executeWindowOnError(status, errorMsg, true);
+
+            // Assert
+            BackfillStatus updated =
+                    backfillStatusRepository.findById(status.getId()).orElseThrow();
+            assertThat(updated.getStatus()).isEqualTo("IN_PROGRESS");
+            assertThat(updated.getLastError()).contains("HTTP 500");
+            // last_collected_date는 변경되지 않음
+            assertThat(updated.getLastCollectedDate()).isNull();
+        }
+
+        @Test
+        @DisplayName(
+                "executeWindowOnError() — KisTokenIssueException(비재시도) → status=FAILED (AC-6.3b)")
+        void executeWindowOnError_nonRetryableKisTokenError_setsFailed() {
+            // Arrange
+            BackfillStatus status = seedPending("005930", "daily_ohlcv");
+            KisTokenIssueException tokenEx =
+                    new KisTokenIssueException("test-alias", new RuntimeException("auth error"));
+            String errorMsg = tokenEx.getMessage();
+            boolean retryable = windowExecutor.isRetryable(tokenEx);
+
+            // Act
+            windowExecutor.executeWindowOnError(status, errorMsg, retryable);
+
+            // Assert
+            BackfillStatus updated =
+                    backfillStatusRepository.findById(status.getId()).orElseThrow();
+            assertThat(updated.getStatus()).isEqualTo("FAILED");
         }
     }
 
