@@ -32,6 +32,9 @@ public class MarketIndicatorBackfillOrchestrator {
     @Value("${aaa.market-indicator.backfill.usdkrw.stale-weekday-threshold:7}")
     private int staleWeekdayThreshold;
 
+    /** DB updateProgress 중간 배칭 단위 — 매 N일마다 IN_PROGRESS 갱신 (W-3, MA-01). */
+    private static final int PROGRESS_BATCH_SIZE = 10;
+
     private final BackfillStatusRepository backfillStatusRepository;
     private final VixCollectionService vixCollectionService;
     private final UsdkrwCollectionService usdkrwCollectionService;
@@ -106,11 +109,19 @@ public class MarketIndicatorBackfillOrchestrator {
      * <p>평일 빈 배열 시 staleWeekdayCount++, 데이터 수신 시 0 리셋. N≥staleWeekdayThreshold → COMPLETED.
      * last_collected_date = 최과거 저장 거래일(anchor).
      */
+    /**
+     * USDKRW 백필: staleWeekdayCount 기반 날짜 루프 (REQ-044).
+     *
+     * <p>평일 빈 배열 시 staleWeekdayCount++, 데이터 수신 시 0 리셋. N≥staleWeekdayThreshold → COMPLETED.
+     * last_collected_date = 최과거 저장 거래일(anchor). IN_PROGRESS DB 갱신은 PROGRESS_BATCH_SIZE(10)일마다 배칭하여
+     * 불필요한 UPDATE를 줄인다(W-3, MA-01). 루프 종료 후 반드시 최종 updateProgress 호출.
+     */
     private void processUsdkrw(BackfillStatus target) {
         LocalDate cursor = LocalDate.now(KST);
         LocalDate anchor = null;
         int staleWeekdayCount = 0;
         int totalSaved = 0;
+        int daysSinceLastUpdate = 0;
 
         while (staleWeekdayCount < staleWeekdayThreshold) {
             // 주말 skip
@@ -124,8 +135,13 @@ public class MarketIndicatorBackfillOrchestrator {
                 totalSaved += saved;
                 staleWeekdayCount = 0;
                 anchor = (anchor == null || cursor.isBefore(anchor)) ? cursor : anchor;
-                backfillStatusRepository.updateProgress(
-                        target.getId(), "IN_PROGRESS", anchor, 0, totalSaved);
+                daysSinceLastUpdate++;
+                // 매 PROGRESS_BATCH_SIZE일마다 중간 IN_PROGRESS 저장
+                if (daysSinceLastUpdate >= PROGRESS_BATCH_SIZE) {
+                    backfillStatusRepository.updateProgress(
+                            target.getId(), "IN_PROGRESS", anchor, 0, totalSaved);
+                    daysSinceLastUpdate = 0;
+                }
                 log.debug("[usdkrw-backfill] 수집 완료 — date={}, saved={}", cursor, saved);
             } else {
                 staleWeekdayCount++;
@@ -138,6 +154,7 @@ public class MarketIndicatorBackfillOrchestrator {
             cursor = cursor.minusDays(1);
         }
 
+        // 루프 종료 후 반드시 최종 updateProgress 호출
         LocalDate lastCollected = anchor != null ? anchor : LocalDate.now(KST);
         backfillStatusRepository.updateProgress(
                 target.getId(), "COMPLETED", lastCollected, 0, totalSaved);

@@ -7,6 +7,7 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -141,9 +142,34 @@ class MarketIndicatorBackfillOrchestratorTest {
 
             orchestrator.runBackfill();
 
-            // 최소한 한 번은 updateProgress IN_PROGRESS(데이터 있음)
+            // 최소한 한 번은 updateProgress(데이터 있음)
             verify(backfillStatusRepository, atLeastOnce())
                     .updateProgress(eq(2L), anyString(), any(), anyInt(), anyInt());
+        }
+
+        @Test
+        @DisplayName("USDKRW — 10일 미만 수집 시 IN_PROGRESS 갱신 없이 COMPLETED 1회만 (W-3, MA-01)")
+        void usdkrw_lessThan10Days_noInProgressUpdate() {
+            // staleWeekdayThreshold=3, 5일 데이터 수신 후 stale
+            BackfillStatus status = buildStatus(2L, "USDKRW", "PENDING");
+            when(backfillStatusRepository.findByStatusInAndTargetTypeOrderById(any(), anyString()))
+                    .thenReturn(List.of(status));
+            when(usdkrwCollectionService.collectDailyForBackfill(any(LocalDate.class)))
+                    .thenReturn(1) // 5회
+                    .thenReturn(1)
+                    .thenReturn(1)
+                    .thenReturn(1)
+                    .thenReturn(1)
+                    .thenReturn(0); // 이후 stale
+
+            orchestrator.runBackfill();
+
+            // 5일 < PROGRESS_BATCH_SIZE(10) → IN_PROGRESS 갱신 없음
+            verify(backfillStatusRepository, never())
+                    .updateProgress(eq(2L), eq("IN_PROGRESS"), any(), anyInt(), anyInt());
+            // 루프 종료 후 COMPLETED 1회
+            verify(backfillStatusRepository, times(1))
+                    .updateProgress(eq(2L), eq("COMPLETED"), any(), anyInt(), anyInt());
         }
     }
 
