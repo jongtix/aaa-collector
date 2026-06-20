@@ -32,8 +32,8 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.test.util.ReflectionTestUtils;
 
 @ExtendWith(MockitoExtension.class)
-@DisplayName("ShortSaleOverseasCollectionService — Daily 합산+매칭+검증")
-class ShortSaleOverseasCollectionServiceDailyTest {
+@DisplayName("ShortSaleOverseasDailyCollectionService — Daily 합산+매칭+검증")
+class ShortSaleOverseasDailyCollectionServiceTest {
 
     private static final LocalDate TRADE_DATE = LocalDate.of(2026, 1, 6);
 
@@ -42,12 +42,12 @@ class ShortSaleOverseasCollectionServiceDailyTest {
     @Mock private ShortSaleOverseasRepository shortSaleOverseasRepository;
     @Mock private BatchMetrics batchMetrics;
 
-    private ShortSaleOverseasCollectionService service;
+    private ShortSaleOverseasDailyCollectionService service;
 
     @BeforeEach
     void setUp() {
         service =
-                new ShortSaleOverseasCollectionService(
+                new ShortSaleOverseasDailyCollectionService(
                         finraClient, stockRepository, shortSaleOverseasRepository, batchMetrics);
         // T5 LOCF forward 배치 조회 — Daily 테스트는 forward 매칭 없음(빈 Map) 기본값으로 둔다(lenient)
         Mockito.lenient()
@@ -93,7 +93,7 @@ class ShortSaleOverseasCollectionServiceDailyTest {
                                     dailyRow("AAPL", 198_716, 588_753)));
 
             // Act
-            ShortSaleOverseasCollectionService.DailyResult result =
+            ShortSaleOverseasDailyCollectionService.DailyResult result =
                     service.collectDaily(TRADE_DATE);
 
             // Assert: short_volume=5159846, total_volume=18442863 합산
@@ -124,7 +124,7 @@ class ShortSaleOverseasCollectionServiceDailyTest {
                     .thenReturn(List.of(dailyRow("AAPL", 100, 200), dailyRow("ZZZZ", 300, 400)));
 
             // Act
-            ShortSaleOverseasCollectionService.DailyResult result =
+            ShortSaleOverseasDailyCollectionService.DailyResult result =
                     service.collectDaily(TRADE_DATE);
 
             // Assert
@@ -184,7 +184,7 @@ class ShortSaleOverseasCollectionServiceDailyTest {
                                     dailyRow("GOOG", 300, 400)));
 
             // Act
-            ShortSaleOverseasCollectionService.DailyResult result =
+            ShortSaleOverseasDailyCollectionService.DailyResult result =
                     service.collectDaily(TRADE_DATE);
 
             // Assert: GOOG만 적재
@@ -206,7 +206,7 @@ class ShortSaleOverseasCollectionServiceDailyTest {
             when(finraClient.fetchRegShoDaily(TRADE_DATE)).thenReturn(List.of());
 
             // Act
-            ShortSaleOverseasCollectionService.DailyResult result =
+            ShortSaleOverseasDailyCollectionService.DailyResult result =
                     service.collectDaily(TRADE_DATE);
 
             // Assert

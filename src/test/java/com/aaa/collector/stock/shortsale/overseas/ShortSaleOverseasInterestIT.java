@@ -53,7 +53,7 @@ class ShortSaleOverseasInterestIT {
 
     @MockitoBean private FinraShortSaleClient finraClient;
 
-    @Autowired private ShortSaleOverseasCollectionService service;
+    @Autowired private ShortSaleOverseasInterestCollectionService service;
     @Autowired private StockRepository stockRepository;
     @Autowired private ShortSaleOverseasRepository repository;
 
