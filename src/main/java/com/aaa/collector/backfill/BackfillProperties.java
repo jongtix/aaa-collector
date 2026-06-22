@@ -3,7 +3,7 @@ package com.aaa.collector.backfill;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 
 /**
- * 백필 스케줄러·오케스트레이터 설정 프로퍼티 (SPEC-COLLECTOR-BACKFILL-001 T7).
+ * 백필 스케줄러·오케스트레이터 설정 프로퍼티 (SPEC-COLLECTOR-BACKFILL-001 T7, SPEC-COLLECTOR-BACKFILL-002 T1).
  *
  * <p>{@code aaa.backfill.*} 프리픽스로 바인딩된다. 모든 필드는 기본값을 보유하므로 YAML 미설정 시에도 동작한다.
  *
@@ -11,10 +11,14 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
  *
  * <ul>
  *   <li>{@code cron}: 02:00 KST — 장 마감(16:00~21:00) 이후 비즈니스 임팩트 최소 시각(AC-7.2 회피 시각대).
- *   <li>{@code perRunStockCap}: 50 — 한 cron 실행에서 처리할 최대 종목 수(KIS rate-limit 보호).
- *   <li>{@code perRunWindowCap}: 100 — 한 cron 실행에서 처리할 최대 윈도우 수(DB 풀 점유 상한 ADR-027).
+ *   <li>{@code perRunCompletionCap}: 10 — 한 cron 회차에서 inner 완성 루프를 개시할 최대 status 슬롯
+ *       수(REQ-BACKFILL-054, AC-3.1). 각 슬롯은 status 1개를 COMPLETED까지 반복하며, 캡은 status 수 단위(window 수가
+ *       아님).
+ *   <li>{@code maxWindowsPerTarget}: 120 — status당 inner 루프 최대 윈도우 횟수 공통 하드 캡(REQ-BACKFILL-053a).
+ *       SPAN 150 달력일 × 120 window ≈ 18,000 달력일 ≈ 49년(~9,000 거래일) 커버 — 최장 상장 종목도 단일 회차 완성 여유. 정상 종료는
+ *       그룹별 종료 정책으로 상한 도달 전에 발생한다. GROUP_A·GROUP_B 모두 적용되는 최종 방어선.
  *   <li>{@code staleWindowThreshold}: 3 — 그룹 B 연속 무전진 종료 임계(REQ-BACKFILL-014).
- *   <li>{@code spanCalendarDays}: 150 — 그룹 A SPAN 폭(REQ-BACKFILL-013a). 100거래일 충족 여유.
+ *   <li>{@code spanCalendarDays}: 150 — 그룹 A SPAN 폭(달력일). 100거래일 충족 여유(REQ-BACKFILL-013a).
  *   <li>{@code anchorSkipMax}: 10 — investor_trend rt_cd=2 anchor 보정 최대 재시도(REQ-BACKFILL-016).
  * </ul>
  */
@@ -24,11 +28,20 @@ public class BackfillProperties {
     /** cron 표현식 (기본: 02:00 KST 매일). fixedDelay 금지 — Virtual Threads 버그(CLAUDE.md). */
     private String cron = "0 0 2 * * *";
 
-    /** 한 cron 실행에서 처리할 최대 종목 수 (KIS rate-limit 보호, AC-7.2b). */
-    private int perRunStockCap = 50;
+    /**
+     * 한 cron 회차에서 inner 완성 루프를 개시할 최대 status 슬롯 수 (REQ-BACKFILL-054, AC-3.1).
+     *
+     * <p>캡은 window 수가 아닌 status(종목×데이터테이블) 수 단위다. inner 루프를 개시한 status 1개가 슬롯 1개를 소비한다.
+     */
+    private int perRunCompletionCap = 10;
 
-    /** 한 cron 실행에서 처리할 최대 윈도우 수 (DB 풀 점유 상한, ADR-027, AC-7.2b). */
-    private int perRunWindowCap = 100;
+    /**
+     * status당 inner 루프 최대 윈도우 반복 횟수 — 무한 루프 하드 방어 공통 상한 (REQ-BACKFILL-053a).
+     *
+     * <p>GROUP_A·GROUP_B 모두 적용되는 최종 방어선. 이 상한에 도달하면 status를 IN_PROGRESS로 남긴 채 다음 cron에서 재개한다. SPAN
+     * 150 달력일 × 120 window ≈ 49년 커버.
+     */
+    private int maxWindowsPerTarget = 120;
 
     /** 그룹 B 연속 무전진 종료 임계 (REQ-BACKFILL-014). */
     private int staleWindowThreshold = 3;
@@ -47,20 +60,20 @@ public class BackfillProperties {
         this.cron = cron;
     }
 
-    public int getPerRunStockCap() {
-        return perRunStockCap;
+    public int getPerRunCompletionCap() {
+        return perRunCompletionCap;
     }
 
-    public void setPerRunStockCap(int perRunStockCap) {
-        this.perRunStockCap = perRunStockCap;
+    public void setPerRunCompletionCap(int perRunCompletionCap) {
+        this.perRunCompletionCap = perRunCompletionCap;
     }
 
-    public int getPerRunWindowCap() {
-        return perRunWindowCap;
+    public int getMaxWindowsPerTarget() {
+        return maxWindowsPerTarget;
     }
 
-    public void setPerRunWindowCap(int perRunWindowCap) {
-        this.perRunWindowCap = perRunWindowCap;
+    public void setMaxWindowsPerTarget(int maxWindowsPerTarget) {
+        this.maxWindowsPerTarget = maxWindowsPerTarget;
     }
 
     public int getStaleWindowThreshold() {
