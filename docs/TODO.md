@@ -121,6 +121,12 @@
 - [ ] `stream:system:collector` 장애 이벤트 발행
 - [ ] NAS 자원 모니터링 (디스크/RAM/CPU) + 3단계 임계치 알림
 
+### 1-10. 운영 이슈 수정 (배포 후 결함 대응)
+- [x] KOREAEXIM USDKRW Primary TLS 검증 실패 — 1차로 JVM AIA chasing 활성화(중간 CA 보완, issue #24, v1.27.1), 이후 요청 호스트를 `www`→`oapi.koreaexim.go.kr`(표준 CA)로 교정해 AIA 설정 없이 근본 해결(issue #21, v1.27.3). 한국수출입은행 Primary 정상화 → 상시 Yahoo fallback 해소
+- [x] `ranking_snapshots` Tier-1 전환 — collector DELETE 권한 의존 제거(C2 멱등 DELETE·M3 7일 prune 폐기, `INSERT IGNORE` + `UNIQUE(market, snapshot_date, symbol)` 멱등). prune DELETE의 `@Transactional` 롤백으로 스냅샷이 매 cycle 미저장 → 등급 분류 매일 보류되던 문제 해소 (ADR-026 Tier-1, issue #20, v1.27.2)
+- [x] YAHOO_VIX 404 — `^VIX` 심볼 URI 이중인코딩(`%255EVIX`) 수정(사전인코딩 → 리터럴 `^VIX`) + `timestamps` null 가드 추가 (issue #22, v1.27.3)
+- [x] 국내 수급 배치 미국 종목 혼입 제거 — `StockRepository.findAllActiveDomesticTradable()`(Market IN KOSPI/KOSDAQ/KRX ∩ STOCK·ETF) 신설, 수급 배치가 시장 무관 조회 대신 이를 사용. US 종목 빈 응답으로 16:00마다 868건 WARN 드랍되던 문제 해소 (issue #23, v1.27.3)
+
 ### 완료 기준
 - [x] GitHub Push → GHCR 이미지 빌드 → Watchtower 자동 업데이트 흐름 동작 확인 (1-3에서 구현)
 - [ ] 수집 누락률 < 1% (장중 기준)
