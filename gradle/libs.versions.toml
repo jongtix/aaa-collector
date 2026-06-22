@@ -1,8 +1,8 @@
 [versions]
 spring-boot = "3.5.15"
 dependency-management = "1.1.7"
-spotless = "8.6.0"
-spotbugs = "6.5.6"
+spotless = "8.7.0"
+spotbugs = "6.5.8"
 pmd = "7.25.0"
 google-java-format = "1.35.0"
 archunit = "1.4.2"
@@ -12,7 +12,7 @@ bucket4j = "8.10.1"
 jacoco = "0.8.13"
 # micrometer-registry-prometheus는 Spring Boot BOM(spring-boot 3.5.15 → micrometer 1.15.12)이 관리하나,
 # 의존성 버전 단일 소스 원칙(CLAUDE.md)에 따라 BOM 관리 버전과 동일하게 명시 핀 고정한다.
-micrometer = "1.15.12"
+micrometer = "1.17.0"
 
 [libraries]
 # Spring Boot (버전은 spring-dependency-management가 관리)
