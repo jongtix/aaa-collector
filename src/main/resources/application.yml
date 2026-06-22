@@ -115,6 +115,17 @@ aaa:
   backfill:
     # cron 표현식 (기본: 02:00 KST 매일). fixedDelay 금지 — Virtual Threads 버그(CLAUDE.md)
     cron: "0 0 2 * * *"
+    # 한 cron 회차에서 inner 완성 루프를 개시할 최대 status 슬롯 수 (REQ-BACKFILL-054, AC-3.1)
+    per-run-completion-cap: 10
+    # status당 inner 루프 최대 윈도우 반복 횟수 — 공통 하드 캡 (REQ-BACKFILL-053a)
+    # SPAN 150일 × 120 ≈ 49년 커버
+    max-windows-per-target: 120
+    # 그룹 B 연속 무전진 종료 임계 (REQ-BACKFILL-014)
+    stale-window-threshold: 3
+    # 그룹 A SPAN 폭(달력일). 100거래일 충족을 위해 ≥150 (REQ-BACKFILL-013a)
+    span-calendar-days: 150
+    # 그룹 B rt_cd=2 anchor 보정 최대 시도 횟수 (REQ-BACKFILL-016)
+    anchor-skip-max: 10
   macro:
     backfill:
       # cron 표현식 (기본: 03:00 KST 매일). fixedDelay 금지 — Virtual Threads 버그(CLAUDE.md)
@@ -129,16 +140,6 @@ aaa:
     api-key: ${FRED_API_KEY:}
     connect-timeout: 5s
     read-timeout: 30s
-    # 한 cron 실행에서 처리할 최대 종목 수 (KIS rate-limit 보호, AC-7.2b)
-    per-run-stock-cap: 50
-    # 한 cron 실행에서 처리할 최대 윈도우 수 (DB 풀 점유 상한 ADR-027, AC-7.2b)
-    per-run-window-cap: 100
-    # 그룹 B 연속 무전진 종료 임계 (REQ-BACKFILL-014)
-    stale-window-threshold: 3
-    # 그룹 A SPAN 폭(달력일). 100거래일 충족을 위해 ≥150 (REQ-BACKFILL-013a)
-    span-calendar-days: 150
-    # 그룹 B rt_cd=2 anchor 보정 최대 시도 횟수 (REQ-BACKFILL-016)
-    anchor-skip-max: 10
 
 management:
   endpoints:
