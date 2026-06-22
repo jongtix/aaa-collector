@@ -21,6 +21,9 @@ public interface StockRepository extends JpaRepository<Stock, Long> {
     /** 미국 일봉 배치 대상 시장 — NYSE/NASDAQ/AMEX(REQ-OVOH-001). */
     Set<Market> OVERSEAS_TRADABLE_MARKETS = Set.of(Market.NYSE, Market.NASDAQ, Market.AMEX);
 
+    /** 국내 수급 배치 대상 시장 — KOSPI/KOSDAQ/KRX. KIS 국내 API는 미국 종목에 null-dated 빈 행 반환. */
+    Set<Market> DOMESTIC_MARKETS = Set.of(Market.KOSPI, Market.KOSDAQ, Market.KRX);
+
     Optional<Stock> findBySymbolAndMarket(String symbol, Market market);
 
     List<Stock> findAllBySymbolIn(Collection<String> symbols);
@@ -61,6 +64,18 @@ public interface StockRepository extends JpaRepository<Stock, Long> {
     @Query(
             "SELECT s FROM Stock s WHERE s.watchlistRemovedAt IS NULL AND s.assetType IN :assetTypes")
     List<Stock> findAllActiveByAssetTypeIn(@Param("assetTypes") Collection<AssetType> assetTypes);
+
+    /**
+     * 국내 수급 배치 대상 종목을 조회한다 — 활성({@code watchlistRemovedAt IS NULL}) ∩ {@code market IN (KOSPI,
+     * KOSDAQ, KRX)} ∩ {@code asset_type IN (STOCK, ETF)}.
+     *
+     * <p>KIS 국내 수급 API(공매도·투자자동향·신용잔고)는 미국 종목(NYSE/NASDAQ/AMEX)에 대해 rt_cd=0이지만 날짜 필드가 null인 빈 객체
+     * 배열을 반환한다. {@link #findAllActiveTradable()}(시장 무관)을 쓰면 미국 종목마다 API 낭비 + WARN 로그 노이즈가 발생한다. 국내
+     * 수급 배치({@code DomesticSupplyDemandCollectionService})는 이 메서드를 사용한다.
+     */
+    default List<Stock> findAllActiveDomesticTradable() {
+        return findAllActiveByMarketInAndAssetTypeIn(DOMESTIC_MARKETS, TRADABLE_ASSET_TYPES);
+    }
 
     /**
      * 미국 일봉 배치 대상 종목을 조회한다 — 활성({@code watchlistRemovedAt IS NULL}) ∩ {@code market IN (NYSE,

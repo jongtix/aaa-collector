@@ -41,8 +41,8 @@ public class DomesticSupplyDemandCollectionService {
      * @param today 수집 기준일
      */
     public void collectAll(LocalDate today) {
-        // REQ-BATCH3-024: per-stock 대상은 STOCK+ETF만 — INDEX 헛호출 제거 (StockRepository 계층에서 캡슐화)
-        List<Stock> activeStocks = stockRepository.findAllActiveTradable();
+        // KIS 국내 수급 API는 미국 종목에 null-dated 빈 행을 반환 → 국내 시장(KOSPI/KOSDAQ/KRX)만 조회
+        List<Stock> activeStocks = stockRepository.findAllActiveDomesticTradable();
         log.info(
                 "[supply-demand] 수급 3종 수집 시작 — activeStocks={}, today={}",
                 activeStocks.size(),

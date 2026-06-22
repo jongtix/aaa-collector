@@ -198,4 +198,30 @@ class StockRepositoryTest {
             assertThat(resultIds).contains(domestic.getId(), overseas.getId());
         }
     }
+
+    @Nested
+    @DisplayName("findAllActiveDomesticTradable — 국내 STOCK·ETF만 반환")
+    class FindAllActiveDomesticTradable {
+
+        @Test
+        @DisplayName("KOSPI·KOSDAQ·KRX STOCK·ETF만 반환 — 미국 종목·INDEX·제거 종목 제외")
+        void returnsDomesticStockAndEtf_excludesOverseasAndIndex() {
+            // Arrange
+            Stock kospiStock = savedStock("DOM_KPI_STK", AssetType.STOCK, Market.KOSPI);
+            Stock kosdaqEtf = savedStock("DOM_KSQ_ETF", AssetType.ETF, Market.KOSDAQ);
+            Stock krxIndex = savedStock("DOM_KRX_IDX", AssetType.INDEX, Market.KRX);
+            Stock nasdaqStock = savedStock("DOM_NAS_STK", AssetType.STOCK, Market.NASDAQ);
+            Stock removedKospi = savedStock("DOM_KPI_REM", AssetType.STOCK, Market.KOSPI);
+            stockRepository.markWatchlistRemoved(Set.of(removedKospi.getId()));
+
+            // Act
+            List<Stock> result = stockRepository.findAllActiveDomesticTradable();
+
+            // Assert — KOSPI·KOSDAQ STOCK·ETF만 포함, INDEX·미국·제거 종목 제외
+            List<Long> resultIds = result.stream().map(Stock::getId).toList();
+            assertThat(resultIds).contains(kospiStock.getId(), kosdaqEtf.getId());
+            assertThat(resultIds)
+                    .doesNotContain(krxIndex.getId(), nasdaqStock.getId(), removedKospi.getId());
+        }
+    }
 }
