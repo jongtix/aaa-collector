@@ -2,8 +2,9 @@ package com.aaa.collector.stock.grade.snapshot;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.argThat;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -19,7 +20,6 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -117,11 +117,11 @@ class RankingSnapshotServiceTest {
     // -----------------------------------------------------------------------
 
     @Nested
-    @DisplayName("시나리오 1-1/1-2 — 원자 저장 (percentile 미저장)")
+    @DisplayName("시나리오 1-1/1-2 — 원자 저장 (percentile 미저장, INSERT IGNORE)")
     class SaveSnapshot {
 
         @Test
-        @DisplayName("정상 엔트리 리스트 저장 시 saveAll 호출, percentile 컬럼 없음")
+        @DisplayName("정상 엔트리 리스트 저장 시 insertIgnore 엔트리 수만큼 호출, percentile 컬럼 없음")
         void saveSnapshot_normalEntries_savesAllWithNoPct() {
             // Arrange
             Clock clock = Clock.fixed(KRX_CAPTURE_INSTANT, KST);
@@ -134,21 +134,36 @@ class RankingSnapshotServiceTest {
                     .thenReturn(Optional.of(LocalDate.of(2024, 6, 16)));
             when(snapshotRepository.countByMarketAndSnapshotDate("KRX", LocalDate.of(2024, 6, 16)))
                     .thenReturn(2L);
-            // 현재 cycle 기존 행 없음
-            when(snapshotRepository.countByMarketAndSnapshotDate("KRX", LocalDate.of(2024, 6, 17)))
-                    .thenReturn(0L);
 
             // Act
             service.saveSnapshot("KRX", entries, clock);
 
-            // Assert
-            ArgumentCaptor<List<RankingSnapshot>> captor = ArgumentCaptor.forClass(List.class);
-            verify(snapshotRepository).saveAll(captor.capture());
-            List<RankingSnapshot> saved = captor.getValue();
-            assertThat(saved).hasSize(2);
-            // snapshot_date = KST 날짜 = 2024-06-17
-            assertThat(saved.getFirst().getSnapshotDate()).isEqualTo(LocalDate.of(2024, 6, 17));
-            assertThat(saved.getFirst().getMarket()).isEqualTo("KRX");
+            // Assert: 엔트리 2건 각각 insertIgnore 호출
+            LocalDate expectedDate = LocalDate.of(2024, 6, 17);
+            verify(snapshotRepository, times(2))
+                    .insertIgnore(
+                            eq("KRX"),
+                            eq(expectedDate),
+                            any(String.class),
+                            any(Double.class),
+                            any(Integer.class),
+                            eq(KRX_CAPTURE_INSTANT));
+            verify(snapshotRepository)
+                    .insertIgnore(
+                            eq("KRX"),
+                            eq(expectedDate),
+                            eq("005930"),
+                            eq(100.0),
+                            eq(1),
+                            eq(KRX_CAPTURE_INSTANT));
+            verify(snapshotRepository)
+                    .insertIgnore(
+                            eq("KRX"),
+                            eq(expectedDate),
+                            eq("000660"),
+                            eq(50.0),
+                            eq(2),
+                            eq(KRX_CAPTURE_INSTANT));
         }
     }
 
@@ -161,53 +176,49 @@ class RankingSnapshotServiceTest {
     class WithholdOnEmpty {
 
         @Test
-        @DisplayName("빈 엔트리 리스트 → saveAll 미호출")
+        @DisplayName("빈 엔트리 리스트 → insertIgnore 미호출")
         void saveSnapshot_emptyEntries_noSave() {
             Clock clock = Clock.fixed(KRX_CAPTURE_INSTANT, KST);
             service.saveSnapshot("KRX", Collections.emptyList(), clock);
-            verify(snapshotRepository, never()).saveAll(any());
+            verify(snapshotRepository, never())
+                    .insertIgnore(
+                            any(), any(), any(), any(Double.class), any(Integer.class), any());
         }
     }
 
     // -----------------------------------------------------------------------
-    // 시나리오 1-5: prune (M3)
+    // 시나리오 1-4: 멱등 재실행 — INSERT IGNORE
     // -----------------------------------------------------------------------
 
     @Nested
-    @DisplayName("시나리오 1-5 — prune (M3): 7일 초과 행 삭제")
-    class Prune {
+    @DisplayName("시나리오 1-4 — 멱등 재실행 (INSERT IGNORE idempotency)")
+    class IdempotentRerun {
 
         @Test
-        @DisplayName("쓰기 성공 후 snapshot_date < cycle-7일 행 삭제 호출")
-        void saveSnapshot_afterSave_prunesOldRows() {
+        @DisplayName("동일 cycle 재실행 시 insertIgnore 호출 — DELETE 없음")
+        void saveSnapshot_idempotentViaInsertIgnore_noDelete() {
             // Arrange
             Clock clock = Clock.fixed(KRX_CAPTURE_INSTANT, KST);
             List<AdtvPercentileCalculator.RankEntry> entries =
                     List.of(new AdtvPercentileCalculator.RankEntry("005930", 100.0));
-            // prevCount: 직전 스냅샷 날짜 존재, count=1 → degenerate(1, 1) = 1 < 0.5 = false → 저장 진행
+            // prevCount: 직전 스냅샷 존재 → isDegenerate(1, 1) = 1 < 0.5 = false → 저장 진행
             when(snapshotRepository.findLatestSnapshotDate("KRX"))
-                    .thenReturn(Optional.of(LocalDate.of(2024, 6, 16)));
-            when(snapshotRepository.countByMarketAndSnapshotDate("KRX", LocalDate.of(2024, 6, 16)))
+                    .thenReturn(Optional.of(LocalDate.of(2024, 6, 15)));
+            when(snapshotRepository.countByMarketAndSnapshotDate("KRX", LocalDate.of(2024, 6, 15)))
                     .thenReturn(1L);
-            // 현재 cycle 기존 행 없음
-            when(snapshotRepository.countByMarketAndSnapshotDate("KRX", LocalDate.of(2024, 6, 17)))
-                    .thenReturn(0L);
 
             // Act
             service.saveSnapshot("KRX", entries, clock);
 
-            // Assert: prune 호출 — 7일 전 날짜 미만 행 삭제
-            LocalDate cycleDate = LocalDate.of(2024, 6, 17);
-            LocalDate pruneBeforeDate = cycleDate.minusDays(7);
-            verify(snapshotRepository).deleteByMarketAndSnapshotDateBefore("KRX", pruneBeforeDate);
-        }
-
-        @Test
-        @DisplayName("빈 엔트리(SKIP) 시 prune 미수행")
-        void saveSnapshot_skipOnEmpty_noPrune() {
-            Clock clock = Clock.fixed(KRX_CAPTURE_INSTANT, KST);
-            service.saveSnapshot("KRX", Collections.emptyList(), clock);
-            verify(snapshotRepository, never()).deleteByMarketAndSnapshotDateBefore(any(), any());
+            // Assert: insertIgnore 호출, DELETE 없음 (ADR-026 Tier-1)
+            verify(snapshotRepository)
+                    .insertIgnore(
+                            eq("KRX"),
+                            eq(LocalDate.of(2024, 6, 17)),
+                            eq("005930"),
+                            eq(100.0),
+                            eq(1),
+                            eq(KRX_CAPTURE_INSTANT));
         }
     }
 
@@ -256,43 +267,6 @@ class RankingSnapshotServiceTest {
 
             Optional<LocalDate> result = service.findLatestSnapshotDate("KRX");
             assertThat(result).contains(LocalDate.of(2024, 6, 17));
-        }
-    }
-
-    // -----------------------------------------------------------------------
-    // 시나리오 1-4: 멱등 재실행 (C2) — 이미 존재하는 cycle
-    // -----------------------------------------------------------------------
-
-    @Nested
-    @DisplayName("시나리오 1-4 — 멱등 재실행 (C2)")
-    class IdempotentRerun {
-
-        @Test
-        @DisplayName("동일 cycle 행이 이미 존재하면 deleteByMarketAndSnapshotDate 후 재저장")
-        void saveSnapshot_existingCycle_deleteThenSave() {
-            // Arrange
-            Clock clock = Clock.fixed(KRX_CAPTURE_INSTANT, KST);
-            List<AdtvPercentileCalculator.RankEntry> entries =
-                    List.of(new AdtvPercentileCalculator.RankEntry("005930", 100.0));
-            // prevCount: 직전 스냅샷 없음(cold) → isDegenerate(1, 0) = 1 < 20 = true!
-            // cold에서 1건이면 degenerate → 테스트 의도를 위해 prevCount가 있도록 설정
-            when(snapshotRepository.findLatestSnapshotDate("KRX"))
-                    .thenReturn(Optional.of(LocalDate.of(2024, 6, 15)));
-            when(snapshotRepository.countByMarketAndSnapshotDate("KRX", LocalDate.of(2024, 6, 15)))
-                    .thenReturn(1L);
-            // 이미 현재 cycle에 5건 존재
-            when(snapshotRepository.countByMarketAndSnapshotDate("KRX", LocalDate.of(2024, 6, 17)))
-                    .thenReturn(5L);
-
-            // Act
-            service.saveSnapshot("KRX", entries, clock);
-
-            // Assert: 기존 행 삭제 후 재저장 (멱등)
-            verify(snapshotRepository)
-                    .deleteByMarketAndSnapshotDate(
-                            argThat("KRX"::equals),
-                            argThat(d -> d.equals(LocalDate.of(2024, 6, 17))));
-            verify(snapshotRepository).saveAll(any());
         }
     }
 

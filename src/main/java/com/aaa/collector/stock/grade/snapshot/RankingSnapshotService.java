@@ -6,7 +6,6 @@ import java.time.Instant;
 import java.time.LocalDate;
 import java.time.ZoneId;
 import java.time.ZonedDateTime;
-import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import lombok.RequiredArgsConstructor;
@@ -20,9 +19,13 @@ import org.springframework.transaction.annotation.Transactional;
  * <p>REQ-GRADE-001: raw 순위 엔트리를 단일 트랜잭션으로 원자적으로 저장한다. percentile은 저장하지 않으며 classify 시점에 재계산한다.
  * snapshot_date는 시장 기준 zone의 cycle 일자로 결정적으로 도출된다 (C1).
  *
- * <p>REQ-GRADE-002: 빈 엔트리 또는 degenerate 임계 미만이면 저장 SKIP(직전 스냅샷 보존). prune은 쓰기 성공 후에만 수행한다 (M3).
+ * <p>REQ-GRADE-002: 빈 엔트리 또는 degenerate 임계 미만이면 저장 SKIP(직전 스냅샷 보존).
+ *
+ * <p>멱등성은 {@code INSERT IGNORE} + {@code UNIQUE(market, snapshot_date, symbol)}로 보장된다 (ADR-026
+ * Tier-1, collector DELETE 권한 불필요). 동일 cycle 수동 재실행 시 기존 행과의 union이 보존된다. prune은 설계상 폐기 — 이력 무제한
+ * 보존(데이터 볼륨 경미).
  */
-// @MX:ANCHOR: [AUTO] 스냅샷 저장·조회·prune 단일 진입점 — GradeClassificationService + RankingSnapshotScheduler
+// @MX:ANCHOR: [AUTO] 스냅샷 저장·조회 단일 진입점 — GradeClassificationService + RankingSnapshotScheduler
 // 양방향 의존(fan_in >= 3 예상).
 // @MX:REASON: classify와 scheduler 양측에서 호출하는 핵심 영속화 컴포넌트.
 @Slf4j
@@ -110,10 +113,11 @@ public class RankingSnapshotService {
     }
 
     /**
-     * 순위 스냅샷 저장 (원자 트랜잭션, C2).
+     * 순위 스냅샷 저장 (원자 트랜잭션).
      *
-     * <p>빈 엔트리 또는 degenerate 임계 미만이면 저장 SKIP. 동일 cycle 기존 행이 있으면 삭제 후 재저장(멱등, C2). 쓰기 성공 후 7일 초과 행
-     * prune (M3).
+     * <p>빈 엔트리 또는 degenerate 임계 미만이면 저장 SKIP. 멱등성은 {@code INSERT IGNORE} + {@code UNIQUE(market,
+     * snapshot_date, symbol)}로 보장한다 (ADR-026 Tier-1). collector는 ranking_snapshots에 UPDATE/DELETE
+     * 권한이 없으므로 DELETE-then-reinsert 패턴을 사용하지 않는다. 동일 cycle 수동 재실행 시 기존 행과 신규 행의 union이 보존된다.
      *
      * @param market 시장 구분
      * @param entries AdtvPercentileCalculator 입력용 엔트리 목록
@@ -142,31 +146,17 @@ public class RankingSnapshotService {
         Instant capturedAt = clock.instant();
         LocalDate snapshotDate = deriveSnapshotDate(capturedAt, market);
 
-        // 동일 cycle 기존 행 제거 (C2 멱등)
-        long existing = snapshotRepository.countByMarketAndSnapshotDate(market, snapshotDate);
-        if (existing > 0) {
-            snapshotRepository.deleteByMarketAndSnapshotDate(market, snapshotDate);
-        }
-
-        // 엔트리 → RankingSnapshot 변환
-        List<RankingSnapshot> snapshots = new ArrayList<>(entries.size());
+        // INSERT IGNORE로 멱등 삽입 — 중복 행은 무시, 신규 행만 삽입 (ADR-026 Tier-1)
         for (int i = 0; i < entries.size(); i++) {
             AdtvPercentileCalculator.RankEntry e = entries.get(i);
-            snapshots.add(
-                    RankingSnapshot.of(
-                            market, snapshotDate, e.symbol(), e.rankValue(), i + 1, capturedAt));
+            snapshotRepository.insertIgnore(
+                    market, snapshotDate, e.symbol(), e.rankValue(), i + 1, capturedAt);
         }
-
-        snapshotRepository.saveAll(snapshots);
-
-        // M3: 쓰기 성공 후 7일 초과 행 prune
-        LocalDate pruneBeforeDate = snapshotDate.minusDays(7);
-        snapshotRepository.deleteByMarketAndSnapshotDateBefore(market, pruneBeforeDate);
 
         log.info(
                 "순위 스냅샷 저장 완료: market={}, snapshotDate={}, count={}",
                 market,
                 snapshotDate,
-                snapshots.size());
+                entries.size());
     }
 }
