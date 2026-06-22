@@ -74,7 +74,7 @@ class YahooFinanceClientTest {
     }
 
     @Nested
-    @DisplayName("fetchHistory — VIX (^VIX / %5EVIX)")
+    @DisplayName("fetchHistory — VIX (^VIX)")
     class FetchHistoryVix {
 
         @Test
@@ -144,7 +144,7 @@ class YahooFinanceClientTest {
                             requestToUriTemplate(
                                     "https://query1.finance.yahoo.com/v8/finance/chart/{symbol}"
                                             + "?period1={p1}&period2={p2}&interval=1d",
-                                    "%5EVIX",
+                                    "^VIX",
                                     period1,
                                     period2))
                     .andRespond(withSuccess(SAMPLE_VIX_JSON, MediaType.APPLICATION_JSON));
@@ -164,7 +164,7 @@ class YahooFinanceClientTest {
                     .andExpect(
                             requestToUriTemplate(
                                     "https://query1.finance.yahoo.com/v8/finance/chart/{symbol}?range=max&interval=1d",
-                                    "%5EVIX"))
+                                    "^VIX"))
                     .andRespond(withSuccess(SAMPLE_VIX_JSON, MediaType.APPLICATION_JSON));
 
             List<MarketIndicatorRow> rows = client.fetchHistory(IndicatorCode.VIX);
@@ -184,6 +184,22 @@ class YahooFinanceClientTest {
             String json =
                     """
                     {"chart":{"result":null}}
+                    """;
+            mockServer
+                    .expect(method(HttpMethod.GET))
+                    .andRespond(withSuccess(json, MediaType.APPLICATION_JSON));
+
+            List<MarketIndicatorRow> rows = client.fetchHistory(IndicatorCode.VIX);
+
+            assertThat(rows).isEmpty();
+        }
+
+        @Test
+        @DisplayName("timestamp 키 없는 result — NPE 없이 빈 리스트 반환")
+        void noTimestamp_returnsEmptyWithoutNpe() {
+            String json =
+                    """
+                    {"chart":{"result":[{"indicators":{"quote":[{"close":[17.20]}]}}]}}
                     """;
             mockServer
                     .expect(method(HttpMethod.GET))

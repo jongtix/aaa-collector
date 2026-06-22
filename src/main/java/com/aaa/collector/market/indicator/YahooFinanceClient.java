@@ -20,9 +20,13 @@ import org.springframework.web.client.RestClient;
  * Yahoo Finance v8 공용 시장 지표 수집 클라이언트 — VIX/USDKRW Fallback 2 (SPEC-COLLECTOR-MARKETIND-001,
  * REQ-016/024).
  *
- * <p>{@code ^VIX} → {@code %5EVIX} URL 인코딩, {@code USDKRW=X}. {@code User-Agent} 헤더 필수(REQ-016).
- * timestamp UTC epoch → {@code America/New_York} LocalDate 변환(REQ-016). close 소수점 4자리 반올림(REQ-016).
- * {@code source="YAHOO"}. OHLC 4컬럼(VIX) 또는 close만(구성에 따라).
+ * <p>{@code ^VIX}·{@code USDKRW=X}. {@code User-Agent} 헤더 필수(REQ-016). timestamp UTC epoch → {@code
+ * America/New_York} LocalDate 변환(REQ-016). close 소수점 4자리 반올림(REQ-016). {@code source="YAHOO"}. OHLC
+ * 4컬럼(VIX) 또는 close만(구성에 따라).
+ *
+ * <p>심볼은 Spring URI 템플릿 변수({@code {symbol}})로 전달한다. Spring이 RFC 3986에 따라 인코딩하므로 {@code ^} → {@code
+ * %5E}로 정상 변환된다. 사전 인코딩값({@code %5EVIX})을 변수로 전달하면 {@code %25}로 이중인코딩되어 Yahoo 404가 발생한다(REQ-016 수정
+ * 이력).
  */
 @Slf4j
 @Component
@@ -34,8 +38,8 @@ public class YahooFinanceClient {
     private static final String USER_AGENT =
             "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36";
 
-    /** VIX 심볼: {@code ^VIX} → URI 인코딩 {@code %5EVIX} */
-    private static final String VIX_SYMBOL = "%5EVIX";
+    /** VIX 심볼: Spring URI 템플릿이 {@code ^} → {@code %5E}로 인코딩한다. */
+    private static final String VIX_SYMBOL = "^VIX";
 
     /** USDKRW 심볼 */
     private static final String USDKRW_SYMBOL = "USDKRW=X";
@@ -97,7 +101,6 @@ public class YahooFinanceClient {
 
     @SuppressWarnings({
         "unchecked",
-        "PMD.AvoidCatchingGenericException",
         "PMD.UnnecessaryCast"
     }) // Yahoo Finance v8 JSON → 제네릭 타입 안전 캐스트 불가
     private List<MarketIndicatorRow> parseChart(
@@ -124,41 +127,61 @@ public class YahooFinanceClient {
         List<Number> lows = (List<Number>) quote.get("low");
         List<Number> closes = (List<Number>) quote.get("close");
         List<Number> timestamps = (List<Number>) result.get("timestamp");
+        if (timestamps == null) {
+            return List.of();
+        }
 
         List<MarketIndicatorRow> rows = new ArrayList<>();
         for (int i = 0; i < timestamps.size(); i++) {
-            try {
-                long epoch = timestamps.get(i).longValue();
-                LocalDate date = Instant.ofEpochSecond(epoch).atZone(NEW_YORK).toLocalDate();
-
-                Number closeNum = closes.get(i);
-                if (closeNum == null) {
-                    log.warn("[yahoo] close null — skip: idx={}", i);
-                    continue;
-                }
-                BigDecimal close =
-                        BigDecimal.valueOf(closeNum.doubleValue())
-                                .setScale(4, RoundingMode.HALF_UP);
-                if (close.compareTo(BigDecimal.ZERO) <= 0) {
-                    log.warn("[yahoo] close 0 이하 — skip: idx={}", i);
-                    continue;
-                }
-
-                BigDecimal open = toScaled(opens.get(i));
-                BigDecimal high = toScaled(highs.get(i));
-                BigDecimal low = toScaled(lows.get(i));
-
-                rows.add(
-                        new MarketIndicatorRow(
-                                indicatorCode, date, open, high, low, close, SOURCE));
-            } catch (Exception e) {
-                log.warn(
-                        "[yahoo] 행 파싱 실패 — skip: idx={}, 오류: {}",
-                        i,
-                        SensitiveDataSanitizer.sanitize(e.getMessage()));
+            MarketIndicatorRow row =
+                    parseRow(indicatorCode, timestamps, opens, highs, lows, closes, i);
+            if (row != null) {
+                rows.add(row);
             }
         }
         return rows;
+    }
+
+    @SuppressWarnings("PMD.AvoidCatchingGenericException") // Yahoo Finance v8 행 파싱 — 개별 예외 격리
+    private MarketIndicatorRow parseRow(
+            IndicatorCode indicatorCode,
+            List<Number> timestamps,
+            List<Number> opens,
+            List<Number> highs,
+            List<Number> lows,
+            List<Number> closes,
+            int i) {
+        try {
+            long epoch = timestamps.get(i).longValue();
+            LocalDate date = Instant.ofEpochSecond(epoch).atZone(NEW_YORK).toLocalDate();
+
+            Number closeNum = closes.get(i);
+            if (closeNum == null) {
+                log.warn("[yahoo] close null — skip: idx={}", i);
+                return null;
+            }
+            BigDecimal close =
+                    BigDecimal.valueOf(closeNum.doubleValue()).setScale(4, RoundingMode.HALF_UP);
+            if (close.compareTo(BigDecimal.ZERO) <= 0) {
+                log.warn("[yahoo] close 0 이하 — skip: idx={}", i);
+                return null;
+            }
+
+            return new MarketIndicatorRow(
+                    indicatorCode,
+                    date,
+                    toScaled(opens.get(i)),
+                    toScaled(highs.get(i)),
+                    toScaled(lows.get(i)),
+                    close,
+                    SOURCE);
+        } catch (Exception e) {
+            log.warn(
+                    "[yahoo] 행 파싱 실패 — skip: idx={}, 오류: {}",
+                    i,
+                    SensitiveDataSanitizer.sanitize(e.getMessage()));
+            return null;
+        }
     }
 
     private BigDecimal toScaled(Number n) {
