@@ -19,7 +19,7 @@ public class MarketIndicatorClientConfig {
     static final String CBOE_BASE_URL = "https://cdn.cboe.com";
     static final String FRED_BASE_URL = "https://api.stlouisfed.org";
     static final String YAHOO_BASE_URL = "https://query1.finance.yahoo.com";
-    static final String KOREAEXIM_BASE_URL = "https://www.koreaexim.go.kr";
+    static final String KOREAEXIM_BASE_URL = "https://oapi.koreaexim.go.kr";
 
     private static final Duration CONNECT_TIMEOUT = Duration.ofSeconds(10);
     private static final Duration READ_TIMEOUT = Duration.ofSeconds(60);

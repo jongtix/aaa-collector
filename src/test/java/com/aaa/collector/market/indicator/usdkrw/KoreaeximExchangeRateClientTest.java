@@ -31,7 +31,7 @@ class KoreaeximExchangeRateClientTest {
     void setUp() {
         RestClient.Builder builder = RestClient.builder();
         mockServer = MockRestServiceServer.bindTo(builder).build();
-        RestClient koreaeximRestClient = builder.baseUrl("https://www.koreaexim.go.kr").build();
+        RestClient koreaeximRestClient = builder.baseUrl("https://oapi.koreaexim.go.kr").build();
         client = new KoreaeximExchangeRateClient(koreaeximRestClient, API_KEY, EMPTY_RETRY_MAX);
     }
 
@@ -44,7 +44,8 @@ class KoreaeximExchangeRateClientTest {
         @BeforeEach
         void setUpBlankKey() {
             RestClient.Builder builder = RestClient.builder();
-            RestClient koreaeximRestClient = builder.baseUrl("https://www.koreaexim.go.kr").build();
+            RestClient koreaeximRestClient =
+                    builder.baseUrl("https://oapi.koreaexim.go.kr").build();
             blankKeyClient = new KoreaeximExchangeRateClient(koreaeximRestClient, "", 3);
         }
 
