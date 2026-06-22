@@ -34,6 +34,11 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
   CMD wget -qO- http://localhost:8080/actuator/health || exit 1
 
 # JVM 옵션: TECHSPEC 10.3절 기준
+# AIA chasing: koreaexim.go.kr 등은 TLS 체인에 중간 CA를 미전송한다. 최신 JDK는
+#   AIA(Authority Information Access)로 중간 CA를 자동 보완하지만 기본 비활성이며,
+#   활성화해도 caIssuer URL 접근이 deny-by-default다. 두 프로퍼티를 함께 지정해야
+#   체인이 완성된다(enableAIAcaIssuers=true 단독으로는 PKIX path building failed).
+#   호스트 단위 허용으로 CA 파일명 변경에 견고하게 대응.
 ENTRYPOINT ["java", \
   "-Xms128m", "-Xmx384m", \
   "-XX:MaxMetaspaceSize=160m", "-XX:MaxDirectMemorySize=64m", \
@@ -42,4 +47,6 @@ ENTRYPOINT ["java", \
   "-XX:HeapDumpPath=/var/log/aaa-collector/dump/", \
   "-XX:ErrorFile=/var/log/aaa-collector/dump/hs_err_pid%p.log", \
   "-Duser.timezone=Asia/Seoul", \
+  "-Dcom.sun.security.enableAIAcaIssuers=true", \
+  "-Dcom.sun.security.allowedAIALocations=http://cacerts.thawte.com", \
   "-jar", "aaa-collector.jar"]
