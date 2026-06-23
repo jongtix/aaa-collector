@@ -11,6 +11,7 @@ import com.aaa.collector.stock.enums.Market;
 import java.time.LocalDate;
 import java.time.ZoneId;
 import java.time.ZonedDateTime;
+import java.util.List;
 import java.util.Optional;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -89,6 +90,73 @@ class StockGradeRepositoryTest {
             // Assert
             assertThat(result).isPresent();
             assertThat(result.get().getGrade()).isEqualTo("A");
+        }
+    }
+
+    @Nested
+    @DisplayName("findSymbolsByGradeIn — symbol projection 조회")
+    class FindSymbolsByGradeIn {
+
+        @Test
+        @DisplayName("A·B 등급 종목 symbol 반환 — grade ASC 정렬 (A 우선)")
+        void findSymbolsByGradeIn_abGrades_returnsSymbolsOrderedByGrade() {
+            // Arrange
+            Stock stockA = savedStock("005930");
+            Stock stockB = savedStock("000660");
+            stockGradeRepository.save(
+                    StockGrade.builder()
+                            .stock(stockA)
+                            .grade("A")
+                            .gradedAt(ZonedDateTime.now(KST))
+                            .build());
+            stockGradeRepository.save(
+                    StockGrade.builder()
+                            .stock(stockB)
+                            .grade("B")
+                            .gradedAt(ZonedDateTime.now(KST))
+                            .build());
+
+            // Act
+            List<String> result = stockGradeRepository.findSymbolsByGradeIn(List.of("A", "B"));
+
+            // Assert — A 등급이 먼저, B 등급이 나중
+            assertThat(result).containsExactly("005930", "000660");
+        }
+
+        @Test
+        @DisplayName("해당 등급 없음 — 빈 리스트 반환")
+        void findSymbolsByGradeIn_noMatchingGrades_returnsEmpty() {
+            savedStock("005930"); // 등급 미부여
+
+            List<String> result = stockGradeRepository.findSymbolsByGradeIn(List.of("A", "B"));
+
+            assertThat(result).isEmpty();
+        }
+
+        @Test
+        @DisplayName("C 등급 제외 — A·B만 반환")
+        void findSymbolsByGradeIn_cGradeExcluded() {
+            // Arrange
+            Stock stockA = savedStock("005930");
+            Stock stockC = savedStock("000660");
+            stockGradeRepository.save(
+                    StockGrade.builder()
+                            .stock(stockA)
+                            .grade("A")
+                            .gradedAt(ZonedDateTime.now(KST))
+                            .build());
+            stockGradeRepository.save(
+                    StockGrade.builder()
+                            .stock(stockC)
+                            .grade("C")
+                            .gradedAt(ZonedDateTime.now(KST))
+                            .build());
+
+            // Act
+            List<String> result = stockGradeRepository.findSymbolsByGradeIn(List.of("A", "B"));
+
+            // Assert — C 등급 제외
+            assertThat(result).containsExactly("005930");
         }
     }
 

@@ -5,6 +5,8 @@ import com.aaa.collector.stock.StockGrade;
 import java.util.List;
 import java.util.Optional;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 
 /** {@code stock_grades} 테이블 저장소. */
 public interface StockGradeRepository extends JpaRepository<StockGrade, Long> {
@@ -18,10 +20,14 @@ public interface StockGradeRepository extends JpaRepository<StockGrade, Long> {
     Optional<StockGrade> findByStock(Stock stock);
 
     /**
-     * A·B 등급 종목을 grade 오름차순(A 우선)으로 조회한다.
+     * 지정 등급 종목의 symbol을 grade 오름차순으로 반환한다.
+     *
+     * <p>Stock 엔티티 로드 없이 symbol만 projection하여 LazyInitializationException을 방지한다.
      *
      * @param grades 조회할 등급 목록 (예: {@code List.of("A", "B")})
-     * @return 해당 등급 종목 목록 (grade 오름차순)
+     * @return symbol 목록 (grade 오름차순)
      */
-    List<StockGrade> findByGradeInOrderByGradeAsc(List<String> grades);
+    @Query(
+            "SELECT sg.stock.symbol FROM StockGrade sg WHERE sg.grade IN :grades ORDER BY sg.grade ASC")
+    List<String> findSymbolsByGradeIn(@Param("grades") List<String> grades);
 }
