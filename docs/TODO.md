@@ -92,10 +92,11 @@
 - [x] 국내 배치(시장 단위 5종): 업종지수, 금리종합, 증시자금종합, 배당/증자일정, 뉴스 제목 (SPEC-COLLECTOR-BATCH-003, v1.16.0~v1.17.0 / 묶음 스케줄러 17:00·뉴스 장중 10분)
 - [x] 국내 배치(종목 단위 2종): 재무비율, 투자의견 (SPEC-COLLECTOR-BATCH-004 — 머지 대기 / `feature/SPEC-COLLECTOR-BATCH-004` 브랜치, SPEC status `completed`)
 - [x] 국내 액면교체(SPLIT) 이벤트 수집: 액면분할/액면병합 → `corporate_events`(EventType.SPLIT) 멱등 저장 (SPEC-COLLECTOR-BATCH-005, v1.18.0). SPEC-COLLECTOR-SPLIT-001은 BATCH-005가 대체(`superseded`)
-- [ ] 해외 배치: OHLCV, 해외선물, 배당/권리, 뉴스 제목
+- [x] 해외 배치 OHLCV 일봉: 미국 STOCK+ETF per-stock 멀티키 수집·원주가(`MODP=0`) 멱등 저장·ET 당일 행 가드·`stream:daily:complete market=overseas` 발행 (SPEC-COLLECTOR-OVERSEAS-OHLCV-001, main 머지 완료)
+- [ ] 해외 배치: 해외선물(`futures_daily`), 배당/권리, 뉴스 제목
 - [x] Rate Limit 준수: 초당 20건/계좌 × 5계좌 = 100건 — 멀티키 라운드로빈 분산 (`HealthyKeyRoundRobinDistributor`/`BatchRestExecutor`, SPEC-COLLECTOR-KEYDIST-001). 완료분 배치에 적용, 잔여 배치 추가 시 동일 메커니즘 사용
 - [x] `@Scheduled` cron 표현식만 사용 (`fixedDelay` 금지) — 국내 일봉/수급 스케줄러 (`DomesticDailyOhlcvScheduler`, `cron = "0 0 16 * * MON-FRI"`)
-- [x] 일봉 수집 완료 시 `stream:daily:complete` 이벤트 발행 (`market` 필드) (`DailyCompletePublisher`, SPEC-COLLECTOR-BATCH-001) — 국내(`domestic`)만 발행, 해외(`overseas`) 미구현
+- [x] 일봉 수집 완료 시 `stream:daily:complete` 이벤트 발행 (`market` 필드) (`DailyCompletePublisher`, SPEC-COLLECTOR-BATCH-001) — 국내(`domestic`) + 해외(`overseas`) 모두 발행 (OVERSEAS-OHLCV-001에서 완료)
 - [x] 과거 데이터 백필: 일봉 OHLCV, 수급 데이터를 종목별 최대 과거까지 수집 (SPEC-COLLECTOR-BACKFILL-001, v1.25.x)
 - [x] `backfill_status` 테이블 관리: (대상, 데이터 테이블) 단위로 백필 상태 추적, 미완료 항목 대상 하루 1회 스케줄 실행 (V24 migration, T6 오케스트레이터, T7 스케줄러)
 - [x] 외부 API 응답 검증: null/0 이하/극단값 필터 적용, 검증 실패 건 저장 제외 + 로그 기록 — 완료분 배치에 적용 (`SupplyDemandValidator`, `DomesticDailyOhlcvCollectionService` 검증, BATCH-003 금리/뉴스 poison-row graceful skip), 잔여 배치 추가 시 동일 정책 적용
@@ -112,14 +113,15 @@
 - [ ] Pre/After-Hours 1분봉: yfinance → Alpaca → Polygon.io (스냅샷 2~3회/일)
 - [ ] DART OpenAPI 공시 폴링 (분당 1000회 제한) + `disclosures` 테이블 추가 (API 스펙 확인 후)
 - [ ] `extended_hours` 테이블 추가 (yfinance/Alpaca/Polygon.io 응답 스펙 확인 후)
-- [ ] Fallback 전환 시 Redis 카운터 기록
+- [ ] Fallback 전환 시 Redis 카운터 기록 (OBSV-001이 Redis 카운터 방식을 VM/Micrometer로 대체했으나, Fallback 전환 카운터 자체는 미구현)
 
 ### 1-9. 장애 감지 및 시스템 알림
-- [ ] 수집 정상 여부 Redis 카운터 추적 (마지막 수집 타임스탬프 또는 분당 수집 건수)
-- [ ] 장중 일정 시간 이상 수집 건수 0 → 로그 기록
-- [ ] 수집 누락률, 수집 지연 p95 Redis 카운터 기록
-- [ ] `stream:system:collector` 장애 이벤트 발행
-- [ ] NAS 자원 모니터링 (디스크/RAM/CPU) + 3단계 임계치 알림
+- [x] 수집 정상 여부 추적 — Micrometer 게이지(`batch_completeness_ratio`, `batch_last_load_seconds`) + VictoriaMetrics 외부 스크랩으로 대체 (SPEC-COLLECTOR-OBSV-001 / Redis 카운터 방식 대체됨)
+- [x] 장중 수집 0건 감지 — vmalert `CollectorBatchStale` 룰(>28h 미적재 AND 장중) + Alertmanager 텔레그램 경보로 대체 (SPEC-COLLECTOR-OBSV-001 / 로그가 아닌 외부 경보)
+- [x] 수집 누락률 추적 — vmalert `CollectorBatchCompletenessLow` 룰(ratio < 0.70 AND 장중)으로 대체 (SPEC-COLLECTOR-OBSV-001)
+- [ ] 수집 지연 p95 계측 (Micrometer histogram/summary — OBSV-001 범위 밖, 미구현)
+- [ ] `stream:system:collector` 장애 이벤트 발행 (OBSV-001이 Phase 3 전까지 Alertmanager 직접 경로 사용 중 — stream 이벤트 미구현)
+- [ ] NAS 자원 모니터링 (디스크/RAM/CPU) + 3단계 임계치 알림 (node_exporter 미도입, vmalert rules 없음)
 
 ### 1-10. 운영 이슈 수정 (배포 후 결함 대응)
 - [x] KOREAEXIM USDKRW Primary TLS 검증 실패 — 1차로 JVM AIA chasing 활성화(중간 CA 보완, issue #24, v1.27.1), 이후 요청 호스트를 `www`→`oapi.koreaexim.go.kr`(표준 CA)로 교정해 AIA 설정 없이 근본 해결(issue #21, v1.27.3). 한국수출입은행 Primary 정상화 → 상시 Yahoo fallback 해소
