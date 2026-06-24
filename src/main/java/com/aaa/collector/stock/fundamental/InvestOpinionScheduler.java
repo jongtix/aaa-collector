@@ -1,5 +1,6 @@
 package com.aaa.collector.stock.fundamental;
 
+import com.aaa.collector.observability.BatchMetrics;
 import java.time.LocalDate;
 import java.time.ZoneId;
 import lombok.RequiredArgsConstructor;
@@ -24,7 +25,11 @@ public class InvestOpinionScheduler {
 
     private static final ZoneId KST = ZoneId.of("Asia/Seoul");
 
+    /** 투자의견 배치 계측 라벨 (REQ-OBSV-020/021). */
+    private static final String BATCH_LABEL = "domestic-invest-opinion";
+
     private final InvestOpinionCollectionService collectionService;
+    private final BatchMetrics batchMetrics;
 
     /**
      * 투자의견 수집 배치 진입점 (REQ-BATCH4-002/003/004/005/012).
@@ -39,6 +44,11 @@ public class InvestOpinionScheduler {
         log.info("[invest-opinion] 수집 배치 시작 — {}", today);
         try {
             FundamentalResult result = collectionService.collect(today);
+            // REQ-OBSV-020/021: 배치 집계 계측 — fail = attempted-succeeded-skipped.
+            long fail =
+                    Math.max(0L, (long) result.attempted() - result.succeeded() - result.skipped());
+            batchMetrics.recordCompletion(
+                    BATCH_LABEL, result.attempted(), result.succeeded(), fail, result.skipped());
             log.info(
                     "[invest-opinion] 수집 배치 완료 — attempted={}, succeeded={}, skipped={}",
                     result.attempted(),
