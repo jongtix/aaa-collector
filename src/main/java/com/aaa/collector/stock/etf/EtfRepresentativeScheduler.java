@@ -1,5 +1,6 @@
 package com.aaa.collector.stock.etf;
 
+import com.aaa.collector.observability.BatchMetrics;
 import java.util.concurrent.atomic.AtomicBoolean;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -16,7 +17,11 @@ import org.springframework.stereotype.Component;
 @RequiredArgsConstructor
 public class EtfRepresentativeScheduler {
 
+    /** ETF 대표 종목 배치 계측 라벨 (REQ-OBSV-020/021). */
+    private static final String BATCH_LABEL = "domestic-etf-representative";
+
     private final EtfRepresentativeService etfRepresentativeService;
+    private final BatchMetrics batchMetrics;
     // package-private: allows same-package tests to access without reflection
     final AtomicBoolean running = new AtomicBoolean(false);
 
@@ -32,8 +37,12 @@ public class EtfRepresentativeScheduler {
         try {
             log.info("ETF representative recalculation started (weekly schedule)");
             etfRepresentativeService.recalculate();
+            // REQ-OBSV-020/021: 정상 완료 — attempted=1, succeeded=1
+            batchMetrics.recordCompletion(BATCH_LABEL, 1, 1, 0, 0);
         } catch (Exception e) {
             log.error("ETF representative recalculation failed — will retry next Monday", e);
+            // REQ-OBSV-020/021: 예외 발생 — attempted=1, fail=1
+            batchMetrics.recordCompletion(BATCH_LABEL, 1, 0, 1, 0);
         } finally {
             running.set(false);
         }

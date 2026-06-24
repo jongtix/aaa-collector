@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 
+import com.aaa.collector.observability.BatchMetrics;
 import java.lang.reflect.Method;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -20,6 +21,7 @@ import org.springframework.scheduling.annotation.Scheduled;
 class EtfRepresentativeSchedulerTest {
 
     @Mock private EtfRepresentativeService etfRepresentativeService;
+    @Mock private BatchMetrics batchMetrics;
 
     @InjectMocks private EtfRepresentativeScheduler scheduler;
 
@@ -75,6 +77,58 @@ class EtfRepresentativeSchedulerTest {
 
             // Assert: running flag reset to false after exception (package-private field)
             assertThat(scheduler.running.get()).isFalse();
+        }
+    }
+
+    @Nested
+    @DisplayName("배치 계측 (REQ-OBSV-020/021)")
+    class BatchMetricsRecording {
+
+        @Test
+        @DisplayName("정상 실행 — batch=domestic-etf-representative, (1,1,0,0) 기록")
+        void recordsBatchMetricsOnSuccess() {
+            // Act
+            scheduler.recalculateWeekly();
+
+            // Assert
+            verify(batchMetrics).recordCompletion("domestic-etf-representative", 1, 1, 0, 0);
+        }
+
+        @Test
+        @DisplayName("예외 발생 — batch=domestic-etf-representative, (1,0,1,0) 기록")
+        void recordsBatchMetricsOnException() {
+            // Arrange
+            Mockito.doThrow(new RuntimeException("ETF 재계산 실패"))
+                    .when(etfRepresentativeService)
+                    .recalculate();
+
+            // Act
+            scheduler.recalculateWeekly();
+
+            // Assert
+            verify(batchMetrics).recordCompletion("domestic-etf-representative", 1, 0, 1, 0);
+        }
+
+        @Test
+        @DisplayName("single-flight 가드로 스킵 시 recordCompletion 미호출")
+        void doesNotRecordWhenSkipped() {
+            // Arrange: running=true 상태로 스킵 유도
+            scheduler.running.set(true);
+
+            // Act
+            scheduler.recalculateWeekly();
+
+            // Assert: 스킵 시 계측 없음
+            verify(batchMetrics, never())
+                    .recordCompletion(
+                            Mockito.anyString(),
+                            Mockito.anyLong(),
+                            Mockito.anyLong(),
+                            Mockito.anyLong(),
+                            Mockito.anyLong());
+
+            // Cleanup
+            scheduler.running.set(false);
         }
     }
 }
