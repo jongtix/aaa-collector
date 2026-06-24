@@ -14,7 +14,7 @@ import com.aaa.collector.stock.StockRepository;
 import com.aaa.collector.stock.enums.AssetType;
 import com.aaa.collector.stock.enums.Market;
 import java.time.ZonedDateTime;
-import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
 import org.junit.jupiter.api.DisplayName;
@@ -232,13 +232,13 @@ class GradeClassificationServiceTest {
         }
     }
 
-    /** Object[][] → List<Object[]> 변환 헬퍼. List.of는 varargs 타입추론 실패로 사용 불가. */
+    /**
+     * Object[][] → List<Object[]> 변환 헬퍼.
+     *
+     * <p>List.of는 Object[] varargs 타입추론 실패로 사용 불가. Arrays.asList 사용.
+     */
     private static List<Object[]> buildAdtvRows(Object[]... rows) {
-        List<Object[]> list = new ArrayList<>();
-        for (Object[] row : rows) {
-            list.add(row);
-        }
-        return list;
+        return Arrays.asList(rows);
     }
 
     private static org.assertj.core.api.AbstractStringAssert<?> assertThat(String actual) {

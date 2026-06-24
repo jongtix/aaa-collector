@@ -8,6 +8,7 @@ import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 import org.assertj.core.data.Offset;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -84,7 +85,7 @@ class DailyOhlcvRepositoryAdtvIT {
 
     private Map<Long, Double> fetchAdtv(List<Long> stockIds) {
         List<Object[]> rows = dailyOhlcvRepository.findRecent20DayAdtvByStockIds(stockIds);
-        Map<Long, Double> result = new java.util.HashMap<>();
+        Map<Long, Double> result = new ConcurrentHashMap<>();
         for (Object[] row : rows) {
             Long stockId = ((Number) row[0]).longValue();
             Double adtv = row[1] != null ? ((Number) row[1]).doubleValue() : 0.0;
@@ -103,7 +104,7 @@ class DailyOhlcvRepositoryAdtvIT {
 
         @Test
         @DisplayName("100행 보유 시 최근 20행(거래대금 10000)만 평균 — 이전 80행(거래대금 1000) 제외")
-        void findRecent20DayAdtv_100rows_averagesOnly20MostRecent() {
+        void averagesOnly20MostRecentRows() {
             // Arrange — 오래된 80행: tradingValue=1000, 최근 20행: tradingValue=10000
             LocalDate base = LocalDate.of(2024, 1, 1);
             for (int i = 0; i < 80; i++) {
@@ -132,7 +133,7 @@ class DailyOhlcvRepositoryAdtvIT {
 
         @Test
         @DisplayName("5행 보유 시 5행 전체 평균 반환")
-        void findRecent20DayAdtv_5rows_averagesAll5() {
+        void averagesAllRowsWhenLessThan20() {
             // Arrange — 5행: tradingValue=5000
             LocalDate base = LocalDate.of(2024, 6, 1);
             for (int i = 0; i < 5; i++) {
@@ -149,7 +150,7 @@ class DailyOhlcvRepositoryAdtvIT {
 
         @Test
         @DisplayName("1행 보유 시 해당 행 tradingValue 반환")
-        void findRecent20DayAdtv_1row_returnsThatValue() {
+        void singleRowReturnsItsValue() {
             // Arrange
             insertOhlcv(stock1, LocalDate.of(2024, 6, 1), 9_999L);
 
@@ -172,7 +173,7 @@ class DailyOhlcvRepositoryAdtvIT {
 
         @Test
         @DisplayName("daily_ohlcv 0건 종목 → 결과 Map에 미포함")
-        void findRecent20DayAdtv_noRows_notInResult() {
+        void stockWithNoRowsNotInResult() {
             // Arrange — stock1에 행 없음, stock2에만 행 존재
             insertOhlcv(stock2, LocalDate.of(2024, 6, 1), 1_000L);
 
@@ -195,7 +196,7 @@ class DailyOhlcvRepositoryAdtvIT {
 
         @Test
         @DisplayName("두 종목 배치 조회 — 각 종목 독립 ADTV 반환")
-        void findRecent20DayAdtv_twoStocks_returnsIndependentAdtv() {
+        void twoStocksReturnIndependentAdtv() {
             // Arrange
             LocalDate base = LocalDate.of(2024, 6, 1);
             for (int i = 0; i < 20; i++) {
@@ -214,7 +215,7 @@ class DailyOhlcvRepositoryAdtvIT {
 
         @Test
         @DisplayName("빈 목록 조회 — 빈 결과 반환 (예외 없음)")
-        void findRecent20DayAdtv_emptyStockIds_returnsEmpty() {
+        void emptyStockIdsReturnsEmpty() {
             Map<Long, Double> result = fetchAdtv(List.of());
             assertThat(result).isEmpty();
         }
