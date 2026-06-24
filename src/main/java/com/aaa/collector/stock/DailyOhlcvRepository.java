@@ -105,6 +105,36 @@ public interface DailyOhlcvRepository extends JpaRepository<DailyOhlcv, Long> {
             @Param("stockId") Long stockId, @Param("tradeDates") Collection<LocalDate> tradeDates);
 
     /**
+     * 종목 ID 목록에 대해 최근 20거래일 평균 거래대금(ADTV)을 배치 조회한다 (REQ-GRADE4-010, 011, 012).
+     *
+     * <p>MySQL 8.4 window 함수를 사용해 각 종목의 trade_date 내림차순 상위 20행만 추출한 뒤 AVG(trading_value)를 계산한다.
+     *
+     * <p>보유 행 수가 20 미만인 종목은 보유 행 전체의 평균을 반환한다 (REQ-GRADE4-011).
+     *
+     * <p>daily_ohlcv 행이 0건인 종목은 결과 Map에 포함되지 않는다 (REQ-GRADE4-012).
+     *
+     * <p><strong>주의</strong>: 네이티브 MySQL 8.4 window 함수 사용 — H2 미동작. 반드시 Testcontainers MySQL 8.4 통합
+     * 테스트로 검증한다.
+     *
+     * <p>기존 {@link #findAdtvByStockIds(List)}(전체-행 AVG)는 ETF 대표 선정 비교자 전용으로 변경하지 않는다.
+     */
+    @Query(
+            value =
+                    """
+                    SELECT stock_id, AVG(trading_value) AS adtv
+                    FROM (
+                        SELECT stock_id, trading_value,
+                               ROW_NUMBER() OVER (PARTITION BY stock_id ORDER BY trade_date DESC) AS rn
+                        FROM daily_ohlcv
+                        WHERE stock_id IN (:stockIds)
+                    ) ranked
+                    WHERE rn <= 20
+                    GROUP BY stock_id
+                    """,
+            nativeQuery = true)
+    List<Object[]> findRecent20DayAdtvByStockIds(@Param("stockIds") List<Long> stockIds);
+
+    /**
      * 종목의 최초 거래일(MIN trade_date)을 조회한다 (REQ-STOCKMETA-013, SPEC-COLLECTOR-STOCKMETA-001).
      *
      * <p>상장일(listed_date)이 NULL인 종목의 상장일 근사치 추정에 사용된다. 거래 데이터가 없으면 {@link Optional#empty()}를 반환한다.
