@@ -58,7 +58,7 @@ public class KisWebSocketScheduler {
         }
     }
 
-    /** 해외 장 개시 — 09:25 America/New_York (EDT/EST 자동 반영). */
+    /** 해외 장 개시 — 09:25 America/New_York (EDT/EST 자동 반영, REQ-WSOV-010). */
     @Scheduled(cron = "0 25 9 * * MON-FRI", zone = "America/New_York")
     public void openOverseasSession() {
         if (!overseasRunning.compareAndSet(false, true)) {
@@ -66,8 +66,11 @@ public class KisWebSocketScheduler {
             return;
         }
         try {
-            log.info("해외 WebSocket 장 개시 시작 (Phase 1: 스텁)");
-            // Phase 1: 해외 구독 대상 없음 — 연결만 수립
+            log.info("해외 WebSocket 장 개시 시작");
+            sessionManager.openAll();
+            List<String> trKeys = subscriptionTargetResolver.resolveOverseasSymbols();
+            sessionManager.subscribeOverseasSymbols(trKeys);
+            log.info("해외 WebSocket 장 개시 완료 — 구독 종목: {}개", trKeys.size());
         } catch (Exception e) {
             log.error("해외 WebSocket 장 개시 중 오류", e);
         } finally {
@@ -75,11 +78,13 @@ public class KisWebSocketScheduler {
         }
     }
 
-    /** 해외 장 종료 — 16:05 America/New_York. */
+    /** 해외 장 종료 — 16:05 America/New_York (REQ-WSOV-011). */
     @Scheduled(cron = "0 5 16 * * MON-FRI", zone = "America/New_York")
     public void closeOverseasSession() {
         try {
-            log.info("해외 WebSocket 장 종료 시작 (Phase 1: 스텁)");
+            log.info("해외 WebSocket 장 종료 시작");
+            sessionManager.closeAll();
+            log.info("해외 WebSocket 장 종료 완료");
         } catch (Exception e) {
             log.error("해외 WebSocket 장 종료 중 오류", e);
         }
