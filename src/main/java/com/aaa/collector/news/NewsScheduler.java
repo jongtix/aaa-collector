@@ -1,5 +1,6 @@
 package com.aaa.collector.news;
 
+import com.aaa.collector.observability.BatchMetrics;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -20,7 +21,11 @@ import org.springframework.stereotype.Component;
 @RequiredArgsConstructor
 public class NewsScheduler {
 
+    /** 뉴스 배치 계측 라벨 (REQ-OBSV-020/021). */
+    private static final String BATCH_LABEL = "domestic-news";
+
     private final NewsTitleCollectionService newsTitleCollectionService;
+    private final BatchMetrics batchMetrics;
 
     /**
      * 뉴스 증분 수집 배치 진입점 (REQ-BATCH3-002, REQ-BATCH3-006).
@@ -33,6 +38,11 @@ public class NewsScheduler {
         log.debug("[news] 뉴스 증분 수집 시작");
         try {
             NewsCollectionResult result = newsTitleCollectionService.collect();
+            // REQ-OBSV-020/021: 배치 집계 계측 — fail = attempted-succeeded-skipped.
+            long fail =
+                    Math.max(0L, (long) result.attempted() - result.succeeded() - result.skipped());
+            batchMetrics.recordCompletion(
+                    BATCH_LABEL, result.attempted(), result.succeeded(), fail, result.skipped());
             log.info(
                     "[news] 수집 완료 — attempted={}, succeeded={}, skipped={}",
                     result.attempted(),
