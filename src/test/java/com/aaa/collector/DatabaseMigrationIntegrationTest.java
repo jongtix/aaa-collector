@@ -9,6 +9,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
 import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.testcontainers.containers.MySQLContainer;
@@ -32,6 +33,7 @@ class DatabaseMigrationIntegrationTest {
     private StringRedisTemplate redisTemplate;
 
     @Autowired private Flyway flyway;
+    @Autowired private JdbcTemplate jdbcTemplate;
 
     @Test
     @DisplayName("모든 마이그레이션이 적용되고 미적용 마이그레이션이 없다")
@@ -40,5 +42,18 @@ class DatabaseMigrationIntegrationTest {
         //          Hibernate ddl-auto=validate는 이미 통과한 상태
         // Act & Assert
         assertThat(flyway.info().pending()).isEmpty();
+    }
+
+    @Test
+    @DisplayName("AC-15 — V25 마이그레이션 이후 ranking_snapshots 테이블 부재 단언")
+    void v25_rankingSnapshotsTableDropped() {
+        // Act & Assert: information_schema 직접 조회 — 테이블 존재하면 count=1, 없으면 0
+        Integer count =
+                jdbcTemplate.queryForObject(
+                        "SELECT COUNT(*) FROM information_schema.tables "
+                                + "WHERE table_schema = DATABASE() "
+                                + "AND table_name = 'ranking_snapshots'",
+                        Integer.class);
+        assertThat(count).isZero();
     }
 }
