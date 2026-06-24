@@ -2,9 +2,13 @@ package com.aaa.collector.news;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
+import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.aaa.collector.observability.BatchMetrics;
 import java.lang.reflect.Method;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -20,6 +24,7 @@ import org.springframework.scheduling.annotation.Scheduled;
 class NewsSchedulerTest {
 
     @Mock private NewsTitleCollectionService newsTitleCollectionService;
+    @Mock private BatchMetrics batchMetrics;
 
     @InjectMocks private NewsScheduler scheduler;
 
@@ -89,6 +94,40 @@ class NewsSchedulerTest {
             when(newsTitleCollectionService.collect()).thenThrow(new RuntimeException("뉴스 수집 실패"));
 
             assertThatCode(scheduler::collectNews).doesNotThrowAnyException();
+        }
+    }
+
+    // ────────────────────────────────────────────────────────────────────
+    // 배치 계측 (REQ-OBSV-020/021)
+    // ────────────────────────────────────────────────────────────────────
+
+    @Nested
+    @DisplayName("배치 계측 (REQ-OBSV-020/021)")
+    class BatchMetricsRecording {
+
+        @Test
+        @DisplayName("수집 완료 후 batch=domestic-news 집계 기록")
+        void recordsBatchMetricsOnCompletion() {
+            // Arrange — 10 시도, 9 성공, 1 스킵 → fail = 10-9-1 = 0
+            when(newsTitleCollectionService.collect())
+                    .thenReturn(new NewsCollectionResult(10, 9, 1));
+
+            // Act
+            scheduler.collectNews();
+
+            // Assert
+            verify(batchMetrics).recordCompletion("domestic-news", 10, 9, 0, 1);
+        }
+
+        @Test
+        @DisplayName("수집 예외 시 배치 계측을 기록하지 않는다")
+        void doesNotRecordOnException() {
+            when(newsTitleCollectionService.collect()).thenThrow(new RuntimeException("뉴스 수집 실패"));
+
+            scheduler.collectNews();
+
+            verify(batchMetrics, never())
+                    .recordCompletion(anyString(), anyLong(), anyLong(), anyLong(), anyLong());
         }
     }
 }
