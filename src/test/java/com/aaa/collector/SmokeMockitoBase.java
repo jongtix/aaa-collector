@@ -35,7 +35,6 @@ import com.aaa.collector.stock.daily.OverseasDailyOhlcvScheduler;
 import com.aaa.collector.stock.etf.EtfMetadataRepository;
 import com.aaa.collector.stock.etf.EtfRepresentativeHistoryRepository;
 import com.aaa.collector.stock.grade.StockGradeRepository;
-import com.aaa.collector.stock.grade.snapshot.RankingSnapshotRepository;
 import com.aaa.collector.stock.shortsale.overseas.FinraShortSaleClient;
 import com.aaa.collector.stock.shortsale.overseas.ShortSaleOverseasDailyCollectionService;
 import com.aaa.collector.stock.shortsale.overseas.ShortSaleOverseasInterestCollectionService;
@@ -61,7 +60,6 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
             EtfRepresentativeHistoryRepository.class,
             DailyOhlcvRepository.class,
             StockGradeRepository.class,
-            RankingSnapshotRepository.class,
             InvestorTrendRepository.class,
             ShortSaleDomesticRepository.class,
             CreditBalanceRepository.class,
