@@ -20,6 +20,8 @@ import com.aaa.collector.stock.enums.AssetType;
 import com.aaa.collector.stock.enums.Market;
 import com.aaa.collector.stock.grade.Grade;
 import com.aaa.collector.stock.grade.GradeCacheRepository;
+import com.aaa.collector.stock.grade.GradeClassifier;
+import com.aaa.collector.stock.grade.GradeInput;
 import com.aaa.collector.stock.grade.StockGradeRepository;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -46,6 +48,7 @@ class EtfRepresentativeServiceTest {
     @Mock private DailyOhlcvRepository dailyOhlcvRepository;
     @Mock private EtfRepresentativeHistoryRepository historyRepository;
     @Mock private GradeCacheRepository gradeCacheRepository;
+    @Mock private GradeClassifier gradeClassifier;
 
     private EtfRepresentativeService service;
 
@@ -57,9 +60,12 @@ class EtfRepresentativeServiceTest {
                         stockGradeRepository,
                         dailyOhlcvRepository,
                         historyRepository,
-                        gradeCacheRepository);
+                        gradeCacheRepository,
+                        gradeClassifier);
         // findByStock returns empty by default — service will call save() for new grades
         lenient().when(stockGradeRepository.findByStock(any())).thenReturn(Optional.empty());
+        // 대표 ETF GradeClassifier 기본값: A (기존 테스트 호환성 유지)
+        lenient().when(gradeClassifier.classify(any(GradeInput.class))).thenReturn(Grade.A);
     }
 
     // --- Fixture helpers ---
@@ -363,6 +369,120 @@ class EtfRepresentativeServiceTest {
                     .save(argThat(sg -> ea.equals(sg.getStock()) && "A".equals(sg.getGrade())));
             verify(stockGradeRepository)
                     .save(argThat(sg -> eb.equals(sg.getStock()) && "C".equals(sg.getGrade())));
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // AC-12: 비대표 ETF → 강제 C
+    // AC-13: 대표 ETF → 신규 20일 ADTV+게이트로 A/B/C
+    // -----------------------------------------------------------------------
+
+    @Nested
+    @DisplayName("AC-12 — 비대표 ETF 강제 C")
+    class Ac12NonRepresentativeEtfForceC {
+
+        @Test
+        @DisplayName("비대표 ETF는 holdingDays/ADTV 무관하게 C로 강등")
+        void recalculate_nonRepresentativeEtf_alwaysC() {
+            // Arrange
+            Stock e1 = buildStock("E1", LocalDate.of(2020, 1, 1)); // 대표 후보
+            Stock e2 = buildStock("E2", LocalDate.of(2020, 1, 2)); // 비대표
+            stubStockId(e1, 1L);
+            stubStockId(e2, 2L);
+
+            EtfMetadata m1 = buildMeta(e1, "069500", 1, false, false);
+            EtfMetadata m2 = buildMeta(e2, "069500", 1, false, false);
+
+            when(etfMetadataRepository.findAllWithStock()).thenReturn(List.of(m1, m2));
+            when(dailyOhlcvRepository.countByStockId(anyLong())).thenReturn(25L);
+            stubAdtv(adtvRow(1L, 3000.0), adtvRow(2L, 2000.0)); // E1이 ADTV 높아 대표
+            when(historyRepository.findLatestByGroupKey(anyString())).thenReturn(Optional.empty());
+
+            // Act
+            service.recalculate();
+
+            // Assert: E2(비대표)는 반드시 C
+            verify(stockGradeRepository)
+                    .save(argThat(sg -> e2.equals(sg.getStock()) && "C".equals(sg.getGrade())));
+        }
+    }
+
+    @Nested
+    @DisplayName("AC-13 — 대표 ETF: GradeClassifier로 A/B/C 산정 (무조건 A 아님)")
+    class Ac13RepresentativeEtfClassifiedByGradeClassifier {
+
+        @Test
+        @DisplayName("GradeClassifier가 B를 반환하면 대표 ETF도 B 등급")
+        void recalculate_representativeEtf_classifiedAsBByGradeClassifier() {
+            // Arrange
+            Stock e1 = buildStock("E1", LocalDate.of(2020, 1, 1));
+            stubStockId(e1, 1L);
+
+            EtfMetadata m1 = buildMeta(e1, "069500", 1, false, false);
+
+            when(etfMetadataRepository.findAllWithStock()).thenReturn(List.of(m1));
+            when(dailyOhlcvRepository.countByStockId(anyLong())).thenReturn(25L);
+            stubAdtv(adtvRow(1L, 2000.0));
+            when(historyRepository.findLatestByGroupKey(anyString())).thenReturn(Optional.empty());
+            // GradeClassifier가 B를 반환하도록 override
+            when(gradeClassifier.classify(any(GradeInput.class))).thenReturn(Grade.B);
+
+            // Act
+            service.recalculate();
+
+            // Assert: E1이 B 등급으로 영속화됨 (무조건 A 아님)
+            verify(stockGradeRepository)
+                    .save(argThat(sg -> e1.equals(sg.getStock()) && "B".equals(sg.getGrade())));
+        }
+
+        @Test
+        @DisplayName("GradeClassifier가 C를 반환하면 대표 ETF도 C 등급")
+        void recalculate_representativeEtf_classifiedAsCByGradeClassifier() {
+            // Arrange
+            Stock e1 = buildStock("E1", LocalDate.of(2020, 1, 1));
+            stubStockId(e1, 1L);
+
+            EtfMetadata m1 = buildMeta(e1, "069500", 1, false, false);
+
+            when(etfMetadataRepository.findAllWithStock()).thenReturn(List.of(m1));
+            when(dailyOhlcvRepository.countByStockId(anyLong())).thenReturn(25L);
+            stubAdtv(adtvRow(1L, 500.0));
+            when(historyRepository.findLatestByGroupKey(anyString())).thenReturn(Optional.empty());
+            // GradeClassifier가 C를 반환 (holdingDays/ADTV 미충족)
+            when(gradeClassifier.classify(any(GradeInput.class))).thenReturn(Grade.C);
+
+            // Act
+            service.recalculate();
+
+            // Assert: E1이 C 등급 (무조건 A 아님)
+            verify(stockGradeRepository)
+                    .save(argThat(sg -> e1.equals(sg.getStock()) && "C".equals(sg.getGrade())));
+        }
+
+        @Test
+        @DisplayName("대표 선정 비교자(findAdtvByStockIds)는 변경되지 않음")
+        void recalculate_representativeSelectionComparator_unchanged() {
+            // Arrange: ADTV 높은 E1이 선택되어야 함 (비교자 변경 없음 검증)
+            Stock e1 = buildStock("E1", LocalDate.of(2020, 1, 1));
+            Stock e2 = buildStock("E2", LocalDate.of(2020, 2, 1));
+            stubStockId(e1, 1L);
+            stubStockId(e2, 2L);
+
+            EtfMetadata m1 = buildMeta(e1, "069500", 1, false, false);
+            EtfMetadata m2 = buildMeta(e2, "069500", 1, false, false);
+
+            when(etfMetadataRepository.findAllWithStock()).thenReturn(List.of(m1, m2));
+            when(dailyOhlcvRepository.countByStockId(anyLong())).thenReturn(25L);
+            stubAdtv(adtvRow(1L, 5000.0), adtvRow(2L, 1000.0)); // E1 ADTV 높음 → 대표
+            when(historyRepository.findLatestByGroupKey(anyString())).thenReturn(Optional.empty());
+
+            // Act
+            service.recalculate();
+
+            // Assert: gradeClassifier는 대표(E1)에 대해서만 호출됨 (비대표 E2는 C 고정)
+            verify(gradeClassifier).classify(argThat(input -> "E1".equals(input.symbol())));
+            verify(stockGradeRepository)
+                    .save(argThat(sg -> e2.equals(sg.getStock()) && "C".equals(sg.getGrade())));
         }
     }
 

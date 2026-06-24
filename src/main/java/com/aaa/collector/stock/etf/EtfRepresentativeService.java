@@ -6,6 +6,8 @@ import com.aaa.collector.stock.StockGrade;
 import com.aaa.collector.stock.enums.AssetType;
 import com.aaa.collector.stock.grade.Grade;
 import com.aaa.collector.stock.grade.GradeCacheRepository;
+import com.aaa.collector.stock.grade.GradeClassifier;
+import com.aaa.collector.stock.grade.GradeInput;
 import com.aaa.collector.stock.grade.StockGradeRepository;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
@@ -36,7 +38,6 @@ import org.springframework.transaction.annotation.Transactional;
 public class EtfRepresentativeService {
 
     static final int MIN_TRADING_DAYS = 20;
-    static final Grade GRADE_REPRESENTATIVE = Grade.A;
     static final Grade GRADE_NON_REPRESENTATIVE = Grade.C;
 
     private static final ZoneId KST = ZoneId.of("Asia/Seoul");
@@ -46,6 +47,7 @@ public class EtfRepresentativeService {
     private final DailyOhlcvRepository dailyOhlcvRepository;
     private final EtfRepresentativeHistoryRepository historyRepository;
     private final GradeCacheRepository gradeCacheRepository;
+    private final GradeClassifier gradeClassifier;
 
     /**
      * ETF 대표 종목 주간 재계산.
@@ -142,7 +144,21 @@ public class EtfRepresentativeService {
             upsertGrade(stock, GRADE_NON_REPRESENTATIVE);
         }
 
-        upsertGrade(representativeStock, GRADE_REPRESENTATIVE);
+        // 대표 ETF: 무조건 A가 아닌 holdingDays + ADTV로 A/B/C 산정 (REQ-GRADE4-031, 032)
+        // GradeClassifier의 ETF→C 분기를 우회하기 위해 assetType을 STOCK으로 전달
+        long holdingDays = dailyOhlcvRepository.countByStockId(representativeStock.getId());
+        double adtv = adtvMap.getOrDefault(representativeStock.getId(), 0.0);
+        String market = representativeStock.getMarket().name().startsWith("KOS") ? "KRX" : "US";
+        GradeInput input =
+                new GradeInput(
+                        representativeStock.getSymbol(),
+                        representativeStock.getNameKo(),
+                        AssetType.STOCK, // ETF 분기 우회 — 대표 ETF는 holdingDays+ADTV로 A/B/C 판정
+                        holdingDays,
+                        adtv,
+                        market);
+        Grade representativeGrade = gradeClassifier.classify(input);
+        upsertGrade(representativeStock, representativeGrade);
         recordHistoryIfChanged(groupKey, representativeStock);
     }
 
