@@ -3,12 +3,14 @@ package com.aaa.collector.kis.websocket;
 import com.aaa.collector.observability.TickMetrics;
 import java.util.Map;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.redis.connection.RedisStreamCommands.XAddOptions;
 import org.springframework.data.redis.connection.stream.MapRecord;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Component;
 
 /** 파싱된 틱을 Redis Streams에 발행. */
+@Slf4j
 @Component
 @RequiredArgsConstructor
 public class KisTickPublisher {
@@ -47,6 +49,12 @@ public class KisTickPublisher {
 
         XAddOptions options = XAddOptions.maxlen(MAX_LEN).approximateTrimming(true);
 
-        redisTemplate.opsForStream().add(record, options);
+        try {
+            redisTemplate.opsForStream().add(record, options);
+        } catch (IllegalStateException e) {
+            // Lettuce가 destroy된 후 WebSocket 틱이 도착하면 발생하는 shutdown 경쟁 조건.
+            // SmartLifecycle.stop()으로 WebSocket을 먼저 닫도록 했으나 방어적으로 tick drop 처리.
+            log.warn("[tick-publisher] Redis 연결 불가 — tick drop: {}", e.getMessage());
+        }
     }
 }

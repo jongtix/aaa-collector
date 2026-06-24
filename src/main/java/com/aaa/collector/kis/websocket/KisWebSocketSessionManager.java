@@ -12,11 +12,13 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Collectors;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.context.SmartLifecycle;
 import org.springframework.stereotype.Component;
 import org.springframework.web.socket.client.standard.StandardWebSocketClient;
 
@@ -31,7 +33,7 @@ import org.springframework.web.socket.client.standard.StandardWebSocketClient;
 // 예정
 @Slf4j
 @Component
-public class KisWebSocketSessionManager {
+public class KisWebSocketSessionManager implements SmartLifecycle {
 
     /** KIS WebSocket 엔드포인트 URL. */
     private static final String KIS_WS_URL = "ws://ops.koreainvestment.com:21000";
@@ -62,6 +64,14 @@ public class KisWebSocketSessionManager {
 
     /** 라운드로빈 인덱스. */
     private final AtomicInteger roundRobinIndex = new AtomicInteger(0);
+
+    /**
+     * SmartLifecycle running 상태.
+     *
+     * <p>openAll() 호출 시 true, closeAll() 호출 시 false로 전환된다. Spring 컨텍스트 종료 시 isRunning()이 true이면
+     * stop()이 호출되어 closeAll()이 실행된다.
+     */
+    private final AtomicBoolean running = new AtomicBoolean();
 
     @Autowired
     public KisWebSocketSessionManager(
@@ -173,6 +183,7 @@ public class KisWebSocketSessionManager {
         }
 
         log.info("전 계좌 WebSocket 세션 연결 완료 — 연결된 세션: {}", sessions.size());
+        running.set(true);
     }
 
     /**
@@ -226,7 +237,49 @@ public class KisWebSocketSessionManager {
                         });
         sessions.clear();
         subscriptionOwner.clear();
+        running.set(false);
         log.info("전 계좌 WebSocket 세션 종료 완료");
+    }
+
+    // ──────────────────────────────────────────────────────────────────
+    // SmartLifecycle
+    // ──────────────────────────────────────────────────────────────────
+
+    /**
+     * Spring 컨텍스트 종료 시 WebSocket 세션을 먼저 닫는다.
+     *
+     * <p>phase를 {@code Integer.MAX_VALUE - 100}으로 설정하여 {@code LettuceConnectionFactory}의 {@code
+     * DisposableBean.destroy()}보다 먼저 실행되도록 보장한다. 이로써 Lettuce가 destroy된 이후에 틱이 도착해 {@code
+     * IllegalStateException}이 발생하는 shutdown 경쟁 조건을 제거한다.
+     */
+    @Override
+    public void stop() {
+        closeAll();
+    }
+
+    @Override
+    public void start() {
+        // 스케줄러(KisWebSocketScheduler)가 openAll()을 호출하므로 여기서는 아무 것도 하지 않는다.
+    }
+
+    @Override
+    public boolean isRunning() {
+        return running.get();
+    }
+
+    /** {@code false}: openAll()은 스케줄러가 호출하므로 자동 기동이 불필요하다. */
+    @Override
+    public boolean isAutoStartup() {
+        return false;
+    }
+
+    /**
+     * {@code LettuceConnectionFactory}({@code DisposableBean})보다 먼저 stop()이 실행되어야 하므로 {@code
+     * Integer.MAX_VALUE - 100}을 반환한다.
+     */
+    @Override
+    public int getPhase() {
+        return Integer.MAX_VALUE - 100;
     }
 
     // ──────────────────────────────────────────────────────────────────
