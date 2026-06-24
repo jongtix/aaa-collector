@@ -81,7 +81,7 @@
 
 ### 1-6. KIS WebSocket 실시간 수집
 - [x] 국내 체결 (`H0STCNT0`), 호가 (`H0STASP0`) 구독
-- [ ] 해외 체결, 호가(Level 1), VIX 선물 실시간 구독 ← Phase 2 구현 예정 (현재 스텁)
+- [x] 해외 체결(`HDFSCNT0`), 호가(`HDFSASP0`) 10단계 실시간 구독 ← **구현 완료** (SPEC-COLLECTOR-WS-OVERSEAS-001 v0.2.0). VIX 선물 실시간은 제외 (해외선물 WS TR 별도·명세 미확보, 추후 별도 SPEC)
 - [x] 5세션 × 40건 = 200건 구독 상한 관리
 - [x] 틱 → Redis Streams (`stream:tick:domestic/overseas`) 발행 (`symbol` 필드 포함, MAXLEN으로 메모리 제어)
 - [x] WebSocket 재연결 로직 + 안전 모드 진입 기준 구현
