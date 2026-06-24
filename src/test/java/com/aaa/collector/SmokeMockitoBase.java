@@ -17,6 +17,7 @@ import com.aaa.collector.market.indicator.vix.CboeVixClient;
 import com.aaa.collector.market.indicator.vix.FredVixClient;
 import com.aaa.collector.market.indicator.vix.VixCollectionService;
 import com.aaa.collector.news.DomesticNewsHeadlineRepository;
+import com.aaa.collector.news.overseas.OverseasNewsHeadlineRepository;
 import com.aaa.collector.stock.AnalystEstimateRepository;
 import com.aaa.collector.stock.CorporateEventRepository;
 import com.aaa.collector.stock.CreditBalanceRepository;
@@ -67,6 +68,8 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
             MacroIndicatorRepository.class,
             CorporateEventRepository.class,
             DomesticNewsHeadlineRepository.class,
+            // SPEC-COLLECTOR-OVERSEAS-ETC-001 T9: 해외 뉴스 리포지토리 신규 빈 모킹 (smoke 회귀 방지)
+            OverseasNewsHeadlineRepository.class,
             FinancialRepository.class,
             AnalystEstimateRepository.class,
             OverseasDailyOhlcvCollectionService.class,
