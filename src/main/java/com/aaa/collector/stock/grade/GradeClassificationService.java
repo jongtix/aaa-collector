@@ -108,8 +108,9 @@ public class GradeClassificationService {
                                 stock.getSymbol(),
                                 stock.getNameKo(),
                                 stock.getAssetType(),
-                                listedYears,
-                                percentile);
+                                (long) listedYears,
+                                percentile,
+                                "KRX");
                 Grade grade = gradeClassifier.classify(input);
                 stockGradePersistService.persistSingle(stock, grade, gradedAt);
             } catch (Exception e) {
@@ -173,8 +174,9 @@ public class GradeClassificationService {
                                 stock.getSymbol(),
                                 stock.getNameKo(),
                                 stock.getAssetType(),
-                                listedYears,
-                                percentile);
+                                (long) listedYears,
+                                percentile,
+                                "US");
                 Grade grade = gradeClassifier.classify(input);
                 stockGradePersistService.persistSingle(stock, grade, gradedAt);
             } catch (Exception e) {

@@ -75,7 +75,7 @@ class ListedYearsResolver {
         double ohlcvElapsedYears =
                 ChronoUnit.DAYS.between(minTradeDate.get(), LocalDate.now(KST)) / 365.25;
 
-        if (ohlcvElapsedYears >= GradeConstants.ESTABLISHED_YEARS_THRESHOLD) {
+        if (ohlcvElapsedYears >= 7.0) {
             log.warn(
                     "상장일 미상 + OHLCV MIN >= 7년 — 장기 상장으로 간주(A 등급 후보), 신규 종목 오분류 여부 확인 요망"
                             + " — symbol={}, market={}, assetType={}, ohlcvMinDate={}",

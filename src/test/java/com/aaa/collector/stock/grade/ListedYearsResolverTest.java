@@ -135,9 +135,7 @@ class ListedYearsResolverTest {
 
             double years = resolver.resolve(stock);
 
-            assertThat(years)
-                    .isGreaterThan(2.9)
-                    .isLessThan(GradeConstants.ESTABLISHED_YEARS_THRESHOLD);
+            assertThat(years).isGreaterThan(2.9).isLessThan(7.0);
         }
 
         @Test
