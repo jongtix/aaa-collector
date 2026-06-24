@@ -15,7 +15,8 @@ import org.springframework.stereotype.Service;
  * 뉴스 제목 수집 서비스 (TR FHKST01011800).
  *
  * <p>T0 실측 확정: {@code output}은 배열(페이지당 40건), {@code cntt_usiq_srno} 내림차순(최신 우선). SRNO 커서는
- * 포함적(inclusive) — page2.first == page1.last이며 중복 경계 행은 {@code uk_news_headlines_serial} 멱등이 흡수한다.
+ * 포함적(inclusive) — page2.first == page1.last이며 중복 경계 행은 {@code uk_domestic_news_headlines_serial}
+ * 멱등이 흡수한다.
  *
  * <p>증분 수집(REQ-BATCH3-063): blank SRNO(최신)부터 fetch → 저장된 max serial_no 도달 시 정지. 페이지 종료 =
  * count&lt;40 또는 경계 행만 반환.
@@ -44,7 +45,7 @@ public class NewsTitleCollectionService {
 
     private final GuardedKisExecutor guardedKisExecutor;
     private final KeyLeaseRegistry keyLeaseRegistry;
-    private final NewsHeadlineRepository newsHeadlineRepository;
+    private final DomesticNewsHeadlineRepository newsHeadlineRepository;
 
     /**
      * 뉴스 제목 증분 수집을 실행하고 집계 결과를 반환한다.
@@ -185,12 +186,12 @@ public class NewsTitleCollectionService {
                         ? srnoVal
                         : currentMinSrno;
 
-        NewsHeadline entity = mapToEntity(row);
+        DomesticNewsHeadline entity = mapToEntity(row);
         if (entity == null) {
             return RowOutcome.skipped(reachedStoredMax, newMinSrno);
         }
 
-        // REQ-BATCH3-062: uk_news_headlines_serial 멱등 저장
+        // REQ-BATCH3-062: uk_domestic_news_headlines_serial 멱등 저장
         if (tryInsert(entity, srnoVal)) {
             return RowOutcome.succeeded(reachedStoredMax, newMinSrno);
         }
@@ -220,7 +221,7 @@ public class NewsTitleCollectionService {
      * insertIgnoreDuplicate 예외(예: MySQL "Data too long") 발생 시 커서 진행이 차단되어 동일 페이지가 무한 재시도되는 영구 정체를
      * 방지한다.
      */
-    private boolean tryInsert(NewsHeadline entity, String srnoVal) {
+    private boolean tryInsert(DomesticNewsHeadline entity, String srnoVal) {
         try {
             newsHeadlineRepository.insertIgnoreDuplicate(entity);
             return true;
@@ -250,12 +251,12 @@ public class NewsTitleCollectionService {
     }
 
     /**
-     * NewsTitleRow → NewsHeadline 매핑.
+     * NewsTitleRow → DomesticNewsHeadline 매핑.
      *
      * @return null 이면 skip
      */
     @SuppressWarnings({"PMD.GuardLogStatement"}) // debug 레벨 파라미터 구성은 런타임 비용 무시 가능
-    private NewsHeadline mapToEntity(KisNewsTitleResponse.NewsTitleRow row) {
+    private DomesticNewsHeadline mapToEntity(KisNewsTitleResponse.NewsTitleRow row) {
         String dataDt = row.dataDt();
         String dataTm = row.dataTm();
 
@@ -282,7 +283,7 @@ public class NewsTitleCollectionService {
         }
 
         // REQ-BATCH3-061: iscd1~5 보존, iscd6~10·kor_isnm1~10 무시
-        return NewsHeadline.builder()
+        return DomesticNewsHeadline.builder()
                 .serialNo(row.cnttUsiqSrno())
                 .publishedAt(publishedAt)
                 .providerCode(row.newsOferEntpCode())

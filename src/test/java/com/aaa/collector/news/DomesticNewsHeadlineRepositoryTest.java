@@ -21,8 +21,8 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 @ActiveProfiles({"test", "db-integration"})
 @Testcontainers
 @Transactional
-@DisplayName("NewsHeadlineRepository 통합 테스트 (멱등 upsert)")
-class NewsHeadlineRepositoryTest {
+@DisplayName("DomesticNewsHeadlineRepository 통합 테스트 (멱등 upsert)")
+class DomesticNewsHeadlineRepositoryTest {
 
     @Container @ServiceConnection
     static final MySQLContainer<?> MYSQL = new MySQLContainer<>("mysql:8.4");
@@ -31,10 +31,10 @@ class NewsHeadlineRepositoryTest {
     @SuppressWarnings("unused")
     private StringRedisTemplate redisTemplate;
 
-    @Autowired private NewsHeadlineRepository newsHeadlineRepository;
+    @Autowired private DomesticNewsHeadlineRepository newsHeadlineRepository;
 
-    private NewsHeadline buildHeadline(String serialNo, String title) {
-        return NewsHeadline.builder()
+    private DomesticNewsHeadline buildHeadline(String serialNo, String title) {
+        return DomesticNewsHeadline.builder()
                 .serialNo(serialNo)
                 .publishedAt(LocalDateTime.of(2026, 6, 15, 9, 30, 0))
                 .providerCode("1")
@@ -64,7 +64,7 @@ class NewsHeadlineRepositoryTest {
             newsHeadlineRepository.insertIgnoreDuplicate(buildHeadline(serialNo, longTitle));
 
             // Assert
-            NewsHeadline saved =
+            DomesticNewsHeadline saved =
                     newsHeadlineRepository.findAll().stream()
                             .filter(n -> n.getSerialNo().equals(serialNo))
                             .findFirst()
@@ -101,7 +101,7 @@ class NewsHeadlineRepositoryTest {
 
             // Assert
             assertThat(newsHeadlineRepository.countAll()).isEqualTo(1L);
-            NewsHeadline saved =
+            DomesticNewsHeadline saved =
                     newsHeadlineRepository.findAll().stream()
                             .filter(n -> n.getSerialNo().equals(serialNo))
                             .findFirst()
