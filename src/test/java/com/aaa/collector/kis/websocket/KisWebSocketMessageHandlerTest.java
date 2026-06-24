@@ -251,6 +251,65 @@ class KisWebSocketMessageHandlerTest {
     }
 
     // ──────────────────────────────────────────────────────────────────
+    // 해외 체결·호가 평문 발행 특성화 (AC-TICK-1, AC-TICK-2, AC-PLAIN-1)
+    // ──────────────────────────────────────────────────────────────────
+
+    @Nested
+    @DisplayName("해외 체결·호가 평문 발행")
+    class OverseasPlainTickPublish {
+
+        @Test
+        @DisplayName("AC-TICK-1: 해외 체결(HDFSCNT0) 평문 → publish 호출, isDomestic=false")
+        void overseasExecutionPlain_publishesWithIsDomesticFalse() {
+            // Arrange — 해외 체결 평문 형식 (encryptFlag=0)
+            String raw = "0|HDFSCNT0|003|DNASAAPL^150000^149500^150200^100^12345";
+
+            // Act
+            handler.handleTextMessage(session, new TextMessage(raw));
+
+            // Assert
+            ArgumentCaptor<ParsedTick> captor = ArgumentCaptor.forClass(ParsedTick.class);
+            verify(tickPublisher).publish(captor.capture());
+            ParsedTick tick = captor.getValue();
+            assertThat(tick.trId()).isEqualTo("HDFSCNT0");
+            assertThat(tick.isDomestic()).isFalse();
+            assertThat(tick.trKey()).isEqualTo("DNASAAPL");
+        }
+
+        @Test
+        @DisplayName("AC-TICK-2: 해외 호가(HDFSASP0) 평문 → publish 호출, isDomestic=false")
+        void overseasQuotePlain_publishesWithIsDomesticFalse() {
+            // Arrange — 해외 호가 평문 형식 (encryptFlag=0)
+            String raw = "0|HDFSASP0|001|DNASAAPL^150000^150100^149900^149800";
+
+            // Act
+            handler.handleTextMessage(session, new TextMessage(raw));
+
+            // Assert
+            ArgumentCaptor<ParsedTick> captor = ArgumentCaptor.forClass(ParsedTick.class);
+            verify(tickPublisher).publish(captor.capture());
+            ParsedTick tick = captor.getValue();
+            assertThat(tick.trId()).isEqualTo("HDFSASP0");
+            assertThat(tick.isDomestic()).isFalse();
+        }
+
+        @Test
+        @DisplayName("AC-PLAIN-1: encryptFlag=0 해외 메시지는 AES 키 미조회 (복호화 경로 미통과)")
+        void encryptFlagZero_doesNotLookUpAesKey() {
+            // Arrange — AES 키 미등록 상태에서 평문 메시지 전송
+            // encryptFlag=1이면 aesKeys.get(trId) 조회 후 null이면 return (틱 유실)
+            // encryptFlag=0이면 aesKeys 미조회 → publish 호출됨
+            String raw = "0|HDFSCNT0|001|DNASAAPL^150000";
+
+            // Act
+            handler.handleTextMessage(session, new TextMessage(raw));
+
+            // Assert — AES 키가 없어도 publish 호출됨 (평문 경로)
+            verify(tickPublisher, times(1)).publish(any(ParsedTick.class));
+        }
+    }
+
+    // ──────────────────────────────────────────────────────────────────
     // Type B — UNSUB 응답
     // ──────────────────────────────────────────────────────────────────
 
