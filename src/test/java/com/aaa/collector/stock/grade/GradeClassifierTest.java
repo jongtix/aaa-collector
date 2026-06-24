@@ -13,180 +13,267 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 
-@DisplayName("GradeClassifier 단위 테스트")
+@DisplayName("GradeClassifier 단위 테스트 — 데이터 게이트 + ADTV 절대 임계값 모델")
 class GradeClassifierTest {
 
     private final GradeClassifier classifier = new GradeClassifier();
 
-    private GradeInput stockInput(double listedYears, double percentile) {
-        return new GradeInput("005930", "삼성전자", AssetType.STOCK, listedYears, percentile);
+    /** KRX 일반 주식 입력 헬퍼 */
+    private GradeInput krxStockInput(long holdingDays, double adtv) {
+        return new GradeInput("005930", "삼성전자", AssetType.STOCK, holdingDays, adtv, "KRX");
     }
 
-    private GradeInput stockInput(String nameKo, double listedYears, double percentile) {
-        return new GradeInput("005930", nameKo, AssetType.STOCK, listedYears, percentile);
+    private GradeInput krxStockInput(String nameKo, long holdingDays, double adtv) {
+        return new GradeInput("005930", nameKo, AssetType.STOCK, holdingDays, adtv, "KRX");
     }
 
-    private GradeInput etfInput(String nameKo, double listedYears, double percentile) {
-        return new GradeInput("069500", nameKo, AssetType.ETF, listedYears, percentile);
+    private GradeInput krxEtfInput(String nameKo, long holdingDays, double adtv) {
+        return new GradeInput("069500", nameKo, AssetType.ETF, holdingDays, adtv, "KRX");
     }
+
+    private GradeInput usStockInput(long holdingDays, double adtv) {
+        return new GradeInput("AAPL", "Apple Inc.", AssetType.STOCK, holdingDays, adtv, "US");
+    }
+
+    // -----------------------------------------------------------------------
+    // AC-1: F 등급 (우선 순위 1위)
+    // -----------------------------------------------------------------------
 
     @Nested
-    @DisplayName("F 등급 — 우선 적용")
+    @DisplayName("AC-1 — F 등급: TDF 또는 액티브 포함 (최우선)")
     class FGrade {
 
         @Test
-        @DisplayName("시나리오 2: TDF 포함 종목명 — 상장 10년 + 상위 5%이더라도 F")
+        @DisplayName("TDF 포함 종목명 — holdingDays 750 이상 + ADTV HIGH 이상이어도 F")
         void classify_tdfInName_returnsF() {
-            GradeInput input = stockInput("TDF 2050", 10.0, 5.0);
+            GradeInput input = krxStockInput("TDF 2050", 1000L, 6e10);
             assertThat(classifier.classify(input)).isEqualTo(Grade.F);
         }
 
         @Test
-        @DisplayName("시나리오 2: 액티브 포함 종목명 — 상장 10년 + 상위 5%이더라도 F")
+        @DisplayName("액티브 포함 ETF — holdingDays 750 이상 + ADTV HIGH 이상이어도 F")
         void classify_activeInName_returnsF() {
-            GradeInput input = etfInput("KODEX 200 액티브", 10.0, 5.0);
+            GradeInput input = krxEtfInput("KODEX 200 액티브", 1000L, 6e10);
             assertThat(classifier.classify(input)).isEqualTo(Grade.F);
         }
 
         @Test
-        @DisplayName("TDF 포함 ETF — A 조건 충족해도 F 우선")
-        void classify_tdfEtf_fTakesPriorityOverA() {
-            GradeInput input = etfInput("삼성 TDF2050", 10.0, 5.0);
+        @DisplayName("TDF 포함 ETF — F가 ETF-C보다 우선")
+        void classify_tdfEtf_fTakesPriorityOverEtfC() {
+            GradeInput input = krxEtfInput("삼성 TDF2050", 800L, 6e10);
             assertThat(classifier.classify(input)).isEqualTo(Grade.F);
         }
 
         @Test
-        @DisplayName("종목명에 TDF 없고 액티브 없는 일반 종목 — F 미적용")
+        @DisplayName("TDF 없고 액티브 없는 종목 — F 미적용")
         void classify_noTdfNoActive_notF() {
-            GradeInput input = stockInput("삼성전자", 10.0, 5.0);
+            GradeInput input = krxStockInput("삼성전자", 1000L, 6e10);
+            assertThat(classifier.classify(input)).isNotEqualTo(Grade.F);
+        }
+
+        @Test
+        @DisplayName("nameKo가 null — F 미적용 (NPE 없음)")
+        void classify_nullNameKo_notF() {
+            GradeInput input = new GradeInput("005930", null, AssetType.STOCK, 1000L, 6e10, "KRX");
             assertThat(classifier.classify(input)).isNotEqualTo(Grade.F);
         }
     }
 
+    // -----------------------------------------------------------------------
+    // AC-2: 비대표 ETF → C
+    // -----------------------------------------------------------------------
+
     @Nested
-    @DisplayName("ETF 기본 C 등급 (REQ-007)")
+    @DisplayName("AC-2 — 비-F ETF: 강제 C")
     class EtfDefaultC {
 
         @Test
-        @DisplayName("시나리오 4: 비-F ETF (상장 10년 + 상위 5%) — C 등급")
-        void classify_nonFEtfLongListed_returnsC() {
-            GradeInput input = etfInput("KODEX 200", 10.0, 5.0);
+        @DisplayName("비-F ETF (holdingDays 1000 + ADTV HIGH 초과) — C 등급")
+        void classify_nonFEtfHighAdtv_returnsC() {
+            GradeInput input = krxEtfInput("KODEX 200", 1000L, 6e10);
             assertThat(classifier.classify(input)).isEqualTo(Grade.C);
         }
 
         @Test
-        @DisplayName("비-F ETF (상장 1년 + 하위 80%) — C 등급")
-        void classify_nonFEtfShortListed_returnsC() {
-            GradeInput input = etfInput("KODEX 코스닥150", 1.0, 80.0);
+        @DisplayName("비-F ETF (holdingDays 적음 + ADTV 낮음) — C 등급")
+        void classify_nonFEtfLowAdtv_returnsC() {
+            GradeInput input = krxEtfInput("KODEX 코스닥150", 100L, 1e8);
             assertThat(classifier.classify(input)).isEqualTo(Grade.C);
         }
     }
 
+    // -----------------------------------------------------------------------
+    // AC-3: A 등급 — holdingDays ≥ 750 AND ADTV ≥ HIGH
+    // -----------------------------------------------------------------------
+
     @Nested
-    @DisplayName("A 등급 — 상장 7년 이상 AND 상위 20%")
+    @DisplayName("AC-3 — A 등급: holdingDays ≥ 750 AND ADTV ≥ HIGH")
     class AGrade {
 
         @Test
-        @DisplayName("시나리오 3: 상장 8년 + 상위 10% → A")
-        void classify_8yearsTop10pct_returnsA() {
-            assertThat(classifier.classify(stockInput(8.0, 10.0))).isEqualTo(Grade.A);
+        @DisplayName("KRX: holdingDays=750 정확히 + ADTV=5e10 정확히 → A (경계값)")
+        void classify_krx_exactly750Days_exactly5e10_returnsA() {
+            assertThat(classifier.classify(krxStockInput(750L, 5e10))).isEqualTo(Grade.A);
         }
 
         @Test
-        @DisplayName("상장 7년 정확히 + 상위 20% 정확히 → A")
-        void classify_exactly7yearsExactly20pct_returnsA() {
-            assertThat(classifier.classify(stockInput(7.0, 20.0))).isEqualTo(Grade.A);
+        @DisplayName("KRX: holdingDays=1000 + ADTV=6e10 → A")
+        void classify_krx_1000Days_6e10_returnsA() {
+            assertThat(classifier.classify(krxStockInput(1000L, 6e10))).isEqualTo(Grade.A);
         }
 
         @Test
-        @DisplayName("상장 10년 + 상위 1% → A")
-        void classify_10yearsTop1pct_returnsA() {
-            assertThat(classifier.classify(stockInput(10.0, 1.0))).isEqualTo(Grade.A);
+        @DisplayName("US: holdingDays=750 정확히 + ADTV=2e9 정확히 → A (경계값)")
+        void classify_us_exactly750Days_exactly2e9_returnsA() {
+            assertThat(classifier.classify(usStockInput(750L, 2e9))).isEqualTo(Grade.A);
+        }
+
+        @Test
+        @DisplayName("US: holdingDays=900 + ADTV=3e9 → A")
+        void classify_us_900Days_3e9_returnsA() {
+            assertThat(classifier.classify(usStockInput(900L, 3e9))).isEqualTo(Grade.A);
         }
     }
 
+    // -----------------------------------------------------------------------
+    // AC-4: B 등급 — holdingDays ≥ 250 AND LOW ≤ ADTV < HIGH
+    // -----------------------------------------------------------------------
+
     @Nested
-    @DisplayName("B 등급 — 상장 3~7년 AND 상위 20%~60%")
+    @DisplayName("AC-4 — B 등급: holdingDays ≥ 250 AND LOW ≤ ADTV < HIGH")
     class BGrade {
 
         @Test
-        @DisplayName("시나리오 3a: 상장 4년 + 상위 30% → B")
-        void classify_4yearsTop30pct_returnsB() {
-            assertThat(classifier.classify(stockInput(4.0, 30.0))).isEqualTo(Grade.B);
+        @DisplayName("KRX: holdingDays=250 정확히 + ADTV=1e10 정확히 → B (경계값)")
+        void classify_krx_exactly250Days_exactly1e10_returnsB() {
+            assertThat(classifier.classify(krxStockInput(250L, 1e10))).isEqualTo(Grade.B);
         }
 
         @Test
-        @DisplayName("상장 3년 정확히 + 상위 20% 초과 60% 이하 → B")
-        void classify_exactly3yearsTop40pct_returnsB() {
-            assertThat(classifier.classify(stockInput(3.0, 40.0))).isEqualTo(Grade.B);
+        @DisplayName("KRX: holdingDays=500 + ADTV=2e10 (LOW 이상 HIGH 미만) → B")
+        void classify_krx_500Days_2e10_returnsB() {
+            assertThat(classifier.classify(krxStockInput(500L, 2e10))).isEqualTo(Grade.B);
         }
 
         @Test
-        @DisplayName("상장 6.9년 + 상위 59% → B")
-        void classify_69yearsTop59pct_returnsB() {
-            assertThat(classifier.classify(stockInput(6.9, 59.0))).isEqualTo(Grade.B);
+        @DisplayName(
+                "KRX: holdingDays=750 + ADTV=HIGH 미만(4.9e10) → B (holdingDays ≥ 750이지만 ADTV < HIGH)")
+        void classify_krx_750Days_adtvBelowHigh_returnsB() {
+            assertThat(classifier.classify(krxStockInput(750L, 4.9e10))).isEqualTo(Grade.B);
+        }
+
+        @Test
+        @DisplayName("US: holdingDays=250 정확히 + ADTV=5e8 정확히 → B (경계값)")
+        void classify_us_exactly250Days_exactly5e8_returnsB() {
+            assertThat(classifier.classify(usStockInput(250L, 5e8))).isEqualTo(Grade.B);
+        }
+
+        @Test
+        @DisplayName("US: holdingDays=600 + ADTV=1e9 (LOW 이상 HIGH 미만) → B")
+        void classify_us_600Days_1e9_returnsB() {
+            assertThat(classifier.classify(usStockInput(600L, 1e9))).isEqualTo(Grade.B);
         }
     }
 
+    // -----------------------------------------------------------------------
+    // AC-5: C 등급 — 나머지
+    // -----------------------------------------------------------------------
+
     @Nested
-    @DisplayName("C 등급 — 나머지 전부")
+    @DisplayName("AC-5 — C 등급: 나머지 전부")
     class CGrade {
 
         @Test
-        @DisplayName("시나리오 3: 8년이지만 하위 50% (백분위 50) → C (기간·백분위 AND 조건 미충족)")
-        void classify_8yearsBottom50pct_returnsC() {
-            assertThat(classifier.classify(stockInput(8.0, 50.0))).isEqualTo(Grade.C);
+        @DisplayName("KRX: holdingDays=749 (A/B 기간 미충족) + ADTV=HIGH → C")
+        void classify_krx_749Days_highAdtv_returnsC() {
+            assertThat(classifier.classify(krxStockInput(749L, 6e10))).isEqualTo(Grade.C);
         }
 
         @Test
-        @DisplayName("시나리오 3b: 7년 이상이지만 상위 20% 미충족 (50번째 백분위) → C (REQ-014)")
-        void classify_7yearsNot20pct_returnsC() {
-            assertThat(classifier.classify(stockInput(7.0, 50.0))).isEqualTo(Grade.C);
+        @DisplayName("KRX: holdingDays=249 + ADTV=LOW → C (holdingDays B 기준 미충족)")
+        void classify_krx_249Days_lowAdtv_returnsC() {
+            assertThat(classifier.classify(krxStockInput(249L, 1e10))).isEqualTo(Grade.C);
         }
 
         @Test
-        @DisplayName("상장 2년 + 상위 5% → C (상장 기간 미충족)")
-        void classify_2yearsTop5pct_returnsC() {
-            assertThat(classifier.classify(stockInput(2.0, 5.0))).isEqualTo(Grade.C);
+        @DisplayName("KRX: holdingDays=250 + ADTV=LOW 미만(9.9e9) → C (B 하한 미달)")
+        void classify_krx_250Days_adtvBelowLow_returnsC() {
+            assertThat(classifier.classify(krxStockInput(250L, 9.9e9))).isEqualTo(Grade.C);
         }
 
         @Test
-        @DisplayName("상장 5년 + 하위 50% (백분위 70) → C (A/B 모두 미충족)")
-        void classify_5yearsBottom50pct_returnsC() {
-            assertThat(classifier.classify(stockInput(5.0, 70.0))).isEqualTo(Grade.C);
+        @DisplayName("KRX: holdingDays=249 + ADTV=HIGH → C (holdingDays B 기준 미충족)")
+        void classify_krx_249Days_highAdtv_returnsC() {
+            assertThat(classifier.classify(krxStockInput(249L, 6e10))).isEqualTo(Grade.C);
         }
 
         @Test
-        @DisplayName("상장 8년 + 상위 21% (백분위 21) → C (A는 상위 20% 미충족, B는 7년 이상이라 제외)")
-        void classify_8yearsPercentile21_returnsC() {
-            assertThat(classifier.classify(stockInput(8.0, 21.0))).isEqualTo(Grade.C);
+        @DisplayName("KRX: holdingDays=0 (일봉 없음) → C")
+        void classify_krx_0Days_returnsC() {
+            assertThat(classifier.classify(krxStockInput(0L, 0.0))).isEqualTo(Grade.C);
         }
     }
 
+    // -----------------------------------------------------------------------
+    // AC-6: 경계값 정확성 검증
+    // -----------------------------------------------------------------------
+
     @Nested
-    @DisplayName("시나리오 11 — REQ-013: 동시 분류 결정론성")
+    @DisplayName("AC-6 — 경계값 정밀 검증")
+    class BoundaryValues {
+
+        @Test
+        @DisplayName("KRX: holdingDays=750, ADTV=5e10 → A (둘 다 경계값 정확히)")
+        void classify_krx_a_exactBoundary() {
+            assertThat(classifier.classify(krxStockInput(750L, 5e10))).isEqualTo(Grade.A);
+        }
+
+        @Test
+        @DisplayName("KRX: holdingDays=750, ADTV=5e10 미만 1원 차이 → B")
+        void classify_krx_adtvJustBelowHigh_returnsB() {
+            // ADTV가 HIGH보다 0.01 낮으면 B (holdingDays ≥ 250 AND LOW ≤ ADTV < HIGH)
+            assertThat(classifier.classify(krxStockInput(750L, 5e10 - 1))).isEqualTo(Grade.B);
+        }
+
+        @Test
+        @DisplayName("KRX: holdingDays=250, ADTV=1e10 → B (둘 다 B 경계값 정확히)")
+        void classify_krx_b_exactBoundary() {
+            assertThat(classifier.classify(krxStockInput(250L, 1e10))).isEqualTo(Grade.B);
+        }
+
+        @Test
+        @DisplayName("KRX: holdingDays=250, ADTV=1e10 미만 → C (B 하한 미달)")
+        void classify_krx_adtvJustBelowLow_returnsC() {
+            assertThat(classifier.classify(krxStockInput(250L, 1e10 - 1))).isEqualTo(Grade.C);
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // AC-12: 동시 분류 결정론성 (REQ-013)
+    // -----------------------------------------------------------------------
+
+    @Nested
+    @DisplayName("AC-12 — REQ-013: 동시 분류 결정론성")
     class ConcurrentDeterminism {
 
         @Test
         @DisplayName("N개 Virtual Thread 동시 호출 결과 == 순차 호출 결과")
         @SuppressWarnings({
-            "PMD.AvoidSynchronizedStatement", // 동시성 테스트 특성상 synchronized 불가피
-            "PMD.AvoidCatchingGenericException", // Future.get()의
-            // ExecutionException/InterruptedException 포착
-            "PMD.AvoidThrowingRawExceptionTypes" // 테스트 실패 전파용
+            "PMD.AvoidSynchronizedStatement",
+            "PMD.AvoidCatchingGenericException",
+            "PMD.AvoidThrowingRawExceptionTypes"
         })
         void classify_concurrentCalls_deterministicResults() throws InterruptedException {
             // Arrange
             List<GradeInput> inputs =
                     List.of(
-                            stockInput("삼성전자", 8.0, 10.0), // A
-                            stockInput("TDF2050", 10.0, 5.0), // F
-                            etfInput("KODEX 200", 10.0, 5.0), // C (ETF)
-                            stockInput("SK하이닉스", 4.0, 30.0), // B
-                            stockInput("카카오", 2.0, 50.0) // C
+                            krxStockInput("삼성전자", 1000L, 6e10), // A
+                            krxStockInput("TDF2050", 1000L, 6e10), // F
+                            krxEtfInput("KODEX 200", 1000L, 6e10), // C (ETF)
+                            krxStockInput("SK하이닉스", 500L, 2e10), // B
+                            krxStockInput("카카오", 100L, 5e8) // C
                             );
 
-            // 순차 실행 결과
             List<Grade> sequentialResults = inputs.stream().map(classifier::classify).toList();
 
             int threadCount = 20;
@@ -196,7 +283,7 @@ class GradeClassifierTest {
                 concurrentResults.add(new ArrayList<>());
             }
 
-            // Act — Virtual Thread로 동시 실행
+            // Act
             try (ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor()) {
                 List<Future<?>> futures = new ArrayList<>();
                 for (int t = 0; t < threadCount; t++) {
