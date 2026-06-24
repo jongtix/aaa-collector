@@ -1,5 +1,7 @@
 package com.aaa.collector.stock;
 
+import java.time.LocalDateTime;
+import java.util.Optional;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
@@ -53,4 +55,8 @@ public interface CreditBalanceRepository extends JpaRepository<CreditBalance, Lo
     /** 종목별 저장 행 수 (멱등성 검증용). */
     @Query("SELECT COUNT(c) FROM CreditBalance c WHERE c.stock.id = :stockId")
     long countByStockId(@Param("stockId") Long stockId);
+
+    /** 최신 적재 시각 조회 (SPEC-OBSV-WARMSTART-001 warm-start용). */
+    @Query("SELECT MAX(c.createdAt) FROM CreditBalance c")
+    Optional<LocalDateTime> findMaxCreatedAt();
 }

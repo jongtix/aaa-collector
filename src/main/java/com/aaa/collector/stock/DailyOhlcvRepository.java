@@ -1,7 +1,9 @@
 package com.aaa.collector.stock;
 
+import com.aaa.collector.stock.enums.Market;
 import java.math.BigDecimal;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
@@ -13,6 +15,19 @@ import org.springframework.transaction.annotation.Transactional;
 
 /** 일봉 시세 리포지토리. */
 public interface DailyOhlcvRepository extends JpaRepository<DailyOhlcv, Long> {
+
+    /**
+     * 시장 필터로 최신 적재 시각을 조회한다 (SPEC-OBSV-WARMSTART-001 warm-start용).
+     *
+     * <p>국내({@code domestic-daily}): KOSPI, KOSDAQ, KRX / 미국({@code overseas-daily}): NYSE, NASDAQ,
+     * AMEX, US 로 분리 조회한다.
+     *
+     * @param markets 조회 대상 Market enum 컬렉션
+     * @return MAX(createdAt) — 한 건도 없으면 {@link Optional#empty()}
+     */
+    @Query("SELECT MAX(o.createdAt) FROM DailyOhlcv o WHERE o.stock.market IN :markets")
+    Optional<LocalDateTime> findMaxCreatedAtByMarketsIn(
+            @Param("markets") Collection<Market> markets);
 
     // @MX:WARN: [AUTO] 권한 민감 네이티브 SQL — 반드시 INSERT IGNORE 유지 (ON DUPLICATE KEY UPDATE 금지)
     // @MX:REASON: [AUTO] collector는 daily_ohlcv에 UPDATE 권한이 없어 ON DUPLICATE KEY UPDATE 사용 시 중복 충돌에서

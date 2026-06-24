@@ -7,6 +7,7 @@ import java.util.Collection;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Collectors;
 import org.springframework.data.jpa.repository.JpaRepository;
@@ -221,6 +222,24 @@ public interface ShortSaleOverseasRepository extends JpaRepository<ShortSaleOver
                                         row -> row.getSettlementDate().toLocalDate(),
                                         Collectors.toCollection(HashSet::new))));
     }
+
+    /**
+     * overseas-shortsale-daily warm-start용: 가장 최근 daily_collected_at을 조회한다
+     * (SPEC-OBSV-WARMSTART-001).
+     *
+     * @return MAX(dailyCollectedAt) — 한 건도 없으면 {@link Optional#empty()}
+     */
+    @Query("SELECT MAX(s.dailyCollectedAt) FROM ShortSaleOverseas s")
+    Optional<LocalDateTime> findMaxDailyCollectedAt();
+
+    /**
+     * overseas-shortsale-interest warm-start용: 가장 최근 interest_collected_at을 조회한다
+     * (SPEC-OBSV-WARMSTART-001).
+     *
+     * @return MAX(interestCollectedAt) — 한 건도 없으면 {@link Optional#empty()}
+     */
+    @Query("SELECT MAX(s.interestCollectedAt) FROM ShortSaleOverseas s")
+    Optional<LocalDateTime> findMaxInterestCollectedAt();
 
     /** {@link #findLatestShortInterestRows} native 투영 인터페이스. */
     interface LatestShortInterestRow {

@@ -1,5 +1,6 @@
 package com.aaa.collector.stock.etf;
 
+import java.time.LocalDateTime;
 import java.util.Optional;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
@@ -16,4 +17,14 @@ public interface EtfRepresentativeHistoryRepository
                     + "ORDER BY h.effectiveFrom DESC "
                     + "LIMIT 1")
     Optional<EtfRepresentativeHistory> findLatestByGroupKey(@Param("groupKey") String groupKey);
+
+    /**
+     * 가장 최근 ETF 대표종목 교체 시각을 조회한다 (SPEC-OBSV-WARMSTART-001 warm-start용).
+     *
+     * <p>EtfRepresentativeHistory는 BaseEntity를 상속하지 않으므로 {@code effectiveFrom}으로 대체한다.
+     *
+     * @return MAX(effectiveFrom) — 한 건도 없으면 {@link Optional#empty()}
+     */
+    @Query("SELECT MAX(h.effectiveFrom) FROM EtfRepresentativeHistory h")
+    Optional<LocalDateTime> findMaxEffectiveFrom();
 }

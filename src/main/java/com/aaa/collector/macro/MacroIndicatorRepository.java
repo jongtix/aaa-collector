@@ -1,6 +1,7 @@
 package com.aaa.collector.macro;
 
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.util.Optional;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;
@@ -50,4 +51,8 @@ public interface MacroIndicatorRepository extends JpaRepository<MacroIndicator, 
     @Query("SELECT MIN(m.tradeDate) FROM MacroIndicator m WHERE m.indicatorCode = :indicatorCode")
     Optional<LocalDate> findMinTradeDateByIndicatorCode(
             @Param("indicatorCode") String indicatorCode);
+
+    /** 최신 적재 시각 조회 (SPEC-OBSV-WARMSTART-001 warm-start용). */
+    @Query("SELECT MAX(m.createdAt) FROM MacroIndicator m")
+    Optional<LocalDateTime> findMaxCreatedAt();
 }
