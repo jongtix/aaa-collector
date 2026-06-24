@@ -1,5 +1,6 @@
 package com.aaa.collector.stock.fundamental;
 
+import com.aaa.collector.observability.BatchMetrics;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -25,7 +26,11 @@ import org.springframework.stereotype.Component;
 @RequiredArgsConstructor
 public class FinancialRatioScheduler {
 
+    /** 재무비율 배치 계측 라벨 (REQ-OBSV-020/021). */
+    private static final String BATCH_LABEL = "domestic-financial-ratio";
+
     private final FinancialRatioCollectionService collectionService;
+    private final BatchMetrics batchMetrics;
 
     /**
      * 재무비율 수집 배치 진입점 (REQ-BATCH4-001/003/004/005/012).
@@ -39,6 +44,11 @@ public class FinancialRatioScheduler {
         log.info("[financial-ratio] 수집 배치 시작 (토요일 주1회)");
         try {
             FundamentalResult result = collectionService.collect();
+            // REQ-OBSV-020/021: 배치 집계 계측 — fail = attempted-succeeded-skipped.
+            long fail =
+                    Math.max(0L, (long) result.attempted() - result.succeeded() - result.skipped());
+            batchMetrics.recordCompletion(
+                    BATCH_LABEL, result.attempted(), result.succeeded(), fail, result.skipped());
             log.info(
                     "[financial-ratio] 수집 배치 완료 — attempted={}, succeeded={}, skipped={}",
                     result.attempted(),
