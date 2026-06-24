@@ -6,7 +6,9 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.aaa.collector.backfill.BackfillStatus;
@@ -212,6 +214,61 @@ class BackfillWindowExecutorTransactionTest {
             BackfillStatus updated =
                     backfillStatusRepository.findById(status.getId()).orElseThrow();
             assertThat(updated.getStatus()).isEqualTo("FAILED");
+        }
+    }
+
+    @Nested
+    @DisplayName("AC-1 resolveAnchor — 초기 anchor 날짜 (REQ-BACKFILL-060)")
+    class ResolveAnchor {
+
+        @Test
+        @DisplayName("AC-1.1 last_collected_date=null → anchor = 어제(LocalDate.now().minusDays(1))")
+        void resolveAnchor_nullLastCollectedDate_usesYesterday() throws InterruptedException {
+            // Arrange
+            BackfillStatus status = seedPending("005930", "investor_trend");
+            LocalDate yesterday = LocalDate.now().minusDays(1);
+            when(investorTrendService.collectWindow(any(), any(), any()))
+                    .thenReturn(new BackfillWindowResult(yesterday.minusDays(30), 30));
+
+            // Act
+            windowExecutor.executeWindow(status, domesticStock, session);
+
+            // Assert — investorTrendService가 어제 날짜로 호출됐는지 확인 (AC-1.1)
+            verify(investorTrendService).collectWindow(any(), any(), eq(yesterday));
+        }
+
+        @Test
+        @DisplayName("AC-1.3 last_collected_date 설정된 경우 → nextAnchor 위임 (기존 동작 불변)")
+        void resolveAnchor_existingLastCollectedDate_delegatesToNextAnchor()
+                throws InterruptedException {
+            // Arrange — 이미 수집된 기록이 있는 status 생성
+            backfillStatusRepository.insertIgnoreSeed("STOCK", "005930", "investor_trend");
+            BackfillStatus raw =
+                    backfillStatusRepository
+                            .findByStatusInAndTargetTypeOrderById(
+                                    java.util.List.of("PENDING"), "STOCK")
+                            .stream()
+                            .filter(
+                                    s ->
+                                            "005930".equals(s.getTargetCode())
+                                                    && "investor_trend".equals(s.getDataTable()))
+                            .findFirst()
+                            .orElseThrow();
+
+            LocalDate lastCollected = LocalDate.of(2025, 6, 1);
+            backfillStatusRepository.updateProgress(
+                    raw.getId(), "IN_PROGRESS", lastCollected, 0, 30);
+            BackfillStatus status = backfillStatusRepository.findById(raw.getId()).orElseThrow();
+
+            when(investorTrendService.collectWindow(any(), any(), any()))
+                    .thenReturn(BackfillWindowResult.EMPTY);
+
+            // Act
+            windowExecutor.executeWindow(status, domesticStock, session);
+
+            // Assert — 오늘도, 어제도 아닌 nextAnchor(lastCollected) 값으로 호출 (AC-1.3)
+            verify(investorTrendService)
+                    .collectWindow(any(), any(), eq(lastCollected.minusDays(1)));
         }
     }
 

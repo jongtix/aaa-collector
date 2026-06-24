@@ -149,7 +149,8 @@ public class BackfillWindowExecutor {
 
     private LocalDate resolveAnchor(BackfillStatus status) {
         if (status.getLastCollectedDate() == null) {
-            return LocalDate.now();
+            // 오늘 날짜는 KIS API TIME LIMIT(00:00~15:40) 대상 — 어제(과거)로 초기화 (REQ-BACKFILL-060)
+            return LocalDate.now().minusDays(1);
         }
         return windowAdvancer.nextAnchor(status.getLastCollectedDate());
     }
