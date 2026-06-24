@@ -101,6 +101,11 @@ class EtfRepresentativeServiceTest {
         when(dailyOhlcvRepository.findAdtvByStockIds(anyList())).thenReturn(Arrays.asList(rows));
     }
 
+    private void stubClassificationAdtv(Object[]... rows) {
+        when(dailyOhlcvRepository.findRecent20DayAdtvByStockIds(anyList()))
+                .thenReturn(Arrays.asList(rows));
+    }
+
     private Object[] adtvRow(long stockId, double adtv) {
         return new Object[] {stockId, adtv};
     }
@@ -503,6 +508,89 @@ class EtfRepresentativeServiceTest {
             verify(stockGradeRepository, never()).save(any(StockGrade.class));
             verify(historyRepository, never()).save(any());
             verify(gradeCacheRepository, never()).save(anyString(), any(Grade.class), any());
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // CR-01: 대표 ETF 분류용 ADTV는 findRecent20DayAdtvByStockIds (20일 쿼리) 사용
+    // -----------------------------------------------------------------------
+
+    @Nested
+    @DisplayName("CR-01 — 대표 ETF 등급 분류 ADTV: 20일 쿼리 사용 (REQ-GRADE4-031)")
+    class Cr01ClassificationAdtvUses20DayQuery {
+
+        @Test
+        @DisplayName("대표 ETF 분류 시 findRecent20DayAdtvByStockIds가 호출된다")
+        void recalculate_representativeEtf_uses20DayAdtvForClassification() {
+            // Arrange
+            Stock e1 = buildStock("E1", LocalDate.of(2020, 1, 1));
+            stubStockId(e1, 1L);
+
+            EtfMetadata m1 = buildMeta(e1, "069500", 1, false, false);
+
+            when(etfMetadataRepository.findAllWithStock()).thenReturn(List.of(m1));
+            when(dailyOhlcvRepository.countByStockId(anyLong())).thenReturn(25L);
+            stubAdtv(adtvRow(1L, 3000.0)); // 선정 비교자용 (findAdtvByStockIds)
+            stubClassificationAdtv(adtvRow(1L, 5e10)); // 분류용 20일 ADTV
+            when(historyRepository.findLatestByGroupKey(anyString())).thenReturn(Optional.empty());
+
+            // Act
+            service.recalculate();
+
+            // Assert: 분류용 20일 ADTV 쿼리 호출됨
+            verify(dailyOhlcvRepository).findRecent20DayAdtvByStockIds(anyList());
+        }
+
+        @Test
+        @DisplayName("선정 비교자(findAdtvByStockIds)는 그대로 유지됨 — 분류 쿼리와 별개")
+        void recalculate_selectionComparator_stillUsesFindAdtvByStockIds() {
+            // Arrange
+            Stock e1 = buildStock("E1", LocalDate.of(2020, 1, 1));
+            Stock e2 = buildStock("E2", LocalDate.of(2020, 2, 1));
+            stubStockId(e1, 1L);
+            stubStockId(e2, 2L);
+
+            EtfMetadata m1 = buildMeta(e1, "069500", 1, false, false);
+            EtfMetadata m2 = buildMeta(e2, "069500", 1, false, false);
+
+            when(etfMetadataRepository.findAllWithStock()).thenReturn(List.of(m1, m2));
+            when(dailyOhlcvRepository.countByStockId(anyLong())).thenReturn(25L);
+            // 선정 비교자: E1이 ADTV 높아 대표 (findAdtvByStockIds)
+            stubAdtv(adtvRow(1L, 5000.0), adtvRow(2L, 1000.0));
+            stubClassificationAdtv(adtvRow(1L, 5e10)); // 분류용 20일 ADTV
+            when(historyRepository.findLatestByGroupKey(anyString())).thenReturn(Optional.empty());
+
+            // Act
+            service.recalculate();
+
+            // Assert: findAdtvByStockIds(전체 후보 목록)도 1회 호출됨 — 비교자 유지
+            verify(dailyOhlcvRepository).findAdtvByStockIds(anyList());
+            // Assert: E1이 대표로 선정됨 (비교자 정상 동작)
+            verify(gradeClassifier).classify(argThat(input -> "E1".equals(input.symbol())));
+        }
+
+        @Test
+        @DisplayName("분류용 ADTV가 0이면 GradeClassifier에 0.0이 전달된다")
+        void recalculate_representativeEtf_classificationAdtvZeroWhenNoData() {
+            // Arrange
+            Stock e1 = buildStock("E1", LocalDate.of(2020, 1, 1));
+            stubStockId(e1, 1L);
+
+            EtfMetadata m1 = buildMeta(e1, "069500", 1, false, false);
+
+            when(etfMetadataRepository.findAllWithStock()).thenReturn(List.of(m1));
+            when(dailyOhlcvRepository.countByStockId(anyLong())).thenReturn(25L);
+            stubAdtv(adtvRow(1L, 3000.0));
+            stubClassificationAdtv(); // 분류용 20일 ADTV: 빈 결과 → 0.0 전달
+            when(historyRepository.findLatestByGroupKey(anyString())).thenReturn(Optional.empty());
+            when(gradeClassifier.classify(any(GradeInput.class))).thenReturn(Grade.C);
+
+            // Act
+            service.recalculate();
+
+            // Assert: GradeClassifier에 adtv=0.0 전달 (holdingDays=25)
+            verify(gradeClassifier)
+                    .classify(argThat(input -> input.adtv() == 0.0 && input.holdingDays() == 25L));
         }
     }
 

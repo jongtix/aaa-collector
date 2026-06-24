@@ -147,7 +147,16 @@ public class EtfRepresentativeService {
         // 대표 ETF: 무조건 A가 아닌 holdingDays + ADTV로 A/B/C 산정 (REQ-GRADE4-031, 032)
         // GradeClassifier의 ETF→C 분기를 우회하기 위해 assetType을 STOCK으로 전달
         long holdingDays = dailyOhlcvRepository.countByStockId(representativeStock.getId());
-        double adtv = adtvMap.getOrDefault(representativeStock.getId(), 0.0);
+
+        // 분류용 ADTV: 선정 비교자(findAdtvByStockIds, 전체-행 AVG)와 별개로 20일 쿼리 사용 (REQ-GRADE4-031)
+        List<Object[]> classificationAdtvRows =
+                dailyOhlcvRepository.findRecent20DayAdtvByStockIds(
+                        List.of(representativeStock.getId()));
+        double adtv =
+                classificationAdtvRows.isEmpty()
+                        ? 0.0
+                        : ((Number) classificationAdtvRows.get(0)[1]).doubleValue();
+
         String market = representativeStock.getMarket().name().startsWith("KOS") ? "KRX" : "US";
         GradeInput input =
                 new GradeInput(
