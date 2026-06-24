@@ -3,9 +3,13 @@ package com.aaa.collector.stock.fundamental;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.aaa.collector.observability.BatchMetrics;
 import java.lang.reflect.Method;
 import java.time.LocalDate;
 import org.junit.jupiter.api.DisplayName;
@@ -22,6 +26,7 @@ import org.springframework.scheduling.annotation.Scheduled;
 class InvestOpinionSchedulerTest {
 
     @Mock private InvestOpinionCollectionService collectionService;
+    @Mock private BatchMetrics batchMetrics;
 
     @InjectMocks private InvestOpinionScheduler scheduler;
 
@@ -75,6 +80,37 @@ class InvestOpinionSchedulerTest {
                     .thenThrow(new RuntimeException("수집 중 예외"));
 
             assertThatCode(scheduler::collectInvestOpinion).doesNotThrowAnyException();
+        }
+    }
+
+    @Nested
+    @DisplayName("collectInvestOpinion — 배치 계측 (REQ-OBSV-020/021)")
+    class BatchMetricsRecording {
+
+        @Test
+        @DisplayName("수집 완료 후 batch=domestic-invest-opinion 집계 기록")
+        void recordsBatchMetricsOnCompletion() {
+            // Arrange — 20 시도, 18 성공, 1 스킵 → fail = 20-18-1 = 1
+            when(collectionService.collect(any(LocalDate.class)))
+                    .thenReturn(new FundamentalResult(20, 18, 1));
+
+            // Act
+            scheduler.collectInvestOpinion();
+
+            // Assert
+            verify(batchMetrics).recordCompletion("domestic-invest-opinion", 20, 18, 1, 1);
+        }
+
+        @Test
+        @DisplayName("수집 예외 시 배치 계측을 기록하지 않는다")
+        void doesNotRecordOnException() {
+            when(collectionService.collect(any(LocalDate.class)))
+                    .thenThrow(new RuntimeException("수집 예외"));
+
+            scheduler.collectInvestOpinion();
+
+            verify(batchMetrics, never())
+                    .recordCompletion(anyString(), anyLong(), anyLong(), anyLong(), anyLong());
         }
     }
 }
