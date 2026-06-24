@@ -407,6 +407,89 @@ class KisWebSocketSessionManagerTest {
     }
 
     // ──────────────────────────────────────────────────────────────────
+    // 해외 구독 (subscribeOverseasSymbols, REQ-WSOV-031)
+    // ──────────────────────────────────────────────────────────────────
+
+    @Nested
+    @DisplayName("subscribeOverseasSymbols — 해외 tr_key 구독")
+    class SubscribeOverseasSymbols {
+
+        @Test
+        @DisplayName("AC-SUB-1: 2개 tr_key 입력 → HDFSCNT0 + HDFSASP0 각 2회 = assignSubscription 4회")
+        void shouldCallAssignSubscriptionTwicePerTrKey() throws Exception {
+            // Arrange — 모든 세션 사용 가능
+            for (KisWebSocketSession s : mockSessions) {
+                when(s.getSubscriptionCount()).thenReturn(0);
+                when(s.isInSafeMode()).thenReturn(false);
+            }
+            List<String> trKeys = List.of("DNASAAPL", "DNYSSPY");
+
+            // Act
+            manager.subscribeOverseasSymbols(trKeys);
+
+            // Assert — assignSubscription은 내부에서 session.subscribe를 호출
+            // 2 trKey × (HDFSCNT0 + HDFSASP0) = 4번 subscribe 호출 (어느 세션에든)
+            int totalSubscribeCalls = 0;
+            for (KisWebSocketSession s : mockSessions) {
+                // subscribe 총 호출수 집계
+                org.mockito.invocation.InvocationOnMock[] invocations =
+                        org.mockito.Mockito.mockingDetails(s).getInvocations().stream()
+                                .filter(inv -> inv.getMethod().getName().equals("subscribe"))
+                                .toArray(org.mockito.invocation.InvocationOnMock[]::new);
+                totalSubscribeCalls += invocations.length;
+            }
+            assertThat(totalSubscribeCalls).isEqualTo(4);
+        }
+
+        @Test
+        @DisplayName("AC-SUB-2: 세션 포화(assignSubscription false) 시 break — 이후 tr_key 구독 없음")
+        void shouldBreakWhenSessionFull() throws Exception {
+            // Arrange — 모든 세션 포화
+            for (KisWebSocketSession s : mockSessions) {
+                when(s.getSubscriptionCount()).thenReturn(MAX_SUBSCRIPTIONS_PER_SESSION);
+                when(s.isInSafeMode()).thenReturn(false);
+            }
+            List<String> trKeys = List.of("DNASAAPL", "DNYSSPY", "DAMSXYZ");
+
+            // Act
+            manager.subscribeOverseasSymbols(trKeys);
+
+            // Assert — 어느 세션에도 subscribe 호출 없음 (전체 포화)
+            for (KisWebSocketSession s : mockSessions) {
+                verify(s, never()).subscribe(anyString(), anyString());
+            }
+        }
+
+        @Test
+        @DisplayName("AC-SCOPE-1: subscribeOverseasSymbols가 사용하는 trId는 HDFSCNT0+HDFSASP0 2개만")
+        void shouldOnlyUseOverseasTrIds() throws Exception {
+            // Arrange
+            int[] counts = new int[SESSION_COUNT];
+            List<String> usedTrIds = new ArrayList<>();
+            for (int i = 0; i < SESSION_COUNT; i++) {
+                final int idx = i;
+                KisWebSocketSession s = mockSessions.get(i);
+                when(s.getSubscriptionCount()).thenAnswer(inv -> counts[idx]);
+                when(s.isInSafeMode()).thenReturn(false);
+                doAnswer(
+                                inv -> {
+                                    usedTrIds.add(inv.getArgument(0));
+                                    counts[idx]++;
+                                    return null;
+                                })
+                        .when(s)
+                        .subscribe(anyString(), anyString());
+            }
+
+            // Act — tr_key 1개 구독
+            manager.subscribeOverseasSymbols(List.of("DNASAAPL"));
+
+            // Assert — 사용된 trId가 HDFSCNT0 + HDFSASP0 2개만
+            assertThat(usedTrIds).containsExactlyInAnyOrder("HDFSCNT0", "HDFSASP0");
+        }
+    }
+
+    // ──────────────────────────────────────────────────────────────────
     // 헬퍼
     // ──────────────────────────────────────────────────────────────────
 

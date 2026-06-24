@@ -327,6 +327,29 @@ public class KisWebSocketSessionManager {
     }
 
     /**
+     * 해외 tr_key 목록을 구독한다.
+     *
+     * <p>각 trKey에 대해 체결({@code HDFSCNT0})과 호가({@code HDFSASP0}) 2개 구독을 할당한다. 세션 용량 초과 시 루프를 중단한다
+     * (REQ-WSOV-031).
+     *
+     * @param overseasTrKeys 구독할 해외 tr_key 목록 (예: {@code "DNASAAPL"})
+     */
+    public void subscribeOverseasSymbols(List<String> overseasTrKeys) {
+        for (String trKey : overseasTrKeys) {
+            boolean cnt = assignSubscription("HDFSCNT0", trKey);
+            boolean asp = assignSubscription("HDFSASP0", trKey);
+            if (!cnt || !asp) {
+                log.warn(
+                        "해외 심볼 구독 실패 (cnt={}, asp={}) — 세션 용량 초과, 이후 종목 스킵: trKey={}",
+                        cnt,
+                        asp,
+                        trKey);
+                break;
+            }
+        }
+    }
+
+    /**
      * 단일 종목을 증분 추가한다 (REQ-WS-060, REQ-WS-061).
      *
      * <p>세션 재연결 없이 기존 연결에 SUBSCRIBE 메시지를 전송한다.
