@@ -1,5 +1,6 @@
 package com.aaa.collector.stock.daily;
 
+import com.aaa.collector.observability.BatchMetrics;
 import java.time.Clock;
 import java.time.LocalDate;
 import java.time.ZoneId;
@@ -30,9 +31,13 @@ public class OverseasDailyOhlcvScheduler {
 
     private static final ZoneId ET = ZoneId.of("America/New_York");
 
+    /** 해외 일봉 배치 계측 라벨 (REQ-OBSV-020/021). */
+    private static final String BATCH_LABEL = "overseas-daily";
+
     private final OverseasDailyOhlcvCollectionService collectionService;
     private final DailyCompletePublisher publisher;
     private final Clock clock;
+    private final BatchMetrics batchMetrics;
 
     /**
      * 미국 일봉 수집 배치 진입점 (REQ-OVOH-010, -020, -032, -041).
@@ -50,6 +55,11 @@ public class OverseasDailyOhlcvScheduler {
         try {
             CollectionResult result = collectionService.collect(today);
             publisher.publish(result, "overseas");
+            // REQ-OBSV-020/021: 배치 집계 계측 — fail = attempted-succeeded-skipped.
+            long fail =
+                    Math.max(0L, (long) result.attempted() - result.succeeded() - result.skipped());
+            batchMetrics.recordCompletion(
+                    BATCH_LABEL, result.attempted(), result.succeeded(), fail, result.skipped());
             log.info(
                     "[overseas-daily] 수집 배치 완료 — attempted={}, succeeded={}, skipped={}",
                     result.attempted(),
