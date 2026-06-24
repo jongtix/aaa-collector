@@ -112,8 +112,8 @@ class GradeClassificationServiceTest {
             ReflectionTestUtils.setField(kospi2, "id", 2L);
 
             when(stockRepository.findAllActive()).thenReturn(List.of(kospi1, kospi2));
-            when(dailyOhlcvRepository.countByStockId(1L)).thenReturn(1000L);
-            when(dailyOhlcvRepository.countByStockId(2L)).thenReturn(1000L);
+            when(dailyOhlcvRepository.countByStockIds(anyList()))
+                    .thenReturn(buildCountRows(new Object[] {1L, 1000L}, new Object[] {2L, 1000L}));
             when(dailyOhlcvRepository.findRecent20DayAdtvByStockIds(anyList()))
                     .thenReturn(buildAdtvRows(new Object[] {1L, 6e10}, new Object[] {2L, 6e10}));
             when(gradeClassifier.classify(any()))
@@ -134,12 +134,14 @@ class GradeClassificationServiceTest {
     class ZeroOhlcvToC {
 
         @Test
-        @DisplayName("countByStockId=0 + ADTV 미포함 → GradeClassifier에 holdingDays=0/adtv=0.0 전달 → C")
+        @DisplayName(
+                "countByStockIds=빈결과 + ADTV 미포함 → GradeClassifier에 holdingDays=0/adtv=0.0 전달 → C")
         void classifyDomestic_zeroOhlcv_classifiesAsC() {
             // Arrange
             Stock kospi = buildKrxStock("005930");
             when(stockRepository.findAllActive()).thenReturn(List.of(kospi));
-            when(dailyOhlcvRepository.countByStockId(1L)).thenReturn(0L);
+            when(dailyOhlcvRepository.countByStockIds(anyList()))
+                    .thenReturn(Collections.emptyList()); // 0행이면 countByStockIds 빈 결과
             when(dailyOhlcvRepository.findRecent20DayAdtvByStockIds(anyList()))
                     .thenReturn(Collections.emptyList()); // 0행이면 ADTV 결과도 빈 리스트
             when(gradeClassifier.classify(any())).thenReturn(Grade.C);
@@ -167,7 +169,8 @@ class GradeClassificationServiceTest {
             // Arrange
             Stock kospi = buildKrxStock("005930");
             when(stockRepository.findAllActive()).thenReturn(List.of(kospi));
-            when(dailyOhlcvRepository.countByStockId(1L)).thenReturn(800L);
+            when(dailyOhlcvRepository.countByStockIds(anyList()))
+                    .thenReturn(buildCountRows(new Object[] {1L, 800L}));
             when(dailyOhlcvRepository.findRecent20DayAdtvByStockIds(anyList()))
                     .thenReturn(buildAdtvRows(new Object[] {1L, 6e10}));
             when(gradeClassifier.classify(any())).thenReturn(Grade.A);
@@ -202,7 +205,8 @@ class GradeClassificationServiceTest {
             // Arrange
             Stock nyse = buildUsStock("AAPL");
             when(stockRepository.findAllActive()).thenReturn(List.of(nyse));
-            when(dailyOhlcvRepository.countByStockId(2L)).thenReturn(800L);
+            when(dailyOhlcvRepository.countByStockIds(anyList()))
+                    .thenReturn(buildCountRows(new Object[] {2L, 800L}));
             when(dailyOhlcvRepository.findRecent20DayAdtvByStockIds(anyList()))
                     .thenReturn(buildAdtvRows(new Object[] {2L, 3e9}));
             when(gradeClassifier.classify(any())).thenReturn(Grade.A);
@@ -232,12 +236,94 @@ class GradeClassificationServiceTest {
         }
     }
 
+    // -----------------------------------------------------------------------
+    // CR-02: holdingDays 배치 조회 — N+1 제거 (countByStockIds)
+    // -----------------------------------------------------------------------
+
+    @Nested
+    @DisplayName("CR-02 — holdingDays 배치 조회: N+1 제거")
+    class Cr02BatchHoldingDaysQuery {
+
+        @Test
+        @DisplayName("classifyDomestic(): countByStockIds가 1회 호출되고, countByStockId는 미호출")
+        void classifyDomestic_holdingDays_usedBatchQuery() {
+            // Arrange
+            Stock kospi1 = buildKrxStock("005930");
+            Stock kospi2 = buildKrxStock("000660");
+            ReflectionTestUtils.setField(kospi2, "id", 2L);
+
+            when(stockRepository.findAllActive()).thenReturn(List.of(kospi1, kospi2));
+            when(dailyOhlcvRepository.countByStockIds(anyList()))
+                    .thenReturn(buildCountRows(new Object[] {1L, 800L}, new Object[] {2L, 800L}));
+            when(dailyOhlcvRepository.findRecent20DayAdtvByStockIds(anyList()))
+                    .thenReturn(buildAdtvRows(new Object[] {1L, 6e10}, new Object[] {2L, 6e10}));
+            when(gradeClassifier.classify(any())).thenReturn(Grade.A);
+
+            // Act
+            service.classifyDomestic();
+
+            // Assert: 배치 쿼리 1회 호출
+            verify(dailyOhlcvRepository).countByStockIds(anyList());
+            // Assert: 단건 쿼리 미호출
+            verify(dailyOhlcvRepository, never()).countByStockId(any());
+        }
+
+        @Test
+        @DisplayName("classifyOverseas(): countByStockIds가 1회 호출되고, countByStockId는 미호출")
+        void classifyOverseas_holdingDays_usedBatchQuery() {
+            // Arrange
+            Stock nyse = buildUsStock("AAPL");
+
+            when(stockRepository.findAllActive()).thenReturn(List.of(nyse));
+            when(dailyOhlcvRepository.countByStockIds(anyList()))
+                    .thenReturn(buildCountRows(new Object[] {2L, 800L}));
+            when(dailyOhlcvRepository.findRecent20DayAdtvByStockIds(anyList()))
+                    .thenReturn(buildAdtvRows(new Object[] {2L, 3e9}));
+            when(gradeClassifier.classify(any())).thenReturn(Grade.A);
+
+            // Act
+            service.classifyOverseas();
+
+            // Assert: 배치 쿼리 1회 호출
+            verify(dailyOhlcvRepository).countByStockIds(anyList());
+            // Assert: 단건 쿼리 미호출
+            verify(dailyOhlcvRepository, never()).countByStockId(any());
+        }
+
+        @Test
+        @DisplayName("countByStockIds 결과에 없는 종목 → holdingDays=0으로 처리")
+        void classifyDomestic_missingInCountMap_holdingDaysZero() {
+            // Arrange
+            Stock kospi = buildKrxStock("005930");
+
+            when(stockRepository.findAllActive()).thenReturn(List.of(kospi));
+            // countByStockIds 빈 결과 → holdingDays=0
+            when(dailyOhlcvRepository.countByStockIds(anyList())).thenReturn(List.of());
+            when(dailyOhlcvRepository.findRecent20DayAdtvByStockIds(anyList()))
+                    .thenReturn(List.of());
+            when(gradeClassifier.classify(any())).thenReturn(Grade.C);
+
+            // Act
+            service.classifyDomestic();
+
+            // Assert: GradeClassifier에 holdingDays=0 전달
+            org.mockito.ArgumentCaptor<GradeInput> captor =
+                    org.mockito.ArgumentCaptor.forClass(GradeInput.class);
+            verify(gradeClassifier).classify(captor.capture());
+            assertThat(String.valueOf(captor.getValue().holdingDays())).isEqualTo("0");
+        }
+    }
+
     /**
      * Object[][] → List<Object[]> 변환 헬퍼.
      *
      * <p>List.of는 Object[] varargs 타입추론 실패로 사용 불가. Arrays.asList 사용.
      */
     private static List<Object[]> buildAdtvRows(Object[]... rows) {
+        return Arrays.asList(rows);
+    }
+
+    private static List<Object[]> buildCountRows(Object[]... rows) {
         return Arrays.asList(rows);
     }
 

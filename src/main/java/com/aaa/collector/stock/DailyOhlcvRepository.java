@@ -135,6 +135,17 @@ public interface DailyOhlcvRepository extends JpaRepository<DailyOhlcv, Long> {
     List<Object[]> findRecent20DayAdtvByStockIds(@Param("stockIds") List<Long> stockIds);
 
     /**
+     * 종목 ID 목록에 대해 일봉 행 수를 배치 조회한다 (REQ-GRADE4-003, 004 — 데이터 게이트).
+     *
+     * <p>N+1 방지: 단건 {@link #countByStockId}를 루프 내 per-stock 호출하는 대신 종목 집합을 한 번에 COUNT한다.
+     *
+     * <p>결과 배열: [stockId, count]. 일봉이 0건인 종목은 결과에 포함되지 않는다 (getOrDefault로 0L 처리).
+     */
+    @Query(
+            "SELECT o.stock.id, COUNT(o) FROM DailyOhlcv o WHERE o.stock.id IN :stockIds GROUP BY o.stock.id")
+    List<Object[]> countByStockIds(@Param("stockIds") List<Long> stockIds);
+
+    /**
      * 종목의 최초 거래일(MIN trade_date)을 조회한다 (REQ-STOCKMETA-013, SPEC-COLLECTOR-STOCKMETA-001).
      *
      * <p>상장일(listed_date)이 NULL인 종목의 상장일 근사치 추정에 사용된다. 거래 데이터가 없으면 {@link Optional#empty()}를 반환한다.
