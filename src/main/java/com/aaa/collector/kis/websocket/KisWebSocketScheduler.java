@@ -70,7 +70,7 @@ public class KisWebSocketScheduler {
             sessionManager.openAll();
             List<String> trKeys = subscriptionTargetResolver.resolveOverseasSymbols();
             sessionManager.subscribeOverseasSymbols(trKeys);
-            log.info("해외 WebSocket 장 개시 완료 — 구독 종목: {}개", trKeys.size());
+            log.info("해외 WebSocket 장 개시 완료 — 구독 대상: {}개", trKeys.size());
         } catch (Exception e) {
             log.error("해외 WebSocket 장 개시 중 오류", e);
         } finally {

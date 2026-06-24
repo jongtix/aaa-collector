@@ -335,6 +335,7 @@ public class KisWebSocketSessionManager {
      * @param overseasTrKeys 구독할 해외 tr_key 목록 (예: {@code "DNASAAPL"})
      */
     public void subscribeOverseasSymbols(List<String> overseasTrKeys) {
+        int subscribed = 0;
         for (String trKey : overseasTrKeys) {
             boolean cnt = assignSubscription("HDFSCNT0", trKey);
             boolean asp = assignSubscription("HDFSASP0", trKey);
@@ -346,6 +347,13 @@ public class KisWebSocketSessionManager {
                         trKey);
                 break;
             }
+            subscribed++;
+        }
+        if (subscribed < overseasTrKeys.size()) {
+            log.warn(
+                    "해외 구독 부분 완료: {}/{}개 종목 구독 — 세션 용량 부족으로 일부 스킵",
+                    subscribed,
+                    overseasTrKeys.size());
         }
     }
 

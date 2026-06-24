@@ -2,6 +2,8 @@ package com.aaa.collector.kis.websocket;
 
 import java.util.List;
 
+// @MX:ANCHOR: [AUTO] 해외 구독 종목 제공의 포트 인터페이스 (DIP)
+// @MX:REASON: SubscriptionTargetResolver에서 호출 — 향후 다중 구현 확장 진입점
 /**
  * 해외 WebSocket 구독 대상 tr_key 목록을 제공하는 포트 인터페이스.
  *
