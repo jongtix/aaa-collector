@@ -9,6 +9,7 @@ import static org.mockito.Mockito.when;
 
 import com.aaa.collector.macro.ecos.EcosCollectionService;
 import com.aaa.collector.macro.fred.FredCollectionService;
+import com.aaa.collector.observability.BatchMetrics;
 import java.lang.reflect.Method;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -21,9 +22,9 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.scheduling.annotation.Scheduled;
 
 /**
- * T5 RED — MacroExternalScheduler 단위 테스트 (SPEC-COLLECTOR-MACRO-EXT-001 REQ-MACRO-EXT-041).
+ * MacroExternalScheduler 단위 테스트 (SPEC-COLLECTOR-MACRO-EXT-001 REQ-MACRO-EXT-041).
  *
- * <p>cron 어노테이션, ECOS→FRED 순서, 예외 격리 검증.
+ * <p>cron 어노테이션, ECOS→FRED 순서, 예외 격리, 배치 계측 검증.
  */
 @ExtendWith(MockitoExtension.class)
 @DisplayName("MacroExternalScheduler — 단위 테스트")
@@ -31,6 +32,7 @@ class MacroExternalSchedulerTest {
 
     @Mock private EcosCollectionService ecosCollectionService;
     @Mock private FredCollectionService fredCollectionService;
+    @Mock private BatchMetrics batchMetrics;
 
     @InjectMocks private MacroExternalScheduler scheduler;
 
@@ -126,6 +128,58 @@ class MacroExternalSchedulerTest {
 
             // Act & Assert — 예외가 전파되지 않아야 함
             assertThatCode(scheduler::collectExternal).doesNotThrowAnyException();
+        }
+    }
+
+    // ────────────────────────────────────────────────────────────────────
+    // 배치 계측 (REQ-OBSV-020/021)
+    // ────────────────────────────────────────────────────────────────────
+
+    @Nested
+    @DisplayName("배치 계측 — ECOS+FRED 합산 (REQ-OBSV-020/021)")
+    class BatchMetricsRecording {
+
+        @Test
+        @DisplayName("ECOS+FRED 정상 완료 — 합산 결과를 batch=macro-external로 기록")
+        void recordsBatchMetricsOnCompletion() {
+            // Arrange — ECOS: 5 시도 5 성공, FRED: 3 시도 3 성공 → 합계 attempted=8, success=8, fail=0,
+            // skip=0
+            when(ecosCollectionService.collect()).thenReturn(new MacroCollectionResult(5, 5, 0));
+            when(fredCollectionService.collect()).thenReturn(new MacroCollectionResult(3, 3, 0));
+
+            // Act
+            scheduler.collectExternal();
+
+            // Assert
+            verify(batchMetrics).recordCompletion("macro-external", 8, 8, 0, 0);
+        }
+
+        @Test
+        @DisplayName("ECOS 예외 — ECOS fail=1 계상, FRED 정상 합산, 1회 recordCompletion 호출")
+        void ecosException_countsAsOneFail() {
+            // Arrange — ECOS 예외(succeeded=0, fail=1), FRED: 3 시도 3 성공
+            doThrow(new RuntimeException("ECOS 장애")).when(ecosCollectionService).collect();
+            when(fredCollectionService.collect()).thenReturn(new MacroCollectionResult(3, 3, 0));
+
+            // Act
+            scheduler.collectExternal();
+
+            // Assert — attempted=4(1+3), success=3, fail=1, skip=0
+            verify(batchMetrics).recordCompletion("macro-external", 4, 3, 1, 0);
+        }
+
+        @Test
+        @DisplayName("FRED 예외 — FRED fail=1 계상, ECOS 정상 합산, 1회 recordCompletion 호출")
+        void fredException_countsAsOneFail() {
+            // Arrange — ECOS: 5 시도 5 성공, FRED 예외
+            when(ecosCollectionService.collect()).thenReturn(new MacroCollectionResult(5, 5, 0));
+            doThrow(new RuntimeException("FRED 장애")).when(fredCollectionService).collect();
+
+            // Act
+            scheduler.collectExternal();
+
+            // Assert — attempted=6(5+1), success=5, fail=1, skip=0
+            verify(batchMetrics).recordCompletion("macro-external", 6, 5, 1, 0);
         }
     }
 }
