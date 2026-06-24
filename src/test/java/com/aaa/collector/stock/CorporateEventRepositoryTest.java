@@ -118,6 +118,52 @@ class CorporateEventRepositoryTest {
         }
 
         @Test
+        @DisplayName("REQ-OVE-062: ex_dividend_date(배당락일)가 V25 컬럼에 멱등 적재된다")
+        void exDividendDate_persistsViaNativeInsert() {
+            // Arrange — 해외 현금배당: record_dt→event_date, div_lock_dt→ex_dividend_date
+            Stock stock = savedStock("AAPL");
+            LocalDate eventDate = LocalDate.of(2026, 5, 11);
+            LocalDate exDividendDate = LocalDate.of(2026, 5, 11);
+            CorporateEvent dividend =
+                    CorporateEvent.builder()
+                            .stock(stock)
+                            .eventType(EventType.DIVIDEND)
+                            .eventDate(eventDate)
+                            .exDividendDate(exDividendDate)
+                            .eventSubtype("현금배당")
+                            .payDate(LocalDate.of(2026, 5, 14))
+                            .build();
+
+            // Act
+            corporateEventRepository.insertIgnoreDuplicate(dividend);
+
+            // Assert — 네이티브 INSERT가 ex_dividend_date 값을 round-trip 보존한다
+            CorporateEvent saved =
+                    corporateEventRepository.findAll().stream()
+                            .filter(e -> e.getStock().getId().equals(stock.getId()))
+                            .findFirst()
+                            .orElseThrow();
+            assertThat(saved.getExDividendDate()).isEqualTo(exDividendDate);
+            assertThat(saved.getEventSubtype()).isEqualTo("현금배당");
+        }
+
+        @Test
+        @DisplayName("ex_dividend_date 미지정(국내 배당) — NULL 허용, 적재 성공")
+        void exDividendDate_nullableForDomestic() {
+            Stock stock = savedStock("207940");
+
+            corporateEventRepository.insertIgnoreDuplicate(
+                    buildDividend(stock, LocalDate.of(2026, 6, 12), 361L));
+
+            CorporateEvent saved =
+                    corporateEventRepository.findAll().stream()
+                            .filter(e -> e.getStock().getId().equals(stock.getId()))
+                            .findFirst()
+                            .orElseThrow();
+            assertThat(saved.getExDividendDate()).isNull();
+        }
+
+        @Test
         @DisplayName(
                 "AC-MAP-4: 동일 (stock_id, event_date), event_type=DIVIDEND·SPLIT 공존 — uk 충돌 없음, 각각 독립 삽입")
         void sameStockSameDate_dividendAndSplitCoexist() {

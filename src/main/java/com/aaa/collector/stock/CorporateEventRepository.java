@@ -33,13 +33,13 @@ public interface CorporateEventRepository extends JpaRepository<CorporateEvent, 
             value =
                     """
                     INSERT IGNORE INTO corporate_events
-                        (stock_id, event_type, event_date, event_subtype,
+                        (stock_id, event_type, event_date, ex_dividend_date, event_subtype,
                          pay_date, stock_pay_date, odd_pay_date,
                          cash_amount, cash_rate, stock_rate,
                          face_value, stock_kind, high_dividend_flag,
                          created_at, updated_at)
                     VALUES
-                        (:#{#e.stock.id}, :#{#e.eventType.name()}, :#{#e.eventDate}, :#{#e.eventSubtype},
+                        (:#{#e.stock.id}, :#{#e.eventType.name()}, :#{#e.eventDate}, :#{#e.exDividendDate}, :#{#e.eventSubtype},
                          :#{#e.payDate}, :#{#e.stockPayDate}, :#{#e.oddPayDate},
                          :#{#e.cashAmount}, :#{#e.cashRate}, :#{#e.stockRate},
                          :#{#e.faceValue}, :#{#e.stockKind}, :#{#e.highDividendFlag},
