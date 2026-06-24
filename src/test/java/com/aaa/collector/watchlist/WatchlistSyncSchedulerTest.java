@@ -6,6 +6,7 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 
+import com.aaa.collector.observability.BatchMetrics;
 import com.aaa.collector.stock.grade.GradeClassificationService;
 import java.lang.reflect.Method;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -38,6 +39,7 @@ class WatchlistSyncSchedulerTest {
 
     @Mock private WatchlistSyncService watchlistSyncService;
     @Mock private GradeClassificationService gradeClassificationService;
+    @Mock private BatchMetrics batchMetrics;
     @InjectMocks private WatchlistSyncScheduler scheduler;
 
     // -----------------------------------------------------------------------
@@ -252,6 +254,89 @@ class WatchlistSyncSchedulerTest {
             // usRunning이 true여도 syncMorning은 실행 가능
             verify(watchlistSyncService).sync();
             verify(gradeClassificationService).classifyDomestic();
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // 배치 계측 (REQ-OBSV-020/021)
+    // -----------------------------------------------------------------------
+
+    @Nested
+    @DisplayName("배치 계측 (REQ-OBSV-020/021)")
+    class BatchMetricsRecording {
+
+        @Test
+        @DisplayName("syncMorning 정상 완료 — batch=watchlist-sync-krx, (1,1,0,0) 기록")
+        void syncMorning_recordsSuccess() {
+            scheduler.syncMorning();
+
+            verify(batchMetrics).recordCompletion("watchlist-sync-krx", 1, 1, 0, 0);
+        }
+
+        @Test
+        @DisplayName("syncMorning 예외 — batch=watchlist-sync-krx, (1,0,1,0) 기록")
+        void syncMorning_recordsFailureOnException() {
+            // Arrange
+            doThrow(new RuntimeException("sync 실패")).when(watchlistSyncService).sync();
+
+            // Act
+            scheduler.syncMorning();
+
+            // Assert
+            verify(batchMetrics).recordCompletion("watchlist-sync-krx", 1, 0, 1, 0);
+        }
+
+        @Test
+        @DisplayName("syncMorning 중복 스킵 — recordCompletion 미호출")
+        void syncMorning_skippedByGuard_doesNotRecord() {
+            ReflectionTestUtils.setField(scheduler, "morningRunning", new AtomicBoolean(true));
+
+            scheduler.syncMorning();
+
+            verify(batchMetrics, never())
+                    .recordCompletion(
+                            org.mockito.ArgumentMatchers.anyString(),
+                            org.mockito.ArgumentMatchers.anyLong(),
+                            org.mockito.ArgumentMatchers.anyLong(),
+                            org.mockito.ArgumentMatchers.anyLong(),
+                            org.mockito.ArgumentMatchers.anyLong());
+        }
+
+        @Test
+        @DisplayName("syncUs 정상 완료 — batch=watchlist-sync-us, (1,1,0,0) 기록")
+        void syncUs_recordsSuccess() {
+            scheduler.syncUs();
+
+            verify(batchMetrics).recordCompletion("watchlist-sync-us", 1, 1, 0, 0);
+        }
+
+        @Test
+        @DisplayName("syncUs 예외 — batch=watchlist-sync-us, (1,0,1,0) 기록")
+        void syncUs_recordsFailureOnException() {
+            // Arrange
+            doThrow(new RuntimeException("US sync 실패")).when(watchlistSyncService).sync();
+
+            // Act
+            scheduler.syncUs();
+
+            // Assert
+            verify(batchMetrics).recordCompletion("watchlist-sync-us", 1, 0, 1, 0);
+        }
+
+        @Test
+        @DisplayName("syncUs 중복 스킵 — recordCompletion 미호출")
+        void syncUs_skippedByGuard_doesNotRecord() {
+            ReflectionTestUtils.setField(scheduler, "usRunning", new AtomicBoolean(true));
+
+            scheduler.syncUs();
+
+            verify(batchMetrics, never())
+                    .recordCompletion(
+                            org.mockito.ArgumentMatchers.anyString(),
+                            org.mockito.ArgumentMatchers.anyLong(),
+                            org.mockito.ArgumentMatchers.anyLong(),
+                            org.mockito.ArgumentMatchers.anyLong(),
+                            org.mockito.ArgumentMatchers.anyLong());
         }
     }
 }
