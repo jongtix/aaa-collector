@@ -38,7 +38,7 @@ class OverseasRightsSchedulerTest {
     }
 
     private OverseasRightsCollectionResult result() {
-        return new OverseasRightsCollectionResult(5, 3, 1, 1, 0);
+        return new OverseasRightsCollectionResult(5, 3, 1, 1, 0, 0);
     }
 
     @Nested

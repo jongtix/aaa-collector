@@ -83,7 +83,7 @@ public class OverseasRightsCollectionService {
 
         if (activeStocks.isEmpty()) {
             log.info("[overseas-rights] 수집 대상 없음 — activeStocks=0");
-            return new OverseasRightsCollectionResult(0, 0, 0, 0, 0);
+            return new OverseasRightsCollectionResult(0, 0, 0, 0, 0, 0);
         }
 
         // REQ-OVE-011: per-batch 헬스 스냅샷 1회 고정
@@ -96,13 +96,15 @@ public class OverseasRightsCollectionService {
                     "[overseas-rights] 모든 키 죽음 — per-stock 수집 0회, 전체 skip. attempted={}, skipped={}",
                     total,
                     total);
-            return new OverseasRightsCollectionResult(total, 0, total, 0, 0);
+            return new OverseasRightsCollectionResult(total, 0, total, 0, 0, 0);
         }
 
         AtomicInteger succeededRows = new AtomicInteger();
         AtomicInteger skippedStocks = new AtomicInteger();
         AtomicInteger skippedNonCashRows = new AtomicInteger();
         AtomicInteger skippedValidationRows = new AtomicInteger();
+        // W1: DB 독성 행(DataAccessException 흡수)을 검증 skip과 분리 집계 — 42,460-failure 사건군 관측성 보존
+        AtomicInteger skippedToxicRows = new AtomicInteger();
 
         // REQ-OVE-028: Virtual Thread executor — 종목별 블로킹을 commonPool 점유 없이 처리. parallelStream 금지.
         try (ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor()) {
@@ -115,7 +117,8 @@ public class OverseasRightsCollectionService {
                                         succeededRows,
                                         skippedStocks,
                                         skippedNonCashRows,
-                                        skippedValidationRows));
+                                        skippedValidationRows,
+                                        skippedToxicRows));
             }
         } // close() blocks until all submitted tasks complete
 
@@ -125,14 +128,16 @@ public class OverseasRightsCollectionService {
                         succeededRows.get(),
                         skippedStocks.get(),
                         skippedNonCashRows.get(),
-                        skippedValidationRows.get());
+                        skippedValidationRows.get(),
+                        skippedToxicRows.get());
         log.info(
-                "[overseas-rights] 수집 완료 — attemptedStocks={}, succeededRows={}, skippedStocks={}, skippedNonCashRows={}, skippedValidationRows={}",
+                "[overseas-rights] 수집 완료 — attemptedStocks={}, succeededRows={}, skippedStocks={}, skippedNonCashRows={}, skippedValidationRows={}, skippedToxicRows={}",
                 result.attemptedStocks(),
                 result.succeededRows(),
                 result.skippedStocks(),
                 result.skippedNonCashRows(),
-                result.skippedValidationRows());
+                result.skippedValidationRows(),
+                result.skippedToxicRows());
         return result;
     }
 
@@ -142,7 +147,8 @@ public class OverseasRightsCollectionService {
             AtomicInteger succeededRows,
             AtomicInteger skippedStocks,
             AtomicInteger skippedNonCashRows,
-            AtomicInteger skippedValidationRows) {
+            AtomicInteger skippedValidationRows,
+            AtomicInteger skippedToxicRows) {
 
         String symbol = stock.getSymbol();
         try {
@@ -161,7 +167,8 @@ public class OverseasRightsCollectionService {
                         symbol,
                         succeededRows,
                         skippedNonCashRows,
-                        skippedValidationRows);
+                        skippedValidationRows,
+                        skippedToxicRows);
             }
         } catch (KisRateLimitException | RestClientException e) {
             // REQ-OVE-013: retryable 재시도 소진 → graceful skip
@@ -203,7 +210,8 @@ public class OverseasRightsCollectionService {
             String symbol,
             AtomicInteger succeededRows,
             AtomicInteger skippedNonCashRows,
-            AtomicInteger skippedValidationRows) {
+            AtomicInteger skippedValidationRows,
+            AtomicInteger skippedToxicRows) {
         // REQ-OVE-023a: 비현금배당(증자·상폐 등) 행은 저장하지 않고 skip
         if (!CASH_DIVIDEND_TITLE.equals(row.caTitle())) {
             skippedNonCashRows.incrementAndGet();
@@ -221,12 +229,13 @@ public class OverseasRightsCollectionService {
             corporateEventRepository.insertIgnoreDuplicate(entity);
             succeededRows.incrementAndGet();
         } catch (DataAccessException ex) {
+            // W1: DB 독성 행 — 검증 skip과 별도 카운터로 집계해 침묵 드롭 관측성 보존(42,460-failure 사건군)
             log.warn(
-                    "[overseas-rights] 행 저장 실패 — skip (symbol={}, error={}: {})",
+                    "[overseas-rights] 독성 행 저장 실패 — skip (symbol={}, error={}: {})",
                     symbol,
                     ex.getClass().getSimpleName(),
                     ex.getMessage());
-            skippedValidationRows.incrementAndGet();
+            skippedToxicRows.incrementAndGet();
         }
     }
 

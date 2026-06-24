@@ -237,7 +237,9 @@ class OverseasRightsCollectionServiceTest {
 
             verify(corporateEventRepository, never()).insertIgnoreDuplicate(any());
             assertThat(result.succeededRows()).isZero();
+            // W1: 검증 skip은 validation 카운터로만 — 독성 카운터와 분리됨을 함께 검증
             assertThat(result.skippedValidationRows()).isEqualTo(1);
+            assertThat(result.skippedToxicRows()).isZero();
         }
 
         @Test
@@ -365,7 +367,7 @@ class OverseasRightsCollectionServiceTest {
         }
 
         @Test
-        @DisplayName("독성 행 DataAccessException — 흡수하고 해당 행만 skip (W1)")
+        @DisplayName("독성 행 DataAccessException — 흡수하고 독성 카운터로만 집계, 검증 카운터와 분리 (W1)")
         void collect_toxicRow_absorbed() throws Exception {
             Stock stock = stockOf("AAPL", Market.NASDAQ, AssetType.STOCK);
             when(stockRepository.findAllActiveOverseasTradable()).thenReturn(List.of(stock));
@@ -381,7 +383,9 @@ class OverseasRightsCollectionServiceTest {
             OverseasRightsCollectionResult result = service.collect();
 
             assertThat(result.succeededRows()).isZero();
-            assertThat(result.skippedValidationRows()).isEqualTo(1);
+            // W1: DB 독성 행은 독성 카운터로 — 검증 skip 카운터는 0으로 분리됨
+            assertThat(result.skippedToxicRows()).isEqualTo(1);
+            assertThat(result.skippedValidationRows()).isZero();
         }
     }
 

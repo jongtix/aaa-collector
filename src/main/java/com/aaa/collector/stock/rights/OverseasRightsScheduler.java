@@ -43,12 +43,13 @@ public class OverseasRightsScheduler {
         try {
             OverseasRightsCollectionResult result = collectionService.collect();
             log.info(
-                    "[overseas-rights] 수집 배치 완료 — attemptedStocks={}, succeededRows={}, skippedStocks={}, skippedNonCashRows={}, skippedValidationRows={}",
+                    "[overseas-rights] 수집 배치 완료 — attemptedStocks={}, succeededRows={}, skippedStocks={}, skippedNonCashRows={}, skippedValidationRows={}, skippedToxicRows={}",
                     result.attemptedStocks(),
                     result.succeededRows(),
                     result.skippedStocks(),
                     result.skippedNonCashRows(),
-                    result.skippedValidationRows());
+                    result.skippedValidationRows(),
+                    result.skippedToxicRows());
         } catch (Exception e) {
             log.error("[overseas-rights] 수집 배치 예외 — 다음 실행 때 재시도", e);
         }
