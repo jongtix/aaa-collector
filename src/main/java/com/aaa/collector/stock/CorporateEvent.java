@@ -49,6 +49,15 @@ public class CorporateEvent extends BaseEntity {
     @Column(name = "event_date")
     private final LocalDate eventDate;
 
+    /**
+     * 배당락일 (해외 현금배당 KIS {@code div_lock_dt} → V25 {@code ex_dividend_date}).
+     *
+     * <p>RD-8 [확정: A]: 해외 현금배당 수집용 1컬럼만 추가(nullable). 국내 배당 행은 영구 NULL(국내 배당 수집은 배당락일 미채움 — 비대칭
+     * 인지·허용, REQ-OVE-062).
+     */
+    @Column(name = "ex_dividend_date")
+    private final LocalDate exDividendDate;
+
     @Column(name = "event_subtype", length = 20)
     private final String eventSubtype;
 
@@ -84,6 +93,7 @@ public class CorporateEvent extends BaseEntity {
             Stock stock,
             EventType eventType,
             LocalDate eventDate,
+            LocalDate exDividendDate,
             String eventSubtype,
             LocalDate payDate,
             LocalDate stockPayDate,
@@ -98,6 +108,7 @@ public class CorporateEvent extends BaseEntity {
         this.stock = stock;
         this.eventType = eventType;
         this.eventDate = eventDate;
+        this.exDividendDate = exDividendDate;
         this.eventSubtype = eventSubtype;
         this.payDate = payDate;
         this.stockPayDate = stockPayDate;
