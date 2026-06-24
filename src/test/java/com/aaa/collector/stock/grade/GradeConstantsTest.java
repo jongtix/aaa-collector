@@ -1,6 +1,7 @@
 package com.aaa.collector.stock.grade;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -26,9 +27,19 @@ class GradeConstantsTest {
         }
 
         @Test
-        @DisplayName("미지정 시장 → KRX 기본값 적용")
-        void getHighThreshold_unknown_returnsKrxDefault() {
-            assertThat(GradeConstants.getHighThreshold("UNKNOWN")).isEqualTo(5e10);
+        @DisplayName("미지정 시장 → IllegalArgumentException 발생")
+        void getHighThreshold_unknown_throwsIllegalArgument() {
+            assertThatThrownBy(() -> GradeConstants.getHighThreshold("UNKNOWN"))
+                    .isInstanceOf(IllegalArgumentException.class)
+                    .hasMessageContaining("UNKNOWN");
+        }
+
+        @Test
+        @DisplayName("getLowThreshold: 미지정 시장 → IllegalArgumentException 발생")
+        void getLowThreshold_unknown_throwsIllegalArgument() {
+            assertThatThrownBy(() -> GradeConstants.getLowThreshold("UNKNOWN"))
+                    .isInstanceOf(IllegalArgumentException.class)
+                    .hasMessageContaining("UNKNOWN");
         }
     }
 

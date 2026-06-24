@@ -37,7 +37,11 @@ final class GradeConstants {
      * @return A 등급 ADTV 임계값
      */
     static double getHighThreshold(String market) {
-        return "US".equals(market) ? US_ADTV_HIGH : KRX_ADTV_HIGH;
+        return switch (market) {
+            case "KRX" -> KRX_ADTV_HIGH;
+            case "US" -> US_ADTV_HIGH;
+            default -> throw new IllegalArgumentException("Unknown market: " + market);
+        };
     }
 
     /**
@@ -47,6 +51,10 @@ final class GradeConstants {
      * @return B 등급 ADTV 하한 임계값
      */
     static double getLowThreshold(String market) {
-        return "US".equals(market) ? US_ADTV_LOW : KRX_ADTV_LOW;
+        return switch (market) {
+            case "KRX" -> KRX_ADTV_LOW;
+            case "US" -> US_ADTV_LOW;
+            default -> throw new IllegalArgumentException("Unknown market: " + market);
+        };
     }
 }
