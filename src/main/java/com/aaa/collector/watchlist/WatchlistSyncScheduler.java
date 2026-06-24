@@ -1,5 +1,6 @@
 package com.aaa.collector.watchlist;
 
+import com.aaa.collector.observability.BatchMetrics;
 import com.aaa.collector.stock.grade.GradeClassificationService;
 import java.util.concurrent.atomic.AtomicBoolean;
 import lombok.RequiredArgsConstructor;
@@ -25,8 +26,15 @@ import org.springframework.stereotype.Component;
 @RequiredArgsConstructor
 public class WatchlistSyncScheduler {
 
+    /** KRX 관심종목 동기화 배치 계측 라벨 (REQ-OBSV-020/021). */
+    private static final String BATCH_LABEL_KRX = "watchlist-sync-krx";
+
+    /** US 관심종목 동기화 배치 계측 라벨 (REQ-OBSV-020/021). */
+    private static final String BATCH_LABEL_US = "watchlist-sync-us";
+
     private final WatchlistSyncService watchlistSyncService;
     private final GradeClassificationService gradeClassificationService;
+    private final BatchMetrics batchMetrics;
 
     // REQ-GRADE-007: 슬롯별 독립 single-flight 가드
     private final AtomicBoolean morningRunning = new AtomicBoolean(false);
@@ -43,8 +51,9 @@ public class WatchlistSyncScheduler {
     public void syncMorning() {
         if (!morningRunning.compareAndSet(false, true)) {
             log.warn("KRX 08:20 sync 이전 실행 중 — 중복 실행 스킵(REQ-GRADE-007)");
-            return;
+            return; // 중복 스킵 시 recordCompletion 미호출
         }
+        boolean hasError = false;
         try {
             log.info("KRX 관심종목 동기화 시작 (08:20 KST)");
             watchlistSyncService.sync();
@@ -52,8 +61,15 @@ public class WatchlistSyncScheduler {
             gradeClassificationService.classifyDomestic();
         } catch (Exception e) {
             log.error("KRX sync/classify 실패 — 다음 스케줄까지 대기", e);
+            hasError = true;
         } finally {
             morningRunning.set(false);
+        }
+        // REQ-OBSV-020/021: 성공=(1,1,0,0), 예외=(1,0,1,0)
+        if (hasError) {
+            batchMetrics.recordCompletion(BATCH_LABEL_KRX, 1, 0, 1, 0);
+        } else {
+            batchMetrics.recordCompletion(BATCH_LABEL_KRX, 1, 1, 0, 0);
         }
     }
 
@@ -68,8 +84,9 @@ public class WatchlistSyncScheduler {
     public void syncUs() {
         if (!usRunning.compareAndSet(false, true)) {
             log.warn("US ET 08:50 sync 이전 실행 중 — 중복 실행 스킵(REQ-GRADE-007)");
-            return;
+            return; // 중복 스킵 시 recordCompletion 미호출
         }
+        boolean hasError = false;
         try {
             log.info("US 관심종목 동기화 시작 (08:50 ET)");
             watchlistSyncService.sync();
@@ -77,8 +94,15 @@ public class WatchlistSyncScheduler {
             gradeClassificationService.classifyOverseas();
         } catch (Exception e) {
             log.error("US sync/classify 실패 — 다음 스케줄까지 대기", e);
+            hasError = true;
         } finally {
             usRunning.set(false);
+        }
+        // REQ-OBSV-020/021: 성공=(1,1,0,0), 예외=(1,0,1,0)
+        if (hasError) {
+            batchMetrics.recordCompletion(BATCH_LABEL_US, 1, 0, 1, 0);
+        } else {
+            batchMetrics.recordCompletion(BATCH_LABEL_US, 1, 1, 0, 0);
         }
     }
 }
