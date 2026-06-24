@@ -7,6 +7,7 @@ import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneId;
+import java.util.Set;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
@@ -138,6 +139,80 @@ class BatchMetricsTest {
             metrics.recordSilentDrops(0);
 
             assertThat(registry.get(SILENT_DROP).counter().count()).isEqualTo(0.0);
+        }
+    }
+
+    @Nested
+    @DisplayName("warm-start API (REQ-001/002/003)")
+    class WarmStart {
+
+        @Test
+        @DisplayName("warmLastLoad 호출 시 last_load_seconds gauge가 instant의 epochSecond로 set된다")
+        void setsLastLoadGaugeToEpochSecond() {
+            Instant instant = Instant.parse("2026-06-24T01:00:00Z"); // 10:00 KST
+            SimpleMeterRegistry registry = new SimpleMeterRegistry();
+            BatchMetrics metrics = new BatchMetrics(registry, Clock.systemDefaultZone());
+
+            metrics.warmLastLoad("domestic-daily", instant);
+
+            Gauge gauge = registry.get(LAST_LOAD).tags("batch", "domestic-daily").gauge();
+            assertThat(gauge.value()).isEqualTo((double) instant.getEpochSecond());
+        }
+
+        @Test
+        @DisplayName("warmLastLoad는 completeness gauge와 카운터를 변경하지 않는다")
+        void doesNotTouchCompletenessOrCounters() {
+            Instant instant = Instant.parse("2026-06-24T01:00:00Z");
+            SimpleMeterRegistry registry = new SimpleMeterRegistry();
+            BatchMetrics metrics = new BatchMetrics(registry, Clock.systemDefaultZone());
+
+            metrics.warmLastLoad("domestic-daily", instant);
+
+            // Arrange: completeness gauge and counters should not exist after warm-start only
+            Set<String> counterNames = Set.of(TARGET, SUCCESS, FAIL, SKIP);
+            boolean noCompleteness =
+                    registry.getMeters().stream()
+                            .noneMatch(m -> COMPLETENESS.equals(m.getId().getName()));
+            boolean noCounters =
+                    registry.getMeters().stream()
+                            .map(m -> m.getId().getName())
+                            .noneMatch(counterNames::contains);
+            assertThat(noCompleteness).isTrue();
+            assertThat(noCounters).isTrue();
+        }
+
+        @Test
+        @DisplayName("warmLastLoad 재호출 시 새 값으로 덮어쓴다 (멱등)")
+        void overwritesWithNewValueOnSecondCall() {
+            Instant first = Instant.parse("2026-06-24T01:00:00Z");
+            Instant second = Instant.parse("2026-06-24T07:00:00Z");
+            SimpleMeterRegistry registry = new SimpleMeterRegistry();
+            BatchMetrics metrics = new BatchMetrics(registry, Clock.systemDefaultZone());
+
+            metrics.warmLastLoad("domestic-daily", first);
+            metrics.warmLastLoad("domestic-daily", second);
+
+            Gauge gauge = registry.get(LAST_LOAD).tags("batch", "domestic-daily").gauge();
+            assertThat(gauge.value()).isEqualTo((double) second.getEpochSecond());
+        }
+
+        @Test
+        @DisplayName("warmLastLoad는 신규 메트릭 이름을 등록하지 않는다")
+        void doesNotRegisterNewMetricNames() {
+            Instant instant = Instant.parse("2026-06-24T01:00:00Z");
+            SimpleMeterRegistry registry = new SimpleMeterRegistry();
+            BatchMetrics metrics = new BatchMetrics(registry, Clock.systemDefaultZone());
+
+            metrics.warmLastLoad("domestic-daily", instant);
+
+            Set<String> knownNames =
+                    Set.of(TARGET, SUCCESS, FAIL, SKIP, COMPLETENESS, LAST_LOAD, SILENT_DROP);
+            boolean onlyKnownNames =
+                    registry.getMeters().stream()
+                            .map(m -> m.getId().getName())
+                            .filter(name -> name.startsWith("aaa_collector_batch_"))
+                            .allMatch(knownNames::contains);
+            assertThat(onlyKnownNames).isTrue();
         }
     }
 

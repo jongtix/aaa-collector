@@ -5,6 +5,7 @@ import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Tags;
 import jakarta.annotation.PostConstruct;
 import java.time.Clock;
+import java.time.Instant;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicLong;
@@ -80,6 +81,19 @@ public class BatchMetrics {
         completenessHolder(batch).add(ratio);
 
         lastLoadHolder(batch).set(clock.instant().getEpochSecond());
+    }
+
+    /**
+     * 부팅 시 DB max 타임스탬프로 last-load gauge를 초기화한다 (SPEC-OBSV-WARMSTART-001 REQ-001/002/003).
+     *
+     * <p>카운터(target/success/fail/skip_total), completeness gauge는 건드리지 않는다. 멱등 — 동일 배치에 재호출 시 새 값으로
+     * 덮어쓴다.
+     *
+     * @param batch 배치 라벨(예: {@code domestic-daily})
+     * @param lastLoad DB에서 조회한 마지막 적재 시각 (UTC Instant)
+     */
+    public void warmLastLoad(String batch, Instant lastLoad) {
+        lastLoadHolder(batch).set(lastLoad.getEpochSecond());
     }
 
     /**
