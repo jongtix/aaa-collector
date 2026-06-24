@@ -2,9 +2,13 @@ package com.aaa.collector.stock.fundamental;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
+import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.aaa.collector.observability.BatchMetrics;
 import java.lang.reflect.Method;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -20,6 +24,7 @@ import org.springframework.scheduling.annotation.Scheduled;
 class FinancialRatioSchedulerTest {
 
     @Mock private FinancialRatioCollectionService collectionService;
+    @Mock private BatchMetrics batchMetrics;
 
     @InjectMocks private FinancialRatioScheduler scheduler;
 
@@ -71,6 +76,35 @@ class FinancialRatioSchedulerTest {
             when(collectionService.collect()).thenThrow(new RuntimeException("수집 중 예외"));
 
             assertThatCode(scheduler::collectFinancialRatio).doesNotThrowAnyException();
+        }
+    }
+
+    @Nested
+    @DisplayName("collectFinancialRatio — 배치 계측 (REQ-OBSV-020/021)")
+    class BatchMetricsRecording {
+
+        @Test
+        @DisplayName("수집 완료 후 batch=domestic-financial-ratio 집계 기록")
+        void recordsBatchMetricsOnCompletion() {
+            // Arrange — 100 시도, 95 성공, 2 스킵 → fail = 100-95-2 = 3
+            when(collectionService.collect()).thenReturn(new FundamentalResult(100, 95, 2));
+
+            // Act
+            scheduler.collectFinancialRatio();
+
+            // Assert
+            verify(batchMetrics).recordCompletion("domestic-financial-ratio", 100, 95, 3, 2);
+        }
+
+        @Test
+        @DisplayName("수집 예외 시 배치 계측을 기록하지 않는다")
+        void doesNotRecordOnException() {
+            when(collectionService.collect()).thenThrow(new RuntimeException("수집 예외"));
+
+            scheduler.collectFinancialRatio();
+
+            verify(batchMetrics, never())
+                    .recordCompletion(anyString(), anyLong(), anyLong(), anyLong(), anyLong());
         }
     }
 }
