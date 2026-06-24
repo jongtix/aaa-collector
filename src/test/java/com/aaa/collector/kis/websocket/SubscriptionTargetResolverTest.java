@@ -18,6 +18,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 class SubscriptionTargetResolverTest {
 
     @Mock private DomesticSymbolProvider domesticSymbolProvider;
+    @Mock private OverseasSymbolProvider overseasSymbolProvider;
 
     @InjectMocks private SubscriptionTargetResolver resolver;
 
@@ -83,12 +84,28 @@ class SubscriptionTargetResolverTest {
     // ──────────────────────────────────────────────────────────────────
 
     @Nested
-    @DisplayName("resolveOverseasSymbols — 해외 종목 선정 (Phase 1 스텁)")
+    @DisplayName("resolveOverseasSymbols — 해외 tr_key 위임")
     class ResolveOverseasSymbols {
 
         @Test
-        @DisplayName("Phase 1: resolveOverseasSymbols()는 항상 빈 리스트를 반환한다")
-        void shouldAlwaysReturnEmptyListForOverseas() {
+        @DisplayName("OverseasSymbolProvider에 위임하여 tr_key 목록을 반환한다")
+        void shouldDelegateToOverseasSymbolProvider() {
+            // Arrange
+            List<String> trKeys = List.of("DNASAAPL", "DNYSSPY");
+            when(overseasSymbolProvider.getOverseasSubscriptionKeys()).thenReturn(trKeys);
+
+            // Act
+            List<String> result = resolver.resolveOverseasSymbols();
+
+            // Assert
+            assertThat(result).containsExactlyElementsOf(trKeys);
+        }
+
+        @Test
+        @DisplayName("provider가 빈 리스트를 반환하면 빈 리스트 전달")
+        void shouldReturnEmptyWhenProviderReturnsEmpty() {
+            when(overseasSymbolProvider.getOverseasSubscriptionKeys()).thenReturn(List.of());
+
             assertThat(resolver.resolveOverseasSymbols()).isEmpty();
         }
     }
