@@ -6,10 +6,10 @@ import com.aaa.collector.stock.StockRepository;
 import com.aaa.collector.stock.enums.Market;
 import java.time.ZoneId;
 import java.time.ZonedDateTime;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -156,7 +156,7 @@ public class GradeClassificationService {
             return Map.of();
         }
         List<Object[]> rows = dailyOhlcvRepository.countByStockIds(stockIds);
-        Map<Long, Long> map = new HashMap<>();
+        Map<Long, Long> map = new ConcurrentHashMap<>();
         for (Object[] row : rows) {
             Long stockId = ((Number) row[0]).longValue();
             Long count = row[1] != null ? ((Number) row[1]).longValue() : 0L;
@@ -170,7 +170,7 @@ public class GradeClassificationService {
             return Map.of();
         }
         List<Object[]> rows = dailyOhlcvRepository.findRecent20DayAdtvByStockIds(stockIds);
-        Map<Long, Double> map = new HashMap<>();
+        Map<Long, Double> map = new ConcurrentHashMap<>();
         for (Object[] row : rows) {
             Long stockId = ((Number) row[0]).longValue();
             Double adtv = row[1] != null ? ((Number) row[1]).doubleValue() : 0.0;

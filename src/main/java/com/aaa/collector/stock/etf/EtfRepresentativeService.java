@@ -14,10 +14,10 @@ import java.time.ZoneId;
 import java.time.ZonedDateTime;
 import java.util.ArrayList;
 import java.util.Comparator;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -116,7 +116,7 @@ public class EtfRepresentativeService {
             return Map.of();
         }
         List<Object[]> results = dailyOhlcvRepository.findAdtvByStockIds(stockIds);
-        Map<Long, Double> map = new HashMap<>();
+        Map<Long, Double> map = new ConcurrentHashMap<>();
         for (Object[] row : results) {
             Long stockId = ((Number) row[0]).longValue();
             Double adtv = row[1] != null ? ((Number) row[1]).doubleValue() : 0.0;
@@ -155,7 +155,7 @@ public class EtfRepresentativeService {
         double adtv =
                 classificationAdtvRows.isEmpty()
                         ? 0.0
-                        : ((Number) classificationAdtvRows.get(0)[1]).doubleValue();
+                        : ((Number) classificationAdtvRows.getFirst()[1]).doubleValue();
 
         String market = representativeStock.getMarket().name().startsWith("KOS") ? "KRX" : "US";
         GradeInput input =
