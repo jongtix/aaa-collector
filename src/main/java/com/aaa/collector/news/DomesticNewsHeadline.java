@@ -14,17 +14,17 @@ import lombok.Builder;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 
-/** 뉴스 제목 (KIS 종합시황공시제목). */
+/** 국내 뉴스 제목 (KIS 종합시황공시제목). */
 @Entity
 @Table(
-        name = "news_headlines",
+        name = "domestic_news_headlines",
         uniqueConstraints =
                 @UniqueConstraint(
-                        name = "uk_news_headlines_serial",
+                        name = "uk_domestic_news_headlines_serial",
                         columnNames = {"serial_no"}))
 @Getter
 @NoArgsConstructor(access = AccessLevel.PROTECTED, force = true)
-public class NewsHeadline extends BaseEntity {
+public class DomesticNewsHeadline extends BaseEntity {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
@@ -65,7 +65,7 @@ public class NewsHeadline extends BaseEntity {
     private final String stockCode5;
 
     @Builder
-    private NewsHeadline(
+    private DomesticNewsHeadline(
             String serialNo,
             LocalDateTime publishedAt,
             String providerCode,

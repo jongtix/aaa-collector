@@ -39,7 +39,7 @@ class NewsTitleCollectionServiceTest {
 
     @Mock private GuardedKisExecutor guardedKisExecutor;
     @Mock private KeyLeaseRegistry keyLeaseRegistry;
-    @Mock private NewsHeadlineRepository newsHeadlineRepository;
+    @Mock private DomesticNewsHeadlineRepository newsHeadlineRepository;
     @Mock private LeaseSession session;
 
     private NewsTitleCollectionService service;
@@ -109,7 +109,7 @@ class NewsTitleCollectionServiceTest {
 
         @Test
         @SuppressWarnings("PMD.UnitTestContainsTooManyAsserts") // iscd1~5 매핑 전체 검증을 한 테스트에서 수행
-        @DisplayName("단일 행 → NewsHeadline 필드 매핑 정확 (serial_no, published_at, iscd1~5)")
+        @DisplayName("단일 행 → DomesticNewsHeadline 필드 매핑 정확 (serial_no, published_at, iscd1~5)")
         void singleRow_fieldsMappedCorrectly() throws Exception {
             // Arrange
             when(newsHeadlineRepository.findMaxSerialNo()).thenReturn(null);
@@ -123,10 +123,11 @@ class NewsTitleCollectionServiceTest {
             service.collect();
 
             // Assert
-            ArgumentCaptor<NewsHeadline> captor = ArgumentCaptor.forClass(NewsHeadline.class);
+            ArgumentCaptor<DomesticNewsHeadline> captor =
+                    ArgumentCaptor.forClass(DomesticNewsHeadline.class);
             verify(newsHeadlineRepository).insertIgnoreDuplicate(captor.capture());
 
-            NewsHeadline saved = captor.getValue();
+            DomesticNewsHeadline saved = captor.getValue();
             assertThat(saved.getSerialNo()).isEqualTo("1000000000000000001");
             assertThat(saved.getStockCode1()).isEqualTo("005930");
             assertThat(saved.getStockCode2()).isEqualTo("000660");
@@ -150,7 +151,8 @@ class NewsTitleCollectionServiceTest {
             service.collect();
 
             // Assert
-            ArgumentCaptor<NewsHeadline> captor = ArgumentCaptor.forClass(NewsHeadline.class);
+            ArgumentCaptor<DomesticNewsHeadline> captor =
+                    ArgumentCaptor.forClass(DomesticNewsHeadline.class);
             verify(newsHeadlineRepository).insertIgnoreDuplicate(captor.capture());
             assertThat(captor.getValue().getPublishedAt())
                     .isEqualTo(LocalDateTime.of(2026, 6, 13, 14, 30, 22));
@@ -537,7 +539,7 @@ class NewsTitleCollectionServiceTest {
     // ────────────────────────────────────────────────────────────────────
 
     @Nested
-    @DisplayName("멱등 저장 — uk_news_headlines_serial")
+    @DisplayName("멱등 저장 — uk_domestic_news_headlines_serial")
     class Idempotency {
 
         @Test

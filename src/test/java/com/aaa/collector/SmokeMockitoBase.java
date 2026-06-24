@@ -16,7 +16,7 @@ import com.aaa.collector.market.indicator.usdkrw.UsdkrwCollectionService;
 import com.aaa.collector.market.indicator.vix.CboeVixClient;
 import com.aaa.collector.market.indicator.vix.FredVixClient;
 import com.aaa.collector.market.indicator.vix.VixCollectionService;
-import com.aaa.collector.news.NewsHeadlineRepository;
+import com.aaa.collector.news.DomesticNewsHeadlineRepository;
 import com.aaa.collector.stock.AnalystEstimateRepository;
 import com.aaa.collector.stock.CorporateEventRepository;
 import com.aaa.collector.stock.CreditBalanceRepository;
@@ -66,7 +66,7 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
             CreditBalanceRepository.class,
             MacroIndicatorRepository.class,
             CorporateEventRepository.class,
-            NewsHeadlineRepository.class,
+            DomesticNewsHeadlineRepository.class,
             FinancialRepository.class,
             AnalystEstimateRepository.class,
             OverseasDailyOhlcvCollectionService.class,

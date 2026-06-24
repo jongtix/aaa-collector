@@ -7,8 +7,8 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 
-@DisplayName("NewsHeadline builder 검증")
-class NewsHeadlineTest {
+@DisplayName("DomesticNewsHeadline builder 검증")
+class DomesticNewsHeadlineTest {
 
     @Nested
     @DisplayName("builder")
@@ -19,8 +19,8 @@ class NewsHeadlineTest {
         void newsHeadline_serialNoAndPublishedAtSet() {
             LocalDateTime publishedAt = LocalDateTime.of(2026, 6, 11, 9, 0, 0);
 
-            NewsHeadline headline =
-                    NewsHeadline.builder()
+            DomesticNewsHeadline headline =
+                    DomesticNewsHeadline.builder()
                             .serialNo("20260611001")
                             .publishedAt(publishedAt)
                             .title("삼성전자 2분기 실적 발표")
@@ -33,8 +33,8 @@ class NewsHeadlineTest {
         @Test
         @DisplayName("providerCode, title, categoryCode, source가 설정된다")
         void newsHeadline_metaFieldsSet() {
-            NewsHeadline headline =
-                    NewsHeadline.builder()
+            DomesticNewsHeadline headline =
+                    DomesticNewsHeadline.builder()
                             .serialNo("20260611002")
                             .publishedAt(LocalDateTime.of(2026, 6, 11, 9, 0, 0))
                             .providerCode("A")
@@ -52,8 +52,8 @@ class NewsHeadlineTest {
         @Test
         @DisplayName("종목코드 5개를 설정하면 모두 저장된다")
         void newsHeadline_fiveStockCodesSet() {
-            NewsHeadline headline =
-                    NewsHeadline.builder()
+            DomesticNewsHeadline headline =
+                    DomesticNewsHeadline.builder()
                             .serialNo("20260611003")
                             .publishedAt(LocalDateTime.of(2026, 6, 11, 10, 0, 0))
                             .title("반도체 관련주 일제 강세")
@@ -72,8 +72,8 @@ class NewsHeadlineTest {
         @Test
         @DisplayName("종목코드를 설정하지 않으면 null이다")
         void newsHeadline_stockCodesNullByDefault() {
-            NewsHeadline headline =
-                    NewsHeadline.builder()
+            DomesticNewsHeadline headline =
+                    DomesticNewsHeadline.builder()
                             .serialNo("20260611004")
                             .publishedAt(LocalDateTime.of(2026, 6, 11, 11, 0, 0))
                             .title("제목 없음")
