@@ -161,6 +161,114 @@ class StockGradeRepositoryTest {
     }
 
     @Nested
+    @DisplayName("findUsSymbolsWithMarketByGradeIn — 미국 한정 symbol+market 조회")
+    class FindUsSymbolsWithMarketByGradeIn {
+
+        private Stock savedStockWithMarket(String symbol, Market market) {
+            Stock stock =
+                    Stock.builder()
+                            .symbol(symbol)
+                            .nameKo("테스트종목_" + symbol)
+                            .market(market)
+                            .assetType(AssetType.STOCK)
+                            .listedDate(LocalDate.of(2020, 1, 1))
+                            .build();
+            return stockRepository.save(stock);
+        }
+
+        @Test
+        @DisplayName("KOSPI/NASDAQ/NYSE 혼합 저장 시 US 종목(A·B 등급)만 반환")
+        void returnsOnlyUsSymbolsForAbGrades() {
+            // Arrange
+            Stock kospi = savedStockWithMarket("005930", Market.KOSPI);
+            Stock nasdaq = savedStockWithMarket("AAPL", Market.NASDAQ);
+            Stock nyse = savedStockWithMarket("SPY", Market.NYSE);
+
+            stockGradeRepository.save(
+                    StockGrade.builder()
+                            .stock(kospi)
+                            .grade("A")
+                            .gradedAt(ZonedDateTime.now(KST))
+                            .build());
+            stockGradeRepository.save(
+                    StockGrade.builder()
+                            .stock(nasdaq)
+                            .grade("A")
+                            .gradedAt(ZonedDateTime.now(KST))
+                            .build());
+            stockGradeRepository.save(
+                    StockGrade.builder()
+                            .stock(nyse)
+                            .grade("B")
+                            .gradedAt(ZonedDateTime.now(KST))
+                            .build());
+
+            // Act
+            List<StockGradeRepository.SymbolWithMarket> result =
+                    stockGradeRepository.findUsSymbolsWithMarketByGradeIn(
+                            List.of(Market.NYSE, Market.NASDAQ, Market.AMEX), List.of("A", "B"));
+
+            // Assert — KOSPI 제외, NASDAQ+NYSE만
+            assertThat(result).hasSize(2);
+            assertThat(result)
+                    .extracting(StockGradeRepository.SymbolWithMarket::symbol)
+                    .containsExactlyInAnyOrder("AAPL", "SPY");
+        }
+
+        @Test
+        @DisplayName("C 등급 US 종목은 제외")
+        void excludesCGradeUsSymbols() {
+            // Arrange
+            Stock nasdaq = savedStockWithMarket("AAPL", Market.NASDAQ);
+            Stock nasdaq2 = savedStockWithMarket("MSFT", Market.NASDAQ);
+
+            stockGradeRepository.save(
+                    StockGrade.builder()
+                            .stock(nasdaq)
+                            .grade("A")
+                            .gradedAt(ZonedDateTime.now(KST))
+                            .build());
+            stockGradeRepository.save(
+                    StockGrade.builder()
+                            .stock(nasdaq2)
+                            .grade("C")
+                            .gradedAt(ZonedDateTime.now(KST))
+                            .build());
+
+            // Act
+            List<StockGradeRepository.SymbolWithMarket> result =
+                    stockGradeRepository.findUsSymbolsWithMarketByGradeIn(
+                            List.of(Market.NYSE, Market.NASDAQ, Market.AMEX), List.of("A", "B"));
+
+            // Assert
+            assertThat(result).hasSize(1);
+            assertThat(result.getFirst().symbol()).isEqualTo("AAPL");
+        }
+
+        @Test
+        @DisplayName("market 필드가 올바르게 반환된다")
+        void returnsCorrectMarketField() {
+            // Arrange
+            Stock nasdaq = savedStockWithMarket("AAPL", Market.NASDAQ);
+            stockGradeRepository.save(
+                    StockGrade.builder()
+                            .stock(nasdaq)
+                            .grade("A")
+                            .gradedAt(ZonedDateTime.now(KST))
+                            .build());
+
+            // Act
+            List<StockGradeRepository.SymbolWithMarket> result =
+                    stockGradeRepository.findUsSymbolsWithMarketByGradeIn(
+                            List.of(Market.NYSE, Market.NASDAQ, Market.AMEX), List.of("A", "B"));
+
+            // Assert
+            assertThat(result).hasSize(1);
+            assertThat(result.getFirst().market()).isEqualTo(Market.NASDAQ);
+        }
+    }
+
+    @Nested
     @DisplayName("save — 등급 저장")
     class SaveGrade {
 
