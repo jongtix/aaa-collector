@@ -117,7 +117,7 @@ class KisWebSocketSchedulerOverseasTest {
             boolean runningBefore = scheduler.overseasRunning.get();
 
             // Act — 예외 전파 없음
-            assertThatCode(() -> scheduler.closeOverseasSession()).doesNotThrowAnyException();
+            assertThatCode(scheduler::closeOverseasSession).doesNotThrowAnyException();
 
             // Assert — 종료 경로는 overseasRunning 플래그 미사용
             assertThat(scheduler.overseasRunning.get()).isEqualTo(runningBefore);

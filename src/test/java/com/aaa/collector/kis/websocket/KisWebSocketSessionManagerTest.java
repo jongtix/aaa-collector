@@ -434,7 +434,7 @@ class KisWebSocketSessionManagerTest {
                 // subscribe 총 호출수 집계
                 org.mockito.invocation.InvocationOnMock[] invocations =
                         org.mockito.Mockito.mockingDetails(s).getInvocations().stream()
-                                .filter(inv -> inv.getMethod().getName().equals("subscribe"))
+                                .filter(inv -> "subscribe".equals(inv.getMethod().getName()))
                                 .toArray(org.mockito.invocation.InvocationOnMock[]::new);
                 totalSubscribeCalls += invocations.length;
             }
