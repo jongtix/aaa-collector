@@ -72,7 +72,6 @@ public class MarketBatchScheduler {
     @Scheduled(cron = "0 0 17 * * MON-FRI", zone = "Asia/Seoul")
     public void collectMarket() {
         LocalDate today = LocalDate.now(KST);
-        String baseDate = today.format(DATE_FMT);
         log.info("[market-batch] 시장지표 묶음 배치 시작 — {}", today);
 
         // 7종 결과 누적 카운터 — collectMarket() 수준에서 합산 후 1회 recordCompletion
@@ -93,6 +92,7 @@ public class MarketBatchScheduler {
         skip += compResult[2];
 
         // T5: 증시자금 — 결과 객체 반환종
+        String baseDate = today.format(DATE_FMT);
         long[] fundsResult = collectMarketFunds(baseDate);
         attempted += fundsResult[0];
         succeeded += fundsResult[1];
