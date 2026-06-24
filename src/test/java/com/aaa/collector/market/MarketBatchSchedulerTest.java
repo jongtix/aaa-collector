@@ -3,7 +3,9 @@ package com.aaa.collector.market;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -13,6 +15,7 @@ import com.aaa.collector.macro.MacroCollectionResult;
 import com.aaa.collector.macro.MarketFundsCollectionService;
 import com.aaa.collector.market.indicator.usdkrw.UsdkrwCollectionService;
 import com.aaa.collector.market.indicator.vix.VixCollectionService;
+import com.aaa.collector.observability.BatchMetrics;
 import com.aaa.collector.stock.DividendCollectionResult;
 import com.aaa.collector.stock.DividendScheduleCollectionService;
 import com.aaa.collector.stock.RevSplitCollectionResult;
@@ -44,6 +47,7 @@ class MarketBatchSchedulerTest {
     @Mock private RevSplitCollectionService revSplitCollectionService;
     @Mock private UsdkrwCollectionService usdkrwCollectionService;
     @Mock private VixCollectionService vixCollectionService;
+    @Mock private BatchMetrics batchMetrics;
 
     @InjectMocks private MarketBatchScheduler scheduler;
 
@@ -262,6 +266,118 @@ class MarketBatchSchedulerTest {
             // MarketBatchScheduler 생성자에 publisher 없음을 컴파일 타임 확인 (설계 검증)
             // 실행 중 예외 없음으로 대리 검증
             assertThatCode(scheduler::collectMarket).doesNotThrowAnyException();
+        }
+    }
+
+    // ────────────────────────────────────────────────────────────────────
+    // 배치 계측 (REQ-OBSV-020/021)
+    // ────────────────────────────────────────────────────────────────────
+
+    @Nested
+    @DisplayName("배치 계측 — 7종 합산 (REQ-OBSV-020/021)")
+    class BatchMetricsRecording {
+
+        @Test
+        @SuppressWarnings("PMD.UnitTestContainsTooManyAsserts")
+        @DisplayName("7종 정상 완료 — 합산 결과를 batch=market-indicators로 1회 기록")
+        void recordsBatchMetricsOnCompletion() {
+            // setUp의 stub 기준:
+            // sectorIndex: 2/2/0, compInterest: 8/8/0, marketFunds: 9/9/0
+            // dividend: 10/8/(1+1=2skip), revSplit: 21/5/(14+2=16skip)
+            // usdkrw: void 성공(1/1/0), vix: void 성공(1/1/0)
+            // 합계: attempted=2+8+9+10+21+1+1=52, succeeded=2+8+9+8+5+1+1=34
+            // skip=0+0+0+2+16+0+0=18, fail=52-34-18=0
+
+            // Act
+            scheduler.collectMarket();
+
+            // Assert
+            verify(batchMetrics).recordCompletion("market-indicators", 52, 34, 0, 18);
+        }
+
+        @Test
+        @DisplayName("usdkrw 예외 — fail=1 계상, 나머지 합산, 1회 recordCompletion 호출")
+        void usdkrwException_countsAsOneFail() {
+            // Arrange — usdkrw 예외
+            doThrow(new RuntimeException("usdkrw 장애"))
+                    .when(usdkrwCollectionService)
+                    .collectDaily(any(LocalDate.class));
+
+            // Act
+            scheduler.collectMarket();
+
+            // Assert — usdkrw: attempted=1, fail=1 / 나머지 정상
+            // 합계: attempted=2+8+9+10+21+1+1=52, succeeded=2+8+9+8+5+0+1=33
+            // skip=18, fail=52-33-18=1
+            verify(batchMetrics).recordCompletion("market-indicators", 52, 33, 1, 18);
+        }
+
+        @Test
+        @DisplayName("vix 예외 — fail=1 계상, 나머지 합산")
+        void vixException_countsAsOneFail() {
+            // Arrange — vix 예외
+            doThrow(new RuntimeException("vix 장애"))
+                    .when(vixCollectionService)
+                    .collectDaily(any(LocalDate.class));
+
+            // Act
+            scheduler.collectMarket();
+
+            // Assert — vix: attempted=1, fail=1 / 나머지 정상
+            // 합계: attempted=52, succeeded=33, skip=18, fail=1
+            verify(batchMetrics).recordCompletion("market-indicators", 52, 33, 1, 18);
+        }
+
+        @Test
+        @DisplayName("모든 7종 예외 — attempted=7, fail=7, 1회 recordCompletion 호출")
+        void allException_countsAllAsFail() {
+            // Arrange — 모든 종 예외
+            when(sectorIndexCollectionService.collect(any(LocalDate.class)))
+                    .thenThrow(new RuntimeException("T3"));
+            when(compInterestCollectionService.collect()).thenThrow(new RuntimeException("T4"));
+            when(marketFundsCollectionService.collect(anyString()))
+                    .thenThrow(new RuntimeException("T5"));
+            when(dividendScheduleCollectionService.collect(anyString(), anyString()))
+                    .thenThrow(new RuntimeException("T6"));
+            when(revSplitCollectionService.collect(any(LocalDate.class), any(LocalDate.class)))
+                    .thenThrow(new RuntimeException("T7"));
+            doThrow(new RuntimeException("T8"))
+                    .when(usdkrwCollectionService)
+                    .collectDaily(any(LocalDate.class));
+            doThrow(new RuntimeException("T9"))
+                    .when(vixCollectionService)
+                    .collectDaily(any(LocalDate.class));
+
+            // Act
+            scheduler.collectMarket();
+
+            // Assert — attempted=7(각 1), fail=7, success=0, skip=0
+            verify(batchMetrics).recordCompletion("market-indicators", 7, 0, 7, 0);
+        }
+
+        @Test
+        @DisplayName("sectorIndex 예외 — sectorIndex만 fail=1, batchMetrics는 1회 호출")
+        void sectorIndexException_onlyOneFailInMetrics() {
+            // Arrange
+            when(sectorIndexCollectionService.collect(any(LocalDate.class)))
+                    .thenThrow(new RuntimeException("업종지수 실패"));
+
+            // Act
+            scheduler.collectMarket();
+
+            // Assert — sectorIndex: attempted=1, fail=1 / 나머지 정상
+            // 합계: attempted=1+8+9+10+21+1+1=51, succeeded=0+8+9+8+5+1+1=32, skip=18,
+            // fail=51-32-18=1
+            verify(batchMetrics).recordCompletion("market-indicators", 51, 32, 1, 18);
+        }
+
+        @Test
+        @DisplayName("batchMetrics.recordCompletion은 정확히 1회 호출된다")
+        void recordCompletionCalledExactlyOnce() {
+            scheduler.collectMarket();
+
+            verify(batchMetrics)
+                    .recordCompletion(anyString(), anyLong(), anyLong(), anyLong(), anyLong());
         }
     }
 }

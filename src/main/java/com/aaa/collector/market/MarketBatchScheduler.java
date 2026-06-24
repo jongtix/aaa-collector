@@ -5,6 +5,7 @@ import com.aaa.collector.macro.MacroCollectionResult;
 import com.aaa.collector.macro.MarketFundsCollectionService;
 import com.aaa.collector.market.indicator.usdkrw.UsdkrwCollectionService;
 import com.aaa.collector.market.indicator.vix.VixCollectionService;
+import com.aaa.collector.observability.BatchMetrics;
 import com.aaa.collector.stock.DividendCollectionResult;
 import com.aaa.collector.stock.DividendScheduleCollectionService;
 import com.aaa.collector.stock.RevSplitCollectionResult;
@@ -48,6 +49,9 @@ public class MarketBatchScheduler {
 
     private static final int REV_SPLIT_FUTURE_DAYS = 60;
 
+    /** 시장지표 묶음 배치 계측 라벨 (REQ-OBSV-020/021). */
+    private static final String BATCH_LABEL = "market-indicators";
+
     private final SectorIndexCollectionService sectorIndexCollectionService;
     private final CompInterestCollectionService compInterestCollectionService;
     private final MarketFundsCollectionService marketFundsCollectionService;
@@ -55,11 +59,15 @@ public class MarketBatchScheduler {
     private final RevSplitCollectionService revSplitCollectionService;
     private final UsdkrwCollectionService usdkrwCollectionService;
     private final VixCollectionService vixCollectionService;
+    private final BatchMetrics batchMetrics;
 
     /**
      * 시장지표 묶음 배치 진입점 (REQ-BATCH3-001, REQ-BATCH3-005, REQ-BATCH3-006).
      *
      * <p>예외 흡수: 각 종의 예외가 전파되어 스케줄러 스레드가 종료되는 것을 방지한다. 각 종 예외는 다음 종 수집을 막지 않는다(REQ-BATCH3-004).
+     *
+     * <p>계측 누적 전략: 7종 결과를 collectMarket() 수준에서 합산하여 1회 recordCompletion 호출. void 반환 종(usdkrw/vix)은
+     * 성공 시 +1, 예외 시 attempted+1만 증가(fail 자동 계상). REQ-OBSV-020/021.
      */
     @Scheduled(cron = "0 0 17 * * MON-FRI", zone = "Asia/Seoul")
     public void collectMarket() {
@@ -67,19 +75,60 @@ public class MarketBatchScheduler {
         String baseDate = today.format(DATE_FMT);
         log.info("[market-batch] 시장지표 묶음 배치 시작 — {}", today);
 
-        collectSectorIndex(today);
-        collectCompInterest();
-        collectMarketFunds(baseDate);
-        collectDividendSchedule(today);
-        collectRevSplit(today);
-        collectUsdkrw(today);
-        collectVix(today);
+        // 7종 결과 누적 카운터 — collectMarket() 수준에서 합산 후 1회 recordCompletion
+        long attempted = 0;
+        long succeeded = 0;
+        long skip = 0;
 
+        // T3: 업종지수 — 결과 객체 반환종
+        long[] sectorResult = collectSectorIndex(today);
+        attempted += sectorResult[0];
+        succeeded += sectorResult[1];
+        skip += sectorResult[2];
+
+        // T4: 금리 — 결과 객체 반환종
+        long[] compResult = collectCompInterest();
+        attempted += compResult[0];
+        succeeded += compResult[1];
+        skip += compResult[2];
+
+        // T5: 증시자금 — 결과 객체 반환종
+        long[] fundsResult = collectMarketFunds(baseDate);
+        attempted += fundsResult[0];
+        succeeded += fundsResult[1];
+        skip += fundsResult[2];
+
+        // T6: 배당 일정 — skip = skippedNonWatchlist + skippedValidation
+        long[] dividendResult = collectDividendSchedule(today);
+        attempted += dividendResult[0];
+        succeeded += dividendResult[1];
+        skip += dividendResult[2];
+
+        // T7: 액면교체 — skip = skippedNonWatchlist + skippedValidation
+        long[] revSplitResult = collectRevSplit(today);
+        attempted += revSplitResult[0];
+        succeeded += revSplitResult[1];
+        skip += revSplitResult[2];
+
+        // T8: USDKRW — void 반환종(성공 시 1/1, 예외 시 1/0)
+        long[] usdkrwResult = collectUsdkrw(today);
+        attempted += usdkrwResult[0];
+        succeeded += usdkrwResult[1];
+
+        // T9: VIX — void 반환종
+        long[] vixResult = collectVix(today);
+        attempted += vixResult[0];
+        succeeded += vixResult[1];
+
+        // REQ-OBSV-020/021: fail = attempted - succeeded - skip
+        long fail = Math.max(0L, attempted - succeeded - skip);
+        batchMetrics.recordCompletion(BATCH_LABEL, attempted, succeeded, fail, skip);
         log.info("[market-batch] 시장지표 묶음 배치 완료 — {}", today);
     }
 
+    /** 업종지수 수집. [attempted, succeeded, skip] 반환. 예외 시 [1, 0, 0]. */
     @SuppressWarnings("PMD.AvoidCatchingGenericException") // 스케줄러 스레드 종료 방지
-    private void collectSectorIndex(LocalDate today) {
+    private long[] collectSectorIndex(LocalDate today) {
         try {
             SectorIndexCollectionResult result = sectorIndexCollectionService.collect(today);
             log.info(
@@ -87,13 +136,16 @@ public class MarketBatchScheduler {
                     result.attempted(),
                     result.succeeded(),
                     result.skipped());
+            return new long[] {result.attempted(), result.succeeded(), result.skipped()};
         } catch (Exception e) {
             log.error("[sector-index] 수집 예외 — 다음 종으로 계속", e);
+            return new long[] {1, 0, 0};
         }
     }
 
+    /** 금리 수집. [attempted, succeeded, skip] 반환. 예외 시 [1, 0, 0]. */
     @SuppressWarnings("PMD.AvoidCatchingGenericException") // 스케줄러 스레드 종료 방지
-    private void collectCompInterest() {
+    private long[] collectCompInterest() {
         try {
             MacroCollectionResult result = compInterestCollectionService.collect();
             log.info(
@@ -101,13 +153,16 @@ public class MarketBatchScheduler {
                     result.attempted(),
                     result.succeeded(),
                     result.skipped());
+            return new long[] {result.attempted(), result.succeeded(), result.skipped()};
         } catch (Exception e) {
             log.error("[comp-interest] 수집 예외 — 다음 종으로 계속", e);
+            return new long[] {1, 0, 0};
         }
     }
 
+    /** 증시자금 수집. [attempted, succeeded, skip] 반환. 예외 시 [1, 0, 0]. */
     @SuppressWarnings("PMD.AvoidCatchingGenericException") // 스케줄러 스레드 종료 방지
-    private void collectMarketFunds(String baseDate) {
+    private long[] collectMarketFunds(String baseDate) {
         try {
             MacroCollectionResult result = marketFundsCollectionService.collect(baseDate);
             log.info(
@@ -115,69 +170,83 @@ public class MarketBatchScheduler {
                     result.attempted(),
                     result.succeeded(),
                     result.skipped());
+            return new long[] {result.attempted(), result.succeeded(), result.skipped()};
         } catch (Exception e) {
             log.error("[market-funds] 수집 예외 — 다음 종으로 계속", e);
+            return new long[] {1, 0, 0};
         }
     }
 
+    /** 배당 일정 수집. [attempted, succeeded, skip(nonWatchlist+validation)] 반환. 예외 시 [1, 0, 0]. */
     @SuppressWarnings("PMD.AvoidCatchingGenericException") // 스케줄러 스레드 종료 방지
-    private void collectDividendSchedule(LocalDate today) {
+    private long[] collectDividendSchedule(LocalDate today) {
         try {
             String fromDate = today.minusDays(DIVIDEND_RANGE_DAYS).format(DATE_FMT);
             String toDate = today.plusDays(DIVIDEND_RANGE_DAYS).format(DATE_FMT);
             DividendCollectionResult result =
                     dividendScheduleCollectionService.collect(fromDate, toDate);
+            long totalSkip = (long) result.skippedNonWatchlist() + result.skippedValidation();
             log.info(
                     "[dividend-schedule] 수집 완료 — attempted={}, succeeded={}, skippedNonWatchlist={}, skippedValidation={}",
                     result.attempted(),
                     result.succeeded(),
                     result.skippedNonWatchlist(),
                     result.skippedValidation());
+            return new long[] {result.attempted(), result.succeeded(), totalSkip};
         } catch (Exception e) {
             log.error("[dividend-schedule] 수집 예외 — 스케줄러 스레드 보호", e);
-        }
-    }
-
-    @SuppressWarnings("PMD.AvoidCatchingGenericException") // 스케줄러 스레드 종료 방지
-    private void collectUsdkrw(LocalDate today) {
-        try {
-            usdkrwCollectionService.collectDaily(today);
-            log.info("[usdkrw] 수집 완료 — {}", today);
-        } catch (Exception e) {
-            log.error("[usdkrw] 수집 예외 — 다음 종으로 계속", e);
-        }
-    }
-
-    @SuppressWarnings("PMD.AvoidCatchingGenericException") // 스케줄러 스레드 종료 방지
-    private void collectVix(LocalDate today) {
-        try {
-            vixCollectionService.collectDaily(today);
-            log.info("[vix] 수집 완료 — {}", today);
-        } catch (Exception e) {
-            log.error("[vix] 수집 예외 — 다음 종으로 계속", e);
+            return new long[] {1, 0, 0};
         }
     }
 
     /**
-     * 5번째 종 — 액면교체 수집 (REQ-BATCH5-001/003/005, D-NEED-CRON Resolved).
+     * 액면교체 수집. [attempted, succeeded, skip(nonWatchlist+validation)] 반환. 예외 시 [1, 0, 0].
      *
-     * <p>윈도우: today-14 ~ today+60 (PROBE-4 확정). 종 단위 예외 격리(REQ-BATCH5-003): 이 종의 예외가 묶음의 다른 종·스케줄러
-     * 스레드를 막지 않는다.
+     * <p>윈도우: today-14 ~ today+60 (PROBE-4 확정). 종 단위 예외 격리(REQ-BATCH5-003).
      */
     @SuppressWarnings("PMD.AvoidCatchingGenericException") // 스케줄러 스레드 종료 방지
-    private void collectRevSplit(LocalDate today) {
+    private long[] collectRevSplit(LocalDate today) {
         try {
             LocalDate from = today.minusDays(REV_SPLIT_LOOKBACK_DAYS);
             LocalDate to = today.plusDays(REV_SPLIT_FUTURE_DAYS);
             RevSplitCollectionResult result = revSplitCollectionService.collect(from, to);
+            long totalSkip = (long) result.skippedNonWatchlist() + result.skippedValidation();
             log.info(
                     "[rev-split] 수집 완료 — attempted={}, succeeded={}, skippedNonWatchlist={}, skippedValidation={}",
                     result.attempted(),
                     result.succeeded(),
                     result.skippedNonWatchlist(),
                     result.skippedValidation());
+            return new long[] {result.attempted(), result.succeeded(), totalSkip};
         } catch (Exception e) {
             log.error("[rev-split] 수집 예외 — 스케줄러 스레드 보호", e);
+            return new long[] {1, 0, 0};
+        }
+    }
+
+    /** USDKRW 수집. [attempted, succeeded] 반환 — skip 없음, void 반환종. 예외 시 [1, 0]. */
+    @SuppressWarnings("PMD.AvoidCatchingGenericException") // 스케줄러 스레드 종료 방지
+    private long[] collectUsdkrw(LocalDate today) {
+        try {
+            usdkrwCollectionService.collectDaily(today);
+            log.info("[usdkrw] 수집 완료 — {}", today);
+            return new long[] {1, 1};
+        } catch (Exception e) {
+            log.error("[usdkrw] 수집 예외 — 다음 종으로 계속", e);
+            return new long[] {1, 0};
+        }
+    }
+
+    /** VIX 수집. [attempted, succeeded] 반환 — skip 없음, void 반환종. 예외 시 [1, 0]. */
+    @SuppressWarnings("PMD.AvoidCatchingGenericException") // 스케줄러 스레드 종료 방지
+    private long[] collectVix(LocalDate today) {
+        try {
+            vixCollectionService.collectDaily(today);
+            log.info("[vix] 수집 완료 — {}", today);
+            return new long[] {1, 1};
+        } catch (Exception e) {
+            log.error("[vix] 수집 예외 — 다음 종으로 계속", e);
+            return new long[] {1, 0};
         }
     }
 }
