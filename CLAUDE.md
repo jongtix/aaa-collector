@@ -48,7 +48,7 @@ collector DB 사용자는 `aaa.*`에 `SELECT, INSERT`를 가지며, `UPDATE`는 
 
 | 티어 | 해당 테이블 예시 | 권한 | 멱등 삽입 규칙 |
 |------|-----------------|------|---------------|
-| **Tier-1** (시계열/이벤트/로그, 쓰기 전용) | `daily_ohlcv`, `news_headlines`, `macro_indicators`, `credit_balance`, `short_sale_domestic`, `corporate_events`, `investor_trend` 등 | `SELECT, INSERT` only | **반드시 `INSERT IGNORE` 사용. `ON DUPLICATE KEY UPDATE` 절대 금지.** |
+| **Tier-1** (시계열/이벤트/로그, 쓰기 전용) | `daily_ohlcv`, `domestic_news_headlines`, `overseas_news_headlines`, `macro_indicators`, `credit_balance`, `short_sale_domestic`, `corporate_events`, `investor_trend` 등 | `SELECT, INSERT` only | **반드시 `INSERT IGNORE` 사용. `ON DUPLICATE KEY UPDATE` 절대 금지.** |
 | **Tier-2** (마스터/상태, in-place 갱신 허용) | `stocks`, `stock_grades`, `short_sale_overseas`, `etf_metadata` | `SELECT, INSERT, UPDATE` | UPDATE 경로 SQL 허용 |
 
 ### SQL 1142 실패 양상
