@@ -19,8 +19,8 @@ CREATE TABLE overseas_news_headlines (
     PRIMARY KEY (id),
     -- 멱등 INSERT IGNORE 보장 — news_key 유니크
     UNIQUE KEY uk_overseas_news_headlines_key (news_key),
-    -- 발행 일시 기반 조회용 인덱스
-    INDEX idx_published_at (published_at)
+    -- 발행 일시 기반 조회용 인덱스 (W2: V9 명명 규약 idx_<table>_published_at 준수)
+    INDEX idx_overseas_news_headlines_published_at (published_at)
 ) ENGINE = InnoDB
   DEFAULT CHARSET = utf8mb4
   COLLATE = utf8mb4_unicode_ci
