@@ -3,11 +3,15 @@ package com.aaa.collector.stock.daily;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 
+import com.aaa.collector.observability.BatchMetrics;
 import java.lang.reflect.Method;
 import java.time.Clock;
 import java.time.Instant;
@@ -34,6 +38,7 @@ class OverseasDailyOhlcvSchedulerTest {
 
     @Mock private OverseasDailyOhlcvCollectionService collectionService;
     @Mock private DailyCompletePublisher publisher;
+    @Mock private BatchMetrics batchMetrics;
 
     /** 기본 스케줄러 — 프로덕션과 동일한 실시간 Clock.system(KST)로 생성. */
     private OverseasDailyOhlcvScheduler scheduler;
@@ -41,7 +46,8 @@ class OverseasDailyOhlcvSchedulerTest {
     @BeforeEach
     void setUp() {
         scheduler =
-                new OverseasDailyOhlcvScheduler(collectionService, publisher, Clock.system(KST));
+                new OverseasDailyOhlcvScheduler(
+                        collectionService, publisher, Clock.system(KST), batchMetrics);
     }
 
     @Nested
@@ -144,6 +150,37 @@ class OverseasDailyOhlcvSchedulerTest {
         }
     }
 
+    @Nested
+    @DisplayName("collectDaily — 배치 계측 (REQ-OBSV-020/021)")
+    class BatchMetricsRecording {
+
+        @Test
+        @DisplayName("수집 완료 후 batch=overseas-daily 집계 기록 (fail = attempted-succeeded-skipped)")
+        void recordsBatchMetricsOnCompletion() {
+            // Arrange — 50 시도, 45 성공, 3 스킵 → fail = 50-45-3 = 2
+            CollectionResult result = new CollectionResult(50, 45, 3);
+            Mockito.when(collectionService.collect(any(LocalDate.class))).thenReturn(result);
+
+            // Act
+            scheduler.collectDaily();
+
+            // Assert
+            verify(batchMetrics).recordCompletion("overseas-daily", 50, 45, 2, 3);
+        }
+
+        @Test
+        @DisplayName("수집 예외 시 배치 계측을 기록하지 않는다")
+        void doesNotRecordOnException() {
+            Mockito.when(collectionService.collect(any(LocalDate.class)))
+                    .thenThrow(new RuntimeException("수집 예외"));
+
+            scheduler.collectDaily();
+
+            verify(batchMetrics, never())
+                    .recordCompletion(anyString(), anyLong(), anyLong(), anyLong(), anyLong());
+        }
+    }
+
     /**
      * AC-VAL-3: ET zone 회귀 가드.
      *
@@ -173,7 +210,8 @@ class OverseasDailyOhlcvSchedulerTest {
 
             Clock fixedClock = Clock.fixed(firingInstant, ET);
             OverseasDailyOhlcvScheduler schedulerUnderTest =
-                    new OverseasDailyOhlcvScheduler(collectionService, publisher, fixedClock);
+                    new OverseasDailyOhlcvScheduler(
+                            collectionService, publisher, fixedClock, batchMetrics);
 
             ArgumentCaptor<LocalDate> dateCaptor = ArgumentCaptor.forClass(LocalDate.class);
             CollectionResult result = new CollectionResult(1, 1, 0);
