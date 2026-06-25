@@ -43,4 +43,16 @@ public class ExtendedHoursClientConfig {
                 .requestFactory(ClientHttpRequestFactoryBuilder.simple().build(settings))
                 .build();
     }
+
+    /**
+     * 프로덕션 Sleeper 빈 — {@code Thread.sleep(ms)} 호출 (REQ-EXTH-011).
+     *
+     * <p>테스트에서는 {@link ExtendedHoursCollectionService.Sleeper#noOp()} 또는 mock으로 교체한다.
+     *
+     * @return Thread.sleep 기반 Sleeper
+     */
+    @Bean
+    ExtendedHoursCollectionService.Sleeper extendedHoursSleeper() {
+        return Thread::sleep;
+    }
 }
