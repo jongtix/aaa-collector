@@ -13,7 +13,10 @@ import org.springframework.stereotype.Component;
 /**
  * 일봉 OHLCV 불일치 탐지 컴포넌트 (REQ-OHLCV2-010,-011,-012,-020).
  *
- * <p>KIS 재조회값과 DB 저장값을 비교하여 불일치 시 WARN 로그를 발산한다. 행 수정·삭제는 수행하지 않는다.
+ * <p>KIS 재조회값과 DB 저장값의 OHLC(시가·고가·저가·종가)를 비교하여 불일치 시 WARN 로그를 발산한다. 행 수정·삭제는 수행하지 않는다.
+ *
+ * <p>volume/tradingValue는 비교 대상에서 제외한다. KRX는 장 마감 직후 잠정치를 제공하고 T+1에 최종 확정치로 소급 수정하므로, 16:00 KST 수집
+ * 시점의 volume은 구조적으로 확정치와 0~3% 차이가 발생한다. 이 오차는 OHLC 기반 가격 분석 및 LightGBM 예측에 유의미한 영향을 주지 않는다.
  *
  * <p>이 컴포넌트를 별도 분리하는 이유: {@link DomesticDailyOhlcvCollectionService}의 PMD CouplingBetweenObjects
  * 임계값(20) 유지 — {@link DailyOhlcv} 타입 의존을 동일 패키지 내로 격리한다.
@@ -70,36 +73,28 @@ class MismatchDetector {
         BigDecimal high = new BigDecimal(row.stckHgpr());
         BigDecimal low = new BigDecimal(row.stckLwpr());
         BigDecimal close = new BigDecimal(row.stckClpr());
-        long volume = Long.parseLong(row.acmlVol());
-        long tradingValue = Long.parseLong(row.acmlTrPbmn());
 
         boolean mismatch =
                 stored.getOpenPrice().compareTo(open) != 0
                         || stored.getHighPrice().compareTo(high) != 0
                         || stored.getLowPrice().compareTo(low) != 0
-                        || stored.getClosePrice().compareTo(close) != 0
-                        || stored.getVolume() != volume
-                        || stored.getTradingValue() != tradingValue;
+                        || stored.getClosePrice().compareTo(close) != 0;
 
         if (mismatch) {
             log.warn(
-                    "[domestic-daily] 불일치 탐지 — symbol={}, date={}, "
-                            + "stored=[open={}, high={}, low={}, close={}, volume={}, tradingValue={}], "
-                            + "refetched=[open={}, high={}, low={}, close={}, volume={}, tradingValue={}]",
+                    "[domestic-daily] 불일치 탐지 (가격) — symbol={}, date={}, "
+                            + "stored=[open={}, high={}, low={}, close={}], "
+                            + "refetched=[open={}, high={}, low={}, close={}]",
                     symbol,
                     tradeDate,
                     stored.getOpenPrice(),
                     stored.getHighPrice(),
                     stored.getLowPrice(),
                     stored.getClosePrice(),
-                    stored.getVolume(),
-                    stored.getTradingValue(),
                     open,
                     high,
                     low,
-                    close,
-                    volume,
-                    tradingValue);
+                    close);
         }
     }
 }
