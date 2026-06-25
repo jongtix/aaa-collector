@@ -4,7 +4,7 @@
 
 echo "[pre-push] Running PMD and tests..."
 
-if ! ./gradlew pmdMain pmdTest test --daemon --quiet; then
+if ! timeout 600 ./gradlew pmdMain pmdTest test --daemon --quiet; then
     echo "[pre-push] PMD or tests failed. Fix issues before pushing."
     exit 1
 fi
