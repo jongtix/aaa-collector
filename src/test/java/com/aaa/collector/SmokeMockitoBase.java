@@ -1,6 +1,10 @@
 package com.aaa.collector;
 
 import com.aaa.collector.backfill.BackfillStatusRepository;
+import com.aaa.collector.dart.disclosure.DartDisclosurePollingScheduler;
+import com.aaa.collector.dart.disclosure.DartDisclosurePollingService;
+import com.aaa.collector.dart.disclosure.DisclosureRepository;
+import com.aaa.collector.dart.external.DartDisclosureClient;
 import com.aaa.collector.macro.MacroExternalScheduler;
 import com.aaa.collector.macro.MacroIndicatorRepository;
 import com.aaa.collector.macro.backfill.MacroIndicatorBackfillOrchestrator;
@@ -105,7 +109,12 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
             ExtendedHoursRepository.class,
             YahooExtendedHoursClient.class,
             ExtendedHoursCollectionService.class,
-            ExtendedHoursScheduler.class
+            ExtendedHoursScheduler.class,
+            // SPEC-COLLECTOR-DART-001: DART 공시 수집 신규 빈 모킹 (smoke 회귀 방지)
+            DisclosureRepository.class,
+            DartDisclosureClient.class,
+            DartDisclosurePollingService.class,
+            DartDisclosurePollingScheduler.class
         })
 class SmokeMockitoBase {
 

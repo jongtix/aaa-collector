@@ -130,6 +130,11 @@ aaa:
     backfill:
       # cron 표현식 (기본: 03:00 KST 매일). fixedDelay 금지 — Virtual Threads 버그(CLAUDE.md)
       cron: "0 0 3 * * *"
+  dart:
+    # OpenDART API 인증키 — 평문 하드코딩 금지(REQ-DART-001, AC-6)
+    api-key: ${DART_API_KEY:}
+    # 공시 유형 필터 — 미설정 시 전체 공시(REQ-DART-032)
+    pblntf-ty: ""
   ecos:
     base-url: https://ecos.bok.or.kr
     service-key: ${ECOS_API_KEY:}
