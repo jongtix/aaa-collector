@@ -125,18 +125,18 @@ public class DartDisclosureClient {
             }
 
             // status != "000" 미적재 + WARN (REQ-DART-031)
-            if (!"000".equals(page.getStatus())) {
+            if (!"000".equals(page.status())) {
                 log.warn(
                         "[dart-client] list.json 비정상 status — status={}, message={}, pageNo={}",
-                        page.getStatus(),
-                        page.getMessage(),
+                        page.status(),
+                        page.message(),
                         pageNo);
                 break;
             }
 
             result.addAll(page.getList());
 
-            Integer totalPage = page.getTotalPage();
+            Integer totalPage = page.totalPage();
             if (totalPage == null || pageNo >= totalPage) {
                 break;
             }
@@ -147,6 +147,6 @@ public class DartDisclosureClient {
     }
 
     private static DartListResponse emptyResponse() {
-        return new DartListResponse();
+        return new DartListResponse(null, null, null, null, null, null, List.of());
     }
 }

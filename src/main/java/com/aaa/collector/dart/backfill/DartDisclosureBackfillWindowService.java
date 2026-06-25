@@ -79,10 +79,10 @@ public class DartDisclosureBackfillWindowService {
         // 필터: 해당 종목만 (corp_code 지정 시 API가 필터하지만 방어적 처리)
         int inserted = 0;
         for (DartListResponse.DisclosureItem item : items) {
-            if (!symbol.equals(item.getStockCode())) {
+            if (!symbol.equals(item.stockCode())) {
                 continue;
             }
-            LocalDate rceptDt = parseRceptDt(item.getRceptDt());
+            LocalDate rceptDt = parseRceptDt(item.rceptDt());
             if (rceptDt == null) {
                 continue;
             }
@@ -107,14 +107,14 @@ public class DartDisclosureBackfillWindowService {
             Long stockId, DartListResponse.DisclosureItem item, LocalDate rceptDt) {
         return new DisclosureRow(
                 stockId,
-                item.getCorpCode(),
-                item.getStockCode(),
-                item.getCorpCls(),
-                item.getReportNm(),
-                item.getRceptNo(),
-                item.getFlrNm(),
+                item.corpCode(),
+                item.stockCode(),
+                item.corpCls(),
+                item.reportNm(),
+                item.rceptNo(),
+                item.flrNm(),
                 rceptDt,
-                item.getRm(),
+                item.rm(),
                 null);
     }
 

@@ -66,7 +66,7 @@ public class DartDisclosurePollingService {
 
         for (DartListResponse.DisclosureItem item : items) {
             targetCount++;
-            String stockCode = item.getStockCode();
+            String stockCode = item.stockCode();
 
             // 빈 stock_code 즉시 스킵 (비상장사, REQ-DART-003)
             if (stockCode == null || stockCode.isBlank()) {
@@ -84,12 +84,12 @@ public class DartDisclosurePollingService {
             // 날짜 파싱 (포맷 오류 시 종목 격리 — REQ-DART-030)
             LocalDate rceptDt;
             try {
-                rceptDt = LocalDate.parse(item.getRceptDt(), RCEPT_DT_FMT);
+                rceptDt = LocalDate.parse(item.rceptDt(), RCEPT_DT_FMT);
             } catch (DateTimeParseException e) {
                 log.warn(
                         "[dart-polling] rcept_dt 파싱 실패 — rceptNo={}, rceptDt={}",
-                        item.getRceptNo(),
-                        item.getRceptDt());
+                        item.rceptNo(),
+                        item.rceptDt());
                 failCount++;
                 continue;
             }
@@ -100,7 +100,7 @@ public class DartDisclosurePollingService {
             } catch (Exception e) {
                 log.warn(
                         "[dart-polling] insertIgnore 실패 — rceptNo={}, error={}",
-                        item.getRceptNo(),
+                        item.rceptNo(),
                         e.getMessage());
                 failCount++;
             }
@@ -127,14 +127,14 @@ public class DartDisclosurePollingService {
             LocalDate rceptDt) {
         return new DisclosureRow(
                 stockId,
-                item.getCorpCode(),
+                item.corpCode(),
                 stockCode,
-                item.getCorpCls(),
-                item.getReportNm(),
-                item.getRceptNo(),
-                item.getFlrNm(),
+                item.corpCls(),
+                item.reportNm(),
+                item.rceptNo(),
+                item.flrNm(),
                 rceptDt,
-                item.getRm(),
+                item.rm(),
                 null);
     }
 
