@@ -33,17 +33,20 @@ public class DartDisclosureClient {
      * @param bgnDe 조회 시작일 (YYYYMMDD)
      * @param endDe 조회 종료일 (YYYYMMDD)
      * @param pageNo 페이지 번호 (1-based)
+     * @param corpCode DART 고유번호 — null이면 전 종목 대상
      * @return 공시 목록 응답 DTO
      */
-    public DartListResponse fetchPage(LocalDate bgnDe, LocalDate endDe, int pageNo) {
+    public DartListResponse fetchPage(
+            LocalDate bgnDe, LocalDate endDe, int pageNo, String corpCode) {
         String bgnDeStr = bgnDe.format(DATE_FMT);
         String endDeStr = endDe.format(DATE_FMT);
 
         log.debug(
-                "[dart-client] list.json 조회 — bgnDe={}, endDe={}, pageNo={}",
+                "[dart-client] list.json 조회 — bgnDe={}, endDe={}, pageNo={}, corpCode={}",
                 bgnDeStr,
                 endDeStr,
-                pageNo);
+                pageNo,
+                corpCode);
 
         DartListResponse response =
                 dartRestClient
@@ -59,6 +62,9 @@ public class DartDisclosureClient {
                                                     .queryParam("end_de", endDeStr)
                                                     .queryParam("page_count", 100)
                                                     .queryParam("page_no", pageNo);
+                                    if (corpCode != null && !corpCode.isBlank()) {
+                                        builder.queryParam("corp_code", corpCode);
+                                    }
                                     String pblntfTy = dartProperties.getPblntfTy();
                                     if (pblntfTy != null && !pblntfTy.isBlank()) {
                                         builder.queryParam("pblntf_ty", pblntfTy);
@@ -80,23 +86,36 @@ public class DartDisclosureClient {
     }
 
     /**
+     * 날짜 범위의 모든 페이지에서 공시 항목 목록을 수집한다 — 전 종목 대상 (REQ-DART-012, 폴링).
+     *
+     * @param bgnDe 조회 시작일
+     * @param endDe 조회 종료일
+     * @return 수집된 공시 항목 목록
+     */
+    public List<DartListResponse.DisclosureItem> fetchAllPages(LocalDate bgnDe, LocalDate endDe) {
+        return fetchAllPages(bgnDe, endDe, null);
+    }
+
+    /**
      * 날짜 범위의 모든 페이지에서 공시 항목 목록을 수집한다 (REQ-DART-012).
      *
      * <p>status != "000" 인 응답은 적재하지 않고 WARN 로그를 남긴다(REQ-DART-031).
      *
      * @param bgnDe 조회 시작일
      * @param endDe 조회 종료일
+     * @param corpCode DART 고유번호 — null이면 전 종목 대상 (폴링), 지정 시 해당 종목만 (백필)
      * @return 수집된 공시 항목 목록
      */
     @SuppressWarnings("PMD.AvoidCatchingGenericException")
-    public List<DartListResponse.DisclosureItem> fetchAllPages(LocalDate bgnDe, LocalDate endDe) {
+    public List<DartListResponse.DisclosureItem> fetchAllPages(
+            LocalDate bgnDe, LocalDate endDe, String corpCode) {
         List<DartListResponse.DisclosureItem> result = new java.util.ArrayList<>();
         int pageNo = 1;
 
         while (true) {
             DartListResponse page;
             try {
-                page = fetchPage(bgnDe, endDe, pageNo);
+                page = fetchPage(bgnDe, endDe, pageNo, corpCode);
             } catch (Exception e) {
                 log.warn(
                         "[dart-client] list.json 페이지 조회 실패 — pageNo={}, error={}",

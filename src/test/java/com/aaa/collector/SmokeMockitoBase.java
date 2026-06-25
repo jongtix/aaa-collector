@@ -1,9 +1,16 @@
 package com.aaa.collector;
 
 import com.aaa.collector.backfill.BackfillStatusRepository;
+import com.aaa.collector.dart.backfill.DartDisclosureBackfillOrchestrator;
+import com.aaa.collector.dart.backfill.DartDisclosureBackfillScheduler;
+import com.aaa.collector.dart.backfill.DartDisclosureBackfillWindowService;
+import com.aaa.collector.dart.corpcode.CorpCodeMappingRepository;
+import com.aaa.collector.dart.corpcode.CorpCodeUpdateScheduler;
+import com.aaa.collector.dart.corpcode.CorpCodeUpdateService;
 import com.aaa.collector.dart.disclosure.DartDisclosurePollingScheduler;
 import com.aaa.collector.dart.disclosure.DartDisclosurePollingService;
 import com.aaa.collector.dart.disclosure.DisclosureRepository;
+import com.aaa.collector.dart.external.DartCorpCodeClient;
 import com.aaa.collector.dart.external.DartDisclosureClient;
 import com.aaa.collector.macro.MacroExternalScheduler;
 import com.aaa.collector.macro.MacroIndicatorRepository;
@@ -114,7 +121,15 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
             DisclosureRepository.class,
             DartDisclosureClient.class,
             DartDisclosurePollingService.class,
-            DartDisclosurePollingScheduler.class
+            DartDisclosurePollingScheduler.class,
+            // SPEC-COLLECTOR-DART-001 M2: corp_code 매핑 + 백필 신규 빈 모킹
+            CorpCodeMappingRepository.class,
+            DartCorpCodeClient.class,
+            CorpCodeUpdateService.class,
+            CorpCodeUpdateScheduler.class,
+            DartDisclosureBackfillWindowService.class,
+            DartDisclosureBackfillOrchestrator.class,
+            DartDisclosureBackfillScheduler.class
         })
 class SmokeMockitoBase {
 
