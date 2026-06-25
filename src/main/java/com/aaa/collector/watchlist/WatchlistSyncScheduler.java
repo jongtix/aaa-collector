@@ -65,7 +65,7 @@ public class WatchlistSyncScheduler {
         } finally {
             morningRunning.set(false);
         }
-        // REQ-OBSV-020/021: 성공=(1,1,0,0), 예외=(1,0,1,0)
+        // Pattern C: 단일 원자 배치 — sync+classify를 묶어 1회 계측, skip 없음.
         if (hasError) {
             batchMetrics.recordCompletion(BATCH_LABEL_KRX, 1, 0, 1, 0);
         } else {
@@ -98,7 +98,7 @@ public class WatchlistSyncScheduler {
         } finally {
             usRunning.set(false);
         }
-        // REQ-OBSV-020/021: 성공=(1,1,0,0), 예외=(1,0,1,0)
+        // Pattern C: 단일 원자 배치 — sync+classify를 묶어 1회 계측, skip 없음.
         if (hasError) {
             batchMetrics.recordCompletion(BATCH_LABEL_US, 1, 0, 1, 0);
         } else {

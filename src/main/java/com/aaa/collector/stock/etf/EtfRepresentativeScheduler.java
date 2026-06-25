@@ -37,11 +37,10 @@ public class EtfRepresentativeScheduler {
         try {
             log.info("ETF representative recalculation started (weekly schedule)");
             etfRepresentativeService.recalculate();
-            // REQ-OBSV-020/021: 정상 완료 — attempted=1, succeeded=1
+            // Pattern C: 단일 원자 배치(세부 단계 없음) — 성공/실패 이진 계측, skip 없음.
             batchMetrics.recordCompletion(BATCH_LABEL, 1, 1, 0, 0);
         } catch (Exception e) {
             log.error("ETF representative recalculation failed — will retry next Monday", e);
-            // REQ-OBSV-020/021: 예외 발생 — attempted=1, fail=1
             batchMetrics.recordCompletion(BATCH_LABEL, 1, 0, 1, 0);
         } finally {
             running.set(false);
