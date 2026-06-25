@@ -70,7 +70,12 @@ public class MacroExternalScheduler {
         log.info("[macro-ext] 외부 거시경제 지표 수집 완료");
     }
 
-    /** ECOS 수집. 성공 시 결과 반환, 예외 시 null 반환(collectExternal에서 fail로 계상). */
+    /**
+     * ECOS 수집.
+     *
+     * @return 수집 결과. 예외 발생 시 null — null은 "빈 결과"가 아니라 "예외 발생"을 의미하며, 호출자(collectExternal)에서
+     *     attempted+=1로 계상되어 fail로 자동 집계된다.
+     */
     @SuppressWarnings("PMD.AvoidCatchingGenericException")
     private MacroCollectionResult collectEcos() {
         try {
@@ -87,7 +92,11 @@ public class MacroExternalScheduler {
         }
     }
 
-    /** FRED 수집. 성공 시 결과 반환, 예외 시 null 반환(collectExternal에서 fail로 계상). */
+    /**
+     * FRED 수집.
+     *
+     * @return 수집 결과. 예외 발생 시 null — collectEcos() 참조.
+     */
     @SuppressWarnings("PMD.AvoidCatchingGenericException")
     private MacroCollectionResult collectFred() {
         try {
