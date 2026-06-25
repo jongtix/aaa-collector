@@ -240,10 +240,10 @@ class MarketBatchSchedulerTest {
                     .thenThrow(new RuntimeException("T6 실패"));
             when(revSplitCollectionService.collect(any(LocalDate.class), any(LocalDate.class)))
                     .thenThrow(new RuntimeException("T7 실패"));
-            org.mockito.Mockito.doThrow(new RuntimeException("T8 실패"))
+            doThrow(new RuntimeException("T8 실패"))
                     .when(usdkrwCollectionService)
                     .collectDaily(any(LocalDate.class));
-            org.mockito.Mockito.doThrow(new RuntimeException("T9 실패"))
+            doThrow(new RuntimeException("T9 실패"))
                     .when(vixCollectionService)
                     .collectDaily(any(LocalDate.class));
 
@@ -278,7 +278,6 @@ class MarketBatchSchedulerTest {
     class BatchMetricsRecording {
 
         @Test
-        @SuppressWarnings("PMD.UnitTestContainsTooManyAsserts")
         @DisplayName("7종 정상 완료 — 합산 결과를 batch=market-indicators로 1회 기록")
         void recordsBatchMetricsOnCompletion() {
             // setUp의 stub 기준:
