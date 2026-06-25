@@ -3,6 +3,7 @@ package com.aaa.collector.stock.exthours;
 import com.aaa.collector.stock.Stock;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.time.Instant;
 import java.time.LocalDate;
 import java.time.ZoneId;
 import java.util.Collections;
@@ -133,11 +134,19 @@ public class YahooExtendedHoursClient {
             long[] bounds,
             Map<String, Object> meta) {
 
-        BigDecimal extPrice = extractLastClose(timestamps, closes, bounds[0], bounds[1]);
-        if (extPrice == null || extPrice.compareTo(BigDecimal.ZERO) <= 0) {
+        Optional<ClosePoint> closeOpt = extractLastClose(timestamps, closes, bounds[0], bounds[1]);
+        if (closeOpt.isEmpty()) {
             if (log.isDebugEnabled()) {
                 log.debug(
                         "[extended-hours] {} {} close 없거나 0 이하 — skip", stock.getSymbol(), session);
+            }
+            return Optional.empty();
+        }
+        BigDecimal extPrice = closeOpt.get().price();
+        if (extPrice.compareTo(BigDecimal.ZERO) <= 0) {
+            if (log.isDebugEnabled()) {
+                log.debug(
+                        "[extended-hours] {} {} extPrice 0 이하 — skip", stock.getSymbol(), session);
             }
             return Optional.empty();
         }
@@ -153,12 +162,16 @@ public class YahooExtendedHoursClient {
             return Optional.empty();
         }
 
+        // REQ-EXTH-034: 세션 분봉 timestamp의 ET LocalDate로 산정 (period start 아닌 실제 close timestamp)
         LocalDate tradeDate =
-                java.time.Instant.ofEpochSecond(bounds[0]).atZone(NEW_YORK).toLocalDate();
+                Instant.ofEpochSecond(closeOpt.get().epochSeconds()).atZone(NEW_YORK).toLocalDate();
         return Optional.of(
                 new ExtendedHoursRow(
                         stock.getId(), session, tradeDate, extPrice, referenceClose, SOURCE));
     }
+
+    /** 마지막 non-null close와 해당 분봉 timestamp를 묶은 값 객체. */
+    private record ClosePoint(BigDecimal price, long epochSeconds) {}
 
     @SuppressWarnings("unchecked")
     private Optional<Map<String, Object>> extractFirstResult(Map<String, Object> body) {
@@ -208,13 +221,15 @@ public class YahooExtendedHoursClient {
     }
 
     /**
-     * 세션 구간 {@code [periodStart, periodEnd)} 내 분봉을 역방향 탐색하여 마지막 non-null close를 반환한다.
+     * 세션 구간 {@code [periodStart, periodEnd)} 내 분봉을 역방향 탐색하여 마지막 non-null close와 해당 분봉 timestamp를
+     * 반환한다 (REQ-EXTH-034: 실제 close timestamp 기반 trade_date 산정).
      *
-     * @return 마지막 non-null close (BigDecimal, scale=4), 없으면 null
+     * @return 마지막 non-null close (price + epochSeconds), 없으면 empty
      */
-    private BigDecimal extractLastClose(
+    private Optional<ClosePoint> extractLastClose(
             List<Number> timestamps, List<Number> closes, long periodStart, long periodEnd) {
-        BigDecimal found = null;
+        BigDecimal foundPrice = null;
+        long foundTs = -1;
         for (int i = timestamps.size() - 1; i >= 0; i--) {
             long ts = timestamps.get(i).longValue();
             if (ts < periodStart || ts >= periodEnd) {
@@ -225,13 +240,17 @@ public class YahooExtendedHoursClient {
             }
             Number closeNum = closes.get(i);
             if (closeNum != null) {
-                found =
+                foundPrice =
                         BigDecimal.valueOf(closeNum.doubleValue())
                                 .setScale(4, RoundingMode.HALF_UP);
+                foundTs = ts;
                 break;
             }
         }
-        return found;
+        if (foundPrice == null) {
+            return Optional.empty();
+        }
+        return Optional.of(new ClosePoint(foundPrice, foundTs));
     }
 
     /**
