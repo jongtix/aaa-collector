@@ -16,7 +16,10 @@ import org.springframework.stereotype.Component;
  *
  * <p>행 단위 검증·매핑·윈도우 필터·경계 커버리지 관측 책임을 수집 서비스에서 분리하여 {@code ShortSaleCollectionService}의 결합도를 임계값
  * 이하로 유지한다(동일 패키지 내 격리 — {@code MismatchDetector}와 동일 패턴). 검증 규칙: null/blank trade_date·비율 절댓값 ≥
- * 1000(DECIMAL(7,4) 경계) 초과·음수 수량/금액·숫자 파싱 실패 행은 저장 제외(WARN 로그). 14일 윈도우 밖 행 제외.
+ * 1000(DECIMAL(7,4) 경계) 초과·음수 수량/금액·숫자 파싱 실패 행은 저장 제외. 14일 윈도우 밖 행 제외.
+ *
+ * <p>null/blank trade_date 집약 로깅: 응답 전체가 null이면 공매도 실적 없는 심볼로 판단하여 INFO 1건으로 집약한다. 일부 행만 null이면 데이터
+ * 이상으로 보고 WARN 1건(건수 포함)으로 기록한다 — 행별 WARN 발산을 방지해 배치/백필 로그 노이즈를 억제한다.
  */
 // @MX:ANCHOR: [AUTO] 공매도 행→엔티티 검증·매핑·윈도우 필터 — 수집 서비스 결합도 격리
 // @MX:REASON: SPEC-COLLECTOR-OBSV-001 — ShortSaleCollectionService가 종목별로 호출
@@ -31,7 +34,7 @@ public class ShortSaleRowMapper {
      *
      * <p>경계 커버리지 산정용 {@code tradeDates}는 파싱 성공한 날짜만 포함(NumberFormatException 제외, 윈도우 밖·검증 실패 포함).
      *
-     * @param windowStart 14일 윈도우 하단(포함)
+     * @param windowStart 윈도우 하단(포함)
      * @param today 윈도우 상단(포함)
      * @return 저장 대상 엔티티 목록(없으면 빈 목록)
      */
@@ -43,10 +46,12 @@ public class ShortSaleRowMapper {
             LocalDate windowStart) {
         List<ShortSaleDomestic> validEntities = new ArrayList<>();
         List<LocalDate> tradeDates = new ArrayList<>();
+        int nullDateCount = 0;
+        int totalRows = response.output2().size();
         for (KisShortSaleResponse.ShortSaleRow row : response.output2()) {
             // null/blank trade_date — coverage 산정 제외, 저장 제외
             if (row.stckBsopDate() == null || row.stckBsopDate().isBlank()) {
-                log.warn("[short-sale] 검증 실패 (trade_date null) — symbol={}", symbol);
+                nullDateCount++;
                 continue;
             }
             LocalDate tradeDate = LocalDate.parse(row.stckBsopDate(), DATE_FMT);
@@ -66,9 +71,30 @@ public class ShortSaleRowMapper {
                         row.stckBsopDate());
             }
         }
+        logNullDateRows(symbol, nullDateCount, totalRows);
         // REQ-BATCH2-025: 경계 커버리지 관측 (단일 응답 윈도우 하단 미커버 시 WARN)
         WindowCoverageChecker.check("short-sale", symbol, tradeDates, windowStart);
         return validEntities;
+    }
+
+    /**
+     * null/blank trade_date 행 집약 로깅.
+     *
+     * <p>전체-null: 공매도 실적 없는 심볼(API 빈 객체 응답) → INFO 1건. 부분-null: 데이터 이상 → WARN 1건.
+     */
+    private void logNullDateRows(String symbol, int nullDateCount, int totalRows) {
+        if (nullDateCount == 0) {
+            return;
+        }
+        if (nullDateCount == totalRows) {
+            log.info("[short-sale] 공매도 데이터 없음 — symbol={}, skipped={}", symbol, nullDateCount);
+        } else {
+            log.warn(
+                    "[short-sale] 검증 실패 (trade_date null) — symbol={}, nullCount={}/{}",
+                    symbol,
+                    nullDateCount,
+                    totalRows);
+        }
     }
 
     /**
