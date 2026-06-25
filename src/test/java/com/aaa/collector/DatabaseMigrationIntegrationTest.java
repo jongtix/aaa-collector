@@ -45,7 +45,7 @@ class DatabaseMigrationIntegrationTest {
     }
 
     @Test
-    @DisplayName("AC-15 — V25 마이그레이션 이후 ranking_snapshots 테이블 부재 단언")
+    @DisplayName("AC-15 — V28 마이그레이션 이후 ranking_snapshots 테이블 부재 단언")
     void v25_rankingSnapshotsTableDropped() {
         // Act & Assert: information_schema 직접 조회 — 테이블 존재하면 count=1, 없으면 0
         Integer count =
