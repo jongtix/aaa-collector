@@ -1,11 +1,11 @@
 package com.aaa.collector.stock.exthours;
 
-import com.aaa.collector.market.indicator.SensitiveDataSanitizer;
 import com.aaa.collector.stock.Stock;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.LocalDate;
 import java.time.ZoneId;
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -51,11 +51,9 @@ public class YahooExtendedHoursClient {
      * @param session 수집 세션 (PRE 또는 AFTER)
      * @return 수집 결과 (skip 조건 충족 시 empty)
      */
-    @SuppressWarnings({
-        "unchecked",
-        "PMD.UnnecessaryCast",
-        "PMD.AvoidCatchingGenericException"
-    }) // Yahoo Finance v8 JSON → 제네릭 타입 안전 캐스트 불가
+    @SuppressWarnings({"unchecked", "PMD.AvoidCatchingGenericException"})
+    // unchecked: Yahoo Finance v8 JSON → 제네릭 타입 안전 캐스트 불가
+    // PMD.AvoidCatchingGenericException: HTTP/파싱 예외 격리 — 종목별 skip
     public Optional<ExtendedHoursRow> fetch(Stock stock, Session session) {
         try {
             Map<String, Object> body =
@@ -67,117 +65,146 @@ public class YahooExtendedHoursClient {
                             .retrieve()
                             .body(new ParameterizedTypeReference<>() {});
 
-            return parseResponse(stock, session, body);
+            return parseBody(stock, session, body);
         } catch (Exception e) {
             log.warn(
                     "[extended-hours] {} {} 호출 실패 — skip: {}",
                     stock.getSymbol(),
                     session,
-                    SensitiveDataSanitizer.sanitize(e.getMessage()));
+                    e.getMessage() != null ? e.getMessage() : "[no message]");
             return Optional.empty();
         }
     }
 
     @SuppressWarnings("unchecked") // Yahoo Finance v8 JSON 구조 캐스팅
-    private Optional<ExtendedHoursRow> parseResponse(
+    private Optional<ExtendedHoursRow> parseBody(
             Stock stock, Session session, Map<String, Object> body) {
-        if (body == null) {
+        Optional<Map<String, Object>> resultOpt = extractFirstResult(body);
+        if (resultOpt.isEmpty()) {
             return Optional.empty();
         }
-
-        Map<String, Object> chart = (Map<String, Object>) body.get("chart");
-        if (chart == null) {
-            return Optional.empty();
-        }
-
-        List<Map<String, Object>> results = (List<Map<String, Object>>) chart.get("result");
-        if (results == null || results.isEmpty()) {
-            return Optional.empty();
-        }
-
-        Map<String, Object> result = results.getFirst();
+        Map<String, Object> result = resultOpt.get();
         Map<String, Object> meta = (Map<String, Object>) result.get("meta");
         if (meta == null) {
             return Optional.empty();
         }
+        return parseMetaAndIndicators(stock, session, result, meta);
+    }
 
-        // hasPrePostMarketData == false → skip
-        Object hasPrePost = meta.get("hasPrePostMarketData");
-        if (!Boolean.TRUE.equals(hasPrePost)) {
-            log.debug("[extended-hours] {} hasPrePostMarketData=false — skip", stock.getSymbol());
+    @SuppressWarnings("unchecked") // Yahoo Finance v8 JSON 구조 캐스팅
+    private Optional<ExtendedHoursRow> parseMetaAndIndicators(
+            Stock stock, Session session, Map<String, Object> result, Map<String, Object> meta) {
+
+        if (!Boolean.TRUE.equals(meta.get("hasPrePostMarketData"))) {
+            if (log.isDebugEnabled()) {
+                log.debug(
+                        "[extended-hours] {} hasPrePostMarketData=false — skip", stock.getSymbol());
+            }
             return Optional.empty();
         }
 
-        // timestamp 배열
         List<Number> timestamps = (List<Number>) result.get("timestamp");
         if (timestamps == null || timestamps.isEmpty()) {
-            log.debug("[extended-hours] {} timestamp 없음 — skip", stock.getSymbol());
+            if (log.isDebugEnabled()) {
+                log.debug("[extended-hours] {} timestamp 없음 — skip", stock.getSymbol());
+            }
             return Optional.empty();
         }
 
-        // 세션 경계 추출
+        Optional<long[]> boundsOpt = extractPeriodBounds(meta, session);
+        if (boundsOpt.isEmpty()) {
+            return Optional.empty();
+        }
+        long[] bounds = boundsOpt.get();
+
+        List<Number> closes = extractCloses(result);
+        if (closes.isEmpty()) {
+            return Optional.empty();
+        }
+
+        return buildRow(stock, session, timestamps, closes, bounds, meta);
+    }
+
+    private Optional<ExtendedHoursRow> buildRow(
+            Stock stock,
+            Session session,
+            List<Number> timestamps,
+            List<Number> closes,
+            long[] bounds,
+            Map<String, Object> meta) {
+
+        BigDecimal extPrice = extractLastClose(timestamps, closes, bounds[0], bounds[1]);
+        if (extPrice == null || extPrice.compareTo(BigDecimal.ZERO) <= 0) {
+            if (log.isDebugEnabled()) {
+                log.debug(
+                        "[extended-hours] {} {} close 없거나 0 이하 — skip", stock.getSymbol(), session);
+            }
+            return Optional.empty();
+        }
+
+        BigDecimal referenceClose = extractReferenceClose(meta, session);
+        if (referenceClose == null || referenceClose.compareTo(BigDecimal.ZERO) <= 0) {
+            if (log.isDebugEnabled()) {
+                log.debug(
+                        "[extended-hours] {} {} referenceClose 없거나 0 이하 — skip",
+                        stock.getSymbol(),
+                        session);
+            }
+            return Optional.empty();
+        }
+
+        LocalDate tradeDate =
+                java.time.Instant.ofEpochSecond(bounds[0]).atZone(NEW_YORK).toLocalDate();
+        return Optional.of(
+                new ExtendedHoursRow(
+                        stock.getId(), session, tradeDate, extPrice, referenceClose, SOURCE));
+    }
+
+    @SuppressWarnings("unchecked")
+    private Optional<Map<String, Object>> extractFirstResult(Map<String, Object> body) {
+        if (body == null) {
+            return Optional.empty();
+        }
+        Map<String, Object> chart = (Map<String, Object>) body.get("chart");
+        if (chart == null) {
+            return Optional.empty();
+        }
+        List<Map<String, Object>> results = (List<Map<String, Object>>) chart.get("result");
+        if (results == null || results.isEmpty()) {
+            return Optional.empty();
+        }
+        return Optional.ofNullable(results.getFirst());
+    }
+
+    @SuppressWarnings("unchecked")
+    private Optional<long[]> extractPeriodBounds(Map<String, Object> meta, Session session) {
         Map<String, Object> tradingPeriod = (Map<String, Object>) meta.get("currentTradingPeriod");
         if (tradingPeriod == null) {
             return Optional.empty();
         }
-
         String periodKey = session == Session.PRE ? "pre" : "post";
         Map<String, Object> period = (Map<String, Object>) tradingPeriod.get(periodKey);
         if (period == null) {
             return Optional.empty();
         }
+        long start = ((Number) period.get("start")).longValue();
+        long end = ((Number) period.get("end")).longValue();
+        return Optional.of(new long[] {start, end});
+    }
 
-        long periodStart = ((Number) period.get("start")).longValue();
-        long periodEnd = ((Number) period.get("end")).longValue();
-
-        // close 배열
+    @SuppressWarnings("unchecked")
+    private List<Number> extractCloses(Map<String, Object> result) {
         Map<String, Object> indicators = (Map<String, Object>) result.get("indicators");
         if (indicators == null) {
-            return Optional.empty();
+            return Collections.emptyList();
         }
         List<Map<String, List<Number>>> quoteList =
                 (List<Map<String, List<Number>>>) indicators.get("quote");
         if (quoteList == null || quoteList.isEmpty()) {
-            return Optional.empty();
+            return Collections.emptyList();
         }
         List<Number> closes = quoteList.getFirst().get("close");
-        if (closes == null) {
-            return Optional.empty();
-        }
-
-        // 세션에 속하는 분봉 중 마지막 non-null close 역방향 탐색
-        BigDecimal extPrice = extractLastClose(timestamps, closes, periodStart, periodEnd);
-        if (extPrice == null) {
-            log.debug(
-                    "[extended-hours] {} {} 세션 non-null close 없음 — skip",
-                    stock.getSymbol(),
-                    session);
-            return Optional.empty();
-        }
-
-        // extPrice ≤ 0 → skip
-        if (extPrice.compareTo(BigDecimal.ZERO) <= 0) {
-            log.debug("[extended-hours] {} {} ext_price <= 0 — skip", stock.getSymbol(), session);
-            return Optional.empty();
-        }
-
-        // 갭 기준 종가
-        BigDecimal referenceClose = extractReferenceClose(meta, session);
-        if (referenceClose == null || referenceClose.compareTo(BigDecimal.ZERO) <= 0) {
-            log.debug(
-                    "[extended-hours] {} {} referenceClose <= 0 또는 없음 — skip",
-                    stock.getSymbol(),
-                    session);
-            return Optional.empty();
-        }
-
-        // 거래일 — 세션 start 시각을 ET 날짜로 변환
-        LocalDate tradeDate =
-                java.time.Instant.ofEpochSecond(periodStart).atZone(NEW_YORK).toLocalDate();
-
-        return Optional.of(
-                new ExtendedHoursRow(
-                        stock.getId(), session, tradeDate, extPrice, referenceClose, SOURCE));
+        return closes != null ? closes : Collections.emptyList();
     }
 
     /**
@@ -187,6 +214,7 @@ public class YahooExtendedHoursClient {
      */
     private BigDecimal extractLastClose(
             List<Number> timestamps, List<Number> closes, long periodStart, long periodEnd) {
+        BigDecimal found = null;
         for (int i = timestamps.size() - 1; i >= 0; i--) {
             long ts = timestamps.get(i).longValue();
             if (ts < periodStart || ts >= periodEnd) {
@@ -196,12 +224,14 @@ public class YahooExtendedHoursClient {
                 continue;
             }
             Number closeNum = closes.get(i);
-            if (closeNum == null) {
-                continue;
+            if (closeNum != null) {
+                found =
+                        BigDecimal.valueOf(closeNum.doubleValue())
+                                .setScale(4, RoundingMode.HALF_UP);
+                break;
             }
-            return BigDecimal.valueOf(closeNum.doubleValue()).setScale(4, RoundingMode.HALF_UP);
         }
-        return null;
+        return found;
     }
 
     /**

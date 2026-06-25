@@ -140,6 +140,13 @@ aaa:
     api-key: ${FRED_API_KEY:}
     connect-timeout: 5s
     read-timeout: 30s
+  extended-hours:
+    # 종목 간 yahoo API 요청 딜레이 (ms). yahoo 비공식 API rate limit 회피 (REQ-EXTH-011)
+    request-delay-ms: 2500
+    # PRE-final cron — PRE 세션 마감(09:30 ET) +30분. fixedDelay 금지 (ADR-008)
+    pre-cron: "0 0 10 * * MON-FRI"
+    # AFTER-final cron — POST 세션 마감(20:00 ET) +30분. fixedDelay 금지 (ADR-008)
+    after-cron: "0 30 20 * * MON-FRI"
 
 management:
   endpoints:

@@ -46,7 +46,7 @@ class ExtendedHoursSchedulerTest {
             doThrow(new RuntimeException("PRE 수집 오류")).when(collectionService).collect(Session.PRE);
 
             // Act & Assert — 예외 전파 없음
-            assertThatCode(() -> scheduler.collectPre()).doesNotThrowAnyException();
+            assertThatCode(scheduler::collectPre).doesNotThrowAnyException();
         }
     }
 
@@ -70,7 +70,7 @@ class ExtendedHoursSchedulerTest {
                     .collect(Session.AFTER);
 
             // Act & Assert — 예외 전파 없음
-            assertThatCode(() -> scheduler.collectAfter()).doesNotThrowAnyException();
+            assertThatCode(scheduler::collectAfter).doesNotThrowAnyException();
         }
     }
 

@@ -369,7 +369,8 @@ class YahooExtendedHoursClientTest {
             assertThat(result).isPresent();
             // ExtendedHoursRow에 volume 필드 없음 확인
             assertThat(ExtendedHoursRow.class.getDeclaredFields())
-                    .noneMatch(f -> f.getName().toLowerCase().contains("volume"));
+                    .noneMatch(
+                            f -> f.getName().toLowerCase(java.util.Locale.ROOT).contains("volume"));
         }
     }
 }

@@ -34,7 +34,7 @@ class ExtendedHoursCollectionServiceTest {
     @Mock private StockRepository stockRepository;
     @Mock private YahooExtendedHoursClient yahooClient;
     @Mock private ExtendedHoursRepository extendedHoursRepository;
-    @Mock private ExtendedHoursCollectionService.Sleeper sleeper;
+    @Mock private ExtendedHoursSleeper sleeper;
 
     private ExtendedHoursCollectionService service;
 

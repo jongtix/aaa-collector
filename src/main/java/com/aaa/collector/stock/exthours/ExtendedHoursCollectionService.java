@@ -1,6 +1,5 @@
 package com.aaa.collector.stock.exthours;
 
-import com.aaa.collector.market.indicator.SensitiveDataSanitizer;
 import com.aaa.collector.stock.Stock;
 import com.aaa.collector.stock.StockRepository;
 import java.time.LocalDateTime;
@@ -15,31 +14,17 @@ import org.springframework.stereotype.Service;
  * 미국 시간외(Pre/After-Hours) 가격 스냅샷 수집 서비스 (SPEC-COLLECTOR-EXTHOURS-001).
  *
  * <p>종목 순차 처리 — {@code parallelStream} 금지(ADR-008/Virtual Threads 주의). 종목 간 Yahoo 비공식 API 부하 분산을 위해
- * {@code Sleeper} 인터페이스로 딜레이를 주입한다. Thread.sleep 값 직접 변경이 아닌 인터페이스 추상화로 테스트 가능성을 보장한다.
+ * {@link ExtendedHoursSleeper} 인터페이스로 딜레이를 주입한다. Thread.sleep 값 직접 변경이 아닌 인터페이스 추상화로 테스트 가능성을 보장한다.
  */
 @Slf4j
 @Service
 @RequiredArgsConstructor
 public class ExtendedHoursCollectionService {
 
-    /**
-     * 종목 간 딜레이 추상화 (REQ-EXTH-011).
-     *
-     * <p>프로덕션: {@code Thread.sleep(ms)}. 테스트: no-op 또는 mock으로 교체.
-     */
-    @FunctionalInterface
-    public interface Sleeper {
-        void sleep(long ms) throws InterruptedException;
-
-        static Sleeper noOp() {
-            return ms -> {};
-        }
-    }
-
     private final StockRepository stockRepository;
     private final YahooExtendedHoursClient yahooClient;
     private final ExtendedHoursRepository extendedHoursRepository;
-    private final Sleeper sleeper;
+    private final ExtendedHoursSleeper sleeper;
 
     @Value("${aaa.extended-hours.request-delay-ms:2500}")
     private long requestDelayMs;
@@ -105,7 +90,7 @@ public class ExtendedHoursCollectionService {
                         "[extended-hours] {} {} 처리 중 예외 — skip: {}",
                         stock.getSymbol(),
                         session,
-                        SensitiveDataSanitizer.sanitize(e.getMessage()));
+                        e.getMessage() != null ? e.getMessage() : "[no message]");
                 skipped++;
             }
         }
@@ -118,7 +103,6 @@ public class ExtendedHoursCollectionService {
                 skipped);
     }
 
-    @SuppressWarnings("PMD.AvoidCatchingGenericException") // sleep 인터럽트 처리 — 배치 흐름 유지
     private void applyDelay(String symbol, Session session) {
         try {
             sleeper.sleep(requestDelayMs);

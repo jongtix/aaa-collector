@@ -34,6 +34,10 @@ import com.aaa.collector.stock.daily.OverseasDailyOhlcvCollectionService;
 import com.aaa.collector.stock.daily.OverseasDailyOhlcvScheduler;
 import com.aaa.collector.stock.etf.EtfMetadataRepository;
 import com.aaa.collector.stock.etf.EtfRepresentativeHistoryRepository;
+import com.aaa.collector.stock.exthours.ExtendedHoursCollectionService;
+import com.aaa.collector.stock.exthours.ExtendedHoursRepository;
+import com.aaa.collector.stock.exthours.ExtendedHoursScheduler;
+import com.aaa.collector.stock.exthours.YahooExtendedHoursClient;
 import com.aaa.collector.stock.grade.StockGradeRepository;
 import com.aaa.collector.stock.shortsale.overseas.FinraShortSaleClient;
 import com.aaa.collector.stock.shortsale.overseas.ShortSaleOverseasDailyCollectionService;
@@ -96,7 +100,12 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
             FredCollectionService.class,
             MacroExternalScheduler.class,
             MacroIndicatorBackfillOrchestrator.class,
-            MacroIndicatorBackfillScheduler.class
+            MacroIndicatorBackfillScheduler.class,
+            // SPEC-COLLECTOR-EXTHOURS-001: 시간외 수집 신규 빈 모킹 (smoke 회귀 방지)
+            ExtendedHoursRepository.class,
+            YahooExtendedHoursClient.class,
+            ExtendedHoursCollectionService.class,
+            ExtendedHoursScheduler.class
         })
 class SmokeMockitoBase {
 
