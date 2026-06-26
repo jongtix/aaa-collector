@@ -246,6 +246,109 @@ class MarketSessionGateTest {
     }
 
     @Nested
+    @DisplayName("isMarketOpenNow — 현재 장중 여부 판정 (REQ-WSREC-020/021/030)")
+    class IsMarketOpenNow {
+
+        @Test
+        @DisplayName("장중 시간 → true")
+        void tradingHours_returnsTrue() {
+            Clock clock = clockAt(TRADING_HOURS_INSTANT);
+            MarketSessionGate gate =
+                    new MarketSessionGate(
+                            new SimpleMeterRegistry(), new KisMarketSchedule(clock), clock);
+
+            assertThat(gate.isMarketOpenNow()).isTrue();
+        }
+
+        @Test
+        @DisplayName("장외 시간 → false")
+        void afterHours_returnsFalse() {
+            Clock clock = clockAt(AFTER_HOURS_INSTANT);
+            MarketSessionGate gate =
+                    new MarketSessionGate(
+                            new SimpleMeterRegistry(), new KisMarketSchedule(clock), clock);
+
+            assertThat(gate.isMarketOpenNow()).isFalse();
+        }
+
+        @Test
+        @DisplayName("주말 → false (AC-3)")
+        void weekend_returnsFalse() {
+            Clock clock = clockAt(WEEKEND_INSTANT);
+            MarketSessionGate gate =
+                    new MarketSessionGate(
+                            new SimpleMeterRegistry(), new KisMarketSchedule(clock), clock);
+
+            assertThat(gate.isMarketOpenNow()).isFalse();
+        }
+
+        @Test
+        @DisplayName("캘린더 로드됨 + 장중 + opnd_yn=N → false (AC-4: 캘린더 휴장)")
+        void calendarLoaded_holidayDuringTradingHours_returnsFalse() {
+            // Arrange
+            Clock clock = clockAt(TRADING_HOURS_INSTANT);
+            MarketSessionGate gate =
+                    new MarketSessionGate(
+                            new SimpleMeterRegistry(), new KisMarketSchedule(clock), clock);
+            LocalDate today = ZonedDateTime.now(clock).toLocalDate();
+
+            // Act — 오늘이 휴장인 캘린더 로드
+            gate.updateCalendar(Map.of(today, Boolean.FALSE));
+
+            // Assert
+            assertThat(gate.isMarketOpenNow()).isFalse();
+        }
+
+        @Test
+        @DisplayName("boot-unset + 평일 장중 → true (fail-open schedule-only, AC-5 수용 트레이드오프)")
+        // 캘린더 미로드 상태에서 schedule-only 판정: 평일 공휴일이라도 시간 조건 충족 시 true.
+        // 이는 부팅-시점 복구의 수용된 한계(REQ-WSREC-030) — 빈 구독으로 무해.
+        void bootUnset_tradingHours_weekday_returnsTrue() {
+            Clock clock = clockAt(TRADING_HOURS_INSTANT);
+            // calendarRef == null (updateCalendar 미호출)
+            MarketSessionGate gate =
+                    new MarketSessionGate(
+                            new SimpleMeterRegistry(), new KisMarketSchedule(clock), clock);
+
+            assertThat(gate.isMarketOpenNow()).isTrue();
+        }
+
+        @Test
+        @DisplayName("isMarketOpenNow 결과가 gauge 값(1.0/0.0)과 일치한다 (AC-10 동작 보존 회귀 방지)")
+        void isMarketOpenNow_matchesGaugeValue_duringTradingHours() {
+            // Arrange — 장중
+            Clock clock = clockAt(TRADING_HOURS_INSTANT);
+            SimpleMeterRegistry registry = new SimpleMeterRegistry();
+            MarketSessionGate gate =
+                    new MarketSessionGate(registry, new KisMarketSchedule(clock), clock);
+
+            // Act & Assert
+            boolean open = gate.isMarketOpenNow();
+            double gaugeValue = registry.get(MarketSessionGate.MARKET_OPEN_NAME).gauge().value();
+
+            assertThat(open).isTrue();
+            assertThat(gaugeValue).isEqualTo(1.0);
+        }
+
+        @Test
+        @DisplayName("isMarketOpenNow 결과가 gauge 값(1.0/0.0)과 일치한다 (AC-10 동작 보존 회귀 방지 — 장외)")
+        void isMarketOpenNow_matchesGaugeValue_afterHours() {
+            // Arrange — 장외
+            Clock clock = clockAt(AFTER_HOURS_INSTANT);
+            SimpleMeterRegistry registry = new SimpleMeterRegistry();
+            MarketSessionGate gate =
+                    new MarketSessionGate(registry, new KisMarketSchedule(clock), clock);
+
+            // Act & Assert
+            boolean open = gate.isMarketOpenNow();
+            double gaugeValue = registry.get(MarketSessionGate.MARKET_OPEN_NAME).gauge().value();
+
+            assertThat(open).isFalse();
+            assertThat(gaugeValue).isEqualTo(0.0);
+        }
+    }
+
+    @Nested
     @DisplayName("메트릭 이름 검증")
     class MetricNames {
 

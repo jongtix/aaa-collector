@@ -130,29 +130,41 @@ public class MarketSessionGate implements MarketOpenGate {
     }
 
     /**
-     * 현재 시각 기준 시장 개방 여부를 계산한다 (gauge 조회 시 Micrometer가 호출).
+     * 현재 시각 기준 국내 장이 열려 있는지 반환한다 (REQ-WSREC-020/021).
      *
      * <p>판정 순서:
      *
      * <ol>
      *   <li>{@code isDomesticOpen(now)} — 스케줄(평일 08:55~15:35 KST) 판정
-     *   <li>캘린더 미로드(boot-unset): schedule 결과만 반환 (갭 알림 부당 억제 방지)
+     *   <li>캘린더 미로드(boot-unset): schedule 결과만 반환 — fail-open(REQ-WSREC-030)
      *   <li>캘린더 로드됨: 오늘 날짜가 캘린더에 있으면 AND, 없으면 schedule-only 폴백
      * </ol>
+     *
+     * <p>boot-unset 시 평일 공휴일에 {@code true}를 반환할 수 있으나 빈 구독으로 무해하며 수용된 트레이드오프다(REQ-WSREC-030).
      */
-    private double computeMarketOpen() {
+    @Override
+    public boolean isMarketOpenNow() {
         ZonedDateTime now = ZonedDateTime.now(clock);
         boolean scheduleOpen = marketSchedule.isDomesticOpen(now);
 
         Map<LocalDate, Boolean> calendar = calendarRef.get();
         if (calendar == null) {
-            // boot-unset: schedule-only (fail toward NOT wrongly suppressing)
-            return scheduleOpen ? 1.0 : 0.0;
+            // boot-unset: schedule-only fail-open (갭 알림 부당 억제 방지, REQ-WSREC-030)
+            return scheduleOpen;
         }
 
+        // 캘린더에 오늘이 없으면 schedule-only 폴백 (stale 캘린더가 수집 억제하지 않도록)
         LocalDate today = now.withZoneSameInstant(KST).toLocalDate();
-        // 캘린더에 오늘이 없으면 schedule-only 폴백 (stale 캘린더가 갭 알림 부당 억제하지 않도록)
         boolean calendarOpen = calendar.getOrDefault(today, Boolean.TRUE);
-        return (scheduleOpen && calendarOpen) ? 1.0 : 0.0;
+        return scheduleOpen && calendarOpen;
+    }
+
+    /**
+     * 현재 시각 기준 시장 개방 여부를 계산한다 (gauge 조회 시 Micrometer가 호출).
+     *
+     * <p>{@link #isMarketOpenNow()}에 위임하여 단일 판정 로직을 보장한다(REQ-WSREC-021).
+     */
+    private double computeMarketOpen() {
+        return isMarketOpenNow() ? 1.0 : 0.0;
     }
 }
