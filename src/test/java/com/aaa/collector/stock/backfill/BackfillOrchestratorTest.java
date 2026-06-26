@@ -35,6 +35,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
+import org.springframework.test.util.ReflectionTestUtils;
 
 @ExtendWith(MockitoExtension.class)
 @MockitoSettings(strictness = Strictness.LENIENT)
@@ -546,16 +547,19 @@ class BackfillOrchestratorTest {
             when(stockRepository.findAllActiveOverseasTradable()).thenReturn(List.of());
 
             BackfillStatus first = buildPendingStatus("005930", "daily_ohlcv");
+            ReflectionTestUtils.setField(first, "id", 1L);
             BackfillStatus second = buildPendingStatus("005930", "investor_trend");
+            ReflectionTestUtils.setField(second, "id", 2L);
             when(backfillStatusRepository.findByStatusInAndTargetTypeOrderById(any(), anyString()))
                     .thenReturn(List.of(first, second));
 
-            // first status: 1회째 성공(IN_PROGRESS 반환), 2회째 예외
+            // first(id=1L): 1회째 성공(IN_PROGRESS 반환), 2회째 예외
+            // second(id=2L): 1회째 COMPLETED — id 기반 스텁으로 VT 병렬 레이스 제거
             BackfillStatus firstInProg =
                     buildInProgressStatus("005930", "daily_ohlcv", LocalDate.of(2024, 6, 1));
             BackfillStatus secondCompleted = buildCompletedStatus("005930", "investor_trend");
-            when(backfillStatusRepository.findById(any()))
-                    .thenReturn(Optional.of(firstInProg))
+            when(backfillStatusRepository.findById(eq(1L))).thenReturn(Optional.of(firstInProg));
+            when(backfillStatusRepository.findById(eq(2L)))
                     .thenReturn(Optional.of(secondCompleted));
 
             // first status 두 번째 executeWindow 호출 시 예외
