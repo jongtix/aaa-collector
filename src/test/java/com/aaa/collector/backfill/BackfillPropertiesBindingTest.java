@@ -8,10 +8,11 @@ import org.springframework.boot.context.properties.EnableConfigurationProperties
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 
 /**
- * BackfillProperties YAML 바인딩 통합 테스트 (SPEC-COLLECTOR-BACKFILL-002 T3, AC-5.3, REQ-BACKFILL-058b).
+ * BackfillProperties YAML 바인딩 통합 테스트 (SPEC-COLLECTOR-BACKFILL-002 T3, SPEC-COLLECTOR-BACKFILL-004
+ * T3).
  *
- * <p>{@code aaa.backfill.*} 키가 올바른 부모 아래에 배치되어 {@link BackfillProperties}에 바인딩됨을 검증한다. 기존 {@code
- * aaa.fred:} 하위 오배치 교정 결과 확인.
+ * <p>{@code aaa.backfill.*} 키가 올바른 부모 아래에 배치되어 {@link BackfillProperties}에 바인딩됨을 검증한다. {@code
+ * per-run-completion-cap} → {@code per-table-completion-cap} 리네임(REQ-BACKFILL-064a) 바인딩 정합 확인.
  */
 @DisplayName("BackfillProperties YAML 바인딩 통합 테스트")
 class BackfillPropertiesBindingTest {
@@ -25,14 +26,15 @@ class BackfillPropertiesBindingTest {
 
     @Test
     @DisplayName(
-            "AC-5.3 — aaa.backfill.per-run-completion-cap이 BackfillProperties에 바인딩된다 (REQ-BACKFILL-058b)")
-    void perRunCompletionCap_bindsFromAaaBackfillPrefix() {
+            "AC-5.3 — aaa.backfill.per-table-completion-cap이 BackfillProperties에 바인딩된다"
+                    + " (REQ-BACKFILL-064a)")
+    void perTableCompletionCap_bindsFromAaaBackfillPrefix() {
         contextRunner
-                .withPropertyValues("aaa.backfill.per-run-completion-cap=25")
+                .withPropertyValues("aaa.backfill.per-table-completion-cap=25")
                 .run(
                         ctx -> {
                             BackfillProperties props = ctx.getBean(BackfillProperties.class);
-                            assertThat(props.getPerRunCompletionCap()).isEqualTo(25);
+                            assertThat(props.getPerTableCompletionCap()).isEqualTo(25);
                         });
     }
 
@@ -62,12 +64,12 @@ class BackfillPropertiesBindingTest {
     }
 
     @Test
-    @DisplayName("AC-5.3 — aaa.backfill 미설정 시 perRunCompletionCap 기본값 10이 유지된다")
+    @DisplayName("AC-5.3 — aaa.backfill 미설정 시 perTableCompletionCap 기본값 10이 유지된다")
     void noProperties_defaultsApply() {
         contextRunner.run(
                 ctx -> {
                     BackfillProperties props = ctx.getBean(BackfillProperties.class);
-                    assertThat(props.getPerRunCompletionCap()).isEqualTo(10);
+                    assertThat(props.getPerTableCompletionCap()).isEqualTo(10);
                     assertThat(props.getMaxWindowsPerTarget()).isEqualTo(120);
                 });
     }

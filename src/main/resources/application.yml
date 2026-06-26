@@ -115,8 +115,8 @@ aaa:
   backfill:
     # cron 표현식 (기본: 02:00 KST 매일). fixedDelay 금지 — Virtual Threads 버그(CLAUDE.md)
     cron: "0 0 2 * * *"
-    # 한 cron 회차에서 inner 완성 루프를 개시할 최대 status 슬롯 수 (REQ-BACKFILL-054, AC-3.1)
-    per-run-completion-cap: 10
+    # 한 테이블 스트림이 한 회차에 완주할 최대 status 슬롯 수 — 테이블별 런타임 바운드 (REQ-BACKFILL-064)
+    per-table-completion-cap: 10
     # status당 inner 루프 최대 윈도우 반복 횟수 — 공통 하드 캡 (REQ-BACKFILL-053a)
     # SPAN 150일 × 120 ≈ 49년 커버
     max-windows-per-target: 120
