@@ -18,13 +18,17 @@ import com.aaa.collector.kis.gate.KeyLeaseRegistry.LeaseSession;
 import com.aaa.collector.kis.token.KisTokenIssueException;
 import com.aaa.collector.stock.Stock;
 import com.aaa.collector.stock.daily.DomesticDailyOhlcvCollectionService;
+import com.aaa.collector.stock.daily.DomesticDailyOhlcvFetch;
 import com.aaa.collector.stock.daily.OverseasDailyOhlcvCollectionService;
 import com.aaa.collector.stock.enums.AssetType;
 import com.aaa.collector.stock.enums.Market;
 import com.aaa.collector.stock.supply.CreditBalanceCollectionService;
 import com.aaa.collector.stock.supply.InvestorTrendCollectionService;
+import com.aaa.collector.stock.supply.InvestorTrendFetch;
 import com.aaa.collector.stock.supply.ShortSaleCollectionService;
 import java.time.LocalDate;
+import java.util.List;
+import java.util.concurrent.atomic.AtomicBoolean;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -36,6 +40,7 @@ import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.testcontainers.containers.MySQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
@@ -43,7 +48,7 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 @SpringBootTest
 @ActiveProfiles({"test", "db-integration"})
 @Testcontainers
-@DisplayName("BackfillWindowExecutor 트랜잭션 통합 테스트 (AC-4.1/4.2)")
+@DisplayName("BackfillWindowExecutor 트랜잭션 통합 테스트 (AC-1/AC-2/AC-4.1/4.2)")
 class BackfillWindowExecutorTransactionTest {
 
     @Container @ServiceConnection
@@ -84,12 +89,115 @@ class BackfillWindowExecutorTransactionTest {
     private BackfillStatus seedPending(String symbol, String dataTable) {
         backfillStatusRepository.insertIgnoreSeed("STOCK", symbol, dataTable);
         return backfillStatusRepository
-                .findByStatusInAndTargetTypeOrderById(java.util.List.of("PENDING"), "STOCK")
+                .findByStatusInAndTargetTypeOrderById(List.of("PENDING"), "STOCK")
                 .stream()
                 .filter(s -> s.getTargetCode().equals(symbol) && s.getDataTable().equals(dataTable))
                 .findFirst()
                 .orElseThrow();
     }
+
+    // -------------------------------------------------------------------------
+    // AC-1: persistWindow 트랜잭션 원자성
+    // -------------------------------------------------------------------------
+
+    @Nested
+    @DisplayName("AC-1 persistWindow 트랜잭션 원자성 (REQ-TXB-030)")
+    class PersistWindowTransaction {
+
+        @Test
+        @DisplayName("persistWindow() — 성공 시 INSERT + updateProgress 커밋 (AC-1 커밋)")
+        void persistWindow_commit_updatesStatus() {
+            // Arrange
+            BackfillStatus status = seedPending("005930", "investor_trend");
+            LocalDate oldest = LocalDate.of(2025, 1, 1);
+            InvestorTrendFetch fetch = new InvestorTrendFetch(List.of(), oldest, 30);
+            when(investorTrendService.persistWindow(any(), eq(fetch)))
+                    .thenReturn(new BackfillWindowResult(oldest, 30));
+
+            // Act
+            windowExecutor.persistWindow(status, domesticStock, fetch);
+
+            // Assert
+            BackfillStatus updated =
+                    backfillStatusRepository.findById(status.getId()).orElseThrow();
+            assertThat(updated.getStatus()).isEqualTo("IN_PROGRESS");
+            assertThat(updated.getLastCollectedDate()).isEqualTo(oldest);
+        }
+
+        @Test
+        @DisplayName(
+                "persistWindow() — updateProgress 예외 시 INSERT + status 변경 모두 롤백 (AC-1 롤백,"
+                        + " REQ-BACKFILL-031)")
+        void persistWindow_rollback_onUpdateProgressFailure() {
+            // Arrange
+            BackfillStatus status = seedPending("005930", "investor_trend");
+            String originalStatus = status.getStatus(); // PENDING
+
+            LocalDate oldest = LocalDate.of(2025, 1, 1);
+            InvestorTrendFetch fetch = new InvestorTrendFetch(List.of(), oldest, 30);
+            when(investorTrendService.persistWindow(any(), eq(fetch)))
+                    .thenReturn(new BackfillWindowResult(oldest, 30));
+
+            // updateProgress 호출 시 RuntimeException → 트랜잭션 롤백
+            doThrow(new RuntimeException("DB write failure — rollback trigger"))
+                    .when(backfillStatusRepository)
+                    .updateProgress(anyLong(), anyString(), any(), anyInt(), any());
+
+            // Act & Assert — 예외 전파
+            assertThatThrownBy(() -> windowExecutor.persistWindow(status, domesticStock, fetch))
+                    .isInstanceOf(RuntimeException.class)
+                    .hasMessageContaining("DB write failure");
+
+            // Assert — 롤백: status 행은 원래 값 유지
+            BackfillStatus afterRollback =
+                    backfillStatusRepository.findById(status.getId()).orElseThrow();
+            assertThat(afterRollback.getStatus()).isEqualTo(originalStatus);
+            assertThat(afterRollback.getLastCollectedDate()).isNull();
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // AC-2: fetchWindow 비트랜잭션 증명
+    // -------------------------------------------------------------------------
+
+    @Nested
+    @DisplayName("AC-2 fetchWindow 비트랜잭션 증명 (REQ-TXB-020)")
+    class FetchWindowNoTransaction {
+
+        @Test
+        @DisplayName("fetchWindow() — @Transactional 없음: 서비스 호출 중 활성 트랜잭션 미점유 (AC-2)")
+        void fetchWindow_noActiveTransaction_duringServiceCall() throws InterruptedException {
+            // Arrange: investor_trend status (lastCollectedDate를 non-null로 설정)
+            BackfillStatus status = seedPending("005930", "investor_trend");
+            backfillStatusRepository.updateProgress(
+                    status.getId(), "IN_PROGRESS", LocalDate.of(2025, 1, 1), 0, 0);
+            BackfillStatus populated =
+                    backfillStatusRepository.findById(status.getId()).orElseThrow();
+
+            // investorTrendService.fetchWindow 호출 시 현재 tx 활성 상태를 캡처
+            AtomicBoolean txActiveDuringFetch = new AtomicBoolean(true);
+            when(investorTrendService.fetchWindow(any(), any(), any()))
+                    .thenAnswer(
+                            invocation -> {
+                                txActiveDuringFetch.set(
+                                        TransactionSynchronizationManager
+                                                .isActualTransactionActive());
+                                return new InvestorTrendFetch(List.of(), null, 0);
+                            });
+
+            // Act — fetchWindow 직접 호출 (executeWindow 경유 아님)
+            windowExecutor.fetchWindow(populated, domesticStock, session);
+
+            // Assert — fetchWindow 내부에서 활성 tx 없음
+            assertThat(txActiveDuringFetch.get())
+                    .as("fetchWindow 실행 중 활성 트랜잭션이 없어야 한다 (REQ-TXB-020)")
+                    .isFalse();
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // AC-4.1 수집+상태 동일 트랜잭션 커밋 (executeWindow 경유)
+    // -------------------------------------------------------------------------
 
     @Nested
     @DisplayName("AC-4.1 수집+상태 동일 트랜잭션 커밋")
@@ -102,9 +210,11 @@ class BackfillWindowExecutorTransactionTest {
             // Arrange
             BackfillStatus status = seedPending("005930", "daily_ohlcv");
             LocalDate oldest = LocalDate.of(2025, 1, 1);
-            when(domesticOhlcvService.collectWindow(any(), any(), any(), any()))
-                    .thenReturn(
-                            new BackfillWindowResult(oldest, 100)); // 100건 = GROUP_A IN_PROGRESS 유지
+            DomesticDailyOhlcvFetch fetch = new DomesticDailyOhlcvFetch(List.of(), oldest, 100);
+            when(domesticOhlcvService.fetchWindow(any(), any(), any(), any())).thenReturn(fetch);
+            // 100건 = GROUP_A IN_PROGRESS 유지
+            when(domesticOhlcvService.persistWindow(any(), any()))
+                    .thenReturn(new BackfillWindowResult(oldest, 100));
 
             // Act
             windowExecutor.executeWindow(status, domesticStock, session);
@@ -123,8 +233,11 @@ class BackfillWindowExecutorTransactionTest {
             // Arrange
             BackfillStatus status = seedPending("005930", "daily_ohlcv");
             LocalDate oldest = LocalDate.of(2020, 1, 2);
-            when(domesticOhlcvService.collectWindow(any(), any(), any(), any()))
-                    .thenReturn(new BackfillWindowResult(oldest, 50)); // 50 < 100 → COMPLETED
+            DomesticDailyOhlcvFetch fetch = new DomesticDailyOhlcvFetch(List.of(), oldest, 50);
+            when(domesticOhlcvService.fetchWindow(any(), any(), any(), any())).thenReturn(fetch);
+            // 50 < 100 → COMPLETED
+            when(domesticOhlcvService.persistWindow(any(), any()))
+                    .thenReturn(new BackfillWindowResult(oldest, 50));
 
             // Act
             windowExecutor.executeWindow(status, domesticStock, session);
@@ -136,22 +249,27 @@ class BackfillWindowExecutorTransactionTest {
         }
     }
 
+    // -------------------------------------------------------------------------
+    // AC-4.2 트랜잭션 롤백 (executeWindow 경유)
+    // -------------------------------------------------------------------------
+
     @Nested
     @DisplayName("AC-4.2 트랜잭션 롤백")
     class TransactionRollback {
 
         @Test
         @DisplayName(
-                "executeWindow() — updateProgress 예외 시 수집 데이터·status 변경 모두 롤백된다 (REQ-BACKFILL-031)")
+                "executeWindow() — updateProgress 예외 시 수집 데이터·status 변경 모두 롤백된다"
+                        + " (REQ-BACKFILL-031)")
         void executeWindow_rollbackOnUpdateProgressFailure_neitherDataNorStatusPersists()
                 throws InterruptedException {
             // Arrange
             BackfillStatus status = seedPending("005930", "daily_ohlcv");
-            String originalStatus = status.getStatus(); // PENDING
-            LocalDate originalDate = status.getLastCollectedDate(); // null
 
             LocalDate oldest = LocalDate.of(2025, 1, 1);
-            when(domesticOhlcvService.collectWindow(any(), any(), any(), any()))
+            DomesticDailyOhlcvFetch fetch = new DomesticDailyOhlcvFetch(List.of(), oldest, 50);
+            when(domesticOhlcvService.fetchWindow(any(), any(), any(), any())).thenReturn(fetch);
+            when(domesticOhlcvService.persistWindow(any(), any()))
                     .thenReturn(new BackfillWindowResult(oldest, 50));
 
             // updateProgress 호출 시 RuntimeException 발생 → 트랜잭션 롤백
@@ -164,7 +282,9 @@ class BackfillWindowExecutorTransactionTest {
                     .isInstanceOf(RuntimeException.class)
                     .hasMessageContaining("DB write failure");
 
-            // Assert — 롤백: status 행은 원래 값 유지
+            // Assert — 롤백: status 행은 원래 값 유지 (seeded PENDING = status/null date)
+            String originalStatus = status.getStatus(); // PENDING
+            LocalDate originalDate = status.getLastCollectedDate(); // null
             BackfillStatus afterRollback =
                     backfillStatusRepository.findById(status.getId()).orElseThrow();
             assertThat(afterRollback.getStatus()).isEqualTo(originalStatus);
@@ -172,13 +292,18 @@ class BackfillWindowExecutorTransactionTest {
         }
     }
 
+    // -------------------------------------------------------------------------
+    // AC-6.3 오류 분류
+    // -------------------------------------------------------------------------
+
     @Nested
     @DisplayName("AC-6.3 오류 분류 — retryable/non-retryable (REQ-BACKFILL-030)")
     class ErrorClassification {
 
         @Test
         @DisplayName(
-                "executeWindowOnError() — retryable=true → status=IN_PROGRESS, last_error 기록 (AC-6.3a)")
+                "executeWindowOnError() — retryable=true → status=IN_PROGRESS, last_error 기록"
+                        + " (AC-6.3a)")
         void executeWindowOnError_retryableError_keepsInProgress() {
             // Arrange
             BackfillStatus status = seedPending("005930", "daily_ohlcv");
@@ -217,6 +342,10 @@ class BackfillWindowExecutorTransactionTest {
         }
     }
 
+    // -------------------------------------------------------------------------
+    // AC-1 resolveAnchor — 초기 anchor 날짜 (REQ-BACKFILL-060)
+    // -------------------------------------------------------------------------
+
     @Nested
     @DisplayName("AC-1 resolveAnchor — 초기 anchor 날짜 (REQ-BACKFILL-060)")
     class ResolveAnchor {
@@ -227,14 +356,16 @@ class BackfillWindowExecutorTransactionTest {
             // Arrange
             BackfillStatus status = seedPending("005930", "investor_trend");
             LocalDate yesterday = LocalDate.now().minusDays(1);
-            when(investorTrendService.collectWindow(any(), any(), any()))
+            when(investorTrendService.fetchWindow(any(), any(), any()))
+                    .thenReturn(new InvestorTrendFetch(List.of(), yesterday.minusDays(30), 30));
+            when(investorTrendService.persistWindow(any(), any()))
                     .thenReturn(new BackfillWindowResult(yesterday.minusDays(30), 30));
 
             // Act
             windowExecutor.executeWindow(status, domesticStock, session);
 
-            // Assert — investorTrendService가 어제 날짜로 호출됐는지 확인 (AC-1.1)
-            verify(investorTrendService).collectWindow(any(), any(), eq(yesterday));
+            // Assert — investorTrendService.fetchWindow이 어제 날짜 anchor로 호출됐는지 확인
+            verify(investorTrendService).fetchWindow(eq(yesterday), any(), any());
         }
 
         @Test
@@ -245,8 +376,7 @@ class BackfillWindowExecutorTransactionTest {
             backfillStatusRepository.insertIgnoreSeed("STOCK", "005930", "investor_trend");
             BackfillStatus raw =
                     backfillStatusRepository
-                            .findByStatusInAndTargetTypeOrderById(
-                                    java.util.List.of("PENDING"), "STOCK")
+                            .findByStatusInAndTargetTypeOrderById(List.of("PENDING"), "STOCK")
                             .stream()
                             .filter(
                                     s ->
@@ -260,17 +390,23 @@ class BackfillWindowExecutorTransactionTest {
                     raw.getId(), "IN_PROGRESS", lastCollected, 0, 30);
             BackfillStatus status = backfillStatusRepository.findById(raw.getId()).orElseThrow();
 
-            when(investorTrendService.collectWindow(any(), any(), any()))
+            when(investorTrendService.fetchWindow(any(), any(), any()))
+                    .thenReturn(new InvestorTrendFetch(List.of(), null, 0));
+            when(investorTrendService.persistWindow(any(), any()))
                     .thenReturn(BackfillWindowResult.EMPTY);
 
             // Act
             windowExecutor.executeWindow(status, domesticStock, session);
 
-            // Assert — 오늘도, 어제도 아닌 nextAnchor(lastCollected) 값으로 호출 (AC-1.3)
-            verify(investorTrendService)
-                    .collectWindow(any(), any(), eq(lastCollected.minusDays(1)));
+            // Assert — 오늘도, 어제도 아닌 nextAnchor(lastCollected)=lastCollected.minusDays(1) 로 호출
+            // (AC-1.3)
+            verify(investorTrendService).fetchWindow(eq(lastCollected.minusDays(1)), any(), any());
         }
     }
+
+    // -------------------------------------------------------------------------
+    // GROUP_B stale 종료
+    // -------------------------------------------------------------------------
 
     @Nested
     @DisplayName("GROUP_B stale 종료")
@@ -283,8 +419,7 @@ class BackfillWindowExecutorTransactionTest {
             backfillStatusRepository.insertIgnoreSeed("STOCK", "005930", "investor_trend");
             BackfillStatus raw =
                     backfillStatusRepository
-                            .findByStatusInAndTargetTypeOrderById(
-                                    java.util.List.of("PENDING"), "STOCK")
+                            .findByStatusInAndTargetTypeOrderById(List.of("PENDING"), "STOCK")
                             .stream()
                             .filter(
                                     s ->
@@ -300,7 +435,9 @@ class BackfillWindowExecutorTransactionTest {
             BackfillStatus status = backfillStatusRepository.findById(raw.getId()).orElseThrow();
 
             // 이번 윈도우도 무전진(0건)
-            when(investorTrendService.collectWindow(any(), any(), any()))
+            when(investorTrendService.fetchWindow(any(), any(), any()))
+                    .thenReturn(new InvestorTrendFetch(List.of(), null, 0));
+            when(investorTrendService.persistWindow(any(), any()))
                     .thenReturn(BackfillWindowResult.EMPTY);
 
             // Act
