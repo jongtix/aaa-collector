@@ -20,6 +20,7 @@ import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
+import org.mockito.Captor;
 import org.mockito.Mock;
 import org.mockito.Mockito;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -40,7 +41,10 @@ class NewsTitleCollectionServiceTest {
     @Mock private GuardedKisExecutor guardedKisExecutor;
     @Mock private KeyLeaseRegistry keyLeaseRegistry;
     @Mock private DomesticNewsHeadlineRepository newsHeadlineRepository;
+    @Mock private DomesticNewsHeadlineInserter newsHeadlineInserter;
     @Mock private LeaseSession session;
+
+    @Captor private ArgumentCaptor<List<DomesticNewsHeadline>> inserterCaptor;
 
     private NewsTitleCollectionService service;
 
@@ -48,7 +52,10 @@ class NewsTitleCollectionServiceTest {
     void setUp() {
         service =
                 new NewsTitleCollectionService(
-                        guardedKisExecutor, keyLeaseRegistry, newsHeadlineRepository);
+                        guardedKisExecutor,
+                        keyLeaseRegistry,
+                        newsHeadlineRepository,
+                        newsHeadlineInserter);
         Mockito.lenient().when(keyLeaseRegistry.openSession()).thenReturn(session);
     }
 
@@ -123,11 +130,13 @@ class NewsTitleCollectionServiceTest {
             service.collect();
 
             // Assert
-            ArgumentCaptor<DomesticNewsHeadline> captor =
-                    ArgumentCaptor.forClass(DomesticNewsHeadline.class);
-            verify(newsHeadlineRepository).insertIgnoreDuplicate(captor.capture());
+            verify(newsHeadlineInserter).insertBatch(inserterCaptor.capture());
 
-            DomesticNewsHeadline saved = captor.getValue();
+            DomesticNewsHeadline saved =
+                    inserterCaptor.getAllValues().stream()
+                            .flatMap(List::stream)
+                            .findFirst()
+                            .orElseThrow();
             assertThat(saved.getSerialNo()).isEqualTo("1000000000000000001");
             assertThat(saved.getStockCode1()).isEqualTo("005930");
             assertThat(saved.getStockCode2()).isEqualTo("000660");
@@ -151,10 +160,13 @@ class NewsTitleCollectionServiceTest {
             service.collect();
 
             // Assert
-            ArgumentCaptor<DomesticNewsHeadline> captor =
-                    ArgumentCaptor.forClass(DomesticNewsHeadline.class);
-            verify(newsHeadlineRepository).insertIgnoreDuplicate(captor.capture());
-            assertThat(captor.getValue().getPublishedAt())
+            verify(newsHeadlineInserter).insertBatch(inserterCaptor.capture());
+            DomesticNewsHeadline savedEntry =
+                    inserterCaptor.getAllValues().stream()
+                            .flatMap(List::stream)
+                            .findFirst()
+                            .orElseThrow();
+            assertThat(savedEntry.getPublishedAt())
                     .isEqualTo(LocalDateTime.of(2026, 6, 13, 14, 30, 22));
         }
 
@@ -177,7 +189,7 @@ class NewsTitleCollectionServiceTest {
 
             // Assert
             assertThat(result.succeeded()).isEqualTo(3);
-            verify(newsHeadlineRepository, times(3)).insertIgnoreDuplicate(any());
+            verify(newsHeadlineInserter, times(3)).insertBatch(any());
         }
     }
 
@@ -235,7 +247,7 @@ class NewsTitleCollectionServiceTest {
 
             // Assert — srno 1001이 2번 삽입 시도됨 (DB가 IGNORE 처리)
             // 총 43번 insertIgnoreDuplicate 호출
-            verify(newsHeadlineRepository, times(43)).insertIgnoreDuplicate(any());
+            verify(newsHeadlineInserter, times(43)).insertBatch(any());
         }
     }
 
@@ -331,7 +343,7 @@ class NewsTitleCollectionServiceTest {
 
             // Assert
             assertThat(result.skipped()).isEqualTo(1);
-            verify(newsHeadlineRepository, never()).insertIgnoreDuplicate(any());
+            verify(newsHeadlineInserter, never()).insertBatch(any());
         }
 
         @Test
@@ -362,7 +374,7 @@ class NewsTitleCollectionServiceTest {
 
             // Assert
             assertThat(result.skipped()).isEqualTo(1);
-            verify(newsHeadlineRepository, never()).insertIgnoreDuplicate(any());
+            verify(newsHeadlineInserter, never()).insertBatch(any());
         }
     }
 
@@ -385,7 +397,7 @@ class NewsTitleCollectionServiceTest {
             NewsCollectionResult result = service.collect();
 
             assertThat(result.succeeded()).isZero();
-            verify(newsHeadlineRepository, never()).insertIgnoreDuplicate(any());
+            verify(newsHeadlineInserter, never()).insertBatch(any());
         }
     }
 
@@ -455,7 +467,7 @@ class NewsTitleCollectionServiceTest {
 
             // Assert — 파싱 실패로 skip
             assertThat(result.skipped()).isEqualTo(1);
-            verify(newsHeadlineRepository, never()).insertIgnoreDuplicate(any());
+            verify(newsHeadlineInserter, never()).insertBatch(any());
         }
     }
 
@@ -479,22 +491,25 @@ class NewsTitleCollectionServiceTest {
                             eq(session), any(), eq(TR_ID), eq(KisNewsTitleResponse.class)))
                     .thenReturn(pageOf(List.of(poisonRow, row2, row3)));
 
-            // insertIgnoreDuplicate: srno=1003 독성 행에서 예외 발생, 나머지는 정상
+            // insertBatch: srno=1003 독성 행에서 예외 발생, 나머지는 정상
             // lenient 필요: 엄격 모드에서는 argThat 미일치 호출에 PotentialStubbingProblem 발생
             Mockito.lenient()
                     .doThrow(
                             new DataIntegrityViolationException("Data too long for column 'title'"))
-                    .when(newsHeadlineRepository)
-                    .insertIgnoreDuplicate(
+                    .when(newsHeadlineInserter)
+                    .insertBatch(
                             org.mockito.ArgumentMatchers.argThat(
-                                    e -> "1003".equals(e.getSerialNo())));
+                                    list ->
+                                            list.stream()
+                                                    .anyMatch(
+                                                            e -> "1003".equals(e.getSerialNo()))));
 
             // Act
             NewsCollectionResult result = service.collect();
 
             // Assert
             // (a) 정상 행 2건 삽입됨
-            verify(newsHeadlineRepository, times(3)).insertIgnoreDuplicate(any());
+            verify(newsHeadlineInserter, times(3)).insertBatch(any());
             assertThat(result.succeeded()).isEqualTo(2);
             // (b) 독성 행은 skipped 집계
             assertThat(result.skipped()).isEqualTo(1);
@@ -518,10 +533,13 @@ class NewsTitleCollectionServiceTest {
 
             Mockito.lenient()
                     .doThrow(new DataIntegrityViolationException("Data too long"))
-                    .when(newsHeadlineRepository)
-                    .insertIgnoreDuplicate(
+                    .when(newsHeadlineInserter)
+                    .insertBatch(
                             org.mockito.ArgumentMatchers.argThat(
-                                    e -> "1003".equals(e.getSerialNo())));
+                                    list ->
+                                            list.stream()
+                                                    .anyMatch(
+                                                            e -> "1003".equals(e.getSerialNo()))));
 
             // Act — 1페이지(3건, count<40)에서 종료
             NewsCollectionResult result = service.collect();
@@ -543,7 +561,7 @@ class NewsTitleCollectionServiceTest {
     class Idempotency {
 
         @Test
-        @DisplayName("10분 재실행 시 insertIgnoreDuplicate 재호출 (DB가 중복 무시)")
+        @DisplayName("10분 재실행 시 insertBatch 재호출 (DB가 중복 무시)")
         void idempotentRerun() throws Exception {
             when(newsHeadlineRepository.findMaxSerialNo()).thenReturn(null);
             when(guardedKisExecutor.execute(
@@ -555,7 +573,7 @@ class NewsTitleCollectionServiceTest {
             service.collect();
 
             // Assert
-            verify(newsHeadlineRepository, times(2)).insertIgnoreDuplicate(any());
+            verify(newsHeadlineInserter, times(2)).insertBatch(any());
         }
     }
 }

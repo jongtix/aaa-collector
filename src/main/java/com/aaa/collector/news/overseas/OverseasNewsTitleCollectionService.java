@@ -7,6 +7,7 @@ import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Set;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -57,6 +58,7 @@ public class OverseasNewsTitleCollectionService {
     private final GuardedKisExecutor guardedKisExecutor;
     private final KeyLeaseRegistry keyLeaseRegistry;
     private final OverseasNewsHeadlineRepository repository;
+    private final OverseasNewsHeadlineInserter overseasNewsHeadlineInserter;
 
     /**
      * 해외 뉴스 제목 수집을 실행하고 집계 결과를 반환한다.
@@ -234,7 +236,7 @@ public class OverseasNewsTitleCollectionService {
     // 재시도되는 영구 정체를 방지한다(REQ-OVE-046). 커서 추출은 processPage에서 이 호출과 무관하게 선행된다.
     private boolean tryInsert(OverseasNewsHeadline entity, String newsKey) {
         try {
-            repository.insertIgnoreDuplicate(entity);
+            overseasNewsHeadlineInserter.insertBatch(List.of(entity));
             return true;
         } catch (DataAccessException ex) {
             log.warn(

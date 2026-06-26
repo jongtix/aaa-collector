@@ -6,6 +6,7 @@ import com.aaa.collector.kis.gate.KeyLeaseRegistry.LeaseSession;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
+import java.util.List;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.dao.DataAccessException;
@@ -46,6 +47,7 @@ public class NewsTitleCollectionService {
     private final GuardedKisExecutor guardedKisExecutor;
     private final KeyLeaseRegistry keyLeaseRegistry;
     private final DomesticNewsHeadlineRepository newsHeadlineRepository;
+    private final DomesticNewsHeadlineInserter newsHeadlineInserter;
 
     /**
      * 뉴스 제목 증분 수집을 실행하고 집계 결과를 반환한다.
@@ -223,7 +225,7 @@ public class NewsTitleCollectionService {
      */
     private boolean tryInsert(DomesticNewsHeadline entity, String srnoVal) {
         try {
-            newsHeadlineRepository.insertIgnoreDuplicate(entity);
+            newsHeadlineInserter.insertBatch(List.of(entity));
             return true;
         } catch (DataAccessException ex) {
             log.warn(
