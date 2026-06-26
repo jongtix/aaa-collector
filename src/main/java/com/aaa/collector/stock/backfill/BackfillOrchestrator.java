@@ -13,6 +13,10 @@ import com.aaa.collector.stock.StockRepository;
 import java.time.LocalDate;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -28,12 +32,13 @@ import org.springframework.stereotype.Component;
  * <p>패키지 위치: {@code stock.backfill} — {@code stock} 피처 패키지가 {@code backfill} 피처 패키지에 의존하는 기존 방향을
  * 유지한다. MdcArchitectureTest noCircularDependenciesBetweenFeaturePackages 준수.
  */
-// @MX:ANCHOR: [AUTO] 백필 오케스트레이터 — 매 cron 진입점, lazy 시딩→미완료 선별→완성 캡→status 단위 inner 완성 루프 담당
+// @MX:ANCHOR: [AUTO] 백필 오케스트레이터 — 매 cron 진입점, lazy 시딩→미완료 선별→data_table 그룹핑→테이블별 VT 스트림 병렬 처리 담당
 // @MX:REASON: [AUTO] SPEC-COLLECTOR-BACKFILL-001 REQ-BACKFILL-006/-008/-020/-033/-034,
-//             SPEC-COLLECTOR-BACKFILL-002 REQ-BACKFILL-050/-053a/-053b/-054/-055/-056/-057/-059.
+//             SPEC-COLLECTOR-BACKFILL-002 REQ-BACKFILL-050/-053a/-053b/-055/-057/-059.
+//             SPEC-COLLECTOR-BACKFILL-004 REQ-BACKFILL-061~070 — 테이블별 스트림 병렬(REQ-063),
+//             테이블별 캡(REQ-064, perRunCompletionCap supersede), 공유 LeaseSession(REQ-066).
 //             inner 루프: 각 status를 COMPLETED까지 반복(GROUP_A=anchor 무전진 break, GROUP_B=미적용).
-//             완성 캡(perRunCompletionCap)은 status 슬롯 수 단위(window 수 아님).
-// @MX:SPEC: SPEC-COLLECTOR-BACKFILL-001, SPEC-COLLECTOR-BACKFILL-002
+// @MX:SPEC: SPEC-COLLECTOR-BACKFILL-001, SPEC-COLLECTOR-BACKFILL-002, SPEC-COLLECTOR-BACKFILL-004
 @Slf4j
 @Component
 @RequiredArgsConstructor
@@ -83,10 +88,14 @@ public class BackfillOrchestrator {
             return;
         }
 
-        // Step 5: 완성 캡·inner 완성 루프 처리
-        int[] counters = processItems(pending, activeStockBySymbol, session);
+        // Step 5: data_table 기준 인메모리 그룹핑 (REQ-BACKFILL-062)
+        Map<String, List<BackfillStatus>> byTable =
+                pending.stream().collect(Collectors.groupingBy(BackfillStatus::getDataTable));
 
-        // Step 6: 진행률 gauge 갱신 (REQ-BACKFILL-040)
+        // Step 6: 테이블별 Virtual Thread 스트림 동시 처리 (REQ-BACKFILL-063)
+        int[] counters = processTableStreams(byTable, activeStockBySymbol, session);
+
+        // Step 7: 진행률 gauge 갱신 (REQ-BACKFILL-040)
         long completedCount =
                 backfillStatusRepository.countByStatusAndTargetType(
                         STATUS_COMPLETED, TARGET_TYPE_STOCK);
@@ -100,30 +109,70 @@ public class BackfillOrchestrator {
     }
 
     /**
-     * 미완료 항목을 순회하며 status 단위 inner 완성 루프를 실행하고 처리 카운터를 반환한다.
+     * 모든 data_table 스트림을 Virtual Thread로 동시 실행하고 합산 카운터를 반환한다.
      *
-     * <p>완성 캡({@code perRunCompletionCap})은 inner 루프를 개시한 status 슬롯 수(window 수 아님)를
-     * 제한한다(REQ-BACKFILL-054). 각 status는 {@code COMPLETED}까지 반복하거나 안전장치(공통 하드 캡·GROUP_A anchor 무전진
-     * break)로 중단된다.
+     * <p>테이블별 스트림은 독립적으로 실행되며, 한 스트림의 인터럽트가 다른 스트림에 영향을 주지 않는다 (REQ-BACKFILL-070).
+     * try-with-resources가 모든 VT 태스크의 완료를 보장한다.
      *
-     * @return int[2] = {완주 시작 status 슬롯 수(completedSlots), 처리 총 윈도우 수(processedWindows)}
+     * @return int[2] = {전체 처리 status 슬롯 합산, 전체 처리 윈도우 합산}
      */
-    private int[] processItems(
-            List<BackfillStatus> pending,
+    // @MX:WARN: [AUTO] processTableStreams — Executors.newVirtualThreadPerTaskExecutor() 병렬 처리
+    // @MX:REASON: [AUTO] 테이블별 VT 스트림 동시 실행(REQ-BACKFILL-063). try-with-resources 자동 셧다운 보장.
+    //             InterruptedException은 해당 스트림만 종료(REQ-BACKFILL-070) — 다른 스트림은 join까지 계속.
+    private int[] processTableStreams(
+            Map<String, List<BackfillStatus>> byTable,
             Map<String, Stock> activeStockBySymbol,
             LeaseSession session) {
+        // try-with-resources: ExecutorService auto-close waits for all submitted tasks
+        try (ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor()) {
+            List<Future<int[]>> futures =
+                    byTable.values().stream()
+                            .map(
+                                    tableStatuses ->
+                                            executor.submit(
+                                                    () ->
+                                                            processTableStream(
+                                                                    tableStatuses,
+                                                                    activeStockBySymbol,
+                                                                    session)))
+                            .toList();
 
-        // completedSlots: inner 루프를 개시한 status 슬롯 수 (REQ-BACKFILL-054, AC-3.1)
+            int totalCompleted = 0;
+            int totalWindows = 0;
+            for (Future<int[]> future : futures) {
+                try {
+                    int[] result = future.get();
+                    totalCompleted += result[0];
+                    totalWindows += result[1];
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    log.warn("[backfill-orchestrator] 스트림 join 인터럽트");
+                } catch (ExecutionException e) {
+                    log.warn("[backfill-orchestrator] 스트림 실행 예외 — {}", e.getMessage());
+                }
+            }
+            return new int[] {totalCompleted, totalWindows};
+        }
+    }
+
+    /**
+     * 단일 data_table 스트림 처리.
+     *
+     * <p>테이블별 {@code perTableCompletionCap} 캡을 적용하여 status 목록을 순회한다. InterruptedException은 해당
+     * 스트림(테이블)만 종료시키며 다른 스트림에 영향을 주지 않는다(REQ-BACKFILL-070).
+     *
+     * @return int[2] = {처리한 status 슬롯 수, 처리한 총 윈도우 수}
+     */
+    private int[] processTableStream(
+            List<BackfillStatus> tableStatuses,
+            Map<String, Stock> activeStockBySymbol,
+            LeaseSession session) {
         int completedSlots = 0;
-        // processedWindows: 이번 회차 처리한 총 윈도우 수 (REQ-BACKFILL-059)
         int processedWindows = 0;
 
-        for (BackfillStatus status : pending) {
-            // 완성 캡 도달 시 이번 회차 종료 (REQ-BACKFILL-054)
-            if (completedSlots >= properties.getPerRunCompletionCap()) {
-                log.info(
-                        "[backfill-orchestrator] 완성 캡 도달 — completionCap={}",
-                        properties.getPerRunCompletionCap());
+        for (BackfillStatus status : tableStatuses) {
+            // 테이블별 캡 (REQ-BACKFILL-064)
+            if (completedSlots >= properties.getPerTableCompletionCap()) {
                 break;
             }
 
@@ -140,16 +189,13 @@ public class BackfillOrchestrator {
             // inner 완성 루프: status가 COMPLETED될 때까지 반복 (REQ-BACKFILL-050)
             InnerLoopResult result = runInnerLoop(status, stock, session);
             processedWindows += result.windowCount;
+
             if (result.interrupted) {
-                // InterruptedException — 회차 즉시 중단 (REQ-BACKFILL-056)
-                log.warn(
-                        "[backfill-orchestrator] 인터럽트 — 처리 중단. completedSlots={}, processedWindows={}",
-                        completedSlots,
-                        processedWindows);
-                return new int[] {completedSlots, processedWindows};
+                // 이 스트림(테이블)만 종료, 나머지 스트림은 join (REQ-BACKFILL-070)
+                log.warn("[backfill-orchestrator] 스트림 인터럽트 종료 — table={}", status.getDataTable());
+                break;
             }
         }
-
         return new int[] {completedSlots, processedWindows};
     }
 

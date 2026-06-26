@@ -58,8 +58,8 @@ class BackfillOrchestratorTest {
         session = mock(LeaseSession.class);
         when(keyLeaseRegistry.openSession()).thenReturn(session);
 
-        // 기본 완성 캡·윈도우 상한 설정 (lenient — 일부 테스트는 도달하지 않음)
-        when(properties.getPerRunCompletionCap()).thenReturn(10);
+        // 기본 테이블별 완성 캡·윈도우 상한 설정 (lenient — 일부 테스트는 도달하지 않음)
+        when(properties.getPerTableCompletionCap()).thenReturn(10);
         when(properties.getMaxWindowsPerTarget()).thenReturn(120);
     }
 
@@ -122,7 +122,6 @@ class BackfillOrchestratorTest {
             // Arrange
             Stock stock = buildDomesticStock("005930");
             BackfillStatus initial = buildPendingStatus("005930", "daily_ohlcv");
-            // findById는 idが必要 — 빌더로 id 없이 생성된 경우 null id 사용
             BackfillStatus refreshed1 =
                     buildInProgressStatus("005930", "daily_ohlcv", LocalDate.of(2024, 1, 1));
             BackfillStatus refreshed2 =
@@ -133,7 +132,6 @@ class BackfillOrchestratorTest {
             when(stockRepository.findAllActiveOverseasTradable()).thenReturn(List.of());
             when(backfillStatusRepository.findByStatusInAndTargetTypeOrderById(any(), anyString()))
                     .thenReturn(List.of(initial));
-            // findById 재조회 시퀀스: 1→IN_PROGRESS, 2→IN_PROGRESS, 3→COMPLETED
             when(backfillStatusRepository.findById(any()))
                     .thenReturn(Optional.of(refreshed1))
                     .thenReturn(Optional.of(refreshed2))
@@ -154,7 +152,6 @@ class BackfillOrchestratorTest {
             // Arrange — investor_trend(GROUP_B), staleWindowThreshold=3 → 3회 무전진 후 COMPLETED
             Stock stock = buildDomesticStock("005930");
             LocalDate anchor = LocalDate.of(2024, 6, 1);
-            // GROUP_B는 stale_count를 누적한다 — lastCollectedDate 불변(무전진)
             BackfillStatus initial = buildPendingStatus("005930", "investor_trend");
             BackfillStatus stale1 = buildInProgressStatus("005930", "investor_trend", anchor);
             BackfillStatus stale2 = buildInProgressStatus("005930", "investor_trend", anchor);
@@ -164,7 +161,6 @@ class BackfillOrchestratorTest {
             when(stockRepository.findAllActiveOverseasTradable()).thenReturn(List.of());
             when(backfillStatusRepository.findByStatusInAndTargetTypeOrderById(any(), anyString()))
                     .thenReturn(List.of(initial));
-            // 1회 후 stale1(IN_PROGRESS), 2회 후 stale2(IN_PROGRESS), 3회 후 COMPLETED
             when(backfillStatusRepository.findById(any()))
                     .thenReturn(Optional.of(stale1))
                     .thenReturn(Optional.of(stale2))
@@ -216,7 +212,6 @@ class BackfillOrchestratorTest {
 
             Stock stock = buildDomesticStock("005930");
             BackfillStatus initial = buildPendingStatus("005930", "daily_ohlcv");
-            // lastCollectedDate가 매번 전진해 anchor 무전진 break는 발동하지 않음
             BackfillStatus inProg1 =
                     buildInProgressStatus("005930", "daily_ohlcv", LocalDate.of(2024, 3, 1));
             BackfillStatus inProg2 =
@@ -244,14 +239,10 @@ class BackfillOrchestratorTest {
         @DisplayName("AC-2.2 — GROUP_A(daily_ohlcv) anchor 무전진 시 즉시 중단 (REQ-BACKFILL-053b)")
         void ac2_2_groupA_anchorNoProgress_immediateBreak() throws InterruptedException {
             // Arrange — daily_ohlcv(GROUP_A), 첫 윈도우 후 lastCollectedDate 불변(무전진)
-            // initial.lastCollectedDate = anchorDate, refreshed.lastCollectedDate = anchorDate(동일 →
-            // 무전진)
             Stock stock = buildDomesticStock("005930");
             LocalDate anchorDate = LocalDate.of(2024, 1, 1);
             BackfillStatus initial = buildInProgressStatus("005930", "daily_ohlcv", anchorDate);
-            // 윈도우 후 재조회 status: lastCollectedDate = anchorDate(직전과 동일 → 무전진)
             BackfillStatus stalled = buildInProgressStatus("005930", "daily_ohlcv", anchorDate);
-            // 두 번째 재조회가 있다면 stalled2를 반환하겠지만 break로 도달 불가
             BackfillStatus stalled2 = buildInProgressStatus("005930", "daily_ohlcv", anchorDate);
 
             when(stockRepository.findAllActiveTradable()).thenReturn(List.of(stock));
@@ -275,7 +266,6 @@ class BackfillOrchestratorTest {
                 throws InterruptedException {
             // Arrange — daily_ohlcv(GROUP_A), lastCollectedDate가 매번 과거로 전진
             Stock stock = buildDomesticStock("005930");
-            // initial.lastCollectedDate=null → 첫 윈도우 면제
             BackfillStatus initial = buildPendingStatus("005930", "daily_ohlcv");
             BackfillStatus inProg1 =
                     buildInProgressStatus("005930", "daily_ohlcv", LocalDate.of(2024, 6, 1));
@@ -308,7 +298,6 @@ class BackfillOrchestratorTest {
             LocalDate anchor = LocalDate.of(2024, 6, 1);
             BackfillStatus initial =
                     buildInProgressStatus("005930", "credit_balance", LocalDate.of(2024, 7, 1));
-            // 첫 윈도우 후 anchor와 동일(무전진) — GROUP_B는 조기 break 없음
             BackfillStatus stale1 = buildInProgressStatus("005930", "credit_balance", anchor);
             BackfillStatus completed = buildCompletedStatus("005930", "credit_balance");
 
@@ -329,19 +318,17 @@ class BackfillOrchestratorTest {
     }
 
     // -----------------------------------------------------------------------
-    // AC-3: 완성 캡 (REQ-BACKFILL-054/-058/-059)
+    // AC-3: 테이블 병렬 처리 (REQ-BACKFILL-061/-062/-063)
     // -----------------------------------------------------------------------
 
     @Nested
-    @DisplayName("AC-3: 완성 캡")
-    class CompletionCap {
+    @DisplayName("AC-3: 테이블 병렬 처리")
+    class TableParallelism {
 
         @Test
-        @DisplayName("AC-3.1 — 완성 캡=2, status 3개 중 2개만 처리 (REQ-BACKFILL-054)")
-        void ac3_1_completionCap_limitsStatusSlots() throws InterruptedException {
-            // Arrange — perRunCompletionCap=2, 활성 status 3개, 각각 1윈도우 후 COMPLETED
-            when(properties.getPerRunCompletionCap()).thenReturn(2);
-
+        @DisplayName("AC-3.1 — 서로 다른 테이블의 pending status가 모두 처리됨 (REQ-BACKFILL-063, 기아 해소 핵심)")
+        void ac3_1_allTablesGetOwnStream() throws InterruptedException {
+            // Arrange: 4개 테이블 각각 1개 status — 단일 종목 "005930"
             Stock stock = buildDomesticStock("005930");
             when(stockRepository.findAllActiveTradable()).thenReturn(List.of(stock));
             when(stockRepository.findAllActiveOverseasTradable()).thenReturn(List.of());
@@ -349,36 +336,108 @@ class BackfillOrchestratorTest {
             BackfillStatus s1 = buildPendingStatus("005930", "daily_ohlcv");
             BackfillStatus s2 = buildPendingStatus("005930", "investor_trend");
             BackfillStatus s3 = buildPendingStatus("005930", "credit_balance");
+            BackfillStatus s4 = buildPendingStatus("005930", "short_sale_domestic");
             when(backfillStatusRepository.findByStatusInAndTargetTypeOrderById(any(), anyString()))
-                    .thenReturn(List.of(s1, s2, s3));
+                    .thenReturn(List.of(s1, s2, s3, s4));
 
             BackfillStatus completed = buildCompletedStatus("005930", "daily_ohlcv");
-            // 두 status 각각 1회씩만 findById 호출됨
             when(backfillStatusRepository.findById(any())).thenReturn(Optional.of(completed));
 
             // Act
             orchestrator.run();
 
-            // Assert — 2개 status만 처리(각 1회 executeWindow), 3번째는 스킵
-            verify(windowExecutor, times(2)).executeWindow(any(), eq(stock), eq(session));
+            // Assert: 4개 테이블 각각 1회씩 = 총 4회 처리됨 (병렬, 비결정적 순서)
+            verify(windowExecutor, times(4)).executeWindow(any(), eq(stock), eq(session));
         }
 
         @Test
-        @DisplayName("AC-3.2 — 다윈도우(5 window) status도 슬롯 1개만 소비 (REQ-BACKFILL-054/-058)")
-        void ac3_2_multiWindowStatus_consumesSingleSlot() throws InterruptedException {
-            // Arrange — perRunCompletionCap=1, 첫 status가 5 윈도우 후 COMPLETED
-            when(properties.getPerRunCompletionCap()).thenReturn(1);
+        @DisplayName(
+                "AC-3.2 — daily_ohlcv 기아 회귀 가드: 저ID 테이블이 많아도 daily_ohlcv 독립 스트림으로 처리됨"
+                        + " (REQ-BACKFILL-061)")
+        void ac3_2_dailyOhlcv_notStarvedByHigherVolumeTable() throws InterruptedException {
+            // Arrange: investor_trend 2개 status + daily_ohlcv 1개 status
+            // per-table-cap=1 → investor_trend cap 도달해도 daily_ohlcv는 별도 스트림에서 처리됨
+            when(properties.getPerTableCompletionCap()).thenReturn(1);
 
             Stock stock = buildDomesticStock("005930");
             when(stockRepository.findAllActiveTradable()).thenReturn(List.of(stock));
             when(stockRepository.findAllActiveOverseasTradable()).thenReturn(List.of());
 
+            BackfillStatus it1 = buildPendingStatus("005930", "investor_trend");
+            BackfillStatus it2 = buildPendingStatus("005930", "investor_trend");
+            BackfillStatus ohlcv = buildPendingStatus("005930", "daily_ohlcv");
+            when(backfillStatusRepository.findByStatusInAndTargetTypeOrderById(any(), anyString()))
+                    .thenReturn(List.of(it1, it2, ohlcv));
+
+            BackfillStatus completed = buildCompletedStatus("005930", "daily_ohlcv");
+            when(backfillStatusRepository.findById(any())).thenReturn(Optional.of(completed));
+
+            // Act
+            orchestrator.run();
+
+            // Assert: investor_trend 1개 + daily_ohlcv 1개 = 총 2회 처리
+            // (기존 전역 캡 구현이었다면 investor_trend cap=1 소진 후 daily_ohlcv가 처리되지 않았음)
+            verify(windowExecutor, times(2)).executeWindow(any(), eq(stock), eq(session));
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // AC-5: 테이블별 캡 독립 적용 (REQ-BACKFILL-064)
+    // -----------------------------------------------------------------------
+
+    @Nested
+    @DisplayName("AC-5: 테이블별 캡")
+    class PerTableCompletionCap {
+
+        @Test
+        @DisplayName("AC-5.1 — 테이블별 캡=2, 같은 테이블 status 3개 중 2개만 처리 (REQ-BACKFILL-064)")
+        void ac5_1_perTableCap_limitsStatusSlotsWithinOneTable() throws InterruptedException {
+            // Arrange — cap=2, 3개 stock 모두 daily_ohlcv → 1개 VT 스트림, cap=2 → 2개 처리
+            when(properties.getPerTableCompletionCap()).thenReturn(2);
+
+            Stock stock1 = buildDomesticStock("005930");
+            Stock stock2 = buildDomesticStock("000660");
+            Stock stock3 = buildDomesticStock("003550");
+            when(stockRepository.findAllActiveTradable())
+                    .thenReturn(List.of(stock1, stock2, stock3));
+            when(stockRepository.findAllActiveOverseasTradable()).thenReturn(List.of());
+
+            // 모두 daily_ohlcv 테이블 → 1개 VT 스트림
             BackfillStatus s1 = buildPendingStatus("005930", "daily_ohlcv");
-            BackfillStatus s2 = buildPendingStatus("005930", "investor_trend");
+            BackfillStatus s2 = buildPendingStatus("000660", "daily_ohlcv");
+            BackfillStatus s3 = buildPendingStatus("003550", "daily_ohlcv");
+            when(backfillStatusRepository.findByStatusInAndTargetTypeOrderById(any(), anyString()))
+                    .thenReturn(List.of(s1, s2, s3));
+
+            BackfillStatus completed = buildCompletedStatus("005930", "daily_ohlcv");
+            when(backfillStatusRepository.findById(any())).thenReturn(Optional.of(completed));
+
+            // Act
+            orchestrator.run();
+
+            // Assert — 2개 status만 처리(3번째는 per-table cap 도달로 스킵)
+            verify(windowExecutor, times(2)).executeWindow(any(), any(), eq(session));
+        }
+
+        @Test
+        @DisplayName(
+                "AC-5.2 — 다윈도우(5 window) status도 슬롯 1개만 소비, 같은 테이블 두 번째 status 미처리 (REQ-BACKFILL-064)")
+        void ac5_2_multiWindowStatus_consumesSingleSlotPerTable() throws InterruptedException {
+            // Arrange — per-table-cap=1, daily_ohlcv 2개 status (005930: 5윈도우 후 완료, 000660: 미처리)
+            when(properties.getPerTableCompletionCap()).thenReturn(1);
+
+            Stock stock1 = buildDomesticStock("005930");
+            Stock stock2 = buildDomesticStock("000660");
+            when(stockRepository.findAllActiveTradable()).thenReturn(List.of(stock1, stock2));
+            when(stockRepository.findAllActiveOverseasTradable()).thenReturn(List.of());
+
+            // 모두 daily_ohlcv 테이블 → 1개 스트림, cap=1 → 첫 번째 status(5윈도우)만 처리
+            BackfillStatus s1 = buildPendingStatus("005930", "daily_ohlcv");
+            BackfillStatus s2 = buildPendingStatus("000660", "daily_ohlcv");
             when(backfillStatusRepository.findByStatusInAndTargetTypeOrderById(any(), anyString()))
                     .thenReturn(List.of(s1, s2));
 
-            // s1 처리: 4회 IN_PROGRESS 후 COMPLETED
+            // s1: 4회 IN_PROGRESS 후 COMPLETED
             BackfillStatus completed = buildCompletedStatus("005930", "daily_ohlcv");
             when(backfillStatusRepository.findById(any()))
                     .thenReturn(
@@ -403,21 +462,22 @@ class BackfillOrchestratorTest {
             orchestrator.run();
 
             // Assert — s1만 처리(5회), s2는 슬롯 소진으로 미처리
-            verify(windowExecutor, times(5)).executeWindow(any(), eq(stock), eq(session));
+            verify(windowExecutor, times(5)).executeWindow(any(), any(), eq(session));
         }
 
         @Test
-        @DisplayName("AC-3.3 — 비활성 종목 status는 inner 루프 미개시·슬롯 미소비 (BACKFILL-001 AC-7.4 유지)")
-        void ac3_3_inactiveStock_skipped_noSlotConsumed() throws InterruptedException {
+        @DisplayName("AC-5.3 — 비활성 종목 status는 inner 루프 미개시·슬롯 미소비 (BACKFILL-001 AC-7.4 유지)")
+        void ac5_3_inactiveStock_skipped_noSlotConsumed() throws InterruptedException {
             // Arrange — 활성종목: 005930만, 000660은 비활성
-            when(properties.getPerRunCompletionCap()).thenReturn(1);
+            when(properties.getPerTableCompletionCap()).thenReturn(1);
 
             Stock activeStock = buildDomesticStock("005930");
             when(stockRepository.findAllActiveTradable()).thenReturn(List.of(activeStock));
             when(stockRepository.findAllActiveOverseasTradable()).thenReturn(List.of());
 
-            BackfillStatus inactive = buildPendingStatus("000660", "daily_ohlcv"); // 비활성
-            BackfillStatus active = buildPendingStatus("005930", "daily_ohlcv"); // 활성
+            // 모두 daily_ohlcv — 1개 스트림. 비활성(000660)은 스킵(슬롯 미소비) → 활성(005930) 처리됨
+            BackfillStatus inactive = buildPendingStatus("000660", "daily_ohlcv");
+            BackfillStatus active = buildPendingStatus("005930", "daily_ohlcv");
             when(backfillStatusRepository.findByStatusInAndTargetTypeOrderById(any(), anyString()))
                     .thenReturn(List.of(inactive, active));
 
@@ -433,37 +493,42 @@ class BackfillOrchestratorTest {
         }
 
         @Test
-        @DisplayName("AC-3.4 — 카운터·로그는 status 슬롯 단위, recordProgress 분자·분모 불변 (REQ-BACKFILL-059)")
-        void ac3_4_counterMetrics_statusSlotSemantics() throws InterruptedException {
-            // Arrange — 2개 status 슬롯, 각각 다윈도우
-            when(properties.getPerRunCompletionCap()).thenReturn(10);
+        @DisplayName(
+                "AC-5.4 — 테이블 간 슬롯 비공유: 각 테이블이 독립적으로 perTableCompletionCap 예산 사용 (REQ-BACKFILL-064)")
+        void ac5_4_tableCapIndependent_totalExceedsGlobalCapConcept() throws InterruptedException {
+            // Arrange: per-table-cap=2, investor_trend 3개 + daily_ohlcv 3개
+            // → investor_trend 2개 + daily_ohlcv 2개 = 총 4회 처리 (전역 캡 개념이라면 2회에 그쳤을 것)
+            when(properties.getPerTableCompletionCap()).thenReturn(2);
 
-            Stock stock = buildDomesticStock("005930");
-            when(stockRepository.findAllActiveTradable()).thenReturn(List.of(stock));
+            Stock stock1 = buildDomesticStock("005930");
+            Stock stock2 = buildDomesticStock("000660");
+            Stock stock3 = buildDomesticStock("003550");
+            when(stockRepository.findAllActiveTradable())
+                    .thenReturn(List.of(stock1, stock2, stock3));
             when(stockRepository.findAllActiveOverseasTradable()).thenReturn(List.of());
 
-            BackfillStatus s1 = buildPendingStatus("005930", "daily_ohlcv");
-            BackfillStatus s2 = buildPendingStatus("005930", "investor_trend");
+            BackfillStatus it1 = buildPendingStatus("005930", "investor_trend");
+            BackfillStatus it2 = buildPendingStatus("000660", "investor_trend");
+            BackfillStatus it3 = buildPendingStatus("003550", "investor_trend");
+            BackfillStatus ohlcv1 = buildPendingStatus("005930", "daily_ohlcv");
+            BackfillStatus ohlcv2 = buildPendingStatus("000660", "daily_ohlcv");
+            BackfillStatus ohlcv3 = buildPendingStatus("003550", "daily_ohlcv");
             when(backfillStatusRepository.findByStatusInAndTargetTypeOrderById(any(), anyString()))
-                    .thenReturn(List.of(s1, s2));
+                    .thenReturn(List.of(it1, it2, it3, ohlcv1, ohlcv2, ohlcv3));
 
             BackfillStatus completed = buildCompletedStatus("005930", "daily_ohlcv");
             when(backfillStatusRepository.findById(any())).thenReturn(Optional.of(completed));
 
-            when(backfillStatusRepository.countByStatusAndTargetType(anyString(), anyString()))
-                    .thenReturn(5L);
-            when(backfillStatusRepository.countByTargetType(anyString())).thenReturn(10L);
-
             // Act
             orchestrator.run();
 
-            // Assert — recordProgress가 COMPLETED 수 / 전체 수로 호출됨(의미 불변)
-            verify(backfillMetrics).recordProgress(5L, 10L);
+            // Assert — 총 4회 이상 (각 테이블 독립적으로 2개씩, 합 ≥4)
+            verify(windowExecutor, times(4)).executeWindow(any(), any(), eq(session));
         }
     }
 
     // -----------------------------------------------------------------------
-    // AC-4: 예외·인터럽트 격리 (REQ-BACKFILL-055/-056)
+    // AC-4: 예외·인터럽트 격리 (REQ-BACKFILL-055/-070)
     // -----------------------------------------------------------------------
 
     @Nested
@@ -472,7 +537,8 @@ class BackfillOrchestratorTest {
 
         @Test
         @DisplayName(
-                "AC-4.1 — 두 번째 윈도우 예외 시 executeWindowOnError 1회·해당 status 루프 종료·다음 status 처리 (REQ-BACKFILL-055)")
+                "AC-4.1 — 두 번째 윈도우 예외 시 executeWindowOnError 1회·해당 status 루프 종료·다음 status 처리"
+                        + " (REQ-BACKFILL-055)")
         void ac4_1_windowException_isolatesStatus_continuesNext() throws InterruptedException {
             // Arrange
             Stock stock = buildDomesticStock("005930");
@@ -489,8 +555,8 @@ class BackfillOrchestratorTest {
                     buildInProgressStatus("005930", "daily_ohlcv", LocalDate.of(2024, 6, 1));
             BackfillStatus secondCompleted = buildCompletedStatus("005930", "investor_trend");
             when(backfillStatusRepository.findById(any()))
-                    .thenReturn(Optional.of(firstInProg)) // first 1회째 후
-                    .thenReturn(Optional.of(secondCompleted)); // second 1회째 후
+                    .thenReturn(Optional.of(firstInProg))
+                    .thenReturn(Optional.of(secondCompleted));
 
             // first status 두 번째 executeWindow 호출 시 예외
             doThrow(new RuntimeException("KIS 오류 시뮬레이션"))
@@ -502,14 +568,15 @@ class BackfillOrchestratorTest {
 
             // Assert
             verify(windowExecutor).executeWindowOnError(eq(firstInProg), anyString(), anyBoolean());
-            // second status도 처리됨
+            // second status도 처리됨 (별도 테이블 스트림)
             verify(windowExecutor).executeWindow(eq(second), eq(stock), eq(session));
         }
 
         @Test
-        @DisplayName("AC-4.2 — InterruptedException 시 인터럽트 플래그 복원·회차 즉시 중단 (REQ-BACKFILL-056)")
-        void ac4_2_interruptedException_abortsRun() throws InterruptedException {
-            // Arrange
+        @DisplayName(
+                "AC-4.3 — InterruptedException 시 해당 스트림만 종료, 나머지 테이블 스트림은 계속 (REQ-BACKFILL-070)")
+        void ac4_3_interruptedStream_otherTablesUnaffected() throws InterruptedException {
+            // Arrange: daily_ohlcv(first)는 InterruptedException, investor_trend(second)는 정상
             Stock stock = buildDomesticStock("005930");
             when(stockRepository.findAllActiveTradable()).thenReturn(List.of(stock));
             when(stockRepository.findAllActiveOverseasTradable()).thenReturn(List.of());
@@ -519,15 +586,21 @@ class BackfillOrchestratorTest {
             when(backfillStatusRepository.findByStatusInAndTargetTypeOrderById(any(), anyString()))
                     .thenReturn(List.of(first, second));
 
+            // daily_ohlcv 스트림: InterruptedException 발생
             doThrow(new InterruptedException("인터럽트 시뮬레이션"))
                     .when(windowExecutor)
                     .executeWindow(eq(first), any(), any());
 
+            // investor_trend 스트림: 정상 처리
+            BackfillStatus secondCompleted = buildCompletedStatus("005930", "investor_trend");
+            when(backfillStatusRepository.findById(any())).thenReturn(Optional.of(secondCompleted));
+
             // Act
             orchestrator.run();
 
-            // Assert — 인터럽트 후 second는 처리 안 됨
-            verify(windowExecutor, never()).executeWindow(eq(second), any(), any());
+            // Assert — daily_ohlcv 스트림은 중단되었지만 investor_trend 스트림은 정상 처리됨
+            // (기존 전역 중단 동작과 다른 핵심 변경점: 한 테이블의 인터럽트가 다른 테이블에 전파되지 않음)
+            verify(windowExecutor).executeWindow(eq(second), eq(stock), eq(session));
         }
     }
 
@@ -565,8 +638,37 @@ class BackfillOrchestratorTest {
             // Act
             orchestrator.run();
 
-            // Assert — openSession 정확히 1회
+            // Assert — openSession 정확히 1회 (VT 스트림 기동 전 공유 세션)
             verify(keyLeaseRegistry, times(1)).openSession();
+        }
+
+        @Test
+        @DisplayName("AC-6.3 — recordProgress 분자·분모 의미 불변 (REQ-BACKFILL-059)")
+        void ac6_3_recordProgress_semanticsUnchanged() throws InterruptedException {
+            // Arrange — 2개 테이블 각각 1 status, 각 1윈도우 후 COMPLETED
+            when(properties.getPerTableCompletionCap()).thenReturn(10);
+
+            Stock stock = buildDomesticStock("005930");
+            when(stockRepository.findAllActiveTradable()).thenReturn(List.of(stock));
+            when(stockRepository.findAllActiveOverseasTradable()).thenReturn(List.of());
+
+            BackfillStatus s1 = buildPendingStatus("005930", "daily_ohlcv");
+            BackfillStatus s2 = buildPendingStatus("005930", "investor_trend");
+            when(backfillStatusRepository.findByStatusInAndTargetTypeOrderById(any(), anyString()))
+                    .thenReturn(List.of(s1, s2));
+
+            BackfillStatus completed = buildCompletedStatus("005930", "daily_ohlcv");
+            when(backfillStatusRepository.findById(any())).thenReturn(Optional.of(completed));
+
+            when(backfillStatusRepository.countByStatusAndTargetType(anyString(), anyString()))
+                    .thenReturn(5L);
+            when(backfillStatusRepository.countByTargetType(anyString())).thenReturn(10L);
+
+            // Act
+            orchestrator.run();
+
+            // Assert — recordProgress가 COMPLETED 수 / 전체 수로 호출됨(의미 불변)
+            verify(backfillMetrics).recordProgress(5L, 10L);
         }
     }
 
