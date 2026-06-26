@@ -1,6 +1,7 @@
 package com.aaa.collector.dart.disclosure;
 
 import com.aaa.collector.observability.BatchMetrics;
+import com.aaa.collector.observability.RowFailureHandler;
 import com.aaa.collector.observability.SilentDropWarningCounter;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
@@ -58,6 +59,30 @@ public class DisclosureInserter {
                             try (PreparedStatement ps = conn.prepareStatement(INSERT_IGNORE_SQL)) {
                                 return SilentDropWarningCounter.countDropsPerRow(
                                         ps, rows, this::bindRow);
+                            }
+                        });
+        batchMetrics.recordSilentDrops(drops == null ? 0L : drops);
+    }
+
+    /**
+     * DART 공시 행들을 격리 삽입한다 (REQ-INSERT-008).
+     *
+     * <p>독성 행은 {@code onFailure}로 통지하고 skip한 뒤 잔여 행을 계속 처리한다.
+     *
+     * @param rows 삽입할 파라미터 객체(빈 목록이면 무동작)
+     * @param onFailure 행별 실패 통지 콜백
+     */
+    public void insertBatchIsolated(
+            List<DisclosureRow> rows, RowFailureHandler<DisclosureRow> onFailure) {
+        if (rows.isEmpty()) {
+            return;
+        }
+        Long drops =
+                jdbcTemplate.execute(
+                        (Connection conn) -> {
+                            try (PreparedStatement ps = conn.prepareStatement(INSERT_IGNORE_SQL)) {
+                                return SilentDropWarningCounter.countDropsPerRowIsolated(
+                                        ps, rows, this::bindRow, onFailure);
                             }
                         });
         batchMetrics.recordSilentDrops(drops == null ? 0L : drops);

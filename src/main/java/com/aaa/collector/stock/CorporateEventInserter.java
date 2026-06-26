@@ -1,6 +1,7 @@
 package com.aaa.collector.stock;
 
 import com.aaa.collector.observability.BatchMetrics;
+import com.aaa.collector.observability.RowFailureHandler;
 import com.aaa.collector.observability.SilentDropWarningCounter;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
@@ -62,6 +63,30 @@ public class CorporateEventInserter {
                             try (PreparedStatement ps = conn.prepareStatement(INSERT_IGNORE_SQL)) {
                                 return SilentDropWarningCounter.countDropsPerRow(
                                         ps, rows, this::bindRow);
+                            }
+                        });
+        batchMetrics.recordSilentDrops(drops == null ? 0L : drops);
+    }
+
+    /**
+     * 기업 이벤트 행들을 격리 삽입한다 (REQ-INSERT-008).
+     *
+     * <p>독성 행은 {@code onFailure}로 통지하고 skip한 뒤 잔여 행을 계속 처리한다.
+     *
+     * @param rows 삽입할 엔티티(빈 목록이면 무동작)
+     * @param onFailure 행별 실패 통지 콜백
+     */
+    public void insertBatchIsolated(
+            List<CorporateEvent> rows, RowFailureHandler<CorporateEvent> onFailure) {
+        if (rows.isEmpty()) {
+            return;
+        }
+        Long drops =
+                jdbcTemplate.execute(
+                        (Connection conn) -> {
+                            try (PreparedStatement ps = conn.prepareStatement(INSERT_IGNORE_SQL)) {
+                                return SilentDropWarningCounter.countDropsPerRowIsolated(
+                                        ps, rows, this::bindRow, onFailure);
                             }
                         });
         batchMetrics.recordSilentDrops(drops == null ? 0L : drops);

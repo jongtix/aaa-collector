@@ -81,6 +81,42 @@ public final class SilentDropWarningCounter {
         return drops;
     }
 
+    /**
+     * 한 종목의 행들을 {@link PreparedStatement}로 하나씩 INSERT IGNORE 실행하고, 각 행의 예외를 격리하여 독성 행을 skip하고 잔여 행을
+     * 계속 처리한다 (REQ-INSERT-007).
+     *
+     * <p>{@link #countDropsPerRow}와 동일한 행별 {@code executeUpdate()} + 경고 누적 방식을 사용하되, {@link
+     * SQLException}을 행별로 catch하여 {@link RowFailureHandler#onFailure}로 통지하고 루프를 중단하지 않는다. 독성 행은 드롭
+     * 카운트에 포함되지 않는다(경고 체인을 읽기 전에 예외가 발생하므로).
+     *
+     * <p><b>주의</b>: {@code bind} 중 예외가 발생하면 해당 행의 {@code executeUpdate()}는 실행되지 않는다 — 따라서 준비된
+     * statement 상태가 오염될 수 있다. 각 행 시작 시 {@code clearWarnings()}를 호출하여 이전 경고를 비운다.
+     *
+     * @param ps 바인딩 가능한 INSERT IGNORE PreparedStatement
+     * @param rows 삽입할 행 목록
+     * @param binder 한 행을 {@code ps}에 바인딩하는 콜백
+     * @param onFailure 행별 SQLException 발생 시 통지 콜백 (예외를 전파하지 않음)
+     * @param <T> 행 타입
+     * @return 성공 행에서 누적된 침묵 드롭(비-1062 경고) 수
+     * @throws SQLException JDBC 레벨에서 bind/execute 외 시스템 오류 발생 시
+     */
+    public static <T> long countDropsPerRowIsolated(
+            PreparedStatement ps, List<T> rows, RowBinder<T> binder, RowFailureHandler<T> onFailure)
+            throws SQLException {
+        long drops = 0L;
+        for (T row : rows) {
+            ps.clearWarnings();
+            try {
+                binder.bind(ps, row);
+                ps.executeUpdate();
+                drops += countGenuineDrops(ps.getWarnings());
+            } catch (SQLException e) {
+                onFailure.onFailure(row, e);
+            }
+        }
+        return drops;
+    }
+
     /** 한 행을 {@link PreparedStatement}에 바인딩하는 콜백(인서터별 컬럼 매핑을 위임). */
     @FunctionalInterface
     public interface RowBinder<T> {

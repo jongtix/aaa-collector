@@ -1,6 +1,7 @@
 package com.aaa.collector.news;
 
 import com.aaa.collector.observability.BatchMetrics;
+import com.aaa.collector.observability.RowFailureHandler;
 import com.aaa.collector.observability.SilentDropWarningCounter;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
@@ -59,6 +60,31 @@ public class DomesticNewsHeadlineInserter {
                             try (PreparedStatement ps = conn.prepareStatement(INSERT_IGNORE_SQL)) {
                                 return SilentDropWarningCounter.countDropsPerRow(
                                         ps, rows, this::bindRow);
+                            }
+                        });
+        batchMetrics.recordSilentDrops(drops == null ? 0L : drops);
+    }
+
+    /**
+     * 국내 뉴스 제목 행들을 격리 삽입한다 (REQ-INSERT-008).
+     *
+     * <p>독성 행(SQLException)은 {@code onFailure} 콜백으로 통지하고 skip한 뒤 잔여 행을 계속 처리한다. 빈 목록이면 JDBC를 사용하지
+     * 않는다.
+     *
+     * @param rows 삽입할 엔티티(빈 목록이면 무동작)
+     * @param onFailure 행별 실패 통지 콜백
+     */
+    public void insertBatchIsolated(
+            List<DomesticNewsHeadline> rows, RowFailureHandler<DomesticNewsHeadline> onFailure) {
+        if (rows.isEmpty()) {
+            return;
+        }
+        Long drops =
+                jdbcTemplate.execute(
+                        (Connection conn) -> {
+                            try (PreparedStatement ps = conn.prepareStatement(INSERT_IGNORE_SQL)) {
+                                return SilentDropWarningCounter.countDropsPerRowIsolated(
+                                        ps, rows, this::bindRow, onFailure);
                             }
                         });
         batchMetrics.recordSilentDrops(drops == null ? 0L : drops);
