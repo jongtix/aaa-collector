@@ -30,9 +30,9 @@ import org.springframework.web.client.RestClientException;
  * <p>{@link com.aaa.collector.stock.daily.DomesticDailyOhlcvCollectionService} 패턴 답습:
  * findAllActive→distributor.distribute→VT executor→종목별 단일 호출→14일 윈도우 필터·검증·멱등 저장→집계.
  *
- * <p>매핑(REQ-BATCH2-031/032): 외국인/기관계/개인 3분류만 저장(11분류 중). 단위(REQ-BATCH2-033): {@code acml_tr_pbmn}
- * 백만원→원 ×1,000,000. 순매수 거래대금(REQ-BATCH2-034/OI-1): 단위 미명시이나 기본 백만원 가정(×1,000,000) — Run 단계 실데이터 자릿수
- * 검증 게이트(AC-4 S4-3) 통과 후 변환 계수 확정 필요.
+ * <p>매핑(REQ-BATCH2-031/032): 외국인/기관계/개인 3분류만 저장(11분류 중). 단위(REQ-BATCH2-033): {@code acml_tr_pbmn}은
+ * 원 단위 직접 저장(포털 명세 "백만원" 오기 — 실측 역산 2026-06-26 정정). 순매수 거래대금(REQ-BATCH2-034/OI-1): 백만원
+ * 확정(×1,000,000 변환, api-specs 실측 노트 2026-06-14).
  *
  * <p>검증(REQ-BATCH2-060~063): null 키 필드·총거래량/총거래대금 음수·파싱 실패 건별 skip. 순매수 수량·거래대금은 매도 우위 시 음수 정상이므로
  * 음수 허용(R-F). 14일 윈도우 밖 행 제외. 빈 응답은 0건 succeeded(REQ-063).
