@@ -54,14 +54,14 @@ class DartDisclosureBackfillOrchestratorTest {
     }
 
     @Nested
-    @DisplayName("per-run-completion-cap 적용")
-    class PerRunCap {
+    @DisplayName("per-table-completion-cap 적용")
+    class PerTableCap {
 
         @Test
         @DisplayName("cap=2이고 PENDING 3건 → executeWindow 2회만 호출")
         void capLimitsWindowExecutions() {
             // Arrange
-            when(backfillProperties.getPerRunCompletionCap()).thenReturn(2);
+            when(backfillProperties.getPerTableCompletionCap()).thenReturn(2);
             Stock s1 = mockStock(1L, "SYM1");
             Stock s2 = mockStock(2L, "SYM2");
             Stock s3 = mockStock(3L, "SYM3");
@@ -89,7 +89,7 @@ class DartDisclosureBackfillOrchestratorTest {
         @DisplayName("findByStatusIn...OrderById 호출 시 data_table=\"disclosures\" 인자 전달")
         void queryUsesDisclosuresDataTable() {
             // Arrange
-            when(backfillProperties.getPerRunCompletionCap()).thenReturn(10);
+            when(backfillProperties.getPerTableCompletionCap()).thenReturn(10);
             when(stockRepository.findAllActive()).thenReturn(List.of());
             when(backfillStatusRepository.findByStatusInAndTargetTypeAndDataTableOrderById(
                             any(), any(), any()))
@@ -112,7 +112,7 @@ class DartDisclosureBackfillOrchestratorTest {
         @Test
         @DisplayName("빈 목록 반환 → executeWindow 미호출")
         void emptyPendingList_windowServiceNotCalled() {
-            when(backfillProperties.getPerRunCompletionCap()).thenReturn(10);
+            when(backfillProperties.getPerTableCompletionCap()).thenReturn(10);
             when(stockRepository.findAllActive()).thenReturn(List.of());
             when(backfillStatusRepository.findByStatusInAndTargetTypeAndDataTableOrderById(
                             any(), any(), any()))

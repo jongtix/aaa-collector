@@ -15,11 +15,11 @@ import org.springframework.stereotype.Component;
 /**
  * DART 공시 백필 오케스트레이터 (SPEC-COLLECTOR-DART-001 REQ-DART-020~023).
  *
- * <p>lazy 시딩 → 미완료 항목 조회 → per-run-completion-cap 적용 → 종목별 윈도우 실행.
+ * <p>lazy 시딩 → 미완료 항목 조회 → per-table-completion-cap 적용 → 종목별 윈도우 실행.
  */
 // @MX:ANCHOR: [AUTO] DART 백필 오케스트레이터 진입점 — lazy 시딩→미완료 선별→cap→종목별 윈도우 실행
 // @MX:REASON: [AUTO] SPEC-COLLECTOR-DART-001 REQ-DART-020/021/022/023 — backfill_status 편입,
-//             stale-window COMPLETED 전이, per-run-completion-cap 제한
+//             stale-window COMPLETED 전이, per-table-completion-cap 제한(REQ-BACKFILL-064b)
 @Slf4j
 @Component
 @RequiredArgsConstructor
@@ -41,7 +41,7 @@ public class DartDisclosureBackfillOrchestrator {
      * <ol>
      *   <li>활성 종목 lazy 시딩 (INSERT IGNORE)
      *   <li>PENDING/IN_PROGRESS 항목 조회
-     *   <li>per-run-completion-cap 적용
+     *   <li>per-table-completion-cap 적용 (DART는 단일 data_table, REQ-BACKFILL-064b)
      *   <li>종목별 윈도우 실행
      * </ol>
      */
@@ -69,8 +69,8 @@ public class DartDisclosureBackfillOrchestrator {
         Map<String, Stock> activeBySymbol =
                 activeStocks.stream().collect(Collectors.toMap(Stock::getSymbol, s -> s));
 
-        // Step 4: per-run-completion-cap 적용 후 종목별 윈도우 실행
-        int cap = backfillProperties.getPerRunCompletionCap();
+        // Step 4: per-table-completion-cap 적용 후 종목별 윈도우 실행 (DART는 단일 테이블 처리)
+        int cap = backfillProperties.getPerTableCompletionCap();
         int processed = 0;
 
         for (BackfillStatus status : pending) {
