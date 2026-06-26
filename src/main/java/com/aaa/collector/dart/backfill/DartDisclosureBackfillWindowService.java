@@ -91,8 +91,8 @@ public class DartDisclosureBackfillWindowService {
         }
 
         // anchor 전진 또는 stale-window COMPLETED 전이 (REQ-DART-023)
-        if (inserted == 0 || endDe.equals(status.getLastCollectedDate())) {
-            // stale-window — COMPLETED
+        // stale-window: 해당 기간 신규 공시 0건 → 최대 과거 도달로 판정
+        if (inserted == 0) {
             log.info("[dart-backfill] stale-window — COMPLETED. symbol={}", symbol);
             backfillStatusRepository.updateProgress(
                     status.getId(), STATUS_COMPLETED, bgnDe, 0, inserted);
@@ -110,7 +110,9 @@ public class DartDisclosureBackfillWindowService {
                 item.corpCode(),
                 item.stockCode(),
                 item.corpCls(),
-                item.reportNm(),
+                // report_nm VARCHAR(512): 펀드명 접미가 붙은 집합투자증권 등 장문 보고서명 대응 — MySQL strict 모드
+                // DataTruncationException 방지
+                truncate(item.reportNm(), 512),
                 item.rceptNo(),
                 item.flrNm(),
                 rceptDt,

@@ -55,10 +55,10 @@ public class DartDisclosureBackfillOrchestrator {
         }
         log.info("[dart-backfill] 시딩 완료 — 활성 종목 수={}", activeStocks.size());
 
-        // Step 2: 미완료 항목 조회
+        // Step 2: 미완료 항목 조회 — data_table='disclosures' 한정 (CR-01: 타 도메인 진행점 오염 방지)
         List<BackfillStatus> pending =
-                backfillStatusRepository.findByStatusInAndTargetTypeOrderById(
-                        List.of(STATUS_PENDING, STATUS_IN_PROGRESS), TARGET_TYPE);
+                backfillStatusRepository.findByStatusInAndTargetTypeAndDataTableOrderById(
+                        List.of(STATUS_PENDING, STATUS_IN_PROGRESS), TARGET_TYPE, DATA_TABLE);
 
         if (pending.isEmpty()) {
             log.info("[dart-backfill] 처리 대상 없음");

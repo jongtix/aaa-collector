@@ -130,12 +130,21 @@ public class DartDisclosurePollingService {
                 item.corpCode(),
                 stockCode,
                 item.corpCls(),
-                item.reportNm(),
+                // report_nm VARCHAR(512): 펀드명 접미 보고서명 대응 — MySQL strict 모드 DataTruncationException
+                // 방지
+                truncateReportNm(item.reportNm()),
                 item.rceptNo(),
                 item.flrNm(),
                 rceptDt,
                 item.rm(),
                 null);
+    }
+
+    private static String truncateReportNm(String raw) {
+        if (raw == null) {
+            return "";
+        }
+        return raw.length() > 512 ? raw.substring(0, 512) : raw;
     }
 
     /**

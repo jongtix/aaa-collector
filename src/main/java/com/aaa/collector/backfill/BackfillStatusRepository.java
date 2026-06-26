@@ -69,6 +69,20 @@ public interface BackfillStatusRepository extends JpaRepository<BackfillStatus, 
             Collection<String> statuses, String targetType);
 
     /**
+     * 처리 대상 항목을 targetType + dataTable 기준으로 id 순으로 조회한다.
+     *
+     * <p>{@code backfill_status}에는 여러 data_table 값이 공존하므로, 특정 도메인 오케스트레이터는 자신의 {@code data_table}
+     * 값으로 범위를 한정해야 한다. data_table 미필터 시 타 도메인의 진행점이 오염될 수 있다 (SPEC-COLLECTOR-DART-001 CR-01 수정).
+     *
+     * @param statuses 포함할 상태 집합
+     * @param targetType 대상 유형 (예: {@code "STOCK"})
+     * @param dataTable 데이터 테이블명 (예: {@code "disclosures"})
+     * @return id 오름차순 정렬된 처리 대상 항목 목록
+     */
+    List<BackfillStatus> findByStatusInAndTargetTypeAndDataTableOrderById(
+            Collection<String> statuses, String targetType, String dataTable);
+
+    /**
      * 윈도우 수집 성공 후 진행점·상태·stale_count·attempt_count를 갱신한다 (T6, REQ-BACKFILL-011, AC-4.1/4.2).
      *
      * <p>last_error를 NULL로 초기화하고 attempt_count를 1 증가시킨다. 데이터 INSERT IGNORE(수집 서비스)와 동일
