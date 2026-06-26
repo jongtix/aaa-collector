@@ -3,6 +3,7 @@ package com.aaa.collector.macro;
 import com.aaa.collector.macro.ecos.EcosCollectionService;
 import com.aaa.collector.macro.fred.FredCollectionService;
 import com.aaa.collector.observability.BatchMetrics;
+import com.aaa.collector.schedule.BatchCrons;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -36,7 +37,7 @@ public class MacroExternalScheduler {
      * <p>계측 누적 전략: ECOS/FRED 결과를 collectExternal() 수준에서 합산하여 1회 recordCompletion 호출. 예외 발생 종은
      * attempted+=1 처리되고 succeeded/skip에 기여하지 않으므로 fail로 자동 계상된다 (REQ-OBSV-020/021).
      */
-    @Scheduled(cron = "0 0 19 * * MON-FRI", zone = "Asia/Seoul")
+    @Scheduled(cron = BatchCrons.MACRO_EXTERNAL_CRON, zone = BatchCrons.MACRO_EXTERNAL_ZONE)
     public void collectExternal() {
         log.info("[macro-ext] 외부 거시경제 지표 수집 시작");
         // ECOS와 FRED 결과를 합산해 1회 recordCompletion 호출

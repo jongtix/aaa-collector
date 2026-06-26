@@ -1,6 +1,7 @@
 package com.aaa.collector.stock.daily;
 
 import com.aaa.collector.observability.BatchMetrics;
+import com.aaa.collector.schedule.BatchCrons;
 import com.aaa.collector.stock.supply.DomesticSupplyDemandCollectionService;
 import java.time.LocalDate;
 import java.time.ZoneId;
@@ -44,7 +45,9 @@ public class DomesticDailyOhlcvScheduler {
      * <p>예외 흡수: 일봉 수집·발행, 수급 수집 각 단계의 예외가 전파되어 스케줄러 스레드가 종료되는 것을 방지한다. 일봉 단계 예외는 수급 단계를 막지 않는다(단계 간
      * 독립). 예외는 ERROR 로그로 남긴다.
      */
-    @Scheduled(cron = "0 0 16 * * MON-FRI", zone = "Asia/Seoul")
+    @Scheduled(
+            cron = BatchCrons.DOMESTIC_DAILY_CHAIN_CRON,
+            zone = BatchCrons.DOMESTIC_DAILY_CHAIN_ZONE)
     public void collectDaily() {
         LocalDate today = LocalDate.now(KST);
         log.info("[domestic-daily] 수집 배치 시작 — {}", today);

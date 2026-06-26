@@ -1,6 +1,7 @@
 package com.aaa.collector.stock.etf;
 
 import com.aaa.collector.observability.BatchMetrics;
+import com.aaa.collector.schedule.BatchCrons;
 import java.util.concurrent.atomic.AtomicBoolean;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -26,7 +27,9 @@ public class EtfRepresentativeScheduler {
     final AtomicBoolean running = new AtomicBoolean(false);
 
     /** 매주 월요일 07:50 KST (REQ-ETFSCHED-001). */
-    @Scheduled(cron = "0 50 7 * * MON", zone = "Asia/Seoul")
+    @Scheduled(
+            cron = BatchCrons.DOMESTIC_ETF_REPRESENTATIVE_CRON,
+            zone = BatchCrons.DOMESTIC_ETF_REPRESENTATIVE_ZONE)
     @SuppressWarnings("PMD.AvoidCatchingGenericException")
     public void recalculateWeekly() {
         if (!running.compareAndSet(false, true)) {

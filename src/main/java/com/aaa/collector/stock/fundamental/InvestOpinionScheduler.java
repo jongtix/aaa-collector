@@ -1,6 +1,7 @@
 package com.aaa.collector.stock.fundamental;
 
 import com.aaa.collector.observability.BatchMetrics;
+import com.aaa.collector.schedule.BatchCrons;
 import java.time.LocalDate;
 import java.time.ZoneId;
 import lombok.RequiredArgsConstructor;
@@ -37,7 +38,9 @@ public class InvestOpinionScheduler {
      * <p>예외 흡수: 수집 예외가 전파되어 스케줄러 스레드가 종료되는 것을 방지한다(REQ-BATCH4-004). 예외는 ERROR 로그로 남기고 다음 실행 때 멱등
      * 재시도한다.
      */
-    @Scheduled(cron = "0 0 18 * * MON-FRI", zone = "Asia/Seoul")
+    @Scheduled(
+            cron = BatchCrons.DOMESTIC_INVEST_OPINION_CRON,
+            zone = BatchCrons.DOMESTIC_INVEST_OPINION_ZONE)
     @SuppressWarnings("PMD.AvoidCatchingGenericException") // 스케줄러 스레드 종료 방지 — 기존 배치 스케줄러와 동일 패턴
     public void collectInvestOpinion() {
         LocalDate today = LocalDate.now(KST);

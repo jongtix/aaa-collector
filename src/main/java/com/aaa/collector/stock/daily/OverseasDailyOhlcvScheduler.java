@@ -1,6 +1,7 @@
 package com.aaa.collector.stock.daily;
 
 import com.aaa.collector.observability.BatchMetrics;
+import com.aaa.collector.schedule.BatchCrons;
 import java.time.Clock;
 import java.time.LocalDate;
 import java.time.ZoneId;
@@ -45,7 +46,7 @@ public class OverseasDailyOhlcvScheduler {
      * <p>예외 흡수: 수집·발행 단계의 예외가 전파되어 스케줄러 스레드가 종료되는 것을 방지한다(다음 실행 때 재시도). 수집 기준일은 ET 거래일이다 — KST가 아닌
      * ET로 당일 행 가드가 동작해야 cron 16:30 ET(=서버 KST 익일) 발화에서 가드가 무력화되지 않는다.
      */
-    @Scheduled(cron = "0 30 16 * * MON-FRI", zone = "America/New_York")
+    @Scheduled(cron = BatchCrons.OVERSEAS_DAILY_CRON, zone = BatchCrons.OVERSEAS_DAILY_ZONE)
     @SuppressWarnings("PMD.AvoidCatchingGenericException") // 스케줄러 스레드 종료 방지 — 국내 스케줄러와 동일 패턴
     public void collectDaily() {
         // REQ-OVOH-015: ET 거래일 기준 당일 행 가드 — clock.instant()를 ET zone으로 변환한다.

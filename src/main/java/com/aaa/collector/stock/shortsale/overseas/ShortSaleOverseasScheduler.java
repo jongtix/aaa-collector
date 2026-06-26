@@ -1,5 +1,6 @@
 package com.aaa.collector.stock.shortsale.overseas;
 
+import com.aaa.collector.schedule.BatchCrons;
 import java.time.Clock;
 import java.time.LocalDate;
 import java.time.ZoneId;
@@ -38,7 +39,7 @@ public class ShortSaleOverseasScheduler {
      * <p>Daily → Short Interest 순서로 순차 폴링한다. 수집 기준일은 ET 거래일 — KST가 아닌 ET로 산정해야 cron 10:00 ET(=서버
      * KST 익일) 발화에서 거래일이 뒤집히지 않는다. 수집 예외는 흡수하여 스케줄러 스레드 종료를 방지한다(다음 실행 때 재시도).
      */
-    @Scheduled(cron = "0 0 10 * * MON-FRI", zone = "America/New_York")
+    @Scheduled(cron = BatchCrons.OVERSEAS_SHORTSALE_CRON, zone = BatchCrons.OVERSEAS_SHORTSALE_ZONE)
     @SuppressWarnings("PMD.AvoidCatchingGenericException") // 스케줄러 스레드 종료 방지 — 기존 스케줄러와 동일 패턴
     public void collect() {
         LocalDate today = LocalDate.ofInstant(clock.instant(), ET);

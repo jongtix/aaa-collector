@@ -6,6 +6,7 @@ import com.aaa.collector.macro.MarketFundsCollectionService;
 import com.aaa.collector.market.indicator.usdkrw.UsdkrwCollectionService;
 import com.aaa.collector.market.indicator.vix.VixCollectionService;
 import com.aaa.collector.observability.BatchMetrics;
+import com.aaa.collector.schedule.BatchCrons;
 import com.aaa.collector.stock.DividendCollectionResult;
 import com.aaa.collector.stock.DividendScheduleCollectionService;
 import com.aaa.collector.stock.RevSplitCollectionResult;
@@ -69,7 +70,7 @@ public class MarketBatchScheduler {
      * <p>계측 누적 전략: 7종 결과를 collectMarket() 수준에서 합산하여 1회 recordCompletion 호출. void 반환 종(usdkrw/vix)은
      * 성공 시 +1, 예외 시 attempted+1만 증가(fail 자동 계상). REQ-OBSV-020/021.
      */
-    @Scheduled(cron = "0 0 17 * * MON-FRI", zone = "Asia/Seoul")
+    @Scheduled(cron = BatchCrons.MARKET_INDICATORS_CRON, zone = BatchCrons.MARKET_INDICATORS_ZONE)
     public void collectMarket() {
         LocalDate today = LocalDate.now(KST);
         log.info("[market-batch] 시장지표 묶음 배치 시작 — {}", today);
