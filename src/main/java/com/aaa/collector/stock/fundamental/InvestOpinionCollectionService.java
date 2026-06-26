@@ -14,7 +14,9 @@ import java.net.URI;
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -201,30 +203,36 @@ public class InvestOpinionCollectionService {
      * @return {@code int[]{rowsSaved, rowsSkipped}} — per-stock 로그 및 배치 합산에 사용 (MI-01)
      */
     private int[] saveValidRows(Stock stock, String symbol, KisInvestOpinionResponse response) {
-        int rowsSaved = 0;
+        // REQ-INSERT-009: 유효 행 누적 후 단일 배치 INSERT IGNORE (소용량)
+        List<AnalystEstimate> batch = new ArrayList<>();
         int rowsSkipped = 0;
         for (KisInvestOpinionResponse.InvestOpinionRow row : response.output()) {
-            boolean saved = insertIfValid(stock, symbol, row);
-            if (saved) {
-                rowsSaved++;
+            Optional<AnalystEstimate> entity = buildIfValid(stock, symbol, row);
+            if (entity.isPresent()) {
+                batch.add(entity.get());
             } else {
                 rowsSkipped++;
             }
         }
-        return new int[] {rowsSaved, rowsSkipped};
+        if (!batch.isEmpty()) {
+            analystEstimateInserter.insertBatch(batch);
+        }
+        return new int[] {batch.size(), rowsSkipped};
     }
 
     /**
-     * 단일 행 파싱·검증·저장을 수행한다.
+     * 단일 행 파싱·검증 후 엔티티를 반환한다.
      *
-     * @return 저장 성공 여부 ({@code false} = 검증 실패 skip)
+     * <p>REQ-INSERT-009: 누적 배치 방식으로 전환 — 여기서는 엔티티만 빌드하고 저장하지 않는다.
+     *
+     * @return 엔티티(성공) 또는 empty(검증 실패 skip)
      */
-    private boolean insertIfValid(
+    private Optional<AnalystEstimate> buildIfValid(
             Stock stock, String symbol, KisInvestOpinionResponse.InvestOpinionRow row) {
 
         if (row.stckBsopDate() == null || row.stckBsopDate().isBlank()) {
             log.warn("[invest-opinion] 검증 실패 (trade_date null) — symbol={}", symbol);
-            return false;
+            return Optional.empty();
         }
 
         LocalDate tradeDate;
@@ -235,11 +243,11 @@ public class InvestOpinionCollectionService {
                     "[invest-opinion] 검증 실패 (trade_date 파싱 불가) — symbol={}, date={}",
                     symbol,
                     row.stckBsopDate());
-            return false;
+            return Optional.empty();
         }
 
         try {
-            AnalystEstimate entity =
+            return Optional.of(
                     AnalystEstimate.builder()
                             .stock(stock)
                             .tradeDate(tradeDate)
@@ -255,9 +263,7 @@ public class InvestOpinionCollectionService {
                             .gapRateNDay(FundamentalValueParser.parseDecimal(row.ndayDprt()))
                             .gapFutures(FundamentalValueParser.parseDecimal(row.stftEsdg()))
                             .gapRateFutures(FundamentalValueParser.parseDecimal(row.dprt()))
-                            .build();
-            analystEstimateInserter.insertBatch(List.of(entity));
-            return true;
+                            .build());
         } catch (NumberFormatException | ArithmeticException e) {
             // 파싱 실패·DECIMAL 정수부 경계 초과·BIGINT 비0 소수부·long 범위 초과 → 건별 skip (REQ-BATCH4-070a)
             log.warn(
@@ -265,7 +271,7 @@ public class InvestOpinionCollectionService {
                     symbol,
                     row.stckBsopDate(),
                     e.getMessage());
-            return false;
+            return Optional.empty();
         }
     }
 }

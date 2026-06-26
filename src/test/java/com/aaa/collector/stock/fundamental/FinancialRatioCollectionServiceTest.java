@@ -296,7 +296,8 @@ class FinancialRatioCollectionServiceTest {
 
             service.collect();
 
-            verify(financialInserter, times(3)).insertBatch(any());
+            // 3행 모두 단일 배치 INSERT (AC-4 배치 통합, REQ-INSERT-009)
+            verify(financialInserter, times(1)).insertBatch(any());
         }
     }
 

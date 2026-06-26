@@ -100,6 +100,9 @@ kis:
       app-secret: ${KIS_ACCT_DC_APP_SECRET}
 
 aaa:
+  inserter:
+    # 대용량 서비스(VIX/FRED/ECOS/CorpCode) 배치 청크 크기 (REQ-INSERT-010)
+    chunk-size: 1000
   market-indicator:
     usdkrw:
       # 빈 배열 재시도 상한 (REQ-012)

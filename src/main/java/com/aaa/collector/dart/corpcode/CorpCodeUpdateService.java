@@ -1,6 +1,8 @@
 package com.aaa.collector.dart.corpcode;
 
+import com.aaa.collector.common.config.InserterProperties;
 import com.aaa.collector.dart.external.DartCorpCodeClient;
+import java.util.ArrayList;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -19,6 +21,7 @@ public class CorpCodeUpdateService {
     private final DartCorpCodeClient dartCorpCodeClient;
     private final CorpCodeMappingRepository corpCodeMappingRepository;
     private final CorpCodeMappingInserter corpCodeMappingInserter;
+    private final InserterProperties inserterProperties;
 
     /**
      * 상장사 corp_code 매핑을 전량 적재한다 (REQ-DART-002, AC-C3).
@@ -34,18 +37,23 @@ public class CorpCodeUpdateService {
             return;
         }
 
-        int count = 0;
+        // REQ-INSERT-009: 전체 매핑 누적 후 청크 분할 배치 INSERT IGNORE (REQ-INSERT-010)
+        List<CorpCodeMapping> batch = new ArrayList<>();
         for (CorpCodeEntry entry : entries) {
-            CorpCodeMapping mapping =
+            batch.add(
                     CorpCodeMapping.builder()
                             .stockCode(entry.stockCode())
                             .corpCode(entry.corpCode())
                             .corpName(entry.corpName())
                             .modifyDate(entry.modifyDate())
-                            .build();
-            corpCodeMappingInserter.insertBatch(List.of(mapping));
-            count++;
+                            .build());
         }
-        log.info("[dart-corpcode] 매핑 갱신 완료 — 처리 건수={}", count);
+
+        int chunkSize = inserterProperties.getChunkSize();
+        for (int i = 0; i < batch.size(); i += chunkSize) {
+            List<CorpCodeMapping> chunk = batch.subList(i, Math.min(i + chunkSize, batch.size()));
+            corpCodeMappingInserter.insertBatch(chunk);
+        }
+        log.info("[dart-corpcode] 매핑 갱신 완료 — 처리 건수={}", batch.size());
     }
 }

@@ -1,5 +1,6 @@
 package com.aaa.collector.macro.ecos;
 
+import com.aaa.collector.common.config.InserterProperties;
 import com.aaa.collector.macro.MacroCollectionResult;
 import com.aaa.collector.macro.MacroIndicator;
 import com.aaa.collector.macro.MacroIndicatorInserter;
@@ -8,6 +9,7 @@ import com.aaa.collector.macro.enums.MacroSource;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -52,6 +54,7 @@ public class EcosCollectionService {
     private final RestClient ecosRestClient;
     private final MacroIndicatorRepository macroIndicatorRepository;
     private final MacroIndicatorInserter macroIndicatorInserter;
+    private final InserterProperties inserterProperties;
 
     @Value("${aaa.ecos.service-key:}")
     private String serviceKey;
@@ -114,54 +117,63 @@ public class EcosCollectionService {
         }
 
         int attempted = 0;
-        int succeeded = 0;
         int skipped = 0;
 
+        // REQ-INSERT-009: 유효 행 누적 후 청크 분할 배치 INSERT IGNORE (REQ-INSERT-010)
+        List<MacroIndicator> batch = new ArrayList<>();
         for (EcosStatisticSearchResponse.Row row : response.statisticSearch().row()) {
             attempted++;
-            if (saveIfValid(series, row)) {
-                succeeded++;
+            MacroIndicator entity = buildIfValid(series, row);
+            if (entity != null) {
+                batch.add(entity);
             } else {
                 skipped++;
             }
         }
 
-        return new MacroCollectionResult(attempted, succeeded, skipped);
+        int chunkSize = inserterProperties.getChunkSize();
+        for (int i = 0; i < batch.size(); i += chunkSize) {
+            List<MacroIndicator> chunk = batch.subList(i, Math.min(i + chunkSize, batch.size()));
+            macroIndicatorInserter.insertBatch(chunk);
+        }
+
+        return new MacroCollectionResult(attempted, batch.size(), skipped);
     }
 
+    /**
+     * 행을 검증·파싱하여 엔티티를 반환한다. skip 시 null 반환.
+     *
+     * <p>REQ-INSERT-009: 누적 배치 방식으로 전환 — 여기서는 엔티티만 빌드하고 저장하지 않는다.
+     */
     @SuppressWarnings("PMD.AvoidCatchingGenericException") // 파싱 실패 graceful skip
-    private boolean saveIfValid(
+    private MacroIndicator buildIfValid(
             EcosSeriesConfig.Series series, EcosStatisticSearchResponse.Row row) {
         String time = row.time();
         String rawValue = row.dataValue();
 
         if (time == null || time.isBlank() || rawValue == null || rawValue.isBlank()) {
             log.warn("[ecos] 빈 TIME/DATA_VALUE — series={}, time={}", series.indicatorCode(), time);
-            return false;
+            return null;
         }
 
         try {
             LocalDate tradeDate = normalizeDate(series.period(), time);
             BigDecimal value = new BigDecimal(rawValue.replace(",", ""));
 
-            MacroIndicator entity =
-                    MacroIndicator.builder()
-                            .indicatorCode(series.indicatorCode())
-                            .source(MacroSource.ECOS)
-                            .tradeDate(tradeDate)
-                            .value(value)
-                            .build();
-
-            macroIndicatorInserter.insertBatch(List.of(entity));
-            return true;
+            return MacroIndicator.builder()
+                    .indicatorCode(series.indicatorCode())
+                    .source(MacroSource.ECOS)
+                    .tradeDate(tradeDate)
+                    .value(value)
+                    .build();
         } catch (Exception e) {
             log.warn(
-                    "[ecos] 파싱/저장 실패 — series={}, time={}, value={}, error={}",
+                    "[ecos] 파싱 실패 — series={}, time={}, value={}, error={}",
                     series.indicatorCode(),
                     time,
                     rawValue,
                     e.getMessage());
-            return false;
+            return null;
         }
     }
 

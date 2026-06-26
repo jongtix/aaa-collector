@@ -6,6 +6,7 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.aaa.collector.common.config.InserterProperties;
 import com.aaa.collector.dart.corpcode.CorpCodeEntry;
 import com.aaa.collector.dart.corpcode.CorpCodeMappingInserter;
 import com.aaa.collector.dart.corpcode.CorpCodeMappingRepository;
@@ -13,11 +14,11 @@ import com.aaa.collector.dart.corpcode.CorpCodeUpdateService;
 import com.aaa.collector.dart.external.DartCorpCodeClient;
 import java.time.LocalDate;
 import java.util.List;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
@@ -30,15 +31,25 @@ class CorpCodeUpdateServiceTest {
     @Mock private CorpCodeMappingRepository corpCodeMappingRepository;
     @Mock private CorpCodeMappingInserter corpCodeMappingInserter;
 
-    @InjectMocks private CorpCodeUpdateService corpCodeUpdateService;
+    private CorpCodeUpdateService corpCodeUpdateService;
+
+    @BeforeEach
+    void setUp() {
+        corpCodeUpdateService =
+                new CorpCodeUpdateService(
+                        dartCorpCodeClient,
+                        corpCodeMappingRepository,
+                        corpCodeMappingInserter,
+                        new InserterProperties());
+    }
 
     @Nested
     @DisplayName("상장사만 INSERT IGNORE")
     class ListedEntriesInsert {
 
         @Test
-        @DisplayName("상장사 2건 반환 → insertIgnore 2회 호출")
-        void twoListedEntries_callsInsertIgnoreTwice() {
+        @DisplayName("상장사 2건 반환 → insertBatch 1회 호출 (AC-4 배치 통합, REQ-INSERT-009)")
+        void twoListedEntries_callsInsertBatchOnce() {
             // Arrange
             CorpCodeEntry e1 =
                     new CorpCodeEntry("00000001", "삼성전자", "005930", LocalDate.of(2026, 1, 1));
@@ -49,8 +60,8 @@ class CorpCodeUpdateServiceTest {
             // Act
             corpCodeUpdateService.update();
 
-            // Assert
-            verify(corpCodeMappingInserter, times(2)).insertBatch(any());
+            // Assert — 2건 모두 단일 배치 (chunkSize=1000 > 2)
+            verify(corpCodeMappingInserter, times(1)).insertBatch(any());
         }
     }
 

@@ -8,6 +8,7 @@ import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.regex.Pattern;
 import lombok.RequiredArgsConstructor;
@@ -70,19 +71,25 @@ public class CompInterestCollectionService {
         }
 
         int attempted = 0;
-        int succeeded = 0;
         int skipped = 0;
 
+        // REQ-INSERT-009: 유효 행 누적 후 단일 배치 INSERT IGNORE (소용량)
+        List<MacroIndicator> batch = new ArrayList<>();
         for (KisCompInterestResponse.CompInterestRow row : response.output2()) {
             attempted++;
-            if (saveIfValid(row)) {
-                succeeded++;
+            MacroIndicator entity = buildIfValid(row);
+            if (entity != null) {
+                batch.add(entity);
             } else {
                 skipped++;
             }
         }
 
-        MacroCollectionResult result = new MacroCollectionResult(attempted, succeeded, skipped);
+        if (!batch.isEmpty()) {
+            macroIndicatorInserter.insertBatch(batch);
+        }
+
+        MacroCollectionResult result = new MacroCollectionResult(attempted, batch.size(), skipped);
         log.info(
                 "[comp-interest] 수집 완료 — attempted={}, succeeded={}, skipped={}",
                 result.attempted(),
@@ -115,7 +122,7 @@ public class CompInterestCollectionService {
         }
     }
 
-    private boolean saveIfValid(KisCompInterestResponse.CompInterestRow row) {
+    private MacroIndicator buildIfValid(KisCompInterestResponse.CompInterestRow row) {
         String bcdtCode = row.bcdtCode();
         String htsKorIsnm = row.htsKorIsnm();
         String bondMnrtPrpr = row.bondMnrtPrpr();
@@ -128,7 +135,7 @@ public class CompInterestCollectionService {
                     "[comp-interest] malformed 행 skip (hts_kor_isnm=코드패턴) — bcdtCode={}, htsKorIsnm={}",
                     bcdtCode,
                     htsKorIsnm);
-            return false;
+            return null;
         }
 
         // 2) bond_mnrt_prpr이 비숫자 → 필드 시프트 행
@@ -137,17 +144,17 @@ public class CompInterestCollectionService {
                     "[comp-interest] malformed 행 skip (bond_mnrt_prpr 비숫자) — bcdtCode={}, value={}",
                     bcdtCode,
                     bondMnrtPrpr);
-            return false;
+            return null;
         }
 
         // REQ-BATCH3-070: null 키 필드 skip
         if (bcdtCode == null || bcdtCode.isBlank()) {
             log.warn("[comp-interest] 검증 실패 (bcdtCode null) — skip");
-            return false;
+            return null;
         }
         if (stckBsopDate == null || stckBsopDate.isBlank()) {
             log.warn("[comp-interest] 검증 실패 (stckBsopDate null) — bcdtCode={}", bcdtCode);
-            return false;
+            return null;
         }
 
         try {
@@ -156,17 +163,12 @@ public class CompInterestCollectionService {
 
             // REQ-BATCH3-031: indicator_code = KIS_RATE_{bcdt_code}, % 무정규화
             String indicatorCode = INDICATOR_CODE_PREFIX + bcdtCode;
-            MacroIndicator entity =
-                    MacroIndicator.builder()
-                            .indicatorCode(indicatorCode)
-                            .source(MacroSource.KIS)
-                            .tradeDate(tradeDate)
-                            .value(value)
-                            .build();
-
-            // REQ-BATCH3-032: uk_macro_indicators 멱등 저장
-            macroIndicatorInserter.insertBatch(List.of(entity));
-            return true;
+            return MacroIndicator.builder()
+                    .indicatorCode(indicatorCode)
+                    .source(MacroSource.KIS)
+                    .tradeDate(tradeDate)
+                    .value(value)
+                    .build();
         } catch (NumberFormatException | DateTimeParseException e) {
             log.warn(
                     "[comp-interest] 파싱 실패 — bcdtCode={}, value={}, date={}, error={}",
@@ -174,7 +176,7 @@ public class CompInterestCollectionService {
                     bondMnrtPrpr,
                     stckBsopDate,
                     e.getMessage());
-            return false;
+            return null;
         }
     }
 

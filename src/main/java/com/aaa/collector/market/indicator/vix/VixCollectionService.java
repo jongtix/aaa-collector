@@ -1,5 +1,6 @@
 package com.aaa.collector.market.indicator.vix;
 
+import com.aaa.collector.common.config.InserterProperties;
 import com.aaa.collector.market.MarketIndicator;
 import com.aaa.collector.market.MarketIndicatorInserter;
 import com.aaa.collector.market.MarketIndicatorRepository;
@@ -7,6 +8,7 @@ import com.aaa.collector.market.enums.IndicatorCode;
 import com.aaa.collector.market.indicator.MarketIndicatorRow;
 import com.aaa.collector.market.indicator.MarketIndicatorSourceChain;
 import java.time.LocalDate;
+import java.util.ArrayList;
 import java.util.List;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Qualifier;
@@ -16,6 +18,9 @@ import org.springframework.stereotype.Service;
  * VIX 일봉 수집 서비스 (SPEC-COLLECTOR-MARKETIND-001, REQ-020~022).
  *
  * <p>체인 = [CBOE, FRED, Yahoo^VIX]. 행별 검증 skip(REQ-034). 종 단위 예외 흡수(REQ-003).
+ *
+ * <p>REQ-INSERT-009, REQ-INSERT-010: 유효 행을 누적한 뒤 {@code chunkSize}로 분할하여 청크마다 단일 커넥션 배치 INSERT
+ * IGNORE.
  */
 @Slf4j
 @Service
@@ -24,14 +29,17 @@ public class VixCollectionService {
     private final MarketIndicatorSourceChain vixChain;
     private final MarketIndicatorRepository marketIndicatorRepository;
     private final MarketIndicatorInserter marketIndicatorInserter;
+    private final InserterProperties inserterProperties;
 
     public VixCollectionService(
             @Qualifier("vixChain") MarketIndicatorSourceChain vixChain,
             MarketIndicatorRepository marketIndicatorRepository,
-            MarketIndicatorInserter marketIndicatorInserter) {
+            MarketIndicatorInserter marketIndicatorInserter,
+            InserterProperties inserterProperties) {
         this.vixChain = vixChain;
         this.marketIndicatorRepository = marketIndicatorRepository;
         this.marketIndicatorInserter = marketIndicatorInserter;
+        this.inserterProperties = inserterProperties;
     }
 
     /**
@@ -61,16 +69,27 @@ public class VixCollectionService {
     }
 
     private int saveRows(List<MarketIndicatorRow> rows) {
-        int count = 0;
+        // Accumulate valid rows
+        List<MarketIndicator> batch = new ArrayList<>();
         for (MarketIndicatorRow row : rows) {
             if (!isValid(row)) {
                 log.warn("[vix] 행 검증 실패 — skip: {}", row);
                 continue;
             }
-            marketIndicatorInserter.insertBatch(List.of(toEntity(row)));
-            count++;
+            batch.add(toEntity(row));
         }
-        return count;
+
+        if (batch.isEmpty()) {
+            return 0;
+        }
+
+        // REQ-INSERT-010: 대용량 배치는 chunkSize로 분할하여 청크마다 단일 커넥션 INSERT IGNORE
+        int chunkSize = inserterProperties.getChunkSize();
+        for (int i = 0; i < batch.size(); i += chunkSize) {
+            List<MarketIndicator> chunk = batch.subList(i, Math.min(i + chunkSize, batch.size()));
+            marketIndicatorInserter.insertBatch(chunk);
+        }
+        return batch.size();
     }
 
     private boolean isValid(MarketIndicatorRow row) {

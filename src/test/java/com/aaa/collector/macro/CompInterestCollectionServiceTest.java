@@ -135,7 +135,7 @@ class CompInterestCollectionServiceTest {
         }
 
         @Test
-        @DisplayName("유효 8종 행 → 8건 시도·성공·skip=0, 8회 insertIgnoreDuplicate 호출")
+        @DisplayName("유효 8종 행 → 8건 시도·성공·skip=0, insertBatch 1회 호출 (AC-4 배치 통합)")
         void stores8CleanRows_resultCounts() throws Exception {
             // Arrange
             stubGate(response(eightCleanRows()));
@@ -147,7 +147,7 @@ class CompInterestCollectionServiceTest {
             assertThat(result.attempted()).isEqualTo(8);
             assertThat(result.succeeded()).isEqualTo(8);
             assertThat(result.skipped()).isZero();
-            verify(macroIndicatorInserter, times(8)).insertBatch(any());
+            verify(macroIndicatorInserter, times(1)).insertBatch(any());
         }
 
         @Test
@@ -159,8 +159,8 @@ class CompInterestCollectionServiceTest {
             // Act
             service.collect();
 
-            // Assert
-            verify(macroIndicatorInserter, times(8)).insertBatch(inserterCaptor.capture());
+            // Assert — 1회 insertBatch 호출, 8개 엔티티 포함
+            verify(macroIndicatorInserter, times(1)).insertBatch(inserterCaptor.capture());
 
             List<MacroIndicator> saved =
                     inserterCaptor.getAllValues().stream().flatMap(List::stream).toList();
@@ -234,10 +234,10 @@ class CompInterestCollectionServiceTest {
             // Act
             MacroCollectionResult result = service.collect();
 
-            // Assert — 정확히 8개 저장, 10개 skip
+            // Assert — 정확히 8개 저장, 10개 skip; insertBatch 1회 (8개 배치)
             assertThat(result.succeeded()).isEqualTo(8);
             assertThat(result.skipped()).isEqualTo(10);
-            verify(macroIndicatorInserter, times(8)).insertBatch(any());
+            verify(macroIndicatorInserter, times(1)).insertBatch(any());
         }
 
         @Test
@@ -289,7 +289,7 @@ class CompInterestCollectionServiceTest {
     class Idempotency {
 
         @Test
-        @DisplayName("동일 행 재수집 시 insertIgnoreDuplicate 재호출 (DB가 중복 무시)")
+        @DisplayName("동일 행 재수집 시 insertBatch 재호출 (DB가 중복 무시)")
         void idempotentRerun_insertIgnoreCalledTwice() throws Exception {
             stubGate(response(List.of(cleanRow("Y0112", "3.72", "20260613"))));
 
