@@ -3,12 +3,15 @@ package com.aaa.collector.observability;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import java.sql.PreparedStatement;
+import java.sql.SQLException;
 import java.sql.SQLWarning;
+import java.util.ArrayList;
 import java.util.List;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -146,6 +149,130 @@ class SilentDropWarningCounterTest {
 
                 assertThat(drops).isZero();
                 verify(ps, times(0)).executeUpdate();
+            }
+        }
+    }
+
+    @Nested
+    @DisplayName("countDropsPerRowIsolated — 독성 행 격리, 잔여 행 계속 (REQ-INSERT-007)")
+    class CountDropsPerRowIsolated {
+
+        @Test
+        @DisplayName("독성 행(SQLException)이 있을 때 onFailure 콜백을 호출하고 잔여 행을 계속 처리한다")
+        void toxicRowCallsCallbackAndContinues() throws Exception {
+            try (PreparedStatement ps = mock(PreparedStatement.class)) {
+                // Arrange — 1행은 SQLException, 2행은 성공
+                when(ps.getWarnings()).thenReturn(null);
+
+                List<String> processed = new ArrayList<>();
+                List<String> failed = new ArrayList<>();
+
+                SilentDropWarningCounter.RowBinder<String> binder =
+                        (s, row) -> {
+                            if ("toxic".equals(row)) {
+                                throw new SQLException("Data too long", "22001", 1406);
+                            }
+                            processed.add(row);
+                            s.setString(1, row);
+                        };
+
+                RowFailureHandler<String> onFailure = (row, ex) -> failed.add(row);
+
+                // Act
+                long drops =
+                        SilentDropWarningCounter.countDropsPerRowIsolated(
+                                ps, List.of("toxic", "good1", "good2"), binder, onFailure);
+
+                // Assert — toxic 행 skip, good1/good2 처리됨
+                assertThat(failed).containsExactly("toxic");
+                assertThat(processed).containsExactly("good1", "good2");
+                assertThat(drops).isZero();
+            }
+        }
+
+        @Test
+        @DisplayName("비-1062 경고는 침묵 드롭으로 누적하고 1062는 제외한다")
+        void nonDuplicateWarningsCountedInIsolatedPath() throws Exception {
+            try (PreparedStatement ps = mock(PreparedStatement.class)) {
+                // Arrange — 1행 성공+경고 1265, 2행 성공+경고 없음
+                when(ps.getWarnings())
+                        .thenReturn(new SQLWarning("Data truncated", "01000", 1265))
+                        .thenReturn(null);
+
+                RowFailureHandler<String> onFailure = (row, ex) -> {};
+
+                // Act
+                long drops =
+                        SilentDropWarningCounter.countDropsPerRowIsolated(
+                                ps,
+                                List.of("r1", "r2"),
+                                (s, row) -> s.setString(1, row),
+                                onFailure);
+
+                // Assert
+                assertThat(drops).isEqualTo(1L);
+            }
+        }
+
+        @Test
+        @DisplayName("SQLException 발생 행에는 onFailure를 호출하고 드롭 카운트에 포함하지 않는다")
+        void sqlExceptionRowNotCountedAsDropAndCallbackInvoked() throws Exception {
+            try (PreparedStatement ps = mock(PreparedStatement.class)) {
+                List<String> failed = new ArrayList<>();
+
+                SilentDropWarningCounter.RowBinder<String> binder =
+                        (s, row) -> {
+                            if ("toxic".equals(row)) {
+                                throw new SQLException("FK violation", "23000", 1452);
+                            }
+                            s.setString(1, row);
+                        };
+
+                when(ps.getWarnings()).thenReturn(null);
+
+                RowFailureHandler<String> onFailure = (row, ex) -> failed.add(row);
+
+                long drops =
+                        SilentDropWarningCounter.countDropsPerRowIsolated(
+                                ps, List.of("toxic"), binder, onFailure);
+
+                assertThat(failed).containsExactly("toxic");
+                assertThat(drops).isZero();
+                // executeUpdate should NOT be called for the failed bind row
+                verify(ps, never()).executeUpdate();
+            }
+        }
+
+        @Test
+        @DisplayName("빈 목록이면 statement 미실행 + 콜백 미호출 + 0 반환")
+        void emptyListNoExecutionNoCallback() throws Exception {
+            try (PreparedStatement ps = mock(PreparedStatement.class)) {
+                List<String> failed = new ArrayList<>();
+                RowFailureHandler<String> onFailure = (row, ex) -> failed.add(row);
+
+                long drops =
+                        SilentDropWarningCounter.countDropsPerRowIsolated(
+                                ps, List.<String>of(), (s, row) -> s.setString(1, row), onFailure);
+
+                assertThat(drops).isZero();
+                assertThat(failed).isEmpty();
+                verify(ps, never()).executeUpdate();
+            }
+        }
+
+        @Test
+        @DisplayName("1062 경고만 있는 성공 행은 드롭으로 세지 않는다")
+        void duplicateOnlyWarningNotCountedInIsolatedPath() throws Exception {
+            try (PreparedStatement ps = mock(PreparedStatement.class)) {
+                when(ps.getWarnings()).thenReturn(new SQLWarning("Duplicate", "23000", 1062));
+
+                RowFailureHandler<String> onFailure = (row, ex) -> {};
+
+                long drops =
+                        SilentDropWarningCounter.countDropsPerRowIsolated(
+                                ps, List.of("r1"), (s, row) -> s.setString(1, row), onFailure);
+
+                assertThat(drops).isZero();
             }
         }
     }

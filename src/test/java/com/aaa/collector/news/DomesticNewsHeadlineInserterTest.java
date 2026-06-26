@@ -6,6 +6,7 @@ import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import com.aaa.collector.observability.BatchMetrics;
+import com.aaa.collector.observability.RowFailureHandler;
 import java.time.LocalDateTime;
 import java.util.List;
 import org.junit.jupiter.api.DisplayName;
@@ -76,6 +77,37 @@ class DomesticNewsHeadlineInserterTest {
             inserter.insertBatch(List.of(entity()));
 
             verify(batchMetrics).recordSilentDrops(0L);
+        }
+    }
+
+    @Nested
+    @DisplayName("insertBatchIsolated — 격리 삽입 (REQ-INSERT-008)")
+    class InsertBatchIsolated {
+
+        @Test
+        @DisplayName("빈 목록 — JDBC·메트릭 미사용")
+        void emptyRows_noJdbcNoMetric() {
+            DomesticNewsHeadlineInserter inserter =
+                    new DomesticNewsHeadlineInserter(jdbcTemplate, batchMetrics);
+            RowFailureHandler<DomesticNewsHeadline> onFailure = (row, ex) -> {};
+
+            inserter.insertBatchIsolated(List.of(), onFailure);
+
+            verifyNoInteractions(jdbcTemplate);
+            verifyNoInteractions(batchMetrics);
+        }
+
+        @Test
+        @DisplayName("execute가 드롭 수를 반환하면 BatchMetrics에 그대로 기록")
+        void drops_recorded() {
+            DomesticNewsHeadlineInserter inserter =
+                    new DomesticNewsHeadlineInserter(jdbcTemplate, batchMetrics);
+            when(jdbcTemplate.execute(any(ConnectionCallback.class))).thenReturn(1L);
+            RowFailureHandler<DomesticNewsHeadline> onFailure = (row, ex) -> {};
+
+            inserter.insertBatchIsolated(List.of(entity()), onFailure);
+
+            verify(batchMetrics).recordSilentDrops(1L);
         }
     }
 }
