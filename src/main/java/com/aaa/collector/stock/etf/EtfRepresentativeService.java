@@ -9,15 +9,11 @@ import com.aaa.collector.stock.grade.GradeCacheRepository;
 import com.aaa.collector.stock.grade.GradeClassifier;
 import com.aaa.collector.stock.grade.GradeInput;
 import com.aaa.collector.stock.grade.StockGradeRepository;
-import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.time.ZonedDateTime;
-import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
-import java.util.Optional;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -116,13 +112,11 @@ public class EtfRepresentativeService {
             return Map.of();
         }
         List<Object[]> results = dailyOhlcvRepository.findAdtvByStockIds(stockIds);
-        Map<Long, Double> map = new ConcurrentHashMap<>();
-        for (Object[] row : results) {
-            Long stockId = ((Number) row[0]).longValue();
-            Double adtv = row[1] != null ? ((Number) row[1]).doubleValue() : 0.0;
-            map.put(stockId, adtv);
-        }
-        return map;
+        return results.stream()
+                .collect(
+                        Collectors.toMap(
+                                row -> ((Number) row[0]).longValue(),
+                                row -> row[1] != null ? ((Number) row[1]).doubleValue() : 0.0));
     }
 
     private void processGroup(
@@ -174,7 +168,7 @@ public class EtfRepresentativeService {
     private List<EtfMetadata> filterCandidates(String groupKey, List<EtfMetadata> groupMetadata) {
         return groupMetadata.stream()
                 .filter(meta -> !isExcluded(groupKey, meta))
-                .collect(Collectors.toCollection(ArrayList::new));
+                .collect(Collectors.toList());
     }
 
     private boolean isExcluded(String groupKey, EtfMetadata meta) {
@@ -220,13 +214,17 @@ public class EtfRepresentativeService {
 
     private void upsertGrade(Stock stock, Grade grade) {
         ZonedDateTime now = ZonedDateTime.now(KST);
-        Optional<StockGrade> existing = stockGradeRepository.findByStock(stock);
-        if (existing.isPresent()) {
-            existing.get().updateGrade(grade.name(), now);
-        } else {
-            stockGradeRepository.save(
-                    StockGrade.builder().stock(stock).grade(grade.name()).gradedAt(now).build());
-        }
+        stockGradeRepository
+                .findByStock(stock)
+                .ifPresentOrElse(
+                        sg -> sg.updateGrade(grade.name(), now),
+                        () ->
+                                stockGradeRepository.save(
+                                        StockGrade.builder()
+                                                .stock(stock)
+                                                .grade(grade.name())
+                                                .gradedAt(now)
+                                                .build()));
         gradeCacheRepository.save(stock.getSymbol(), grade, now);
         if (log.isDebugEnabled()) {
             log.debug("Grade upserted — symbol={}, grade={}", stock.getSymbol(), grade);
@@ -234,27 +232,29 @@ public class EtfRepresentativeService {
     }
 
     private void recordHistoryIfChanged(String groupKey, Stock newRepresentative) {
-        Optional<EtfRepresentativeHistory> latest =
-                historyRepository.findLatestByGroupKey(groupKey);
+        historyRepository
+                .findLatestByGroupKey(groupKey)
+                .ifPresentOrElse(
+                        latest -> {
+                            if (!latest.getStock().getId().equals(newRepresentative.getId())) {
+                                saveHistoryEntry(groupKey, newRepresentative, latest.getStock());
+                            }
+                        },
+                        () -> saveHistoryEntry(groupKey, newRepresentative, null));
+    }
 
-        boolean changed =
-                latest.map(h -> !h.getStock().getId().equals(newRepresentative.getId()))
-                        .orElse(true);
-
-        if (changed) {
-            Stock prevStock = latest.map(EtfRepresentativeHistory::getStock).orElse(null);
-            historyRepository.save(
-                    EtfRepresentativeHistory.builder()
-                            .groupKey(groupKey)
-                            .stock(newRepresentative)
-                            .prevStock(prevStock)
-                            .effectiveFrom(LocalDateTime.now())
-                            .build());
-            log.info(
-                    "ETF representative changed — groupKey={}, new={}, prev={}",
-                    groupKey,
-                    newRepresentative.getSymbol(),
-                    prevStock != null ? prevStock.getSymbol() : "none");
-        }
+    private void saveHistoryEntry(String groupKey, Stock newRepresentative, Stock prevStock) {
+        historyRepository.save(
+                EtfRepresentativeHistory.builder()
+                        .groupKey(groupKey)
+                        .stock(newRepresentative)
+                        .prevStock(prevStock)
+                        .effectiveFrom(ZonedDateTime.now(KST).toLocalDateTime())
+                        .build());
+        log.info(
+                "ETF representative changed — groupKey={}, new={}, prev={}",
+                groupKey,
+                newRepresentative.getSymbol(),
+                prevStock != null ? prevStock.getSymbol() : "none");
     }
 }
