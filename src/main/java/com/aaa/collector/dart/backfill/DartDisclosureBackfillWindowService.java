@@ -3,6 +3,7 @@ package com.aaa.collector.dart.backfill;
 import com.aaa.collector.backfill.BackfillStatus;
 import com.aaa.collector.backfill.BackfillStatusRepository;
 import com.aaa.collector.dart.corpcode.CorpCodeMappingRepository;
+import com.aaa.collector.dart.disclosure.DisclosureInserter;
 import com.aaa.collector.dart.disclosure.DisclosureRepository;
 import com.aaa.collector.dart.disclosure.DisclosureRow;
 import com.aaa.collector.dart.external.DartDisclosureClient;
@@ -33,6 +34,7 @@ public class DartDisclosureBackfillWindowService {
 
     private final DartDisclosureClient dartDisclosureClient;
     private final DisclosureRepository disclosureRepository;
+    private final DisclosureInserter disclosureInserter;
     private final CorpCodeMappingRepository corpCodeMappingRepository;
     private final BackfillStatusRepository backfillStatusRepository;
 
@@ -86,7 +88,7 @@ public class DartDisclosureBackfillWindowService {
             if (rceptDt == null) {
                 continue;
             }
-            disclosureRepository.insertIgnore(toRow(stockId, item, rceptDt));
+            disclosureInserter.insertBatch(List.of(toRow(stockId, item, rceptDt)));
             inserted++;
         }
 

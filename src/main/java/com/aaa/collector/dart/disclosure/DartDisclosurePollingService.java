@@ -31,6 +31,7 @@ public class DartDisclosurePollingService {
 
     private final DartDisclosureClient dartDisclosureClient;
     private final DisclosureRepository disclosureRepository;
+    private final DisclosureInserter disclosureInserter;
     private final StockRepository stockRepository;
     private final BatchMetrics batchMetrics;
 
@@ -95,7 +96,8 @@ public class DartDisclosurePollingService {
             }
 
             try {
-                disclosureRepository.insertIgnore(toRow(stock.getId(), stockCode, item, rceptDt));
+                disclosureInserter.insertBatch(
+                        List.of(toRow(stock.getId(), stockCode, item, rceptDt)));
                 successCount++;
             } catch (Exception e) {
                 log.warn(

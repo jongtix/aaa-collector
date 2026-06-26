@@ -7,6 +7,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.aaa.collector.dart.corpcode.CorpCodeEntry;
+import com.aaa.collector.dart.corpcode.CorpCodeMappingInserter;
 import com.aaa.collector.dart.corpcode.CorpCodeMappingRepository;
 import com.aaa.collector.dart.corpcode.CorpCodeUpdateService;
 import com.aaa.collector.dart.external.DartCorpCodeClient;
@@ -27,6 +28,7 @@ class CorpCodeUpdateServiceTest {
 
     @Mock private DartCorpCodeClient dartCorpCodeClient;
     @Mock private CorpCodeMappingRepository corpCodeMappingRepository;
+    @Mock private CorpCodeMappingInserter corpCodeMappingInserter;
 
     @InjectMocks private CorpCodeUpdateService corpCodeUpdateService;
 
@@ -48,7 +50,7 @@ class CorpCodeUpdateServiceTest {
             corpCodeUpdateService.update();
 
             // Assert
-            verify(corpCodeMappingRepository, times(2)).insertIgnore(any(), any(), any(), any());
+            verify(corpCodeMappingInserter, times(2)).insertBatch(any());
         }
     }
 
@@ -63,7 +65,7 @@ class CorpCodeUpdateServiceTest {
 
             corpCodeUpdateService.update();
 
-            verify(corpCodeMappingRepository, never()).insertIgnore(any(), any(), any(), any());
+            verify(corpCodeMappingInserter, never()).insertBatch(any());
         }
     }
 }

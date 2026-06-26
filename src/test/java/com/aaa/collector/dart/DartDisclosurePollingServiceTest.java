@@ -9,6 +9,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.aaa.collector.dart.disclosure.DartDisclosurePollingService;
+import com.aaa.collector.dart.disclosure.DisclosureInserter;
 import com.aaa.collector.dart.disclosure.DisclosureRepository;
 import com.aaa.collector.dart.disclosure.DisclosureRow;
 import com.aaa.collector.dart.external.DartDisclosureClient;
@@ -23,6 +24,7 @@ import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
+import org.mockito.Captor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -39,9 +41,13 @@ class DartDisclosurePollingServiceTest {
 
     @Mock private DisclosureRepository disclosureRepository;
 
+    @Mock private DisclosureInserter disclosureInserter;
+
     @Mock private StockRepository stockRepository;
 
     @Mock private BatchMetrics batchMetrics;
+
+    @Captor private ArgumentCaptor<List<DisclosureRow>> inserterCaptor;
 
     @InjectMocks private DartDisclosurePollingService pollingService;
 
@@ -75,9 +81,12 @@ class DartDisclosurePollingServiceTest {
             pollingService.poll();
 
             // Assert — DisclosureRow 파라미터 캡처 후 필드 검증
-            ArgumentCaptor<DisclosureRow> captor = ArgumentCaptor.forClass(DisclosureRow.class);
-            verify(disclosureRepository).insertIgnore(captor.capture());
-            DisclosureRow captured = captor.getValue();
+            verify(disclosureInserter).insertBatch(inserterCaptor.capture());
+            DisclosureRow captured =
+                    inserterCaptor.getAllValues().stream()
+                            .flatMap(List::stream)
+                            .findFirst()
+                            .orElseThrow();
             assertThat(captured.stockId()).isEqualTo(10L);
             assertThat(captured.stockCode()).isEqualTo("005930");
             assertThat(captured.rceptNo()).isEqualTo("20260601000001");
@@ -97,7 +106,7 @@ class DartDisclosurePollingServiceTest {
             pollingService.poll();
 
             // Assert
-            verify(disclosureRepository, never()).insertIgnore(any(DisclosureRow.class));
+            verify(disclosureInserter, never()).insertBatch(any());
         }
 
         @Test
@@ -113,7 +122,7 @@ class DartDisclosurePollingServiceTest {
             pollingService.poll();
 
             // Assert
-            verify(disclosureRepository, never()).insertIgnore(any(DisclosureRow.class));
+            verify(disclosureInserter, never()).insertBatch(any());
         }
 
         @Test

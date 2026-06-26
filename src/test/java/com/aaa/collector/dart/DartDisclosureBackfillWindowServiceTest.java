@@ -10,8 +10,8 @@ import com.aaa.collector.backfill.BackfillStatus;
 import com.aaa.collector.backfill.BackfillStatusRepository;
 import com.aaa.collector.dart.backfill.DartDisclosureBackfillWindowService;
 import com.aaa.collector.dart.corpcode.CorpCodeMappingRepository;
+import com.aaa.collector.dart.disclosure.DisclosureInserter;
 import com.aaa.collector.dart.disclosure.DisclosureRepository;
-import com.aaa.collector.dart.disclosure.DisclosureRow;
 import com.aaa.collector.dart.external.DartDisclosureClient;
 import com.aaa.collector.dart.external.DartListResponse;
 import java.time.LocalDate;
@@ -36,6 +36,7 @@ class DartDisclosureBackfillWindowServiceTest {
 
     @Mock private DartDisclosureClient dartDisclosureClient;
     @Mock private DisclosureRepository disclosureRepository;
+    @Mock private DisclosureInserter disclosureInserter;
     @Mock private CorpCodeMappingRepository corpCodeMappingRepository;
     @Mock private BackfillStatusRepository backfillStatusRepository;
 
@@ -75,7 +76,7 @@ class DartDisclosureBackfillWindowServiceTest {
             // Assert
             verify(backfillStatusRepository)
                     .updateError(eq(1L), eq("IN_PROGRESS"), eq("corp_code 매핑 없음: " + SYMBOL));
-            verify(disclosureRepository, never()).insertIgnore(any(DisclosureRow.class));
+            verify(disclosureInserter, never()).insertBatch(any());
         }
     }
 
@@ -124,7 +125,7 @@ class DartDisclosureBackfillWindowServiceTest {
             windowService.executeWindow(status, STOCK_ID, SYMBOL);
 
             // Assert
-            verify(disclosureRepository).insertIgnore(any(DisclosureRow.class));
+            verify(disclosureInserter).insertBatch(any());
             verify(backfillStatusRepository)
                     .updateProgress(eq(1L), eq("IN_PROGRESS"), eq(expectedBgnDe), eq(0), eq(1));
         }
@@ -150,7 +151,7 @@ class DartDisclosureBackfillWindowServiceTest {
             windowService.executeWindow(status, STOCK_ID, SYMBOL);
 
             // Assert — 일치하는 1건만 삽입
-            verify(disclosureRepository).insertIgnore(any(DisclosureRow.class));
+            verify(disclosureInserter).insertBatch(any());
         }
     }
 }

@@ -18,6 +18,7 @@ public class CorpCodeUpdateService {
 
     private final DartCorpCodeClient dartCorpCodeClient;
     private final CorpCodeMappingRepository corpCodeMappingRepository;
+    private final CorpCodeMappingInserter corpCodeMappingInserter;
 
     /**
      * 상장사 corp_code 매핑을 전량 적재한다 (REQ-DART-002, AC-C3).
@@ -35,8 +36,14 @@ public class CorpCodeUpdateService {
 
         int count = 0;
         for (CorpCodeEntry entry : entries) {
-            corpCodeMappingRepository.insertIgnore(
-                    entry.stockCode(), entry.corpCode(), entry.corpName(), entry.modifyDate());
+            CorpCodeMapping mapping =
+                    CorpCodeMapping.builder()
+                            .stockCode(entry.stockCode())
+                            .corpCode(entry.corpCode())
+                            .corpName(entry.corpName())
+                            .modifyDate(entry.modifyDate())
+                            .build();
+            corpCodeMappingInserter.insertBatch(List.of(mapping));
             count++;
         }
         log.info("[dart-corpcode] 매핑 갱신 완료 — 처리 건수={}", count);
