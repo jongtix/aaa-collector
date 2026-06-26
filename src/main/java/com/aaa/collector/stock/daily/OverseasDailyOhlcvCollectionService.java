@@ -7,7 +7,6 @@ import com.aaa.collector.kis.gate.KeyLeaseRegistry;
 import com.aaa.collector.kis.gate.KeyLeaseRegistry.LeaseSession;
 import com.aaa.collector.kis.gate.NoHealthyKeyException;
 import com.aaa.collector.kis.token.KisTokenIssueException;
-import com.aaa.collector.stock.DailyOhlcvRepository;
 import com.aaa.collector.stock.Stock;
 import com.aaa.collector.stock.StockRepository;
 import java.math.BigDecimal;
@@ -18,6 +17,7 @@ import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Optional;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -51,6 +51,9 @@ import org.springframework.web.util.UriBuilder;
  * KeyLeaseRegistry#openSession()}으로 per-batch 헬스 스냅샷을 1회 고정(REQ-KISGATE-006a)하고, 종목별 게이트 호출이 그 세션에서
  * least-busy 키를 동적 lease한다 (SPEC-COLLECTOR-KISGATE-001 REQ-KISGATE-001,-020). 모든 키 죽음·graceful skip
  * 종단 동작은 국내(BATCH-001)와 동일하게 보존한다(REQ-KISGATE-024, REQ-KISGATE-022).
+ *
+ * <p>REQ-INSERT-005: {@link #keepValidRows}에서 행별 파싱을 1회만 수행하여 {@link ParsedOhlcvRow}로 수집하고, {@link
+ * WarningCountingOhlcvInserter#insertBatch(Long, List)}로 단일 커넥션 배치 INSERT IGNORE 수행 (W-2 불변식).
  */
 @Slf4j
 @Service
@@ -83,9 +86,9 @@ public class OverseasDailyOhlcvCollectionService {
     private static final int ZDIV_MAX = 4;
 
     private final StockRepository stockRepository;
-    private final DailyOhlcvRepository dailyOhlcvRepository;
     private final GuardedKisExecutor guardedKisExecutor;
     private final KeyLeaseRegistry keyLeaseRegistry;
+    private final WarningCountingOhlcvInserter ohlcvInserter;
 
     /**
      * 미국 일봉 수집을 실행하고 집계 결과를 반환한다.
@@ -190,13 +193,6 @@ public class OverseasDailyOhlcvCollectionService {
     /**
      * 백필용 윈도우 1구간 수집 — 당일 수집과 동일한 EXCD 라우팅·검증·INSERT IGNORE 경로를 재사용한다 (REQ-BACKFILL-002).
      *
-     * <p>당일 경로({@link #collect(LocalDate)})와 차이는 두 가지뿐이다: (1) {@code anchor}({@code BYMD})를 호출자가 직접
-     * 지정해 과거 100영업일 윈도우를 받을 수 있고(REQ-BACKFILL-013a — 해외는 anchor 전진만으로 충분), (2) 종료 판정 입력인 {@link
-     * BackfillWindowResult}를 반환한다. ET 당일 행 가드({@link #isEtToday})는 anchor 기준 그대로 적용되며, 백필 anchor는
-     * 과거일이라 반환 행이 anchor보다 과거이므로 가드가 자연히 발동하지 않는다.
-     *
-     * <p>EXCD 미매핑·예외는 호출자(T6)가 상태 전이로 처리하도록 전파한다.
-     *
      * @param stock 백필 대상 미국 종목 (활성, REQ-BACKFILL-006)
      * @param session 호출자가 1회 고정한 per-run 헬스 스냅샷 세션
      * @param anchor 윈도우 기준일 ({@code BYMD})
@@ -216,18 +212,16 @@ public class OverseasDailyOhlcvCollectionService {
             return BackfillWindowResult.EMPTY;
         }
 
-        List<KisOverseasDailyOhlcvResponse.OverseasDailyOhlcvRow> kept =
-                keepAndInsertRows(stock, symbol, response, anchor);
+        List<ParsedOhlcvRow> kept = keepAndInsertRows(stock, symbol, response, anchor);
         if (kept.isEmpty()) {
             return BackfillWindowResult.EMPTY;
         }
-        // 이미 검증·적재된 행에서 최소 거래일을 도출한다(2차 재파싱 없음) — xymd(yyyyMMdd)는 사전식=연대순.
-        String oldest =
+        LocalDate oldest =
                 kept.stream()
-                        .map(KisOverseasDailyOhlcvResponse.OverseasDailyOhlcvRow::xymd)
+                        .map(ParsedOhlcvRow::tradeDate)
                         .min(Comparator.naturalOrder())
                         .orElseThrow();
-        return new BackfillWindowResult(LocalDate.parse(oldest, DATE_FMT), kept.size());
+        return new BackfillWindowResult(oldest, kept.size());
     }
 
     private KisOverseasDailyOhlcvResponse fetch(
@@ -275,42 +269,39 @@ public class OverseasDailyOhlcvCollectionService {
     }
 
     /**
-     * [T3] fetch 경로 전용 — ET 당일 행 제외·검증만 수행하고 INSERT하지 않는다.
+     * ET 당일 행 제외·검증 통과 행 목록을 반환한다 (REQ-INSERT-005, W-1 불변식).
      *
-     * <p>{@link #fetchWindow}가 사용하는 순수 검증 경로. {@link #keepAndInsertRows}는 이 결과에 적재를
-     * 추가한다(REQ-BACKFILL-002). 호출자는 빈응답·zdiv 가드를 사전에 통과시킨 뒤 호출한다.
+     * <p>파싱을 1회만 수행하여 {@link ParsedOhlcvRow}로 수집한다 — 이미 파싱된 값을 후속 단계가 재사용한다.
      *
-     * @return 검증 통과 행 목록 (없으면 빈 목록)
+     * @return 검증 통과 ParsedOhlcvRow 목록 (없으면 빈 목록)
      */
-    private List<KisOverseasDailyOhlcvResponse.OverseasDailyOhlcvRow> keepValidRows(
+    private List<ParsedOhlcvRow> keepValidRows(
             String symbol, KisOverseasDailyOhlcvResponse response, LocalDate today) {
-        List<KisOverseasDailyOhlcvResponse.OverseasDailyOhlcvRow> kept = new ArrayList<>();
+        List<ParsedOhlcvRow> kept = new ArrayList<>();
         for (KisOverseasDailyOhlcvResponse.OverseasDailyOhlcvRow row : response.output2()) {
             if (isEtToday(row.xymd(), today)) {
                 continue;
             }
-            if (!isValid(symbol, row)) {
-                continue;
-            }
-            kept.add(row);
+            Optional<ParsedOhlcvRow> parsed = isValid(symbol, row);
+            parsed.ifPresent(kept::add);
         }
         return kept;
     }
 
     /**
-     * ET 당일 행 제외·검증 통과 행을 멱등 적재하고, 적재한 행 목록을 반환한다(REQ-OVOH-015, -012).
+     * ET 당일 행 제외·검증 통과 행을 파싱 후 단일 커넥션 배치 INSERT IGNORE로 멱등 적재하고 행 목록을 반환한다 (REQ-INSERT-005, W-2
+     * 불변식).
      *
-     * <p>당일 경로({@link #saveValidRows})는 반환값을 무시하고, 백필 경로({@link #collectWindow})는 최소 거래일·행 수 도출에
-     * 사용한다 — 동일 ET 가드·검증·적재 경로를 공유한다(REQ-BACKFILL-002). 호출자는 빈응답·zdiv 가드를 사전에 통과시킨 뒤 호출한다.
+     * <p>당일 경로는 반환값을 무시하고, 백필 경로는 최소 거래일·행 수 도출에 사용한다(REQ-BACKFILL-002).
      *
-     * @return 적재한 행 목록 (없으면 빈 목록)
+     * @return 적재한 ParsedOhlcvRow 목록 (없으면 빈 목록)
      */
-    private List<KisOverseasDailyOhlcvResponse.OverseasDailyOhlcvRow> keepAndInsertRows(
+    private List<ParsedOhlcvRow> keepAndInsertRows(
             Stock stock, String symbol, KisOverseasDailyOhlcvResponse response, LocalDate today) {
-        List<KisOverseasDailyOhlcvResponse.OverseasDailyOhlcvRow> kept =
-                keepValidRows(symbol, response, today);
-        for (KisOverseasDailyOhlcvResponse.OverseasDailyOhlcvRow row : kept) {
-            insertRow(stock, row);
+        List<ParsedOhlcvRow> kept = keepValidRows(symbol, response, today);
+        if (!kept.isEmpty()) {
+            // REQ-INSERT-005: 단일 커넥션 배치 INSERT IGNORE — 커넥션 1회 (W-2 불변식)
+            ohlcvInserter.insertBatch(stock.getId(), kept);
         }
         return kept;
     }
@@ -318,10 +309,7 @@ public class OverseasDailyOhlcvCollectionService {
     /**
      * [T3] fetch 단계 — HTTP 호출·빈응답/zdiv 가드·ET 당일 제외·검증을 수행하고 INSERT하지 않는다.
      *
-     * <p>{@code anchor}(= BYMD)를 호출자가 직접 전달한다. 검증 통과 행과 최소 거래일을 {@link OverseasDailyOhlcvFetch}로
-     * 반환한다. DB 접촉 없음.
-     *
-     * @param anchor 윈도우 기준일 (BYMD, BackfillWindowExecutor가 resolveStatusForFetch로 계산해서 전달)
+     * @param anchor 윈도우 기준일 (BYMD)
      * @param stock 백필 대상 미국 종목
      * @param session 호출자가 고정한 per-run 헬스 스냅샷 세션
      * @return 검증 통과 행 목록 + 최소 거래일 + 행 수 (없으면 rows=빈목록, oldestTradeDate=null, rowCount=0)
@@ -342,23 +330,22 @@ public class OverseasDailyOhlcvCollectionService {
             return new OverseasDailyOhlcvFetch(List.of(), null, 0);
         }
 
-        List<KisOverseasDailyOhlcvResponse.OverseasDailyOhlcvRow> kept =
-                keepValidRows(symbol, response, anchor);
+        List<ParsedOhlcvRow> kept = keepValidRows(symbol, response, anchor);
         if (kept.isEmpty()) {
             return new OverseasDailyOhlcvFetch(List.of(), null, 0);
         }
-        String oldest =
+        LocalDate oldest =
                 kept.stream()
-                        .map(KisOverseasDailyOhlcvResponse.OverseasDailyOhlcvRow::xymd)
+                        .map(ParsedOhlcvRow::tradeDate)
                         .min(Comparator.naturalOrder())
                         .orElseThrow();
-        return new OverseasDailyOhlcvFetch(kept, LocalDate.parse(oldest, DATE_FMT), kept.size());
+        return new OverseasDailyOhlcvFetch(kept, oldest, kept.size());
     }
 
     /**
      * [T3] persist 단계 — {@link OverseasDailyOhlcvFetch}의 행을 INSERT IGNORE로 적재한다.
      *
-     * <p>@Transactional 없음 — 트랜잭션은 {@code BackfillWindowExecutor}(T7)가 소유한다(REQ-TXBOUNDARY-002).
+     * <p>REQ-INSERT-005: ParsedOhlcvRow를 직접 바인딩 — 추가 파싱 없음 (W-1 불변식).
      *
      * @param stock 백필 대상 종목
      * @param fetch fetchWindow가 반환한 DTO
@@ -376,9 +363,7 @@ public class OverseasDailyOhlcvCollectionService {
             }
             return BackfillWindowResult.EMPTY;
         }
-        for (KisOverseasDailyOhlcvResponse.OverseasDailyOhlcvRow row : fetch.rows()) {
-            insertRow(stock, row);
-        }
+        ohlcvInserter.insertBatch(stock.getId(), fetch.rows());
         return new BackfillWindowResult(fetch.oldestTradeDate(), fetch.rowCount());
     }
 
@@ -396,36 +381,12 @@ public class OverseasDailyOhlcvCollectionService {
         return today.format(DATE_FMT).equals(xymd);
     }
 
-    private void insertRow(Stock stock, KisOverseasDailyOhlcvResponse.OverseasDailyOhlcvRow row) {
-        BigDecimal open = new BigDecimal(row.open());
-        BigDecimal high = new BigDecimal(row.high());
-        BigDecimal low = new BigDecimal(row.low());
-        BigDecimal close = new BigDecimal(row.clos());
-        long volume = Long.parseLong(row.tvol());
-        long tradingValue = Long.parseLong(row.tamt());
-
-        dailyOhlcvRepository.insertIgnoreDuplicate(
-                stock.getId(),
-                LocalDate.parse(row.xymd(), DATE_FMT),
-                open,
-                high,
-                low,
-                close,
-                volume,
-                tradingValue);
-    }
-
     /**
-     * 일봉 행 검증 규칙 (REQ-OVOH-012, MA-01).
+     * 일봉 행 검증 규칙 (REQ-OVOH-012, MA-01, REQ-INSERT-005).
      *
-     * <ul>
-     *   <li>가격(clos/open/high/low) ≤ 0 또는 > USD 100,000 → invalid(상·하한 양방).
-     *   <li>거래량(tvol)·거래대금(tamt) ≤ 0 → invalid. <b>상한 가드 없음</b> — 미국 대형주·ETF의 정상 거래대금이 국내 스케일을 정당하게
-     *       초과한다(AAPL tamt=1.27e10).
-     *   <li>null / 숫자 파싱 실패 → invalid.
-     * </ul>
+     * <p>파싱 성공 시 파싱된 값을 담은 {@link ParsedOhlcvRow}를 반환 — 1회 파싱, 재사용 (W-1 불변식).
      */
-    private boolean isValid(
+    private Optional<ParsedOhlcvRow> isValid(
             String symbol, KisOverseasDailyOhlcvResponse.OverseasDailyOhlcvRow row) {
         try {
             BigDecimal close = new BigDecimal(row.clos());
@@ -455,9 +416,11 @@ public class OverseasDailyOhlcvCollectionService {
                         row.low(),
                         row.tvol(),
                         row.tamt());
-                return false;
+                return Optional.empty();
             }
-            return true;
+            LocalDate tradeDate = LocalDate.parse(row.xymd(), DATE_FMT);
+            return Optional.of(
+                    new ParsedOhlcvRow(tradeDate, open, high, low, close, volume, tradingValue));
         } catch (NumberFormatException e) {
             log.warn(
                     "[overseas-daily] 숫자 파싱 실패 (데이터 유실) — symbol={}, date={}, clos={}, open={}, high={}, low={}, tvol={}, tamt={}",
@@ -469,7 +432,7 @@ public class OverseasDailyOhlcvCollectionService {
                     row.low(),
                     row.tvol(),
                     row.tamt());
-            return false;
+            return Optional.empty();
         }
     }
 

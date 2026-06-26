@@ -22,11 +22,11 @@ import com.aaa.collector.kis.gate.KeyLeaseRegistry.LeaseSession;
 import com.aaa.collector.kis.token.HealthyKeySelector;
 import com.aaa.collector.kis.token.KisAccountCredential;
 import com.aaa.collector.kis.token.KisTokenIssueException;
-import com.aaa.collector.stock.DailyOhlcvRepository;
 import com.aaa.collector.stock.Stock;
 import com.aaa.collector.stock.StockRepository;
 import com.aaa.collector.stock.enums.AssetType;
 import com.aaa.collector.stock.enums.Market;
+import java.math.BigDecimal;
 import java.net.URI;
 import java.time.LocalDate;
 import java.util.List;
@@ -66,9 +66,9 @@ class OverseasDailyOhlcvCollectionServiceTest {
     private static final String PREV_YMD = "20260617";
 
     @Mock private StockRepository stockRepository;
-    @Mock private DailyOhlcvRepository dailyOhlcvRepository;
     @Mock private GuardedKisExecutor guardedKisExecutor;
     @Mock private HealthyKeySelector healthyKeySelector;
+    @Mock private WarningCountingOhlcvInserter ohlcvInserter;
 
     private OverseasDailyOhlcvCollectionService service;
 
@@ -79,10 +79,7 @@ class OverseasDailyOhlcvCollectionServiceTest {
         KeyLeaseRegistry keyLeaseRegistry = new KeyLeaseRegistry(healthyKeySelector);
         service =
                 new OverseasDailyOhlcvCollectionService(
-                        stockRepository,
-                        dailyOhlcvRepository,
-                        guardedKisExecutor,
-                        keyLeaseRegistry);
+                        stockRepository, guardedKisExecutor, keyLeaseRegistry, ohlcvInserter);
     }
 
     private Stock stockOf(String symbol, Market market, AssetType assetType) {
@@ -401,17 +398,14 @@ class OverseasDailyOhlcvCollectionServiceTest {
             // Act
             service.collect(TODAY);
 
-            // Assert — reject되지 않고 정상 저장
-            verify(dailyOhlcvRepository, times(1))
-                    .insertIgnoreDuplicate(
-                            any(),
-                            any(),
-                            any(),
-                            any(),
-                            any(),
-                            any(),
-                            eq(42_745_060L),
-                            eq(12_697_950_974L));
+            // Assert — reject되지 않고 정상 저장 (ParsedOhlcvRow 캡처로 tvol/tamt 검증)
+            @SuppressWarnings("unchecked")
+            ArgumentCaptor<List<ParsedOhlcvRow>> captor = ArgumentCaptor.forClass(List.class);
+            verify(ohlcvInserter, times(1)).insertBatch(any(), captor.capture());
+            assertThat(captor.getValue()).hasSize(1);
+            ParsedOhlcvRow saved = captor.getValue().get(0);
+            assertThat(saved.volume()).isEqualTo(42_745_060L);
+            assertThat(saved.tradingValue()).isEqualTo(12_697_950_974L);
         }
     }
 
@@ -438,16 +432,7 @@ class OverseasDailyOhlcvCollectionServiceTest {
 
             CollectionResult result = service.collect(TODAY);
 
-            verify(dailyOhlcvRepository, times(1))
-                    .insertIgnoreDuplicate(
-                            any(),
-                            any(),
-                            any(),
-                            any(),
-                            any(),
-                            any(),
-                            any(Long.class),
-                            any(Long.class));
+            verify(ohlcvInserter, times(1)).insertBatch(any(), any());
             assertThat(result.succeeded()).isEqualTo(1);
         }
 
@@ -507,27 +492,16 @@ class OverseasDailyOhlcvCollectionServiceTest {
             // Act
             service.collect(TODAY);
 
-            // Assert — ET 당일 행(tvol=78511) 미저장, 직전 영업일 행(tvol=42745060)만 저장
-            verify(dailyOhlcvRepository, never())
-                    .insertIgnoreDuplicate(
-                            any(),
-                            eq(LocalDate.of(2026, 6, 18)),
-                            any(),
-                            any(),
-                            any(),
-                            any(),
-                            any(Long.class),
-                            any(Long.class));
-            verify(dailyOhlcvRepository, times(1))
-                    .insertIgnoreDuplicate(
-                            any(),
-                            eq(LocalDate.of(2026, 6, 17)),
-                            any(),
-                            any(),
-                            any(),
-                            any(),
-                            eq(42_745_060L),
-                            eq(12_697_950_974L));
+            // Assert — ET 당일 행(TODAY_YMD) 미저장, 직전 영업일 행(tvol=42745060)만 저장
+            // insertBatch는 1회 호출되고, 배치에는 PREV_YMD 행만 포함 (ET today 가드로 TODAY_YMD 제외)
+            @SuppressWarnings("unchecked")
+            ArgumentCaptor<List<ParsedOhlcvRow>> captor = ArgumentCaptor.forClass(List.class);
+            verify(ohlcvInserter, times(1)).insertBatch(any(), captor.capture());
+            List<ParsedOhlcvRow> saved = captor.getValue();
+            assertThat(saved).hasSize(1);
+            assertThat(saved.get(0).tradeDate()).isEqualTo(LocalDate.of(2026, 6, 17));
+            assertThat(saved.get(0).volume()).isEqualTo(42_745_060L);
+            assertThat(saved.get(0).tradingValue()).isEqualTo(12_697_950_974L);
         }
     }
 
@@ -641,7 +615,7 @@ class OverseasDailyOhlcvCollectionServiceTest {
         }
 
         @Test
-        @DisplayName("당일 수집과 동일한 검증·INSERT IGNORE 경로 재사용 (insertIgnoreDuplicate 호출)")
+        @DisplayName("당일 수집과 동일한 검증·INSERT IGNORE 경로 재사용 (ohlcvInserter.insertBatch 호출)")
         void collectWindow_reusesValidateInsertPath() throws Exception {
             when(guardedKisExecutor.execute(
                             any(LeaseSession.class),
@@ -661,16 +635,11 @@ class OverseasDailyOhlcvCollectionServiceTest {
             service.collectWindow(
                     stockOf("AAPL", Market.NASDAQ, AssetType.STOCK), openSession(), ANCHOR);
 
-            verify(dailyOhlcvRepository, times(1))
-                    .insertIgnoreDuplicate(
-                            any(),
-                            eq(LocalDate.of(2026, 1, 30)),
-                            any(),
-                            any(),
-                            any(),
-                            any(),
-                            any(Long.class),
-                            any(Long.class));
+            @SuppressWarnings("unchecked")
+            ArgumentCaptor<List<ParsedOhlcvRow>> captor = ArgumentCaptor.forClass(List.class);
+            verify(ohlcvInserter, times(1)).insertBatch(any(), captor.capture());
+            assertThat(captor.getValue()).hasSize(1);
+            assertThat(captor.getValue().get(0).tradeDate()).isEqualTo(LocalDate.of(2026, 1, 30));
         }
 
         @Test
@@ -731,7 +700,7 @@ class OverseasDailyOhlcvCollectionServiceTest {
         }
 
         @Test
-        @DisplayName("fetchWindow — DB(dailyOhlcvRepository.insertIgnoreDuplicate) 미호출 (INSERT 없음)")
+        @DisplayName("fetchWindow — ohlcvInserter.insertBatch 미호출 (fetch 단계에서 INSERT 없음)")
         void fetchWindow_doesNotCallRepository() throws Exception {
             when(guardedKisExecutor.execute(
                             any(LeaseSession.class),
@@ -752,16 +721,7 @@ class OverseasDailyOhlcvCollectionServiceTest {
                     service.fetchWindow(
                             ANCHOR, stockOf("AAPL", Market.NASDAQ, AssetType.STOCK), openSession());
 
-            verify(dailyOhlcvRepository, never())
-                    .insertIgnoreDuplicate(
-                            any(),
-                            any(),
-                            any(),
-                            any(),
-                            any(),
-                            any(),
-                            any(Long.class),
-                            any(Long.class));
+            verify(ohlcvInserter, never()).insertBatch(any(), any());
             assertThat(fetch.rowCount()).isEqualTo(1);
             assertThat(fetch.oldestTradeDate()).isEqualTo(LocalDate.of(2026, 1, 30));
         }
@@ -789,32 +749,30 @@ class OverseasDailyOhlcvCollectionServiceTest {
 
         @Test
         @DisplayName(
-                "persistWindow — dailyOhlcvRepository.insertIgnoreDuplicate 호출 (persist에서 INSERT)")
-        void persistWindow_callsRepository() {
+                "persistWindow — ohlcvInserter.insertBatch 호출 (persist에서 INSERT, REQ-INSERT-005)")
+        void persistWindow_callsInserter() {
             Stock stock = stockOf("AAPL", Market.NASDAQ, AssetType.STOCK);
-            KisOverseasDailyOhlcvResponse.OverseasDailyOhlcvRow r =
-                    row("20260130", "296.9200", "42745060", "12697950974");
+            ParsedOhlcvRow parsedRow =
+                    new ParsedOhlcvRow(
+                            LocalDate.of(2026, 1, 30),
+                            new BigDecimal("296.9200"),
+                            new BigDecimal("296.9200"),
+                            new BigDecimal("296.9200"),
+                            new BigDecimal("296.9200"),
+                            42_745_060L,
+                            12_697_950_974L);
             OverseasDailyOhlcvFetch fetch =
-                    new OverseasDailyOhlcvFetch(List.of(r), LocalDate.of(2026, 1, 30), 1);
+                    new OverseasDailyOhlcvFetch(List.of(parsedRow), LocalDate.of(2026, 1, 30), 1);
 
             BackfillWindowResult result = service.persistWindow(stock, fetch);
 
-            verify(dailyOhlcvRepository, times(1))
-                    .insertIgnoreDuplicate(
-                            any(),
-                            eq(LocalDate.of(2026, 1, 30)),
-                            any(),
-                            any(),
-                            any(),
-                            any(),
-                            eq(42_745_060L),
-                            eq(12_697_950_974L));
+            verify(ohlcvInserter, times(1)).insertBatch(any(), any());
             assertThat(result.oldestTradeDate()).isEqualTo(LocalDate.of(2026, 1, 30));
             assertThat(result.rowCount()).isEqualTo(1);
         }
 
         @Test
-        @DisplayName("persistWindow — 빈 fetch → EMPTY 반환, repository 미호출")
+        @DisplayName("persistWindow — 빈 fetch → EMPTY 반환, inserter 미호출")
         void persistWindow_emptyFetch_returnsEmpty() {
             OverseasDailyOhlcvFetch emptyFetch = new OverseasDailyOhlcvFetch(List.of(), null, 0);
 
@@ -823,16 +781,7 @@ class OverseasDailyOhlcvCollectionServiceTest {
                             stockOf("AAPL", Market.NASDAQ, AssetType.STOCK), emptyFetch);
 
             assertThat(result).isEqualTo(BackfillWindowResult.EMPTY);
-            verify(dailyOhlcvRepository, never())
-                    .insertIgnoreDuplicate(
-                            any(),
-                            any(),
-                            any(),
-                            any(),
-                            any(),
-                            any(),
-                            any(Long.class),
-                            any(Long.class));
+            verify(ohlcvInserter, never()).insertBatch(any(), any());
         }
 
         @Test
@@ -851,16 +800,7 @@ class OverseasDailyOhlcvCollectionServiceTest {
             CollectionResult result = service.collect(TODAY);
 
             assertThat(result.succeeded()).isEqualTo(1);
-            verify(dailyOhlcvRepository, times(1))
-                    .insertIgnoreDuplicate(
-                            any(),
-                            any(),
-                            any(),
-                            any(),
-                            any(),
-                            any(),
-                            any(Long.class),
-                            any(Long.class));
+            verify(ohlcvInserter, times(1)).insertBatch(any(), any());
         }
     }
 
@@ -882,8 +822,6 @@ class OverseasDailyOhlcvCollectionServiceTest {
     }
 
     private void verifyNoInsert() {
-        verify(dailyOhlcvRepository, never())
-                .insertIgnoreDuplicate(
-                        any(), any(), any(), any(), any(), any(), any(Long.class), any(Long.class));
+        verify(ohlcvInserter, never()).insertBatch(any(), any());
     }
 }

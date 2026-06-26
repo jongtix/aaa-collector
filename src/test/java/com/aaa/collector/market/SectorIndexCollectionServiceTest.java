@@ -13,9 +13,9 @@ import static org.mockito.Mockito.when;
 import com.aaa.collector.kis.gate.GuardedKisExecutor;
 import com.aaa.collector.kis.gate.KeyLeaseRegistry;
 import com.aaa.collector.kis.gate.KeyLeaseRegistry.LeaseSession;
-import com.aaa.collector.stock.DailyOhlcvRepository;
 import com.aaa.collector.stock.Stock;
 import com.aaa.collector.stock.StockRepository;
+import com.aaa.collector.stock.daily.WarningCountingOhlcvInserter;
 import com.aaa.collector.stock.enums.AssetType;
 import com.aaa.collector.stock.enums.Market;
 import java.time.LocalDate;
@@ -44,10 +44,10 @@ class SectorIndexCollectionServiceTest {
     private static final String TR_ID = "FHKUP03500100";
 
     @Mock private StockRepository stockRepository;
-    @Mock private DailyOhlcvRepository dailyOhlcvRepository;
     @Mock private GuardedKisExecutor guardedKisExecutor;
     @Mock private KeyLeaseRegistry keyLeaseRegistry;
     @Mock private LeaseSession session;
+    @Mock private WarningCountingOhlcvInserter ohlcvInserter;
 
     private SectorIndexCollectionService service;
 
@@ -55,10 +55,7 @@ class SectorIndexCollectionServiceTest {
     void setUp() {
         service =
                 new SectorIndexCollectionService(
-                        stockRepository,
-                        dailyOhlcvRepository,
-                        guardedKisExecutor,
-                        keyLeaseRegistry);
+                        stockRepository, guardedKisExecutor, keyLeaseRegistry, ohlcvInserter);
         Mockito.lenient().when(keyLeaseRegistry.openSession()).thenReturn(session);
     }
 
@@ -152,17 +149,8 @@ class SectorIndexCollectionServiceTest {
             assertThat(result.succeeded()).isEqualTo(2);
             assertThat(result.skipped()).isZero();
 
-            // insertIgnoreDuplicate 2회 호출 (각 종목 1행)
-            verify(dailyOhlcvRepository, times(2))
-                    .insertIgnoreDuplicate(
-                            any(),
-                            any(),
-                            any(),
-                            any(),
-                            any(),
-                            any(),
-                            any(long.class),
-                            any(long.class));
+            // insertBatch 2회 호출 (각 종목 1행 배치, REQ-INSERT-006 AC-3)
+            verify(ohlcvInserter, times(2)).insertBatch(any(), any());
         }
 
         @Test
@@ -223,16 +211,7 @@ class SectorIndexCollectionServiceTest {
             service.collect(TODAY);
 
             // Assert — 저장 없음
-            verify(dailyOhlcvRepository, never())
-                    .insertIgnoreDuplicate(
-                            any(),
-                            any(),
-                            any(),
-                            any(),
-                            any(),
-                            any(),
-                            any(long.class),
-                            any(long.class));
+            verify(ohlcvInserter, never()).insertBatch(any(), any());
         }
 
         @Test
@@ -251,16 +230,7 @@ class SectorIndexCollectionServiceTest {
             service.collect(TODAY);
 
             // Assert
-            verify(dailyOhlcvRepository, never())
-                    .insertIgnoreDuplicate(
-                            any(),
-                            any(),
-                            any(),
-                            any(),
-                            any(),
-                            any(),
-                            any(long.class),
-                            any(long.class));
+            verify(ohlcvInserter, never()).insertBatch(any(), any());
         }
     }
 
@@ -289,16 +259,7 @@ class SectorIndexCollectionServiceTest {
             assertThat(result.attempted()).isEqualTo(2);
             assertThat(result.succeeded()).isEqualTo(2);
             assertThat(result.skipped()).isZero();
-            verify(dailyOhlcvRepository, never())
-                    .insertIgnoreDuplicate(
-                            any(),
-                            any(),
-                            any(),
-                            any(),
-                            any(),
-                            any(),
-                            any(long.class),
-                            any(long.class));
+            verify(ohlcvInserter, never()).insertBatch(any(), any());
         }
     }
 
@@ -386,7 +347,7 @@ class SectorIndexCollectionServiceTest {
     class Idempotency {
 
         @Test
-        @DisplayName("동일 행 재수집 시 insertIgnoreDuplicate 재호출 (DB가 중복 무시)")
+        @DisplayName("동일 행 재수집 시 insertBatch 재호출 (DB가 중복 무시)")
         void idempotentSave_insertIgnoreCalledAgain() throws Exception {
             // Arrange
             Stock kospi = indexStock("0001", 1L);
@@ -398,17 +359,8 @@ class SectorIndexCollectionServiceTest {
             service.collect(TODAY);
             service.collect(TODAY);
 
-            // Assert — insertIgnoreDuplicate 총 2회 (각 실행 1회씩, DB가 중복 무시함), 세션도 2회 open
-            verify(dailyOhlcvRepository, times(2))
-                    .insertIgnoreDuplicate(
-                            any(),
-                            any(),
-                            any(),
-                            any(),
-                            any(),
-                            any(),
-                            any(long.class),
-                            any(long.class));
+            // Assert — insertBatch 총 2회 (각 실행 1회씩, DB가 중복 무시함), 세션도 2회 open
+            verify(ohlcvInserter, times(2)).insertBatch(any(), any());
             verify(keyLeaseRegistry, times(2)).openSession();
         }
     }
