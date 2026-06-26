@@ -656,18 +656,32 @@ class BackfillOrchestratorTest {
 
             BackfillStatus s1 = buildPendingStatus("005930", "daily_ohlcv");
             BackfillStatus s2 = buildPendingStatus("005930", "investor_trend");
+            ReflectionTestUtils.setField(s1, "id", 1L);
+            ReflectionTestUtils.setField(s2, "id", 2L);
             when(backfillStatusRepository.findByStatusInAndTargetTypeOrderById(any(), anyString()))
                     .thenReturn(List.of(s1, s2));
 
-            // 각 status 2 윈도우 후 COMPLETED
-            BackfillStatus inProg =
+            // 각 status 2 윈도우 후 COMPLETED.
+            // findById가 inProg를 반환하면 current.getId()가 null이 되어 다음 findById(null) 호출 시
+            // 스텁이 소비되지 않는다. ID를 각 체인에 일관되게 설정해 VT 경쟁 조건을 해소한다.
+            BackfillStatus inProg1 =
                     buildInProgressStatus("005930", "daily_ohlcv", LocalDate.of(2024, 1, 1));
-            BackfillStatus completed = buildCompletedStatus("005930", "daily_ohlcv");
-            when(backfillStatusRepository.findById(any()))
-                    .thenReturn(Optional.of(inProg))
-                    .thenReturn(Optional.of(completed))
-                    .thenReturn(Optional.of(inProg))
-                    .thenReturn(Optional.of(completed));
+            BackfillStatus completed1 = buildCompletedStatus("005930", "daily_ohlcv");
+            ReflectionTestUtils.setField(inProg1, "id", 1L);
+            ReflectionTestUtils.setField(completed1, "id", 1L);
+
+            BackfillStatus inProg2 =
+                    buildInProgressStatus("005930", "investor_trend", LocalDate.of(2024, 1, 1));
+            BackfillStatus completed2 = buildCompletedStatus("005930", "investor_trend");
+            ReflectionTestUtils.setField(inProg2, "id", 2L);
+            ReflectionTestUtils.setField(completed2, "id", 2L);
+
+            when(backfillStatusRepository.findById(1L))
+                    .thenReturn(Optional.of(inProg1))
+                    .thenReturn(Optional.of(completed1));
+            when(backfillStatusRepository.findById(2L))
+                    .thenReturn(Optional.of(inProg2))
+                    .thenReturn(Optional.of(completed2));
 
             // Act
             orchestrator.run();
