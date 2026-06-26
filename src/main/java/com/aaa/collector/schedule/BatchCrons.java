@@ -8,9 +8,8 @@ package com.aaa.collector.schedule;
  *
  * <p>인스턴스화 불필요 — 모든 상수는 {@code public static final String}.
  */
+@SuppressWarnings("PMD.AvoidDuplicateLiterals") // zone 문자열 "Asia/Seoul"은 단일 소스 원칙 구현을 위해 의도적으로 반복
 public final class BatchCrons {
-
-    private BatchCrons() {}
 
     // ─── domestic-daily-chain ────────────────────────────────────────────────
     /** 국내 일봉 배치 cron — 평일 16:00 KST. */
@@ -67,4 +66,6 @@ public final class BatchCrons {
 
     /** ETF 대표 종목 재계산 배치 zone. */
     public static final String DOMESTIC_ETF_REPRESENTATIVE_ZONE = "Asia/Seoul";
+
+    private BatchCrons() {}
 }

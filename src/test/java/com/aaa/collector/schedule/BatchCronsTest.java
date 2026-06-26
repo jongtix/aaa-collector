@@ -237,22 +237,38 @@ class BatchCronsTest {
         }
 
         @Test
-        @DisplayName("상수 값은 null이 아니어야 한다")
-        void allConstants_areNotNull() {
+        @DisplayName("cron 상수 값은 null이 아니어야 한다")
+        void allCronConstants_areNotNull() {
+            // 개별 등가 단언이 이미 위에서 수행됨 — null 아님은 파생적 불변식
             assertThat(BatchCrons.DOMESTIC_DAILY_CHAIN_CRON).isNotNull();
-            assertThat(BatchCrons.DOMESTIC_DAILY_CHAIN_ZONE).isNotNull();
             assertThat(BatchCrons.OVERSEAS_DAILY_CRON).isNotNull();
-            assertThat(BatchCrons.OVERSEAS_DAILY_ZONE).isNotNull();
             assertThat(BatchCrons.OVERSEAS_SHORTSALE_CRON).isNotNull();
-            assertThat(BatchCrons.OVERSEAS_SHORTSALE_ZONE).isNotNull();
             assertThat(BatchCrons.DOMESTIC_INVEST_OPINION_CRON).isNotNull();
-            assertThat(BatchCrons.DOMESTIC_INVEST_OPINION_ZONE).isNotNull();
             assertThat(BatchCrons.DOMESTIC_FINANCIAL_RATIO_CRON).isNotNull();
+        }
+
+        @Test
+        @DisplayName("zone 상수 값은 null이 아니어야 한다")
+        void allZoneConstants_areNotNull() {
+            assertThat(BatchCrons.DOMESTIC_DAILY_CHAIN_ZONE).isNotNull();
+            assertThat(BatchCrons.OVERSEAS_DAILY_ZONE).isNotNull();
+            assertThat(BatchCrons.OVERSEAS_SHORTSALE_ZONE).isNotNull();
+            assertThat(BatchCrons.DOMESTIC_INVEST_OPINION_ZONE).isNotNull();
             assertThat(BatchCrons.DOMESTIC_FINANCIAL_RATIO_ZONE).isNotNull();
+        }
+
+        @Test
+        @DisplayName("macro-external/market-indicators cron/zone 상수 값은 null이 아니어야 한다")
+        void macroAndMarketConstants_areNotNull() {
             assertThat(BatchCrons.MACRO_EXTERNAL_CRON).isNotNull();
             assertThat(BatchCrons.MACRO_EXTERNAL_ZONE).isNotNull();
             assertThat(BatchCrons.MARKET_INDICATORS_CRON).isNotNull();
             assertThat(BatchCrons.MARKET_INDICATORS_ZONE).isNotNull();
+        }
+
+        @Test
+        @DisplayName("domestic-etf-representative cron/zone 상수 값은 null이 아니어야 한다")
+        void etfConstants_areNotNull() {
             assertThat(BatchCrons.DOMESTIC_ETF_REPRESENTATIVE_CRON).isNotNull();
             assertThat(BatchCrons.DOMESTIC_ETF_REPRESENTATIVE_ZONE).isNotNull();
         }

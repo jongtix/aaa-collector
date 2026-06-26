@@ -145,6 +145,13 @@ aaa:
     api-key: ${FRED_API_KEY:}
     connect-timeout: 5s
     read-timeout: 30s
+  catchup:
+    # 재시작 후 누락 배치 즉시 재실행 활성화 (SPEC-COLLECTOR-CATCHUP-001)
+    enabled: true
+    # expectedLastFire 이후 경과해야 재실행 조건이 성립하는 초 단위 유예 시간 (strict >)
+    grace-seconds: 300
+    # 단위당 배치 재실행 최대 대기 초
+    unit-timeout-seconds: 600
   extended-hours:
     # 종목 간 yahoo API 요청 딜레이 (ms). yahoo 비공식 API rate limit 회피 (REQ-EXTH-011)
     request-delay-ms: 2500

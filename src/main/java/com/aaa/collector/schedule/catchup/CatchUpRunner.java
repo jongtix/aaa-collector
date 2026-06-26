@@ -33,6 +33,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import java.util.function.Supplier;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
@@ -64,6 +65,10 @@ import org.springframework.stereotype.Component;
 @EnableConfigurationProperties(CatchUpProperties.class)
 @ConditionalOnProperty(name = "aaa.catchup.enabled", havingValue = "true", matchIfMissing = true)
 @RequiredArgsConstructor
+@SuppressWarnings({
+    "PMD.ExcessiveImports", // 8개 스케줄러 + 10개 리포지토리 + Java 유틸 imports — 불가피
+    "PMD.CouplingBetweenObjects" // 8개 스케줄러 + 10개 리포지토리 의존 — catch-up 레지스트리 설계상 불가피
+})
 public class CatchUpRunner {
 
     /** lastLoad 변환 기준 zone — unit.zone과 무관하게 항상 KST 고정 (MA-02, AC-12). */
@@ -120,10 +125,10 @@ public class CatchUpRunner {
                 if (decision.shouldRun()) {
                     log.info("[catch-up] batch={} 누락 감지 → 즉시 재실행", unit.name());
                     runWithTimeout(unit);
-                } else {
+                } else if (log.isDebugEnabled()) {
                     log.debug("[catch-up] batch={} 재실행 불필요 — {}", unit.name(), decision.reason());
                 }
-            } catch (Exception e) {
+            } catch (Exception e) { // NOPMD.AvoidCatchingGenericException — per-unit 격리(AC-10)
                 log.warn("[catch-up] batch={} 처리 중 예외 — 다음 단위로 계속", unit.name(), e);
             }
         }
@@ -175,7 +180,7 @@ public class CatchUpRunner {
      * Optional#empty()} → stale (신규 테이블 시딩). lastLoad 변환은 항상 KST 고정(MA-02, AC-12).
      */
     private boolean isStale(CatchUpUnit unit, Instant expectedLastFire) {
-        for (var supplier : unit.lastLoadSuppliers()) {
+        for (Supplier<Optional<LocalDateTime>> supplier : unit.lastLoadSuppliers()) {
             Optional<LocalDateTime> lastLoadOpt = supplier.get();
             if (lastLoadOpt.isEmpty()) {
                 return true; // 신규 테이블 → stale
@@ -205,7 +210,7 @@ public class CatchUpRunner {
      *
      * <p>타임아웃 초과 시 인터럽트(베스트-에포트)하고 다음 단위로 진행한다(AC-18). package-private: 같은 패키지의 테스트에서 접근 가능.
      */
-    @SuppressWarnings("PMD.AvoidCatchingGenericException") // ExecutionException 원인 로깅
+    @SuppressWarnings("PMD.CloseResource") // executor.shutdownNow() 호출로 finally에서 정리됨
     void runWithTimeout(CatchUpUnit unit) {
         ExecutorService executor = Executors.newSingleThreadExecutor();
         Future<?> future = executor.submit(() -> unit.trigger().run());

@@ -21,4 +21,10 @@ public record CatchUpUnit(
         String zone,
         Freshness freshness,
         List<Supplier<Optional<LocalDateTime>>> lastLoadSuppliers,
-        Runnable trigger) {}
+        Runnable trigger) {
+
+    /** 방어적 복사 — 외부 mutable list 노출 차단 (SpotBugs EI_EXPOSE_REP2). */
+    public CatchUpUnit {
+        lastLoadSuppliers = List.copyOf(lastLoadSuppliers);
+    }
+}

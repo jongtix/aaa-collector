@@ -151,9 +151,9 @@ class ExpectedFireCalculatorTest {
             // 2026-06-15(월) 기준 lookback 8일(6/7~6/14)에 31일이 없으면 empty.
             String cron = "0 0 0 31 * ?";
             String zone = "Asia/Seoul";
-            ZoneId KST = ZoneId.of("Asia/Seoul");
+            ZoneId kst = ZoneId.of("Asia/Seoul");
             // 2026-06-15(월) 12:00 KST: lookback 8일 내에 31일 없음 (6/7~6/14)
-            Instant now = ZonedDateTime.of(2026, 6, 15, 12, 0, 0, 0, KST).toInstant();
+            Instant now = ZonedDateTime.of(2026, 6, 15, 12, 0, 0, 0, kst).toInstant();
 
             Optional<Instant> result = calculator.calculate(cron, zone, now);
 
@@ -164,15 +164,15 @@ class ExpectedFireCalculatorTest {
         @DisplayName("now가 정확히 발화 시각과 같으면 해당 시각이 반환된다 (경계 포함)")
         void whenNowIsExactlyFireTime_thenThatFireTimeReturned() {
             // Arrange: 2026-06-22(월) 16:00:00 KST — 정확히 발화 시각
-            ZoneId KST = ZoneId.of("Asia/Seoul");
-            Instant now = ZonedDateTime.of(2026, 6, 22, 16, 0, 0, 0, KST).toInstant();
+            ZoneId kst = ZoneId.of("Asia/Seoul");
+            Instant now = ZonedDateTime.of(2026, 6, 22, 16, 0, 0, 0, kst).toInstant();
             String cron = "0 0 16 * * MON-FRI";
             String zone = "Asia/Seoul";
 
             Optional<Instant> result = calculator.calculate(cron, zone, now);
 
             assertThat(result).isPresent();
-            Instant expected = ZonedDateTime.of(2026, 6, 22, 16, 0, 0, 0, KST).toInstant();
+            Instant expected = ZonedDateTime.of(2026, 6, 22, 16, 0, 0, 0, kst).toInstant();
             assertThat(result.get()).isEqualTo(expected);
         }
 
@@ -180,8 +180,8 @@ class ExpectedFireCalculatorTest {
         @DisplayName("결과는 항상 now 이전 또는 now와 같아야 한다")
         void resultIsAlwaysBeforeOrEqualToNow() {
             // 여러 cron 패턴에 대해 불변식 검증
-            ZoneId KST = ZoneId.of("Asia/Seoul");
-            Instant now = ZonedDateTime.of(2026, 6, 23, 10, 0, 0, 0, KST).toInstant();
+            ZoneId kst = ZoneId.of("Asia/Seoul");
+            Instant now = ZonedDateTime.of(2026, 6, 23, 10, 0, 0, 0, kst).toInstant();
 
             String[] crons = {
                 "0 0 16 * * MON-FRI", "0 30 16 * * MON-FRI", "0 0 17 * * MON-FRI", "0 50 7 * * MON"
@@ -200,9 +200,9 @@ class ExpectedFireCalculatorTest {
         @DisplayName("LocalDateTime.now 시각과 1분 차이가 나도 올바른 발화를 반환한다")
         void oneMinuteBeforeFire_returnsCorrectPreviousFire() {
             // Arrange: 2026-06-22(월) 15:59 KST — 16:00 발화 직전
-            ZoneId KST = ZoneId.of("Asia/Seoul");
+            ZoneId kst = ZoneId.of("Asia/Seoul");
             Instant now =
-                    ZonedDateTime.of(2026, 6, 22, 15, 59, 0, 0, KST)
+                    ZonedDateTime.of(2026, 6, 22, 15, 59, 0, 0, kst)
                             .toInstant()
                             .plusSeconds(59); // 15:59:59
             String cron = "0 0 16 * * MON-FRI";
@@ -211,7 +211,7 @@ class ExpectedFireCalculatorTest {
 
             // 당일 16:00 미경과 → 직전 금요일 16:00 KST
             assertThat(result).isPresent();
-            LocalDateTime fireLocal = result.get().atZone(KST).toLocalDateTime();
+            LocalDateTime fireLocal = result.get().atZone(kst).toLocalDateTime();
             assertThat(fireLocal).isEqualTo(LocalDateTime.of(2026, 6, 19, 16, 0, 0));
         }
     }
