@@ -11,7 +11,9 @@ import com.aaa.collector.dart.external.DartListResponse;
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicInteger;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -79,7 +81,8 @@ public class DartDisclosureBackfillWindowService {
         }
 
         // 필터: 해당 종목만 (corp_code 지정 시 API가 필터하지만 방어적 처리)
-        int inserted = 0;
+        // REQ-INSERT-011: 유효 행 누적 후 격리 삽입
+        List<DisclosureRow> batch = new ArrayList<>();
         for (DartListResponse.DisclosureItem item : items) {
             if (!symbol.equals(item.stockCode())) {
                 continue;
@@ -88,8 +91,23 @@ public class DartDisclosureBackfillWindowService {
             if (rceptDt == null) {
                 continue;
             }
-            disclosureInserter.insertBatch(List.of(toRow(stockId, item, rceptDt)));
-            inserted++;
+            batch.add(toRow(stockId, item, rceptDt));
+        }
+
+        // REQ-INSERT-011: 격리 삽입 — 독성 행 skip·잔여 행 계속·커넥션 중단 없음
+        int inserted = 0;
+        if (!batch.isEmpty()) {
+            AtomicInteger dbFailures = new AtomicInteger();
+            disclosureInserter.insertBatchIsolated(
+                    batch,
+                    (row, ex) -> {
+                        log.warn(
+                                "[dart-backfill] insertIgnore 실패 — rceptNo={}, error={}",
+                                row.rceptNo(),
+                                ex.getMessage());
+                        dbFailures.incrementAndGet();
+                    });
+            inserted = batch.size() - dbFailures.get();
         }
 
         // anchor 전진 또는 stale-window COMPLETED 전이 (REQ-DART-023)

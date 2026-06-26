@@ -29,7 +29,6 @@ import org.mockito.Captor;
 import org.mockito.Mock;
 import org.mockito.Mockito;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.dao.DataIntegrityViolationException;
 
 /**
  * SPEC-COLLECTOR-KISGATE-001 M6(T20) — {@link RevSplitCollectionService} 게이트 경유 단위 테스트.
@@ -135,7 +134,7 @@ class RevSplitCollectionServiceTest {
             assertThat(result.skippedValidation()).isZero();
 
             // inserterCaptor is a @Captor field
-            verify(corporateEventInserter).insertBatch(inserterCaptor.capture());
+            verify(corporateEventInserter).insertBatchIsolated(inserterCaptor.capture(), any());
 
             CorporateEvent saved =
                     inserterCaptor.getAllValues().stream()
@@ -171,7 +170,7 @@ class RevSplitCollectionServiceTest {
             assertThat(result.succeeded()).isEqualTo(1);
 
             // inserterCaptor is a @Captor field
-            verify(corporateEventInserter).insertBatch(inserterCaptor.capture());
+            verify(corporateEventInserter).insertBatchIsolated(inserterCaptor.capture(), any());
 
             CorporateEvent saved =
                     inserterCaptor.getAllValues().stream()
@@ -203,7 +202,7 @@ class RevSplitCollectionServiceTest {
             assertThat(result.attempted()).isEqualTo(1);
             assertThat(result.succeeded()).isZero();
             assertThat(result.skippedValidation()).isEqualTo(1);
-            verify(corporateEventInserter, never()).insertBatch(any());
+            verify(corporateEventInserter, never()).insertBatchIsolated(any(), any());
         }
 
         @Test
@@ -225,7 +224,7 @@ class RevSplitCollectionServiceTest {
             assertThat(result.attempted()).isEqualTo(1);
             assertThat(result.succeeded()).isZero();
             assertThat(result.skippedValidation()).isEqualTo(1);
-            verify(corporateEventInserter, never()).insertBatch(any());
+            verify(corporateEventInserter, never()).insertBatchIsolated(any(), any());
         }
 
         @Test
@@ -243,7 +242,7 @@ class RevSplitCollectionServiceTest {
 
             // Assert
             // inserterCaptor is a @Captor field
-            verify(corporateEventInserter).insertBatch(inserterCaptor.capture());
+            verify(corporateEventInserter).insertBatchIsolated(inserterCaptor.capture(), any());
             CorporateEvent savedFaceValue =
                     inserterCaptor.getAllValues().stream()
                             .flatMap(List::stream)
@@ -273,7 +272,7 @@ class RevSplitCollectionServiceTest {
             // Assert — 병합(af>bf): stock_rate = 100/300 ≈ 0.3333
             assertThat(result.succeeded()).isEqualTo(1);
             // inserterCaptor is a @Captor field
-            verify(corporateEventInserter).insertBatch(inserterCaptor.capture());
+            verify(corporateEventInserter).insertBatchIsolated(inserterCaptor.capture(), any());
             CorporateEvent savedStockRate =
                     inserterCaptor.getAllValues().stream()
                             .flatMap(List::stream)
@@ -299,7 +298,7 @@ class RevSplitCollectionServiceTest {
 
             // Assert — SPLIT 행 미사용 컬럼은 null
             // inserterCaptor is a @Captor field
-            verify(corporateEventInserter).insertBatch(inserterCaptor.capture());
+            verify(corporateEventInserter).insertBatchIsolated(inserterCaptor.capture(), any());
             CorporateEvent savedNullCols =
                     inserterCaptor.getAllValues().stream()
                             .flatMap(List::stream)
@@ -340,8 +339,8 @@ class RevSplitCollectionServiceTest {
             service.collect(LocalDate.of(2026, 5, 30), LocalDate.of(2026, 8, 15));
             service.collect(LocalDate.of(2026, 5, 30), LocalDate.of(2026, 8, 15));
 
-            // Assert — 서비스는 2회 호출, DB는 ON DUPLICATE KEY로 중복 무시
-            verify(corporateEventInserter, times(2)).insertBatch(any());
+            // Assert — 서비스는 2회 호출 → insertBatchIsolated 2회 (collect당 1회)
+            verify(corporateEventInserter, times(2)).insertBatchIsolated(any(), any());
         }
     }
 
@@ -388,7 +387,7 @@ class RevSplitCollectionServiceTest {
             // Assert — 0건 성공 (정상)
             assertThat(result.attempted()).isZero();
             assertThat(result.succeeded()).isZero();
-            verify(corporateEventInserter, never()).insertBatch(any());
+            verify(corporateEventInserter, never()).insertBatchIsolated(any(), any());
         }
 
         @Test
@@ -467,7 +466,7 @@ class RevSplitCollectionServiceTest {
             assertThat(result.attempted()).isEqualTo(3);
             assertThat(result.succeeded()).isEqualTo(1);
             assertThat(result.skippedNonWatchlist()).isEqualTo(2);
-            verify(corporateEventInserter, times(1)).insertBatch(any());
+            verify(corporateEventInserter, times(1)).insertBatchIsolated(any(), any());
         }
 
         @Test
@@ -488,7 +487,7 @@ class RevSplitCollectionServiceTest {
 
             // Assert
             assertThat(result.skippedValidation()).isEqualTo(1);
-            verify(corporateEventInserter, never()).insertBatch(any());
+            verify(corporateEventInserter, never()).insertBatchIsolated(any(), any());
         }
 
         @Test
@@ -510,7 +509,7 @@ class RevSplitCollectionServiceTest {
 
             // Assert
             assertThat(result.skippedValidation()).isEqualTo(1);
-            verify(corporateEventInserter, never()).insertBatch(any());
+            verify(corporateEventInserter, never()).insertBatchIsolated(any(), any());
         }
 
         @Test
@@ -532,7 +531,7 @@ class RevSplitCollectionServiceTest {
 
             // Assert
             assertThat(result.skippedValidation()).isEqualTo(1);
-            verify(corporateEventInserter, never()).insertBatch(any());
+            verify(corporateEventInserter, never()).insertBatchIsolated(any(), any());
         }
 
         @Test
@@ -607,7 +606,7 @@ class RevSplitCollectionServiceTest {
 
             // Assert
             assertThat(result.skippedValidation()).isEqualTo(1);
-            verify(corporateEventInserter, never()).insertBatch(any());
+            verify(corporateEventInserter, never()).insertBatchIsolated(any(), any());
         }
 
         @Test
@@ -683,7 +682,7 @@ class RevSplitCollectionServiceTest {
                     service.collect(LocalDate.of(2026, 5, 30), LocalDate.of(2026, 8, 15));
 
             assertThat(result.skippedValidation()).isEqualTo(1);
-            verify(corporateEventInserter, never()).insertBatch(any());
+            verify(corporateEventInserter, never()).insertBatchIsolated(any(), any());
         }
 
         @Test
@@ -704,7 +703,7 @@ class RevSplitCollectionServiceTest {
                     service.collect(LocalDate.of(2026, 5, 30), LocalDate.of(2026, 8, 15));
 
             assertThat(result.skippedValidation()).isEqualTo(1);
-            verify(corporateEventInserter, never()).insertBatch(any());
+            verify(corporateEventInserter, never()).insertBatchIsolated(any(), any());
         }
 
         @Test
@@ -716,9 +715,21 @@ class RevSplitCollectionServiceTest {
             when(guardedKisExecutor.execute(
                             eq(session), any(), eq(TR_ID), eq(KisRevSplitResponse.class)))
                     .thenReturn(singlePageResponse(List.of(splitRow("096960"))));
-            Mockito.doThrow(new DataIntegrityViolationException("dup"))
+            // REQ-INSERT-011: 독성 행에 대해 콜백 호출 시뮬레이션
+            final java.sql.SQLException toxicEx = new java.sql.SQLException("dup", "23000", 1062);
+            Mockito.doAnswer(
+                            invocation -> {
+                                List<CorporateEvent> rows = invocation.getArgument(0);
+                                @SuppressWarnings("unchecked")
+                                com.aaa.collector.observability.RowFailureHandler<CorporateEvent>
+                                        handler = invocation.getArgument(1);
+                                for (CorporateEvent entity : rows) {
+                                    handler.onFailure(entity, toxicEx);
+                                }
+                                return null;
+                            })
                     .when(corporateEventInserter)
-                    .insertBatch(any());
+                    .insertBatchIsolated(any(), any());
 
             // Act
             RevSplitCollectionResult result =

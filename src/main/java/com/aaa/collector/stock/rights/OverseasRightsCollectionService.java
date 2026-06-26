@@ -16,6 +16,7 @@ import java.net.URI;
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -23,7 +24,6 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Function;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.dao.DataAccessException;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestClientException;
 import org.springframework.web.util.UriBuilder;
@@ -162,15 +162,25 @@ public class OverseasRightsCollectionService {
                 return;
             }
 
+            // REQ-INSERT-011: 유효 행 누적 후 격리 삽입
+            List<CorporateEvent> batch = new ArrayList<>();
             for (KisOverseasRightsResponse.RightsRow row : response.output1()) {
-                processRow(
-                        row,
-                        stock,
-                        symbol,
-                        succeededRows,
-                        skippedNonCashRows,
-                        skippedValidationRows,
-                        skippedToxicRows);
+                buildRow(row, stock, batch, skippedNonCashRows, skippedValidationRows);
+            }
+
+            if (!batch.isEmpty()) {
+                AtomicInteger dbFailures = new AtomicInteger();
+                corporateEventInserter.insertBatchIsolated(
+                        batch,
+                        (entity, ex) -> {
+                            log.warn(
+                                    "[overseas-rights] 독성 행 저장 실패 — skip (symbol={}, error={})",
+                                    symbol,
+                                    ex.getMessage());
+                            skippedToxicRows.incrementAndGet();
+                            dbFailures.incrementAndGet();
+                        });
+                succeededRows.addAndGet(batch.size() - dbFailures.get());
             }
         } catch (KisRateLimitException | RestClientException e) {
             // REQ-OVE-013: retryable 재시도 소진 → graceful skip
@@ -198,22 +208,16 @@ public class OverseasRightsCollectionService {
     }
 
     /**
-     * 권리 1건을 처리한다 — 비현금배당 skip(REQ-OVE-023a), 현금배당 매핑·검증·멱등 저장.
+     * 권리 1건을 검증·매핑하여 배치에 추가한다 (REQ-INSERT-011).
      *
-     * <p>독성 행 흡수: {@code insertIgnoreDuplicate} 예외가 종목 내 다음 행 처리를 차단하지 않도록 예외를 흡수하고 현재 행만
-     * skip한다(REQ-OVE-026, W1).
+     * <p>비현금배당 skip(REQ-OVE-023a). 유효 행만 배치에 누적 — DB 저장은 호출자가 {@code insertBatchIsolated}로 수행한다.
      */
-    // @MX:WARN: [AUTO] 독성 행 예외 흡수 — 영구 정체 방지 (W1)
-    // @MX:REASON: insertIgnoreDuplicate 예외가 종목 내 다음 행 처리·배치 전체 수집을 차단하지 않도록 현재 행만
-    // skip한다(REQ-OVE-026).
-    private void processRow(
+    private void buildRow(
             KisOverseasRightsResponse.RightsRow row,
             Stock stock,
-            String symbol,
-            AtomicInteger succeededRows,
+            List<CorporateEvent> batch,
             AtomicInteger skippedNonCashRows,
-            AtomicInteger skippedValidationRows,
-            AtomicInteger skippedToxicRows) {
+            AtomicInteger skippedValidationRows) {
         // REQ-OVE-023a: 비현금배당(증자·상폐 등) 행은 저장하지 않고 skip
         if (!CASH_DIVIDEND_TITLE.equals(row.caTitle())) {
             skippedNonCashRows.incrementAndGet();
@@ -226,19 +230,7 @@ public class OverseasRightsCollectionService {
             return;
         }
 
-        // REQ-OVE-024/061: uk_corporate_events 멱등 저장
-        try {
-            corporateEventInserter.insertBatch(List.of(entity));
-            succeededRows.incrementAndGet();
-        } catch (DataAccessException ex) {
-            // W1: DB 독성 행 — 검증 skip과 별도 카운터로 집계해 침묵 드롭 관측성 보존(42,460-failure 사건군)
-            log.warn(
-                    "[overseas-rights] 독성 행 저장 실패 — skip (symbol={}, error={}: {})",
-                    symbol,
-                    ex.getClass().getSimpleName(),
-                    ex.getMessage());
-            skippedToxicRows.incrementAndGet();
-        }
+        batch.add(entity);
     }
 
     /** 게이트를 경유해 종목별 권리종합을 조회한다(REQ-OVE-021 — NCOD=US, ST/ED 공백=오늘±3개월). */

@@ -403,7 +403,7 @@ class OverseasDailyOhlcvCollectionServiceTest {
             ArgumentCaptor<List<ParsedOhlcvRow>> captor = ArgumentCaptor.forClass(List.class);
             verify(ohlcvInserter, times(1)).insertBatch(any(), captor.capture());
             assertThat(captor.getValue()).hasSize(1);
-            ParsedOhlcvRow saved = captor.getValue().get(0);
+            ParsedOhlcvRow saved = captor.getValue().getFirst();
             assertThat(saved.volume()).isEqualTo(42_745_060L);
             assertThat(saved.tradingValue()).isEqualTo(12_697_950_974L);
         }
@@ -499,9 +499,9 @@ class OverseasDailyOhlcvCollectionServiceTest {
             verify(ohlcvInserter, times(1)).insertBatch(any(), captor.capture());
             List<ParsedOhlcvRow> saved = captor.getValue();
             assertThat(saved).hasSize(1);
-            assertThat(saved.get(0).tradeDate()).isEqualTo(LocalDate.of(2026, 6, 17));
-            assertThat(saved.get(0).volume()).isEqualTo(42_745_060L);
-            assertThat(saved.get(0).tradingValue()).isEqualTo(12_697_950_974L);
+            assertThat(saved.getFirst().tradeDate()).isEqualTo(LocalDate.of(2026, 6, 17));
+            assertThat(saved.getFirst().volume()).isEqualTo(42_745_060L);
+            assertThat(saved.getFirst().tradingValue()).isEqualTo(12_697_950_974L);
         }
     }
 
@@ -639,7 +639,8 @@ class OverseasDailyOhlcvCollectionServiceTest {
             ArgumentCaptor<List<ParsedOhlcvRow>> captor = ArgumentCaptor.forClass(List.class);
             verify(ohlcvInserter, times(1)).insertBatch(any(), captor.capture());
             assertThat(captor.getValue()).hasSize(1);
-            assertThat(captor.getValue().get(0).tradeDate()).isEqualTo(LocalDate.of(2026, 1, 30));
+            assertThat(captor.getValue().getFirst().tradeDate())
+                    .isEqualTo(LocalDate.of(2026, 1, 30));
         }
 
         @Test

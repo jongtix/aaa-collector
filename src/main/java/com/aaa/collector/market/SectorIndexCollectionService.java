@@ -14,7 +14,6 @@ import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
-import java.util.Optional;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
@@ -166,7 +165,10 @@ public class SectorIndexCollectionService {
         // REQ-INSERT-006: 유효 행 누적 후 단일 배치 INSERT IGNORE (W-2 불변식)
         List<ParsedOhlcvRow> validRows = new ArrayList<>();
         for (KisSectorIndexResponse.SectorIndexRow row : response.output2()) {
-            saveIfValid(symbol, row).ifPresent(validRows::add);
+            ParsedOhlcvRow parsed = saveIfValid(symbol, row);
+            if (parsed != null) {
+                validRows.add(parsed);
+            }
         }
 
         if (!validRows.isEmpty()) {
@@ -180,8 +182,7 @@ public class SectorIndexCollectionService {
      *
      * @return 검증 통과 시 {@link ParsedOhlcvRow}, 실패 시 empty
      */
-    private Optional<ParsedOhlcvRow> saveIfValid(
-            String symbol, KisSectorIndexResponse.SectorIndexRow row) {
+    private ParsedOhlcvRow saveIfValid(String symbol, KisSectorIndexResponse.SectorIndexRow row) {
         // REQ-BATCH3-070: null 키 필드 skip
         if (row.stckBsopDate() == null
                 || row.stckBsopDate().isBlank()
@@ -191,7 +192,7 @@ public class SectorIndexCollectionService {
                     "[sector-index] 검증 실패 (null 키 필드) — symbol={}, date={}",
                     symbol,
                     row.stckBsopDate());
-            return Optional.empty();
+            return null;
         }
         try {
             BigDecimal close = new BigDecimal(row.bstpNmixPrpr());
@@ -202,7 +203,7 @@ public class SectorIndexCollectionService {
                         symbol,
                         row.stckBsopDate(),
                         row.bstpNmixPrpr());
-                return Optional.empty();
+                return null;
             }
 
             LocalDate tradeDate = LocalDate.parse(row.stckBsopDate(), DATE_FMT);
@@ -212,15 +213,14 @@ public class SectorIndexCollectionService {
             long volume = parseLongOrZero(row.acmlVol());
             long tradingValue = parseLongOrZero(row.acmlTrPbmn());
 
-            return Optional.of(
-                    new ParsedOhlcvRow(tradeDate, open, high, low, close, volume, tradingValue));
+            return new ParsedOhlcvRow(tradeDate, open, high, low, close, volume, tradingValue);
         } catch (NumberFormatException e) {
             log.warn(
                     "[sector-index] 파싱 실패 — symbol={}, date={}, error={}",
                     symbol,
                     row.stckBsopDate(),
                     e.getMessage());
-            return Optional.empty();
+            return null;
         }
     }
 

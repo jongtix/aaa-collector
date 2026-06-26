@@ -76,7 +76,7 @@ class DartDisclosureBackfillWindowServiceTest {
             // Assert
             verify(backfillStatusRepository)
                     .updateError(eq(1L), eq("IN_PROGRESS"), eq("corp_code 매핑 없음: " + SYMBOL));
-            verify(disclosureInserter, never()).insertBatch(any());
+            verify(disclosureInserter, never()).insertBatchIsolated(any(), any());
         }
     }
 
@@ -125,7 +125,7 @@ class DartDisclosureBackfillWindowServiceTest {
             windowService.executeWindow(status, STOCK_ID, SYMBOL);
 
             // Assert
-            verify(disclosureInserter).insertBatch(any());
+            verify(disclosureInserter).insertBatchIsolated(any(), any());
             verify(backfillStatusRepository)
                     .updateProgress(eq(1L), eq("IN_PROGRESS"), eq(expectedBgnDe), eq(0), eq(1));
         }
@@ -151,7 +151,7 @@ class DartDisclosureBackfillWindowServiceTest {
             windowService.executeWindow(status, STOCK_ID, SYMBOL);
 
             // Assert — 일치하는 1건만 삽입
-            verify(disclosureInserter).insertBatch(any());
+            verify(disclosureInserter).insertBatchIsolated(any(), any());
         }
     }
 }

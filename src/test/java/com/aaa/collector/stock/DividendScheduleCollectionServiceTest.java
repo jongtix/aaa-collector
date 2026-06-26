@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.atLeastOnce;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -12,9 +13,11 @@ import static org.mockito.Mockito.when;
 import com.aaa.collector.kis.gate.GuardedKisExecutor;
 import com.aaa.collector.kis.gate.KeyLeaseRegistry;
 import com.aaa.collector.kis.gate.KeyLeaseRegistry.LeaseSession;
+import com.aaa.collector.observability.RowFailureHandler;
 import com.aaa.collector.stock.enums.AssetType;
 import com.aaa.collector.stock.enums.EventType;
 import com.aaa.collector.stock.enums.Market;
+import java.sql.SQLException;
 import java.util.List;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -26,7 +29,6 @@ import org.mockito.Captor;
 import org.mockito.Mock;
 import org.mockito.Mockito;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.dao.DataIntegrityViolationException;
 
 /**
  * SPEC-COLLECTOR-KISGATE-001 M6(T19) — {@link DividendScheduleCollectionService} 게이트 경유 단위 테스트.
@@ -129,7 +131,7 @@ class DividendScheduleCollectionServiceTest {
             assertThat(result.skippedNonWatchlist()).isZero();
             assertThat(result.skippedValidation()).isZero();
 
-            verify(corporateEventInserter).insertBatch(inserterCaptor.capture());
+            verify(corporateEventInserter).insertBatchIsolated(inserterCaptor.capture(), any());
 
             CorporateEvent saved =
                     inserterCaptor.getAllValues().stream()
@@ -157,7 +159,7 @@ class DividendScheduleCollectionServiceTest {
             service.collect("20260601", "20260630");
 
             // Assert
-            verify(corporateEventInserter).insertBatch(inserterCaptor.capture());
+            verify(corporateEventInserter).insertBatchIsolated(inserterCaptor.capture(), any());
 
             CorporateEvent saved =
                     inserterCaptor.getAllValues().stream()
@@ -199,7 +201,7 @@ class DividendScheduleCollectionServiceTest {
             // Assert
             assertThat(result.succeeded()).isEqualTo(1);
             assertThat(result.skippedNonWatchlist()).isEqualTo(2);
-            verify(corporateEventInserter, times(1)).insertBatch(any());
+            verify(corporateEventInserter, times(1)).insertBatchIsolated(any(), any());
         }
 
         @Test
@@ -217,7 +219,7 @@ class DividendScheduleCollectionServiceTest {
 
             // Assert
             assertThat(result.skippedNonWatchlist()).isEqualTo(2);
-            verify(corporateEventInserter, never()).insertBatch(any());
+            verify(corporateEventInserter, never()).insertBatchIsolated(any(), any());
         }
     }
 
@@ -253,7 +255,7 @@ class DividendScheduleCollectionServiceTest {
 
             // Assert — 2건 저장
             assertThat(result.succeeded()).isEqualTo(2);
-            verify(corporateEventInserter, times(2)).insertBatch(any());
+            verify(corporateEventInserter, times(2)).insertBatchIsolated(any(), any());
             // 게이트 2회 경유 확인(2페이지), 동일 세션 공유 + per-batch 스냅샷 1회
             verify(guardedKisExecutor, times(2))
                     .execute(eq(session), any(), eq(TR_ID), eq(KisDividendScheduleResponse.class));
@@ -274,7 +276,7 @@ class DividendScheduleCollectionServiceTest {
 
             // Assert
             assertThat(result.succeeded()).isZero();
-            verify(corporateEventInserter, never()).insertBatch(any());
+            verify(corporateEventInserter, never()).insertBatchIsolated(any(), any());
         }
     }
 
@@ -315,7 +317,7 @@ class DividendScheduleCollectionServiceTest {
 
             // Assert
             assertThat(result.skippedValidation()).isEqualTo(1);
-            verify(corporateEventInserter, never()).insertBatch(any());
+            verify(corporateEventInserter, never()).insertBatchIsolated(any(), any());
         }
 
         @Test
@@ -346,7 +348,7 @@ class DividendScheduleCollectionServiceTest {
 
             // Assert
             assertThat(result.skippedValidation()).isEqualTo(1);
-            verify(corporateEventInserter, never()).insertBatch(any());
+            verify(corporateEventInserter, never()).insertBatchIsolated(any(), any());
         }
     }
 
@@ -373,7 +375,7 @@ class DividendScheduleCollectionServiceTest {
             service.collect("20260601", "20260630");
 
             // Assert
-            verify(corporateEventInserter, times(2)).insertBatch(any());
+            verify(corporateEventInserter, times(2)).insertBatchIsolated(any(), any());
         }
     }
 
@@ -414,7 +416,7 @@ class DividendScheduleCollectionServiceTest {
 
             // Assert — 저장 성공, pay_date=null
             assertThat(result.succeeded()).isEqualTo(1);
-            verify(corporateEventInserter).insertBatch(inserterCaptor.capture());
+            verify(corporateEventInserter).insertBatchIsolated(inserterCaptor.capture(), any());
             CorporateEvent savedNullPayDate =
                     inserterCaptor.getAllValues().stream()
                             .flatMap(List::stream)
@@ -461,7 +463,7 @@ class DividendScheduleCollectionServiceTest {
 
             // Assert — 저장 성공, cash_rate=null (parseRateOrNull이 경계 초과 시 null 반환)
             assertThat(result.succeeded()).isEqualTo(1);
-            verify(corporateEventInserter).insertBatch(inserterCaptor.capture());
+            verify(corporateEventInserter).insertBatchIsolated(inserterCaptor.capture(), any());
             CorporateEvent savedNullRate =
                     inserterCaptor.getAllValues().stream()
                             .flatMap(List::stream)
@@ -496,28 +498,33 @@ class DividendScheduleCollectionServiceTest {
                                             sampleRow("000660"), // 정상
                                             sampleRow("035420")))); // 정상
 
-            // insertBatch: 005930 독성 행에서 예외 발생
-            // lenient 필요: 엄격 모드에서는 argThat 미일치 호출에 PotentialStubbingProblem 발생
-            Mockito.lenient()
-                    .doThrow(new DataIntegrityViolationException("Data too long"))
+            // REQ-INSERT-011: insertBatchIsolated — 005930 독성 행에 대해 콜백 호출 시뮬레이션
+            doAnswer(
+                            invocation -> {
+                                List<CorporateEvent> rows = invocation.getArgument(0);
+                                @SuppressWarnings("unchecked")
+                                RowFailureHandler<CorporateEvent> handler =
+                                        invocation.getArgument(1);
+                                // 005930(독성 행)에 대해서만 콜백 호출
+                                final String toxicSymbol = "005930";
+                                final SQLException toxicEx =
+                                        new SQLException("Data too long", "22001", 1406);
+                                for (CorporateEvent entity : rows) {
+                                    if (toxicSymbol.equals(entity.getStock().getSymbol())) {
+                                        handler.onFailure(entity, toxicEx);
+                                    }
+                                }
+                                return null;
+                            })
                     .when(corporateEventInserter)
-                    .insertBatch(
-                            org.mockito.ArgumentMatchers.argThat(
-                                    list ->
-                                            list.stream()
-                                                    .anyMatch(
-                                                            e ->
-                                                                    "005930"
-                                                                            .equals(
-                                                                                    e.getStock()
-                                                                                            .getSymbol()))));
+                    .insertBatchIsolated(any(), any());
 
             // Act
             DividendCollectionResult result = service.collect("20260601", "20260630");
 
             // Assert
-            // (a) 정상 행 2건 삽입
-            verify(corporateEventInserter, times(3)).insertBatch(any());
+            // (a) insertBatchIsolated 1회 (3건 배치), 정상 행 2건 성공
+            verify(corporateEventInserter, times(1)).insertBatchIsolated(any(), any());
             assertThat(result.succeeded()).isEqualTo(2);
             // (b) 독성 행은 skippedValidation 집계
             assertThat(result.skippedValidation()).isEqualTo(1);
@@ -550,7 +557,8 @@ class DividendScheduleCollectionServiceTest {
             service.collect("20260601", "20260630");
 
             // Assert
-            verify(corporateEventInserter, atLeastOnce()).insertBatch(inserterCaptor.capture());
+            verify(corporateEventInserter, atLeastOnce())
+                    .insertBatchIsolated(inserterCaptor.capture(), any());
             assertThat(inserterCaptor.getAllValues())
                     .flatMap(l -> l)
                     .allMatch(e -> e.getEventType() == EventType.DIVIDEND);

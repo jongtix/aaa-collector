@@ -4,7 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.atLeastOnce;
-import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -36,7 +36,6 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.Captor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.web.util.UriBuilder;
 import org.springframework.web.util.UriComponentsBuilder;
 
@@ -211,7 +210,7 @@ class OverseasRightsCollectionServiceTest {
             OverseasRightsCollectionResult result = service.collect();
 
             // Assert
-            verify(corporateEventInserter).insertBatch(inserterCaptor.capture());
+            verify(corporateEventInserter).insertBatchIsolated(inserterCaptor.capture(), any());
             CorporateEvent savedMapping =
                     inserterCaptor.getAllValues().stream()
                             .flatMap(List::stream)
@@ -244,7 +243,7 @@ class OverseasRightsCollectionServiceTest {
 
             OverseasRightsCollectionResult result = service.collect();
 
-            verify(corporateEventInserter, never()).insertBatch(any());
+            verify(corporateEventInserter, never()).insertBatchIsolated(any(), any());
             assertThat(result.succeededRows()).isZero();
             // W1: 검증 skip은 validation 카운터로만 — 독성 카운터와 분리됨을 함께 검증
             assertThat(result.skippedValidationRows()).isEqualTo(1);
@@ -262,7 +261,7 @@ class OverseasRightsCollectionServiceTest {
 
             service.collect();
 
-            verify(corporateEventInserter).insertBatch(inserterCaptor.capture());
+            verify(corporateEventInserter).insertBatchIsolated(inserterCaptor.capture(), any());
             CorporateEvent savedNullDates =
                     inserterCaptor.getAllValues().stream()
                             .flatMap(List::stream)
@@ -319,7 +318,7 @@ class OverseasRightsCollectionServiceTest {
             OverseasRightsCollectionResult result = service.collect();
 
             // Assert
-            verify(corporateEventInserter, never()).insertBatch(any());
+            verify(corporateEventInserter, never()).insertBatchIsolated(any(), any());
             assertThat(result.succeededRows()).isZero();
             assertThat(result.skippedNonCashRows()).isEqualTo(2);
         }
@@ -353,7 +352,7 @@ class OverseasRightsCollectionServiceTest {
 
             OverseasRightsCollectionResult result = service.collect();
 
-            verify(corporateEventInserter, atLeastOnce()).insertBatch(any());
+            verify(corporateEventInserter, atLeastOnce()).insertBatchIsolated(any(), any());
             assertThat(result.succeededRows()).isEqualTo(1);
             assertThat(result.skippedNonCashRows()).isEqualTo(1);
         }
@@ -374,7 +373,7 @@ class OverseasRightsCollectionServiceTest {
 
             OverseasRightsCollectionResult result = service.collect();
 
-            verify(corporateEventInserter, never()).insertBatch(any());
+            verify(corporateEventInserter, never()).insertBatchIsolated(any(), any());
             assertThat(result.skippedStocks()).isEqualTo(1);
         }
 
@@ -387,9 +386,21 @@ class OverseasRightsCollectionServiceTest {
             when(guardedKisExecutor.execute(any(LeaseSession.class), any(), anyString(), any()))
                     .thenReturn(
                             response(List.of(cashDividendRow("20260511", "20260511", "20260514"))));
-            doThrow(new DataIntegrityViolationException("toxic"))
+            // REQ-INSERT-011: 독성 행에 대해 콜백 호출 시뮬레이션
+            final java.sql.SQLException toxicEx = new java.sql.SQLException("toxic", "22001", 1406);
+            doAnswer(
+                            invocation -> {
+                                List<CorporateEvent> rows = invocation.getArgument(0);
+                                @SuppressWarnings("unchecked")
+                                com.aaa.collector.observability.RowFailureHandler<CorporateEvent>
+                                        handler = invocation.getArgument(1);
+                                for (CorporateEvent entity : rows) {
+                                    handler.onFailure(entity, toxicEx);
+                                }
+                                return null;
+                            })
                     .when(corporateEventInserter)
-                    .insertBatch(any());
+                    .insertBatchIsolated(any(), any());
 
             // Act & Assert — 예외 전파 없이 흡수
             OverseasRightsCollectionResult result = service.collect();
@@ -429,7 +440,7 @@ class OverseasRightsCollectionServiceTest {
             // Assert
             assertThat(result.attemptedStocks()).isEqualTo(3);
             assertThat(result.succeededRows()).isEqualTo(3);
-            verify(corporateEventInserter, atLeastOnce()).insertBatch(any());
+            verify(corporateEventInserter, atLeastOnce()).insertBatchIsolated(any(), any());
         }
     }
 }

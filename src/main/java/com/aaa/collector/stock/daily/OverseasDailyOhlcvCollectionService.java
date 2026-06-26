@@ -10,25 +10,20 @@ import com.aaa.collector.kis.token.KisTokenIssueException;
 import com.aaa.collector.stock.Stock;
 import com.aaa.collector.stock.StockRepository;
 import java.math.BigDecimal;
-import java.net.URI;
 import java.time.LocalDate;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
-import java.util.Comparator;
 import java.util.List;
-import java.util.Optional;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicInteger;
-import java.util.function.Function;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.client.RestClientException;
-import org.springframework.web.util.UriBuilder;
 
 /**
  * 미국(해외) 일봉 OHLCV 수집 서비스 (SPEC-COLLECTOR-OVERSEAS-OHLCV-001).
@@ -219,7 +214,7 @@ public class OverseasDailyOhlcvCollectionService {
         LocalDate oldest =
                 kept.stream()
                         .map(ParsedOhlcvRow::tradeDate)
-                        .min(Comparator.naturalOrder())
+                        .min(LocalDate::compareTo)
                         .orElseThrow();
         return new BackfillWindowResult(oldest, kept.size());
     }
@@ -228,7 +223,8 @@ public class OverseasDailyOhlcvCollectionService {
             LeaseSession session, String excd, String symbol, LocalDate today)
             throws InterruptedException {
         String bymd = today.format(DATE_FMT);
-        Function<UriBuilder, URI> uriCustomizer =
+        return guardedKisExecutor.execute(
+                session,
                 uri ->
                         uri.path("/uapi/overseas-price/v1/quotations/dailyprice")
                                 .queryParam("AUTH", "")
@@ -239,9 +235,9 @@ public class OverseasDailyOhlcvCollectionService {
                                 // 금지.
                                 .queryParam("MODP", "0")
                                 .queryParam("BYMD", bymd)
-                                .build();
-        return guardedKisExecutor.execute(
-                session, uriCustomizer, DAILY_PRICE_TR_ID, KisOverseasDailyOhlcvResponse.class);
+                                .build(),
+                DAILY_PRICE_TR_ID,
+                KisOverseasDailyOhlcvResponse.class);
     }
 
     /**
@@ -282,8 +278,10 @@ public class OverseasDailyOhlcvCollectionService {
             if (isEtToday(row.xymd(), today)) {
                 continue;
             }
-            Optional<ParsedOhlcvRow> parsed = isValid(symbol, row);
-            parsed.ifPresent(kept::add);
+            ParsedOhlcvRow parsed = parseIfValid(symbol, row);
+            if (parsed != null) {
+                kept.add(parsed);
+            }
         }
         return kept;
     }
@@ -337,7 +335,7 @@ public class OverseasDailyOhlcvCollectionService {
         LocalDate oldest =
                 kept.stream()
                         .map(ParsedOhlcvRow::tradeDate)
-                        .min(Comparator.naturalOrder())
+                        .min(LocalDate::compareTo)
                         .orElseThrow();
         return new OverseasDailyOhlcvFetch(kept, oldest, kept.size());
     }
@@ -386,7 +384,7 @@ public class OverseasDailyOhlcvCollectionService {
      *
      * <p>파싱 성공 시 파싱된 값을 담은 {@link ParsedOhlcvRow}를 반환 — 1회 파싱, 재사용 (W-1 불변식).
      */
-    private Optional<ParsedOhlcvRow> isValid(
+    private ParsedOhlcvRow parseIfValid(
             String symbol, KisOverseasDailyOhlcvResponse.OverseasDailyOhlcvRow row) {
         try {
             BigDecimal close = new BigDecimal(row.clos());
@@ -416,11 +414,10 @@ public class OverseasDailyOhlcvCollectionService {
                         row.low(),
                         row.tvol(),
                         row.tamt());
-                return Optional.empty();
+                return null;
             }
             LocalDate tradeDate = LocalDate.parse(row.xymd(), DATE_FMT);
-            return Optional.of(
-                    new ParsedOhlcvRow(tradeDate, open, high, low, close, volume, tradingValue));
+            return new ParsedOhlcvRow(tradeDate, open, high, low, close, volume, tradingValue);
         } catch (NumberFormatException e) {
             log.warn(
                     "[overseas-daily] 숫자 파싱 실패 (데이터 유실) — symbol={}, date={}, clos={}, open={}, high={}, low={}, tvol={}, tamt={}",
@@ -432,7 +429,7 @@ public class OverseasDailyOhlcvCollectionService {
                     row.low(),
                     row.tvol(),
                     row.tamt());
-            return Optional.empty();
+            return null;
         }
     }
 

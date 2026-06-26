@@ -3,7 +3,7 @@ package com.aaa.collector.news.overseas;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
-import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -26,7 +26,6 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.Captor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.web.util.UriBuilder;
 import org.springframework.web.util.UriComponentsBuilder;
 
@@ -207,7 +206,8 @@ class OverseasNewsTitleCollectionServiceTest {
             OverseasNewsCollectionResult result = service.collect();
 
             // Assert — K1/K2/K3 각 1회 저장(K2 중복은 dedup), succeeded=3
-            verify(overseasNewsHeadlineInserter, times(3)).insertBatch(any());
+            // page1(K1+K2) → 1회, page2(K3만) → 1회 = 총 2회 insertBatchIsolated
+            verify(overseasNewsHeadlineInserter, times(2)).insertBatchIsolated(any(), any());
             assertThat(result.succeeded()).isEqualTo(3);
             // attempted = page1(2) + page2(2) = 4, K2 중복 1건 skip
             assertThat(result.attempted()).isEqualTo(4);
@@ -228,7 +228,7 @@ class OverseasNewsTitleCollectionServiceTest {
 
             OverseasNewsCollectionResult result = service.collect();
 
-            verify(overseasNewsHeadlineInserter, never()).insertBatch(any());
+            verify(overseasNewsHeadlineInserter, never()).insertBatchIsolated(any(), any());
             assertThat(result.attempted()).isZero();
             verify(guardedKisExecutor, times(1))
                     .execute(any(LeaseSession.class), any(), anyString(), any());
@@ -278,7 +278,7 @@ class OverseasNewsTitleCollectionServiceTest {
             OverseasNewsCollectionResult result = service.collect();
 
             // null news_key 1건 skip, K2만 저장
-            verify(overseasNewsHeadlineInserter, times(1)).insertBatch(any());
+            verify(overseasNewsHeadlineInserter, times(1)).insertBatchIsolated(any(), any());
             assertThat(result.succeeded()).isEqualTo(1);
             assertThat(result.skipped()).isEqualTo(1);
         }
@@ -295,7 +295,8 @@ class OverseasNewsTitleCollectionServiceTest {
 
             OverseasNewsCollectionResult result = service.collect();
 
-            verify(overseasNewsHeadlineInserter).insertBatch(inserterCaptor.capture());
+            verify(overseasNewsHeadlineInserter)
+                    .insertBatchIsolated(inserterCaptor.capture(), any());
             OverseasNewsHeadline saved =
                     inserterCaptor.getAllValues().stream()
                             .flatMap(List::stream)
@@ -315,9 +316,22 @@ class OverseasNewsTitleCollectionServiceTest {
             when(guardedKisExecutor.execute(any(LeaseSession.class), any(), anyString(), any()))
                     .thenReturn(page1)
                     .thenReturn(emptyPage());
-            doThrow(new DataIntegrityViolationException("toxic"))
+            // REQ-INSERT-011: 독성 행에 대해 콜백 호출 시뮬레이션
+            final java.sql.SQLException toxicEx = new java.sql.SQLException("toxic", "22001", 1406);
+            doAnswer(
+                            invocation -> {
+                                List<OverseasNewsHeadline> rows = invocation.getArgument(0);
+                                @SuppressWarnings("unchecked")
+                                com.aaa.collector.observability.RowFailureHandler<
+                                                OverseasNewsHeadline>
+                                        handler = invocation.getArgument(1);
+                                for (OverseasNewsHeadline entity : rows) {
+                                    handler.onFailure(entity, toxicEx);
+                                }
+                                return null;
+                            })
                     .when(overseasNewsHeadlineInserter)
-                    .insertBatch(any());
+                    .insertBatchIsolated(any(), any());
 
             // Act & Assert — 예외 전파 없이 흡수
             OverseasNewsCollectionResult result = service.collect();
@@ -351,7 +365,8 @@ class OverseasNewsTitleCollectionServiceTest {
 
             assertThat(result.succeeded()).isEqualTo(3);
             assertThat(result.attempted()).isEqualTo(3);
-            verify(overseasNewsHeadlineInserter, times(3)).insertBatch(any());
+            // 3페이지 각 1행 → insertBatchIsolated 3회 (페이지당 1회)
+            verify(overseasNewsHeadlineInserter, times(3)).insertBatchIsolated(any(), any());
             verify(guardedKisExecutor, times(4))
                     .execute(any(LeaseSession.class), any(), anyString(), any());
         }
