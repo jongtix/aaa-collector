@@ -205,10 +205,17 @@ public class CatchUpRunner {
         return false;
     }
 
+    // @MX:WARN: [AUTO] runWithTimeout — future.cancel(true)는 socket/HTTP I/O 블록 중단 불가능
+    // @MX:REASON: [AUTO] KIS HTTP 수집 중 타임아웃 시 스레드가 I/O 반환까지 살아있을 수 있음(MI-B, §4.1).
+    //             잔여 KIS 호출은 GuardedKisExecutor 직렬화로 동시 버스트 방지 — 수용된 트레이드오프.
     /**
      * 단위 배치를 타임아웃 내에 실행한다.
      *
-     * <p>타임아웃 초과 시 인터럽트(베스트-에포트)하고 다음 단위로 진행한다(AC-18). package-private: 같은 패키지의 테스트에서 접근 가능.
+     * <p>타임아웃 초과 시 인터럽트(베스트-에포트)하고 다음 단위로 진행한다(AC-18, §4.1 MI-B).
+     *
+     * <p><b>I/O 인터럽트 한계</b>: {@code future.cancel(true)}는 socket/HTTP 블록 중단을 보장하지 않는다. 타임아웃 후 잔여
+     * KIS 호출이 백그라운드에서 완료될 수 있으나, {@code GuardedKisExecutor}가 직렬화하므로 다음 단위와 동시 버스트로 번지지 않는다.
+     * package-private: 같은 패키지의 테스트에서 접근 가능.
      */
     @SuppressWarnings("PMD.CloseResource") // executor.shutdownNow() 호출로 finally에서 정리됨
     void runWithTimeout(CatchUpUnit unit) {
