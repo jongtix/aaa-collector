@@ -115,7 +115,7 @@
     </rule>
     <rule ref="category/java/design.xml/TooManyMethods">
         <properties>
-            <property name="maxmethods" value="21"/>
+            <property name="maxmethods" value="20"/>
             <property name="violationSuppressXPath"
                       value="//ClassDeclaration[ends-with(@SimpleName, 'Test')]"/>
         </properties>

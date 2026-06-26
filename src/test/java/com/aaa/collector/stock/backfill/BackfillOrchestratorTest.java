@@ -65,10 +65,8 @@ class BackfillOrchestratorTest {
         when(properties.getPerTableCompletionCap()).thenReturn(10);
         when(properties.getMaxWindowsPerTarget()).thenReturn(120);
 
-        // resolveStatusForFetch: 테스트에서 anchor 보정 로직을 우회하고 원본 status를 그대로 반환.
-        // 이를 통해 fetchWindow/persistWindow 스텁에서 eq(status) 매처를 그대로 사용할 수 있다.
-        when(windowExecutor.resolveStatusForFetch(any()))
-                .thenAnswer(invocation -> invocation.getArgument(0));
+        // windowExecutor는 @Mock — fetchWindow는 원본 current를 그대로 전달받으므로
+        // eq(status) 매처를 그대로 사용할 수 있다.
     }
 
     private Stock buildDomesticStock(String symbol) {
@@ -590,7 +588,7 @@ class BackfillOrchestratorTest {
                     .thenReturn(Optional.of(secondCompleted));
 
             // first status 두 번째 fetchWindow 호출(firstInProg 처리 시점) 시 예외
-            // resolveStatusForFetch identity 스텁으로 인해 resolved == firstInProg → eq() 매처 사용 가능
+            // 오케스트레이터는 current(== firstInProg)를 fetchWindow에 그대로 전달 → eq() 매처 사용 가능
             doThrow(new RuntimeException("KIS 오류 시뮬레이션"))
                     .when(windowExecutor)
                     .fetchWindow(eq(firstInProg), any(), any());
@@ -621,7 +619,7 @@ class BackfillOrchestratorTest {
                     .thenReturn(List.of(first, second));
 
             // daily_ohlcv 스트림: fetchWindow에서 InterruptedException 발생
-            // resolveStatusForFetch identity 스텁으로 인해 resolved == first → eq() 매처 사용 가능
+            // 오케스트레이터는 current(== first)를 fetchWindow에 그대로 전달 → eq() 매처 사용 가능
             doThrow(new InterruptedException("인터럽트 시뮬레이션"))
                     .when(windowExecutor)
                     .fetchWindow(eq(first), any(), any());
