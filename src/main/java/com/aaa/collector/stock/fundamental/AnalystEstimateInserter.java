@@ -20,7 +20,7 @@ import org.springframework.stereotype.Component;
  * SilentDropWarningCounter#countDropsPerRow}로 행별 실행하며 각 행의 {@link PreparedStatement#getWarnings()}
  * 경고 체인을 분석해 중복(1062) 외 침묵 드롭만 {@link BatchMetrics}에 기록한다.
  */
-// @MX:ANCHOR: [AUTO] 투자의견 INSERT IGNORE 경고 캡처 경로 — 침묵 드롭 가시화의 진입점
+// @MX:NOTE: [AUTO] 투자의견 INSERT IGNORE 경고 캡처 경로 — 침묵 드롭 가시화의 진입점
 // @MX:REASON: [AUTO] InvestOpinionCollectionService가 호출(fan_in=1)
 @Component
 @RequiredArgsConstructor
