@@ -6,27 +6,23 @@ import com.aaa.collector.backfill.BackfillWindowResult;
 import com.aaa.collector.kis.KisRateLimitException;
 import com.aaa.collector.kis.gate.GuardedKisExecutor;
 import com.aaa.collector.kis.gate.KeyLeaseRegistry;
-import com.aaa.collector.kis.gate.KeyLeaseRegistry.LeaseSession;
 import com.aaa.collector.kis.gate.NoHealthyKeyException;
 import com.aaa.collector.kis.token.KisTokenIssueException;
 import com.aaa.collector.stock.InvestorTrend;
 import com.aaa.collector.stock.Stock;
 import com.aaa.collector.stock.StockRepository;
-import java.net.URI;
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
-import java.util.ArrayList;
-import java.util.Comparator;
 import java.util.List;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicInteger;
-import java.util.function.Function;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.client.RestClientException;
-import org.springframework.web.util.UriBuilder;
 
 /**
  * 종목별 투자자 매매동향 수집 서비스 (TR FHPTJ04160001).
@@ -70,7 +66,6 @@ public class InvestorTrendCollectionService {
     /** KIS API rt_cd 값 — 비영업일 anchor 거부 코드 (REQ-BACKFILL-016, MA-05 실측 2026-06-20). */
     private static final String RT_CD_NON_BUSINESS_DAY = "2";
 
-    private static final DateTimeFormatter DATE_FMT = DateTimeFormatter.BASIC_ISO_DATE;
     private static final String TR_ID = "FHPTJ04160001";
     private static final String PATH =
             "/uapi/domestic-stock/v1/quotations/investor-trade-by-stock-daily";
@@ -105,7 +100,7 @@ public class InvestorTrendCollectionService {
         }
 
         // REQ-KISGATE-006a: per-batch 헬스 스냅샷 1회 고정
-        LeaseSession session = keyLeaseRegistry.openSession();
+        KeyLeaseRegistry.LeaseSession session = keyLeaseRegistry.openSession();
         int total = activeStocks.size();
 
         // REQ-KISGATE-024, REQ-KEYDIST-020 보존: 빈 스냅샷 = 전 키 사망 → skip-all + ERROR + no fallback
@@ -151,7 +146,8 @@ public class InvestorTrendCollectionService {
      * @return 적재 대상 행의 최소 거래일 + 행 수 (적재 대상 없으면 {@link BackfillWindowResult#EMPTY})
      * @throws InterruptedException 게이트 호출 인터럽트 시 전파
      */
-    public BackfillWindowResult collectWindow(Stock stock, LeaseSession session, LocalDate anchor)
+    public BackfillWindowResult collectWindow(
+            Stock stock, KeyLeaseRegistry.LeaseSession session, LocalDate anchor)
             throws InterruptedException {
         String symbol = stock.getSymbol();
         LocalDate effectiveAnchor = anchor;
@@ -184,14 +180,14 @@ public class InvestorTrendCollectionService {
         LocalDate oldest =
                 validEntities.stream()
                         .map(InvestorTrend::getTradeDate)
-                        .min(Comparator.naturalOrder())
+                        .min(LocalDate::compareTo)
                         .orElseThrow();
         return new BackfillWindowResult(oldest, validEntities.size());
     }
 
     private void collectStock(
             Stock stock,
-            LeaseSession session,
+            KeyLeaseRegistry.LeaseSession session,
             LocalDate today,
             LocalDate windowStart,
             AtomicInteger succeeded,
@@ -227,10 +223,12 @@ public class InvestorTrendCollectionService {
         }
     }
 
-    private KisInvestorTrendResponse fetch(LeaseSession session, String symbol, LocalDate today)
+    private KisInvestorTrendResponse fetch(
+            KeyLeaseRegistry.LeaseSession session, String symbol, LocalDate today)
             throws InterruptedException {
-        String date = today.format(DATE_FMT);
-        Function<UriBuilder, URI> uriCustomizer =
+        String date = today.format(DateTimeFormatter.BASIC_ISO_DATE);
+        return guardedKisExecutor.execute(
+                session,
                 uri ->
                         uri.path(PATH)
                                 .queryParam("FID_COND_MRKT_DIV_CODE", "J")
@@ -238,9 +236,77 @@ public class InvestorTrendCollectionService {
                                 .queryParam("FID_INPUT_DATE_1", date)
                                 .queryParam("FID_ORG_ADJ_PRC", "")
                                 .queryParam("FID_ETC_CLS_CODE", "1")
-                                .build();
-        return guardedKisExecutor.execute(
-                session, uriCustomizer, TR_ID, KisInvestorTrendResponse.class);
+                                .build(),
+                TR_ID,
+                KisInvestorTrendResponse.class);
+    }
+
+    /**
+     * [T5] fetch 경로 전용 — 검증·매핑·경계 커버리지 관측만 수행하고 INSERT하지 않는다.
+     *
+     * <p>{@link #fetchWindow}가 사용하는 순수 검증 경로. {@link #saveValidRows}는 이 결과에 적재를
+     * 추가한다(REQ-BACKFILL-002).
+     *
+     * @return 검증 통과 엔티티 목록 (없으면 빈 목록)
+     */
+    private List<InvestorTrend> collectValidEntities(
+            Stock stock,
+            String symbol,
+            KisInvestorTrendResponse response,
+            LocalDate today,
+            LocalDate windowStart) {
+        // 파싱 성공한 모든 거래일 (윈도우 밖 포함) — 커버리지 관측용
+        List<LocalDate> tradeDates =
+                response.output2().stream()
+                        .filter(
+                                row -> {
+                                    if (row.stckBsopDate() == null
+                                            || row.stckBsopDate().isBlank()) {
+                                        log.warn(
+                                                "[investor-trend] 검증 실패 (trade_date null) — symbol={}",
+                                                symbol);
+                                        return false;
+                                    }
+                                    return true;
+                                })
+                        .map(
+                                row ->
+                                        LocalDate.parse(
+                                                row.stckBsopDate(),
+                                                DateTimeFormatter.BASIC_ISO_DATE))
+                        .toList();
+
+        // REQ-BATCH2-025: 경계 커버리지 관측 (단일 응답 윈도우 하단 미커버 시 WARN)
+        WindowCoverageChecker.check("investor", symbol, tradeDates, windowStart);
+
+        // 윈도우 내 검증 통과 엔티티만 수집 — mapMulti로 try-catch 인라인 처리
+        return response.output2().stream()
+                .filter(row -> row.stckBsopDate() != null && !row.stckBsopDate().isBlank())
+                .filter(
+                        row -> {
+                            LocalDate tradeDate =
+                                    LocalDate.parse(
+                                            row.stckBsopDate(), DateTimeFormatter.BASIC_ISO_DATE);
+                            return !tradeDate.isBefore(windowStart) && !tradeDate.isAfter(today);
+                        })
+                .<InvestorTrend>mapMulti(
+                        (row, consumer) -> {
+                            LocalDate tradeDate =
+                                    LocalDate.parse(
+                                            row.stckBsopDate(), DateTimeFormatter.BASIC_ISO_DATE);
+                            try {
+                                InvestorTrend entity = buildEntity(stock, symbol, tradeDate, row);
+                                if (entity != null) {
+                                    consumer.accept(entity);
+                                }
+                            } catch (NumberFormatException e) {
+                                log.warn(
+                                        "[investor-trend] 숫자 파싱 실패 (데이터 유실) — symbol={}, date={}",
+                                        symbol,
+                                        row.stckBsopDate());
+                            }
+                        })
+                .toList();
     }
 
     /**
@@ -260,38 +326,93 @@ public class InvestorTrendCollectionService {
             KisInvestorTrendResponse response,
             LocalDate today,
             LocalDate windowStart) {
-        List<InvestorTrend> validEntities = new ArrayList<>();
-        List<LocalDate> tradeDates = new ArrayList<>();
-        for (KisInvestorTrendResponse.InvestorTrendRow row : response.output2()) {
-            if (row.stckBsopDate() == null || row.stckBsopDate().isBlank()) {
-                log.warn("[investor-trend] 검증 실패 (trade_date null) — symbol={}", symbol);
-                continue;
-            }
-            LocalDate tradeDate = LocalDate.parse(row.stckBsopDate(), DATE_FMT);
-            tradeDates.add(tradeDate);
-            if (tradeDate.isBefore(windowStart) || tradeDate.isAfter(today)) {
-                // 윈도우 밖 행은 저장하지 않으나, 경계 커버리지 최소 trade_date 산정에는 포함한다.
-                continue;
-            }
-            try {
-                InvestorTrend entity = buildEntity(stock, symbol, tradeDate, row);
-                if (entity != null) {
-                    validEntities.add(entity);
-                }
-            } catch (NumberFormatException e) {
-                log.warn(
-                        "[investor-trend] 숫자 파싱 실패 (데이터 유실) — symbol={}, date={}",
-                        symbol,
-                        row.stckBsopDate());
-            }
-        }
-        // REQ-BATCH2-025: 경계 커버리지 관측 (단일 응답 윈도우 하단 미커버 시 WARN)
-        WindowCoverageChecker.check("investor", symbol, tradeDates, windowStart);
+        List<InvestorTrend> validEntities =
+                collectValidEntities(stock, symbol, response, today, windowStart);
         if (validEntities.isEmpty()) {
             return validEntities;
         }
         inserter.insertBatch(validEntities);
         return validEntities;
+    }
+
+    /**
+     * [T5] fetch 단계 — HTTP 호출·비영업일 anchor-skip 보정 루프·검증을 수행하고 INSERT하지 않는다.
+     *
+     * <p>[HARD] {@code windowAdvancer.correctRejectedAnchor} 호출이 포함된 rt_cd=2 재시도 루프는 이 메서드에 잔류한다
+     * (REQ-BACKFILL-016).
+     *
+     * <p>{@code anchor}를 initial anchor로 삼는다. DB 접촉 없음.
+     *
+     * @param anchor initial anchor (BackfillWindowExecutor가 resolveStatusForFetch로 계산해서 전달)
+     * @param stock 백필 대상 종목
+     * @param session 호출자가 고정한 per-run 헬스 스냅샷 세션
+     * @return 검증 통과 엔티티 목록 + 최소 거래일 + 행 수 (없으면 rows=빈목록, oldestTradeDate=null, rowCount=0)
+     * @throws InterruptedException 게이트 호출 인터럽트 시 전파
+     */
+    // @MX:NOTE: [AUTO] fetchWindow — 비tx HTTP 단계. DB 미접촉. BackfillWindowExecutor가 @Transactional
+    // persistWindow와 교차 빈으로 순차 호출.
+    public InvestorTrendFetch fetchWindow(
+            LocalDate anchor, Stock stock, KeyLeaseRegistry.LeaseSession session)
+            throws InterruptedException {
+        String symbol = stock.getSymbol();
+        LocalDate effectiveAnchor = anchor;
+
+        KisInvestorTrendResponse response = fetch(session, symbol, effectiveAnchor);
+        int attempts = 0;
+        while (RT_CD_NON_BUSINESS_DAY.equals(response.rtCd())) {
+            AnchorCorrectionResult correction =
+                    windowAdvancer.correctRejectedAnchor(effectiveAnchor, attempts);
+            effectiveAnchor = correction.correctedAnchor();
+            attempts = correction.attempts();
+            if (correction.exhausted()) {
+                log.warn(
+                        "[investor-trend][backfill] anchor-skip 한도 소진 — symbol={}, originalAnchor={}, effectiveAnchor={}, attempts={}",
+                        symbol,
+                        anchor,
+                        effectiveAnchor,
+                        attempts);
+                return new InvestorTrendFetch(List.of(), null, 0);
+            }
+            response = fetch(session, symbol, effectiveAnchor);
+        }
+
+        LocalDate windowStart = effectiveAnchor.minusDays(LOOKBACK_CALENDAR_DAYS);
+        List<InvestorTrend> validEntities =
+                collectValidEntities(stock, symbol, response, effectiveAnchor, windowStart);
+        if (validEntities.isEmpty()) {
+            return new InvestorTrendFetch(List.of(), null, 0);
+        }
+        LocalDate oldest =
+                validEntities.stream()
+                        .map(InvestorTrend::getTradeDate)
+                        .min(LocalDate::compareTo)
+                        .orElseThrow();
+        return new InvestorTrendFetch(validEntities, oldest, validEntities.size());
+    }
+
+    /**
+     * [T5] persist 단계 — {@link InvestorTrendFetch}의 엔티티를 INSERT IGNORE 배치 적재한다.
+     *
+     * <p>@Transactional 없음 — 트랜잭션은 {@code BackfillWindowExecutor}(T7)가 소유한다(REQ-TXBOUNDARY-002).
+     *
+     * @param stock 백필 대상 종목
+     * @param fetch fetchWindow가 반환한 DTO
+     * @return 적재 대상 행의 최소 거래일 + 행 수 (fetch가 빈 경우 {@link BackfillWindowResult#EMPTY})
+     */
+    // @MX:NOTE: [AUTO] persistWindow — BackfillWindowExecutor @Transactional에 MANDATORY 전파로 합류.
+    // INSERT + 결과 구성 담당.
+    @Transactional(propagation = Propagation.MANDATORY)
+    public BackfillWindowResult persistWindow(Stock stock, InvestorTrendFetch fetch) {
+        if (fetch.rows().isEmpty()) {
+            if (log.isDebugEnabled()) {
+                log.debug(
+                        "[investor-trend][backfill] persistWindow 스킵 (빈 fetch) — symbol={}",
+                        stock.getSymbol());
+            }
+            return BackfillWindowResult.EMPTY;
+        }
+        inserter.insertBatch(fetch.rows());
+        return new BackfillWindowResult(fetch.oldestTradeDate(), fetch.rowCount());
     }
 
     /**
@@ -307,7 +428,8 @@ public class InvestorTrendCollectionService {
 
         // 순매수 수량·거래대금은 매도 우위 시 음수가 정상이므로 음수 검증 제외(R-F).
         // 총거래량·총거래대금은 음수 비정상 — 저장 제외.
-        if (SupplyDemandValidator.anyNegative(totalVolume, totalTradingValue)) {
+        // 총거래량·총거래대금은 음수 비정상 — 저장 제외 (순매수 계열 음수는 정상이므로 여기서만 검증, R-F)
+        if (totalVolume < 0 || totalTradingValue < 0) {
             log.warn(
                     "[investor-trend] 검증 실패 (음수 총거래량/거래대금) — symbol={}, date={}, totalVolume={}, totalTradingValue={}",
                     symbol,

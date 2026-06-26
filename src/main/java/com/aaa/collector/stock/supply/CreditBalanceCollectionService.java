@@ -1,5 +1,6 @@
 package com.aaa.collector.stock.supply;
 
+import com.aaa.collector.backfill.BackfillStatus;
 import com.aaa.collector.backfill.BackfillWindowResult;
 import com.aaa.collector.kis.KisRateLimitException;
 import com.aaa.collector.kis.gate.GuardedKisExecutor;
@@ -22,6 +23,8 @@ import java.util.function.Function;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.client.RestClientException;
 import org.springframework.web.util.UriBuilder;
 
@@ -201,6 +204,68 @@ public class CreditBalanceCollectionService {
                         .min(Comparator.naturalOrder())
                         .orElseThrow();
         return new BackfillWindowResult(oldest, validEntities.size());
+    }
+
+    /**
+     * [T6] fetch 단계 — HTTP 호출·매핑·검증·윈도우 필터를 수행하고 INSERT하지 않는다.
+     *
+     * <p>{@code status.lastCollectedDate}를 anchor(= fid_input_date_1)로, anchor − 14 달력일을
+     * windowStart로 삼아 KIS API를 호출한다(REQ-BACKFILL-050). anchor-skip 보정 없음 — FHPST04760000은 주말에도
+     * rt_cd=0 반환(MA-05). 검증 통과 엔티티와 최소 deal_date를 {@link CreditBalanceFetch}로 반환한다. DB 접촉 없음.
+     *
+     * @param status 현재 백필 상태 (lastCollectedDate = anchor)
+     * @param stock 백필 대상 종목
+     * @param session 호출자가 고정한 per-run 헬스 스냅샷 세션
+     * @return 검증 통과 엔티티 목록 + 최소 거래일 + 행 수 (없으면 rows=빈목록, oldestTradeDate=null, rowCount=0)
+     * @throws InterruptedException 게이트 호출 인터럽트 시 전파
+     */
+    // @MX:NOTE: [AUTO] fetchWindow — 비tx HTTP 단계. DB 미접촉. BackfillWindowExecutor가 @Transactional
+    // persistWindow와 교차 빈으로 순차 호출.
+    public CreditBalanceFetch fetchWindow(BackfillStatus status, Stock stock, LeaseSession session)
+            throws InterruptedException {
+        LocalDate anchor = status.getLastCollectedDate();
+        LocalDate windowStart = anchor.minusDays(LOOKBACK_CALENDAR_DAYS);
+        String symbol = stock.getSymbol();
+        KisCreditBalanceResponse response = fetch(session, symbol, anchor);
+        List<CreditBalance> validEntities =
+                mapper.collectValid(stock, symbol, response, anchor, windowStart);
+        if (validEntities.isEmpty()) {
+            return new CreditBalanceFetch(List.of(), null, 0);
+        }
+        LocalDate oldest =
+                validEntities.stream()
+                        .map(CreditBalance::getTradeDate)
+                        .min(Comparator.naturalOrder())
+                        .orElseThrow();
+        return new CreditBalanceFetch(validEntities, oldest, validEntities.size());
+    }
+
+    /**
+     * [T6] persist 단계 — {@link CreditBalanceFetch}의 엔티티를 INSERT IGNORE 배치 적재한다.
+     *
+     * <p>@Transactional 없음 — 트랜잭션은 {@code BackfillWindowExecutor}(T7)가 소유한다(REQ-TXBOUNDARY-002).
+     *
+     * @param status 백필 상태 (anchor 로깅용)
+     * @param stock 백필 대상 종목
+     * @param fetch fetchWindow가 반환한 DTO
+     * @return 적재 대상 행의 최소 거래일 + 행 수 (fetch가 빈 경우 {@link BackfillWindowResult#EMPTY})
+     */
+    // @MX:NOTE: [AUTO] persistWindow — BackfillWindowExecutor @Transactional에 MANDATORY 전파로 합류.
+    // INSERT + 결과 구성 담당.
+    @Transactional(propagation = Propagation.MANDATORY)
+    public BackfillWindowResult persistWindow(
+            BackfillStatus status, Stock stock, CreditBalanceFetch fetch) {
+        if (fetch.rows().isEmpty()) {
+            if (log.isDebugEnabled()) {
+                log.debug(
+                        "[credit-balance][backfill] persistWindow 스킵 (빈 fetch) — symbol={}, anchor={}",
+                        stock.getSymbol(),
+                        status.getLastCollectedDate());
+            }
+            return BackfillWindowResult.EMPTY;
+        }
+        inserter.insertBatch(fetch.rows());
+        return new BackfillWindowResult(fetch.oldestTradeDate(), fetch.rowCount());
     }
 
     /**

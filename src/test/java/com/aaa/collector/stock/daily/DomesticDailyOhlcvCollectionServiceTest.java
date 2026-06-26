@@ -501,6 +501,131 @@ class DomesticDailyOhlcvCollectionServiceTest {
     }
 
     @Nested
+    @DisplayName("fetchWindow / persistWindow — fetch·persist 분리 (T2, REQ-TXBOUNDARY-002)")
+    class FetchPersistWindow {
+
+        private static final LocalDate ANCHOR = LocalDate.of(2026, 5, 30);
+
+        /** groupASpanFromDate(ANCHOR) = ANCHOR.minusDays(150) = 2025-12-31 */
+        private static final LocalDate FROM = ANCHOR.minusDays(150);
+
+        private LeaseSession openSession() {
+            when(healthyKeySelector.selectHealthy()).thenReturn(List.of(ISA, GOLD));
+            return new KeyLeaseRegistry(healthyKeySelector).openSession();
+        }
+
+        @Test
+        @DisplayName("fetchWindow — DB(ohlcvInserter) 미호출 (fetch 단계에서 INSERT 없음)")
+        void fetchWindow_doesNotCallInserter() throws Exception {
+            // Arrange
+            when(guardedKisExecutor.execute(
+                            any(LeaseSession.class),
+                            any(),
+                            anyString(),
+                            eq(KisDailyOhlcvResponse.class)))
+                    .thenReturn(stubResponse(List.of(validRow("20260101"))));
+
+            // Act
+            DomesticDailyOhlcvFetch fetch =
+                    service.fetchWindow(FROM, ANCHOR, stockOf("005930"), openSession());
+
+            // Assert — fetch 단계에서 DB INSERT 없음
+            verify(ohlcvInserter, never()).insertBatch(any(), any(), any());
+            assertThat(fetch.rowCount()).isEqualTo(1);
+            assertThat(fetch.oldestTradeDate()).isEqualTo(LocalDate.of(2026, 1, 1));
+        }
+
+        @Test
+        @DisplayName("fetchWindow — 빈 응답 시 rows=빈목록, oldestTradeDate=null, rowCount=0")
+        void fetchWindow_emptyResponse_emptyFetch() throws Exception {
+            when(guardedKisExecutor.execute(
+                            any(LeaseSession.class),
+                            any(),
+                            anyString(),
+                            eq(KisDailyOhlcvResponse.class)))
+                    .thenReturn(stubResponse(List.of()));
+
+            DomesticDailyOhlcvFetch fetch =
+                    service.fetchWindow(FROM, ANCHOR, stockOf("005930"), openSession());
+
+            assertThat(fetch.rows()).isEmpty();
+            assertThat(fetch.oldestTradeDate()).isNull();
+            assertThat(fetch.rowCount()).isZero();
+            verify(ohlcvInserter, never()).insertBatch(any(), any(), any());
+        }
+
+        @Test
+        @DisplayName(
+                "fetchWindow — anchor를 FID_INPUT_DATE_2, from(anchor-150)을 FID_INPUT_DATE_1으로 전송")
+        @SuppressWarnings("unchecked")
+        void fetchWindow_sendsAnchorAndSpanParams() throws Exception {
+            // Arrange — anchor=2026-05-30 → DATE_2=20260530, from=2025-12-31 → DATE_1=20251231
+            ArgumentCaptor<Function<UriBuilder, URI>> uriCaptor =
+                    ArgumentCaptor.forClass(Function.class);
+            when(guardedKisExecutor.execute(
+                            any(LeaseSession.class),
+                            uriCaptor.capture(),
+                            anyString(),
+                            eq(KisDailyOhlcvResponse.class)))
+                    .thenReturn(stubResponse(List.of(validRow("20260101"))));
+
+            service.fetchWindow(FROM, ANCHOR, stockOf("005930"), openSession());
+
+            URI built = uriCaptor.getValue().apply(UriComponentsBuilder.newInstance());
+            assertThat(built.toString()).contains("FID_INPUT_DATE_2=20260530");
+            assertThat(built.toString()).contains("FID_INPUT_DATE_1=20251231");
+        }
+
+        @Test
+        @DisplayName("persistWindow — ohlcvInserter.insertBatch 1회 호출 (persist 단계에서 INSERT 발생)")
+        void persistWindow_callsInserter() throws Exception {
+            // Arrange
+            Stock stock = stockOf("005930");
+            DomesticDailyOhlcvFetch fetch =
+                    new DomesticDailyOhlcvFetch(
+                            List.of(validRow("20260101")), LocalDate.of(2026, 1, 1), 1);
+
+            // Act
+            BackfillWindowResult result = service.persistWindow(stock, fetch);
+
+            // Assert — persist 단계에서 정확히 1회 INSERT
+            verify(ohlcvInserter, times(1)).insertBatch(any(), any(), any());
+            assertThat(result.oldestTradeDate()).isEqualTo(LocalDate.of(2026, 1, 1));
+            assertThat(result.rowCount()).isEqualTo(1);
+        }
+
+        @Test
+        @DisplayName("persistWindow — 빈 fetch → EMPTY 반환, inserter 미호출")
+        void persistWindow_emptyFetch_returnsEmpty() {
+            DomesticDailyOhlcvFetch emptyFetch = new DomesticDailyOhlcvFetch(List.of(), null, 0);
+
+            BackfillWindowResult result = service.persistWindow(stockOf("005930"), emptyFetch);
+
+            assertThat(result).isEqualTo(BackfillWindowResult.EMPTY);
+            verify(ohlcvInserter, never()).insertBatch(any(), any(), any());
+        }
+
+        @Test
+        @DisplayName("회귀 가드 — 당일 경로(collect) green 유지: saveValidRows가 collect에서 정상 동작")
+        void dailyPathRegression_collectStillWorks() throws Exception {
+            Stock stock = stockOf("005930");
+            when(stockRepository.findAllActiveTradable()).thenReturn(List.of(stock));
+            when(healthyKeySelector.selectHealthy()).thenReturn(List.of(ISA));
+            when(guardedKisExecutor.execute(
+                            any(LeaseSession.class),
+                            any(),
+                            anyString(),
+                            eq(KisDailyOhlcvResponse.class)))
+                    .thenReturn(stubResponse(List.of(validRow("20260605"))));
+
+            CollectionResult result = service.collect(LocalDate.of(2026, 6, 5));
+
+            assertThat(result.succeeded()).isEqualTo(1);
+            verify(ohlcvInserter, times(1)).insertBatch(any(), any(), any());
+        }
+    }
+
+    @Nested
     @DisplayName("T3a 회귀 — asset_type 필터 검증 (REQ-BATCH3-024 보존)")
     class AssetTypeFilter {
 

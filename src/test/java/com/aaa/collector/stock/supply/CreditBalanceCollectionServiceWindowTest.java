@@ -9,16 +9,19 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.aaa.collector.backfill.BackfillStatus;
 import com.aaa.collector.backfill.BackfillWindowResult;
 import com.aaa.collector.kis.gate.GuardedKisExecutor;
 import com.aaa.collector.kis.gate.KeyLeaseRegistry;
 import com.aaa.collector.kis.gate.KeyLeaseRegistry.LeaseSession;
 import com.aaa.collector.kis.token.HealthyKeySelector;
 import com.aaa.collector.kis.token.KisAccountCredential;
+import com.aaa.collector.stock.CreditBalance;
 import com.aaa.collector.stock.Stock;
 import com.aaa.collector.stock.StockRepository;
 import com.aaa.collector.stock.enums.AssetType;
 import com.aaa.collector.stock.enums.Market;
+import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.List;
 import org.junit.jupiter.api.BeforeEach;
@@ -94,12 +97,9 @@ class CreditBalanceCollectionServiceWindowTest {
                             eq(KisCreditBalanceResponse.class)))
                     .thenReturn(response);
 
-            com.aaa.collector.stock.CreditBalance cb1 =
-                    makeCreditBalance(stock, LocalDate.of(2026, 6, 11));
-            com.aaa.collector.stock.CreditBalance cb2 =
-                    makeCreditBalance(stock, LocalDate.of(2026, 6, 12));
-            com.aaa.collector.stock.CreditBalance cb3 =
-                    makeCreditBalance(stock, LocalDate.of(2026, 6, 13));
+            CreditBalance cb1 = makeCreditBalance(stock, LocalDate.of(2026, 6, 11));
+            CreditBalance cb2 = makeCreditBalance(stock, LocalDate.of(2026, 6, 12));
+            CreditBalance cb3 = makeCreditBalance(stock, LocalDate.of(2026, 6, 13));
             when(mapper.collectValid(eq(stock), anyString(), eq(response), any(), any()))
                     .thenReturn(List.of(cb1, cb2, cb3));
 
@@ -190,10 +190,124 @@ class CreditBalanceCollectionServiceWindowTest {
         }
     }
 
+    @Nested
+    @DisplayName("fetchWindow / persistWindow — fetch·persist 분리 (T6, REQ-TXBOUNDARY-002)")
+    class FetchPersistWindow {
+
+        private BackfillStatus statusOf(LocalDate lastCollectedDate) {
+            return BackfillStatus.builder()
+                    .targetType("STOCK")
+                    .targetCode("005930")
+                    .dataTable("credit_balance")
+                    .status("IN_PROGRESS")
+                    .lastCollectedDate(lastCollectedDate)
+                    .build();
+        }
+
+        @Test
+        @DisplayName("fetchWindow — inserter(DB) 미호출 (fetch 단계에서 INSERT 없음)")
+        void fetchWindow_doesNotCallInserter() throws Exception {
+            // Arrange
+            Stock stock = stockOf("005930");
+            KisCreditBalanceResponse response = anyResponse();
+            when(guardedKisExecutor.execute(
+                            any(LeaseSession.class),
+                            any(),
+                            anyString(),
+                            eq(KisCreditBalanceResponse.class)))
+                    .thenReturn(response);
+            when(mapper.collectValid(eq(stock), anyString(), eq(response), any(), any()))
+                    .thenReturn(
+                            List.of(
+                                    makeCreditBalance(stock, LocalDate.of(2026, 6, 11)),
+                                    makeCreditBalance(stock, LocalDate.of(2026, 6, 12))));
+
+            // Act
+            CreditBalanceFetch fetch = service.fetchWindow(statusOf(ANCHOR), stock, session);
+
+            // Assert — fetch 단계에서 DB INSERT 없음
+            verify(inserter, never()).insertBatch(any());
+            assertThat(fetch.rowCount()).isEqualTo(2);
+            assertThat(fetch.oldestTradeDate()).isEqualTo(LocalDate.of(2026, 6, 11));
+        }
+
+        @Test
+        @DisplayName("fetchWindow — 빈 응답 시 rows=빈목록, oldestTradeDate=null, rowCount=0")
+        void fetchWindow_emptyResponse_emptyFetch() throws Exception {
+            Stock stock = stockOf("005930");
+            KisCreditBalanceResponse response = anyResponse();
+            when(guardedKisExecutor.execute(
+                            any(LeaseSession.class),
+                            any(),
+                            anyString(),
+                            eq(KisCreditBalanceResponse.class)))
+                    .thenReturn(response);
+            when(mapper.collectValid(eq(stock), anyString(), eq(response), any(), any()))
+                    .thenReturn(List.of());
+
+            CreditBalanceFetch fetch = service.fetchWindow(statusOf(ANCHOR), stock, session);
+
+            assertThat(fetch.rows()).isEmpty();
+            assertThat(fetch.oldestTradeDate()).isNull();
+            assertThat(fetch.rowCount()).isZero();
+            verify(inserter, never()).insertBatch(any());
+        }
+
+        @Test
+        @DisplayName("persistWindow — inserter.insertBatch 1회 호출 (persist에서 INSERT 발생)")
+        void persistWindow_callsInserter() {
+            Stock stock = stockOf("005930");
+            CreditBalance entity = makeCreditBalance(stock, LocalDate.of(2026, 6, 11));
+            CreditBalanceFetch fetch =
+                    new CreditBalanceFetch(List.of(entity), LocalDate.of(2026, 6, 11), 1);
+
+            BackfillWindowResult result = service.persistWindow(statusOf(ANCHOR), stock, fetch);
+
+            verify(inserter, times(1)).insertBatch(any());
+            assertThat(result.oldestTradeDate()).isEqualTo(LocalDate.of(2026, 6, 11));
+            assertThat(result.rowCount()).isEqualTo(1);
+        }
+
+        @Test
+        @DisplayName("persistWindow — 빈 fetch → EMPTY 반환, inserter 미호출")
+        void persistWindow_emptyFetch_returnsEmpty() {
+            CreditBalanceFetch emptyFetch = new CreditBalanceFetch(List.of(), null, 0);
+
+            BackfillWindowResult result =
+                    service.persistWindow(statusOf(ANCHOR), stockOf("005930"), emptyFetch);
+
+            assertThat(result).isEqualTo(BackfillWindowResult.EMPTY);
+            verify(inserter, never()).insertBatch(any());
+        }
+
+        @Test
+        @DisplayName("회귀 가드 — 당일 경로(collect) green 유지: saveValidRows가 collect에서 정상 동작")
+        void dailyPathRegression_collectStillWorks() throws Exception {
+            // Arrange
+            Stock stock = stockOf("005930");
+            when(stockRepository.findAllActiveTradable()).thenReturn(List.of(stock));
+            KisCreditBalanceResponse response = anyResponse();
+            when(guardedKisExecutor.execute(
+                            any(LeaseSession.class),
+                            any(),
+                            anyString(),
+                            eq(KisCreditBalanceResponse.class)))
+                    .thenReturn(response);
+            when(mapper.collectValid(eq(stock), anyString(), eq(response), any(), any()))
+                    .thenReturn(List.of(makeCreditBalance(stock, LocalDate.of(2026, 6, 12))));
+
+            // Act
+            SupplyDemandResult result = service.collect(ANCHOR);
+
+            // Assert
+            assertThat(result.succeeded()).isEqualTo(1);
+            verify(inserter, times(1)).insertBatch(any());
+        }
+    }
+
     /** 테스트용 CreditBalance 엔티티 생성 헬퍼. */
-    private com.aaa.collector.stock.CreditBalance makeCreditBalance(
-            Stock stock, LocalDate tradeDate) {
-        return com.aaa.collector.stock.CreditBalance.builder()
+    private CreditBalance makeCreditBalance(Stock stock, LocalDate tradeDate) {
+        return CreditBalance.builder()
                 .stock(stock)
                 .tradeDate(tradeDate)
                 .loanNewQty(100L)
@@ -202,16 +316,16 @@ class CreditBalanceCollectionServiceWindowTest {
                 .loanNewAmt(1000L)
                 .loanRepayAmt(500L)
                 .loanBalanceAmt(2000L)
-                .loanBalanceRate(java.math.BigDecimal.valueOf(1.5))
-                .loanSupplyRate(java.math.BigDecimal.valueOf(0.5))
+                .loanBalanceRate(BigDecimal.valueOf(1.5))
+                .loanSupplyRate(BigDecimal.valueOf(0.5))
                 .lendNewQty(10L)
                 .lendRepayQty(5L)
                 .lendBalanceQty(20L)
                 .lendNewAmt(100L)
                 .lendRepayAmt(50L)
                 .lendBalanceAmt(200L)
-                .lendBalanceRate(java.math.BigDecimal.valueOf(0.1))
-                .lendSupplyRate(java.math.BigDecimal.valueOf(0.05))
+                .lendBalanceRate(BigDecimal.valueOf(0.1))
+                .lendSupplyRate(BigDecimal.valueOf(0.05))
                 .build();
     }
 }

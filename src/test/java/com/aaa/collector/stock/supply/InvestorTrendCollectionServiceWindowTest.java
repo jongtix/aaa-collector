@@ -18,6 +18,7 @@ import com.aaa.collector.kis.gate.KeyLeaseRegistry;
 import com.aaa.collector.kis.gate.KeyLeaseRegistry.LeaseSession;
 import com.aaa.collector.kis.token.HealthyKeySelector;
 import com.aaa.collector.kis.token.KisAccountCredential;
+import com.aaa.collector.stock.InvestorTrend;
 import com.aaa.collector.stock.Stock;
 import com.aaa.collector.stock.StockRepository;
 import com.aaa.collector.stock.enums.AssetType;
@@ -254,6 +255,127 @@ class InvestorTrendCollectionServiceWindowTest {
             service.collectWindow(stockOf("005930"), session, ANCHOR);
 
             verify(stockRepository, never()).findAllActiveTradable();
+        }
+    }
+
+    @Nested
+    @DisplayName("fetchWindow / persistWindow — fetch·persist 분리 (T5, REQ-TXBOUNDARY-002)")
+    class FetchPersistWindow {
+
+        @Test
+        @DisplayName("fetchWindow — inserter(DB) 미호출 (fetch 단계에서 INSERT 없음)")
+        void fetchWindow_doesNotCallInserter() throws Exception {
+            when(guardedKisExecutor.execute(
+                            any(LeaseSession.class),
+                            any(),
+                            anyString(),
+                            eq(KisInvestorTrendResponse.class)))
+                    .thenReturn(successResponse(List.of("20260611", "20260612", "20260613")));
+
+            InvestorTrendFetch fetch = service.fetchWindow(ANCHOR, stockOf("005930"), session);
+
+            verify(inserter, never()).insertBatch(any());
+            assertThat(fetch.rowCount()).isEqualTo(3);
+            assertThat(fetch.oldestTradeDate()).isEqualTo(LocalDate.of(2026, 6, 11));
+        }
+
+        @Test
+        @DisplayName("fetchWindow — 빈 응답 시 rows=빈목록, oldestTradeDate=null, rowCount=0")
+        void fetchWindow_emptyResponse_emptyFetch() throws Exception {
+            when(guardedKisExecutor.execute(
+                            any(LeaseSession.class),
+                            any(),
+                            anyString(),
+                            eq(KisInvestorTrendResponse.class)))
+                    .thenReturn(new KisInvestorTrendResponse("0", "MCA00000", "정상", List.of()));
+
+            InvestorTrendFetch fetch = service.fetchWindow(ANCHOR, stockOf("005930"), session);
+
+            assertThat(fetch.rows()).isEmpty();
+            assertThat(fetch.oldestTradeDate()).isNull();
+            assertThat(fetch.rowCount()).isZero();
+            verify(inserter, never()).insertBatch(any());
+        }
+
+        @Test
+        @DisplayName("fetchWindow — rt_cd=2 anchor-skip 보정 루프가 fetchWindow에 잔류 (HARD)")
+        void fetchWindow_rt_cd2_retryLoopInFetch() throws Exception {
+            // rt_cd=2 첫 호출 → anchor-skip 보정 후 rt_cd=0 두 번째 호출
+            when(guardedKisExecutor.execute(
+                            any(LeaseSession.class),
+                            any(),
+                            anyString(),
+                            eq(KisInvestorTrendResponse.class)))
+                    .thenReturn(rtCd2Response())
+                    .thenReturn(successResponse(List.of("20260611", "20260612")));
+
+            InvestorTrendFetch fetch = service.fetchWindow(ANCHOR, stockOf("005930"), session);
+
+            // fetch 단계에서 retry 발생 (execute 2회), inserter는 여전히 미호출
+            verify(guardedKisExecutor, times(2))
+                    .execute(
+                            any(LeaseSession.class),
+                            any(),
+                            anyString(),
+                            eq(KisInvestorTrendResponse.class));
+            verify(inserter, never()).insertBatch(any());
+            assertThat(fetch.rowCount()).isEqualTo(2);
+        }
+
+        @Test
+        @DisplayName("persistWindow — inserter.insertBatch 1회 호출 (persist에서 INSERT 발생)")
+        void persistWindow_callsInserter() {
+            Stock stock = stockOf("005930");
+            InvestorTrend entity =
+                    InvestorTrend.builder()
+                            .stock(stock)
+                            .tradeDate(LocalDate.of(2026, 6, 11))
+                            .foreignNetQty(1000L)
+                            .institutionNetQty(500L)
+                            .individualNetQty(-200L)
+                            .foreignNetValue(100_000_000L)
+                            .institutionNetValue(50_000_000L)
+                            .individualNetValue(-20_000_000L)
+                            .totalVolume(10_000L)
+                            .totalTradingValue(5_000_000_000L)
+                            .build();
+            InvestorTrendFetch fetch =
+                    new InvestorTrendFetch(List.of(entity), LocalDate.of(2026, 6, 11), 1);
+
+            BackfillWindowResult result = service.persistWindow(stock, fetch);
+
+            verify(inserter, times(1)).insertBatch(any());
+            assertThat(result.oldestTradeDate()).isEqualTo(LocalDate.of(2026, 6, 11));
+            assertThat(result.rowCount()).isEqualTo(1);
+        }
+
+        @Test
+        @DisplayName("persistWindow — 빈 fetch → EMPTY 반환, inserter 미호출")
+        void persistWindow_emptyFetch_returnsEmpty() {
+            InvestorTrendFetch emptyFetch = new InvestorTrendFetch(List.of(), null, 0);
+
+            BackfillWindowResult result = service.persistWindow(stockOf("005930"), emptyFetch);
+
+            assertThat(result).isEqualTo(BackfillWindowResult.EMPTY);
+            verify(inserter, never()).insertBatch(any());
+        }
+
+        @Test
+        @DisplayName("회귀 가드 — 당일 경로(collect) green 유지: saveValidRows가 collect에서 정상 동작")
+        void dailyPathRegression_collectStillWorks() throws Exception {
+            Stock stock = stockOf("005930");
+            when(stockRepository.findAllActiveTradable()).thenReturn(List.of(stock));
+            when(guardedKisExecutor.execute(
+                            any(LeaseSession.class),
+                            any(),
+                            anyString(),
+                            eq(KisInvestorTrendResponse.class)))
+                    .thenReturn(successResponse(List.of("20260613")));
+
+            SupplyDemandResult result = service.collect(ANCHOR);
+
+            assertThat(result.succeeded()).isEqualTo(1);
+            verify(inserter, times(1)).insertBatch(any());
         }
     }
 }
