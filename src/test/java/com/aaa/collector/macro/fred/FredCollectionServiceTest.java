@@ -8,6 +8,7 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.aaa.collector.common.config.InserterProperties;
 import com.aaa.collector.macro.MacroCollectionResult;
 import com.aaa.collector.macro.MacroIndicator;
 import com.aaa.collector.macro.MacroIndicatorInserter;
@@ -49,13 +50,18 @@ class FredCollectionServiceTest {
 
     @Captor private ArgumentCaptor<List<MacroIndicator>> inserterCaptor;
 
+    private final InserterProperties inserterProperties = new InserterProperties();
+
     private FredCollectionService service;
 
     @BeforeEach
     void setUp() {
         service =
                 new FredCollectionService(
-                        macroFredRestClient, macroIndicatorRepository, macroIndicatorInserter);
+                        macroFredRestClient,
+                        macroIndicatorRepository,
+                        macroIndicatorInserter,
+                        inserterProperties);
     }
 
     @SuppressWarnings("unchecked")

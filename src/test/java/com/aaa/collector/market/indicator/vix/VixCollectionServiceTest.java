@@ -4,9 +4,11 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.aaa.collector.common.config.InserterProperties;
 import com.aaa.collector.market.MarketIndicator;
 import com.aaa.collector.market.MarketIndicatorInserter;
 import com.aaa.collector.market.MarketIndicatorRepository;
@@ -15,6 +17,7 @@ import com.aaa.collector.market.indicator.MarketIndicatorRow;
 import com.aaa.collector.market.indicator.MarketIndicatorSourceChain;
 import java.math.BigDecimal;
 import java.time.LocalDate;
+import java.util.ArrayList;
 import java.util.List;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -36,13 +39,19 @@ class VixCollectionServiceTest {
 
     @Captor private ArgumentCaptor<List<MarketIndicator>> inserterCaptor;
 
+    /** 기본 청크 크기 1000 (REQ-INSERT-010). */
+    private final InserterProperties inserterProperties = new InserterProperties();
+
     private VixCollectionService service;
 
     @BeforeEach
     void setUp() {
         service =
                 new VixCollectionService(
-                        vixChain, marketIndicatorRepository, marketIndicatorInserter);
+                        vixChain,
+                        marketIndicatorRepository,
+                        marketIndicatorInserter,
+                        inserterProperties);
     }
 
     private MarketIndicatorRow vixRow(LocalDate date) {
@@ -61,23 +70,22 @@ class VixCollectionServiceTest {
     class CollectDaily {
 
         @Test
-        @DisplayName("정상 수집 — insertBatch 호출")
+        @DisplayName("정상 수집 — insertBatch 1회 호출 (AC-4 배치 통합)")
         void normalCollect_insertsRow() {
             LocalDate date = LocalDate.of(2026, 6, 20);
             when(vixChain.fetchDaily(date)).thenReturn(List.of(vixRow(date)));
 
             service.collectDaily(date);
 
-            verify(marketIndicatorInserter).insertBatch(inserterCaptor.capture());
-            List<MarketIndicator> inserted =
-                    inserterCaptor.getAllValues().stream().flatMap(List::stream).toList();
+            verify(marketIndicatorInserter, times(1)).insertBatch(inserterCaptor.capture());
+            List<MarketIndicator> inserted = inserterCaptor.getValue();
             assertThat(inserted).hasSize(1);
             assertThat(inserted.getFirst().getIndicatorCode()).isEqualTo(IndicatorCode.VIX);
             assertThat(inserted.getFirst().getCloseValue()).isEqualByComparingTo("18.5000");
         }
 
         @Test
-        @DisplayName("빈 결과 — insertBatch 미호출")
+        @DisplayName("빈 결과 — insertBatch 미호출 (AC-9)")
         void emptyResult_noInsert() {
             LocalDate date = LocalDate.of(2026, 6, 20);
             when(vixChain.fetchDaily(date)).thenReturn(List.of());
@@ -124,6 +132,45 @@ class VixCollectionServiceTest {
             int count = service.collectHistory();
 
             assertThat(count).isEqualTo(2);
+        }
+    }
+
+    @Nested
+    @DisplayName("청크 분할 — 대용량 배치 (AC-5, REQ-INSERT-010)")
+    class ChunkSplit {
+
+        @Test
+        @DisplayName("AC-5 — 9200행 + chunkSize=1000 → insertBatch 10회 호출")
+        void largeHistory_chunkedToExact10Batches() {
+            // Arrange — 9200행 = 9 × 1000 + 200
+            List<MarketIndicatorRow> rows = new ArrayList<>();
+            LocalDate base = LocalDate.of(1990, 1, 2);
+            for (int i = 0; i < 9200; i++) {
+                rows.add(vixRow(base.plusDays(i)));
+            }
+            when(vixChain.fetchHistory()).thenReturn(rows);
+
+            // Act — 기본 chunkSize=1000 사용
+            int count = service.collectHistory();
+
+            // Assert — 9200 / 1000 = 9 full chunks + 1 remainder → 10회 호출
+            assertThat(count).isEqualTo(9200);
+            verify(marketIndicatorInserter, times(10)).insertBatch(any());
+        }
+
+        @Test
+        @DisplayName("정확히 chunkSize와 같은 행 수 → 1회 insertBatch 호출")
+        void exactlyChunkSize_oneBatch() {
+            List<MarketIndicatorRow> rows = new ArrayList<>();
+            LocalDate base = LocalDate.of(2020, 1, 2);
+            for (int i = 0; i < 1000; i++) {
+                rows.add(vixRow(base.plusDays(i)));
+            }
+            when(vixChain.fetchHistory()).thenReturn(rows);
+
+            service.collectHistory();
+
+            verify(marketIndicatorInserter, times(1)).insertBatch(any());
         }
     }
 }

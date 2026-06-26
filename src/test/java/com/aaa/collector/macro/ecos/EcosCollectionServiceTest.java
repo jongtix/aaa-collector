@@ -9,6 +9,7 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.aaa.collector.common.config.InserterProperties;
 import com.aaa.collector.macro.MacroCollectionResult;
 import com.aaa.collector.macro.MacroIndicator;
 import com.aaa.collector.macro.MacroIndicatorInserter;
@@ -51,13 +52,18 @@ class EcosCollectionServiceTest {
 
     @Captor private ArgumentCaptor<List<MacroIndicator>> inserterCaptor;
 
+    private final InserterProperties inserterProperties = new InserterProperties();
+
     private EcosCollectionService service;
 
     @BeforeEach
     void setUp() {
         service =
                 new EcosCollectionService(
-                        ecosRestClient, macroIndicatorRepository, macroIndicatorInserter);
+                        ecosRestClient,
+                        macroIndicatorRepository,
+                        macroIndicatorInserter,
+                        inserterProperties);
     }
 
     @SuppressWarnings("unchecked")

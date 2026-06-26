@@ -8,6 +8,7 @@ import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
+import java.util.ArrayList;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -71,8 +72,10 @@ public class MarketFundsCollectionService {
         int succeeded = 0;
         int skipped = 0;
 
+        // REQ-INSERT-009: 유효 지표를 누적하고 루프 후 단일 배치 INSERT IGNORE (소용량)
+        List<MacroIndicator> batch = new ArrayList<>();
         for (KisMarketFundsResponse.MarketFundsRow row : response.output()) {
-            // 각 행에서 9개 지표를 분해하여 저장
+            // 각 행에서 9개 지표를 분해하여 누적
             String bsopDate = row.bsopDate();
             if (bsopDate == null || bsopDate.isBlank()) {
                 log.warn("[mktfunds] 검증 실패 (bsopDate null) — 행 전체 skip");
@@ -91,21 +94,29 @@ public class MarketFundsCollectionService {
                 continue;
             }
 
-            // REQ-BATCH3-041/042: 9개 금액 지표 분해 저장
+            // REQ-BATCH3-041/042: 9개 금액 지표 분해 누적
             attempted += 9;
             int rowSucceeded = 0;
-            rowSucceeded += saveIndicator("MKTFUND_CUST_DEPOSIT", row.custDpmnAmt(), tradeDate);
-            rowSucceeded += saveIndicator("MKTFUND_CREDIT_LOAN", row.crdtLoanRmnd(), tradeDate);
-            rowSucceeded += saveIndicator("MKTFUND_MMF", row.mmfAmt(), tradeDate);
-            rowSucceeded += saveIndicator("MKTFUND_UNCOLLECTED", row.unclAmt(), tradeDate);
-            rowSucceeded += saveIndicator("MKTFUND_FUTURES_DEPOSIT", row.futsTfamAmt(), tradeDate);
-            rowSucceeded += saveIndicator("MKTFUND_EQUITY_TYPE", row.sttpAmt(), tradeDate);
-            rowSucceeded += saveIndicator("MKTFUND_MIXED_TYPE", row.mxtpAmt(), tradeDate);
-            rowSucceeded += saveIndicator("MKTFUND_BOND_TYPE", row.bntpAmt(), tradeDate);
-            rowSucceeded += saveIndicator("MKTFUND_SECURED_LOAN", row.secuLendAmt(), tradeDate);
+            rowSucceeded +=
+                    buildIndicator("MKTFUND_CUST_DEPOSIT", row.custDpmnAmt(), tradeDate, batch);
+            rowSucceeded +=
+                    buildIndicator("MKTFUND_CREDIT_LOAN", row.crdtLoanRmnd(), tradeDate, batch);
+            rowSucceeded += buildIndicator("MKTFUND_MMF", row.mmfAmt(), tradeDate, batch);
+            rowSucceeded += buildIndicator("MKTFUND_UNCOLLECTED", row.unclAmt(), tradeDate, batch);
+            rowSucceeded +=
+                    buildIndicator("MKTFUND_FUTURES_DEPOSIT", row.futsTfamAmt(), tradeDate, batch);
+            rowSucceeded += buildIndicator("MKTFUND_EQUITY_TYPE", row.sttpAmt(), tradeDate, batch);
+            rowSucceeded += buildIndicator("MKTFUND_MIXED_TYPE", row.mxtpAmt(), tradeDate, batch);
+            rowSucceeded += buildIndicator("MKTFUND_BOND_TYPE", row.bntpAmt(), tradeDate, batch);
+            rowSucceeded +=
+                    buildIndicator("MKTFUND_SECURED_LOAN", row.secuLendAmt(), tradeDate, batch);
 
             succeeded += rowSucceeded;
             skipped += (9 - rowSucceeded);
+        }
+
+        if (!batch.isEmpty()) {
+            macroIndicatorInserter.insertBatch(batch);
         }
 
         MacroCollectionResult result = new MacroCollectionResult(attempted, succeeded, skipped);
@@ -137,11 +148,17 @@ public class MarketFundsCollectionService {
     }
 
     /**
-     * 단일 지표를 원 정규화 후 멱등 저장한다.
+     * 단일 지표를 원 정규화 후 배치에 추가한다.
      *
-     * @return 저장 성공 1, skip 0
+     * <p>REQ-INSERT-009: 개별 저장 대신 배치 누적 — 호출자가 루프 후 일괄 INSERT IGNORE.
+     *
+     * @return 누적 성공 1, skip 0
      */
-    private int saveIndicator(String indicatorCode, String rawValue, LocalDate tradeDate) {
+    private int buildIndicator(
+            String indicatorCode,
+            String rawValue,
+            LocalDate tradeDate,
+            List<MacroIndicator> batch) {
         // REQ-BATCH3-070: null·비숫자 skip
         if (rawValue == null || rawValue.isBlank()) {
             log.debug("[mktfunds] 지표 skip (null 값) — indicatorCode={}", indicatorCode);
@@ -162,16 +179,13 @@ public class MarketFundsCollectionService {
         // REQ-BATCH3-042: 억원 → 원 정규화 (×EOK_WON_TO_WON)
         BigDecimal wonValue = parsedAmt.multiply(BigDecimal.valueOf(EOK_WON_TO_WON));
 
-        MacroIndicator entity =
+        batch.add(
                 MacroIndicator.builder()
                         .indicatorCode(indicatorCode)
                         .source(MacroSource.KIS)
                         .tradeDate(tradeDate)
                         .value(wonValue)
-                        .build();
-
-        // REQ-BATCH3-043: uk_macro_indicators 멱등 저장
-        macroIndicatorInserter.insertBatch(List.of(entity));
+                        .build());
         return 1;
     }
 }

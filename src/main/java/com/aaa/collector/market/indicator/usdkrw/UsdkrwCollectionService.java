@@ -7,6 +7,7 @@ import com.aaa.collector.market.enums.IndicatorCode;
 import com.aaa.collector.market.indicator.MarketIndicatorRow;
 import com.aaa.collector.market.indicator.MarketIndicatorSourceChain;
 import java.time.LocalDate;
+import java.util.ArrayList;
 import java.util.List;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Qualifier;
@@ -75,16 +76,19 @@ public class UsdkrwCollectionService {
     }
 
     private int saveRows(List<MarketIndicatorRow> rows) {
-        int count = 0;
+        // REQ-INSERT-009: 유효 행 누적 후 단일 배치 INSERT IGNORE (소용량 — 분할 불필요)
+        List<MarketIndicator> batch = new ArrayList<>();
         for (MarketIndicatorRow row : rows) {
             if (!isValid(row)) {
                 log.warn("[usdkrw] 행 검증 실패 — skip: {}", row);
                 continue;
             }
-            marketIndicatorInserter.insertBatch(List.of(toEntity(row)));
-            count++;
+            batch.add(toEntity(row));
         }
-        return count;
+        if (!batch.isEmpty()) {
+            marketIndicatorInserter.insertBatch(batch);
+        }
+        return batch.size();
     }
 
     private boolean isValid(MarketIndicatorRow row) {

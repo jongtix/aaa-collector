@@ -116,7 +116,7 @@ class MarketFundsCollectionServiceTest {
     class HappyPath {
 
         @Test
-        @DisplayName("샘플 행 → 9건 시도·9건 성공, 9회 insertIgnoreDuplicate 호출")
+        @DisplayName("샘플 행 → 9건 시도·9건 성공, insertBatch 1회 호출 (AC-4 배치 통합)")
         void storesSampleRow_9Indicators() throws Exception {
             // Arrange
             stubGate(response(List.of(sampleRow("20260613"))));
@@ -128,7 +128,7 @@ class MarketFundsCollectionServiceTest {
             assertThat(result.attempted()).isEqualTo(9);
             assertThat(result.succeeded()).isEqualTo(9);
             assertThat(result.skipped()).isZero();
-            verify(macroIndicatorInserter, times(9)).insertBatch(any());
+            verify(macroIndicatorInserter, times(1)).insertBatch(any());
         }
 
         @Test
@@ -141,7 +141,7 @@ class MarketFundsCollectionServiceTest {
             service.collect("20260613");
 
             // Assert
-            verify(macroIndicatorInserter, times(9)).insertBatch(inserterCaptor.capture());
+            verify(macroIndicatorInserter, times(1)).insertBatch(inserterCaptor.capture());
 
             List<MacroIndicator> saved =
                     inserterCaptor.getAllValues().stream().flatMap(List::stream).toList();
@@ -169,7 +169,7 @@ class MarketFundsCollectionServiceTest {
             service.collect("20260613");
 
             // Assert
-            verify(macroIndicatorInserter, times(9)).insertBatch(inserterCaptor.capture());
+            verify(macroIndicatorInserter, times(1)).insertBatch(inserterCaptor.capture());
 
             List<MacroIndicator> sourceAndDateSaved =
                     inserterCaptor.getAllValues().stream().flatMap(List::stream).toList();
@@ -188,7 +188,7 @@ class MarketFundsCollectionServiceTest {
             service.collect("20260613");
 
             // Assert
-            verify(macroIndicatorInserter, times(9)).insertBatch(inserterCaptor.capture());
+            verify(macroIndicatorInserter, times(1)).insertBatch(inserterCaptor.capture());
 
             MacroIndicator custDeposit =
                     inserterCaptor.getAllValues().stream()
@@ -228,7 +228,7 @@ class MarketFundsCollectionServiceTest {
             service.collect("20260613");
 
             // Assert
-            verify(macroIndicatorInserter, times(9)).insertBatch(inserterCaptor.capture());
+            verify(macroIndicatorInserter, times(1)).insertBatch(inserterCaptor.capture());
 
             MacroIndicator custDeposit =
                     inserterCaptor.getAllValues().stream()
@@ -296,10 +296,10 @@ class MarketFundsCollectionServiceTest {
             // Act
             MacroCollectionResult result = service.collect("20260613");
 
-            // Assert — 8건 성공, 1건 skip
+            // Assert — 8건 성공, 1건 skip; insertBatch 1회 (8개 배치)
             assertThat(result.succeeded()).isEqualTo(8);
             assertThat(result.skipped()).isEqualTo(1);
-            verify(macroIndicatorInserter, times(8)).insertBatch(any());
+            verify(macroIndicatorInserter, times(1)).insertBatch(any());
         }
 
         @Test
@@ -366,7 +366,7 @@ class MarketFundsCollectionServiceTest {
             service.collect("20260613");
 
             // Assert — 2회 × 9건 = 18회 호출, 게이트도 2회·세션 2회 open
-            verify(macroIndicatorInserter, times(18)).insertBatch(any());
+            verify(macroIndicatorInserter, times(2)).insertBatch(any());
             verify(keyLeaseRegistry, times(2)).openSession();
         }
     }

@@ -14,7 +14,9 @@ import com.aaa.collector.stock.enums.PeriodType;
 import java.net.URI;
 import java.time.DateTimeException;
 import java.time.LocalDate;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -228,25 +230,31 @@ public class FinancialRatioCollectionService {
      */
     private int[] saveValidRows(
             Stock stock, String symbol, PeriodType periodType, KisFinancialRatioResponse response) {
-        int rowsSaved = 0;
+        // REQ-INSERT-009: 유효 행 누적 후 단일 배치 INSERT IGNORE (소용량)
+        List<Financial> batch = new ArrayList<>();
         int rowsSkipped = 0;
         for (KisFinancialRatioResponse.FinancialRatioRow row : response.output()) {
-            boolean saved = insertIfValid(stock, symbol, periodType, row);
-            if (saved) {
-                rowsSaved++;
+            Optional<Financial> entity = buildIfValid(stock, symbol, periodType, row);
+            if (entity.isPresent()) {
+                batch.add(entity.get());
             } else {
                 rowsSkipped++;
             }
         }
-        return new int[] {rowsSaved, rowsSkipped};
+        if (!batch.isEmpty()) {
+            financialInserter.insertBatch(batch);
+        }
+        return new int[] {batch.size(), rowsSkipped};
     }
 
     /**
-     * 단일 행 파싱·검증·저장을 수행한다.
+     * 단일 행 파싱·검증 후 엔티티를 반환한다.
      *
-     * @return 저장 성공 여부 ({@code false} = 검증 실패 skip)
+     * <p>REQ-INSERT-009: 누적 배치 방식으로 전환 — 여기서는 엔티티만 빌드하고 저장하지 않는다.
+     *
+     * @return 엔티티(성공) 또는 empty(검증 실패 skip)
      */
-    private boolean insertIfValid(
+    private Optional<Financial> buildIfValid(
             Stock stock,
             String symbol,
             PeriodType periodType,
@@ -257,7 +265,7 @@ public class FinancialRatioCollectionService {
                     "[financial-ratio] 검증 실패 (stac_yymm null) — symbol={}, periodType={}",
                     symbol,
                     periodType);
-            return false;
+            return Optional.empty();
         }
 
         LocalDate periodDate = parsePeriodDate(row.stacYymm());
@@ -267,11 +275,11 @@ public class FinancialRatioCollectionService {
                     symbol,
                     periodType,
                     row.stacYymm());
-            return false;
+            return Optional.empty();
         }
 
         try {
-            Financial entity =
+            return Optional.of(
                     Financial.builder()
                             .stock(stock)
                             .periodType(periodType)
@@ -286,9 +294,7 @@ public class FinancialRatioCollectionService {
                             .bps(FundamentalValueParser.parseBigInt(row.bps()))
                             .retentionRate(FundamentalValueParser.parseDecimal(row.rsrvRate()))
                             .debtRatio(FundamentalValueParser.parseDecimal(row.lbltRate()))
-                            .build();
-            financialInserter.insertBatch(List.of(entity));
-            return true;
+                            .build());
         } catch (NumberFormatException | ArithmeticException e) {
             // 파싱 실패·DECIMAL 정수부 경계 초과·BIGINT 비0 소수부·long 범위 초과 → 건별 skip (REQ-BATCH4-070a)
             log.warn(
@@ -297,7 +303,7 @@ public class FinancialRatioCollectionService {
                     periodType,
                     row.stacYymm(),
                     e.getMessage());
-            return false;
+            return Optional.empty();
         }
     }
 
