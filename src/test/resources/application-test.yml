@@ -8,8 +8,10 @@ kis:
       app-key: test-app-key
       app-secret: test-app-secret
 
-# CatchUpRunner 테스트 프로파일 비활성화 (CR-01 — CI 자동 실행 차단)
+# CatchUpRunner·WsRecovery 테스트 프로파일 비활성화 (CI @SpringBootTest 자동 실행 차단)
 aaa:
+  ws-recovery:
+    enabled: false  # @SpringBootTest ApplicationReadyEvent 발화 시 실 WS 연결 방지 (REQ-WSREC-051)
   catchup:
     enabled: false
 
