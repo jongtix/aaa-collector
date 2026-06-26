@@ -3,15 +3,18 @@ package com.aaa.collector.market;
 import com.aaa.collector.kis.gate.GuardedKisExecutor;
 import com.aaa.collector.kis.gate.KeyLeaseRegistry;
 import com.aaa.collector.kis.gate.KeyLeaseRegistry.LeaseSession;
-import com.aaa.collector.stock.DailyOhlcvRepository;
 import com.aaa.collector.stock.Stock;
 import com.aaa.collector.stock.StockRepository;
+import com.aaa.collector.stock.daily.ParsedOhlcvRow;
+import com.aaa.collector.stock.daily.WarningCountingOhlcvInserter;
 import com.aaa.collector.stock.enums.Market;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
@@ -35,6 +38,9 @@ import org.springframework.stereotype.Service;
  *
  * <p>검증(REQ-BATCH3-070/073): null 키 필드·종가 ≤ 0 건별 skip + 로그 + 계속. 빈 output2 → 0건 성공. 대상 INDEX 행 부재 →
  * skip + 로그.
+ *
+ * <p>REQ-INSERT-006: 종목별로 유효 행을 누적한 뒤 {@link WarningCountingOhlcvInserter#insertBatch(Long, List)}로
+ * 단일 커넥션 배치 INSERT IGNORE 수행 (W-2 불변식).
  */
 @Slf4j
 @Service
@@ -62,9 +68,9 @@ public class SectorIndexCollectionService {
             "/uapi/domestic-stock/v1/quotations/inquire-daily-indexchartprice";
 
     private final StockRepository stockRepository;
-    private final DailyOhlcvRepository dailyOhlcvRepository;
     private final GuardedKisExecutor guardedKisExecutor;
     private final KeyLeaseRegistry keyLeaseRegistry;
+    private final WarningCountingOhlcvInserter ohlcvInserter;
 
     /**
      * 국내 종합지수 일봉 수집을 실행하고 집계 결과를 반환한다.
@@ -157,22 +163,25 @@ public class SectorIndexCollectionService {
             return 0;
         }
 
-        int saved = 0;
+        // REQ-INSERT-006: 유효 행 누적 후 단일 배치 INSERT IGNORE (W-2 불변식)
+        List<ParsedOhlcvRow> validRows = new ArrayList<>();
         for (KisSectorIndexResponse.SectorIndexRow row : response.output2()) {
-            if (saveIfValid(stock, symbol, row)) {
-                saved++;
-            }
+            saveIfValid(symbol, row).ifPresent(validRows::add);
         }
-        return saved;
+
+        if (!validRows.isEmpty()) {
+            ohlcvInserter.insertBatch(stock.getId(), validRows);
+        }
+        return validRows.size();
     }
 
     /**
-     * 행 검증 후 멱등 저장한다.
+     * 행 검증 후 파싱된 결과를 반환한다 (REQ-INSERT-006, W-1 불변식).
      *
-     * @return 저장 성공 여부
+     * @return 검증 통과 시 {@link ParsedOhlcvRow}, 실패 시 empty
      */
-    private boolean saveIfValid(
-            Stock stock, String symbol, KisSectorIndexResponse.SectorIndexRow row) {
+    private Optional<ParsedOhlcvRow> saveIfValid(
+            String symbol, KisSectorIndexResponse.SectorIndexRow row) {
         // REQ-BATCH3-070: null 키 필드 skip
         if (row.stckBsopDate() == null
                 || row.stckBsopDate().isBlank()
@@ -182,7 +191,7 @@ public class SectorIndexCollectionService {
                     "[sector-index] 검증 실패 (null 키 필드) — symbol={}, date={}",
                     symbol,
                     row.stckBsopDate());
-            return false;
+            return Optional.empty();
         }
         try {
             BigDecimal close = new BigDecimal(row.bstpNmixPrpr());
@@ -193,7 +202,7 @@ public class SectorIndexCollectionService {
                         symbol,
                         row.stckBsopDate(),
                         row.bstpNmixPrpr());
-                return false;
+                return Optional.empty();
             }
 
             LocalDate tradeDate = LocalDate.parse(row.stckBsopDate(), DATE_FMT);
@@ -203,17 +212,15 @@ public class SectorIndexCollectionService {
             long volume = parseLongOrZero(row.acmlVol());
             long tradingValue = parseLongOrZero(row.acmlTrPbmn());
 
-            // REQ-BATCH3-023: uk_daily_ohlcv 멱등 저장 (DailyOhlcvRepository.insertIgnoreDuplicate 재사용)
-            dailyOhlcvRepository.insertIgnoreDuplicate(
-                    stock.getId(), tradeDate, open, high, low, close, volume, tradingValue);
-            return true;
+            return Optional.of(
+                    new ParsedOhlcvRow(tradeDate, open, high, low, close, volume, tradingValue));
         } catch (NumberFormatException e) {
             log.warn(
                     "[sector-index] 파싱 실패 — symbol={}, date={}, error={}",
                     symbol,
                     row.stckBsopDate(),
                     e.getMessage());
-            return false;
+            return Optional.empty();
         }
     }
 
