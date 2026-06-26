@@ -114,6 +114,12 @@ public class MarketSessionGate implements MarketOpenGate {
      *   <li>캘린더에 해당 날짜 있음: {@code opnd_yn} 값 반환
      * </ul>
      *
+     * <p><b>정책 비대칭 주의</b>: {@link #computeMarketOpen()}는 gauge 전용(schedule-only fallback)이고 이 메서드는
+     * 배치용(fail-open). 두 메서드는 목적이 다르므로 정책이 다름 — 의도된 설계.
+     *
+     * <p>동시성: {@code calendarRef.get()}의 happens-before 보장으로 {@code Map} 가시성 OK. {@link
+     * #updateCalendar}가 {@code Map.copyOf()}로 불변 복사본을 전달하므로 read-only 사용 안전.
+     *
      * @param date 판정할 날짜 (KST)
      * @return 개장일이면 {@code true}, 휴장일이면 {@code false}
      */

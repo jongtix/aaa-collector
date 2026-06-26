@@ -44,7 +44,7 @@ public class DomesticSupplyDemandCollectionService {
      */
     public void collectAll(LocalDate today) {
         if (!marketSessionGate.isOpenDay(today)) {
-            log.info("[supply-demand] 비개장일 — 수급 3종 수집 skip. date={}", today);
+            log.debug("[supply-demand] 비개장일 — 수급 3종 수집 skip. date={}", today);
             return;
         }
         // KIS 국내 수급 API는 미국 종목에 null-dated 빈 행을 반환 → 국내 시장(KOSPI/KOSDAQ/KRX)만 조회
