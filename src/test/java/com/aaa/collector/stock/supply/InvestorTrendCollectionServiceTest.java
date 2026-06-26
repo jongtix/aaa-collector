@@ -88,8 +88,18 @@ class InvestorTrendCollectionServiceTest {
     }
 
     private KisInvestorTrendResponse.InvestorTrendRow row(String date) {
+        // acml_tr_pbmn은 원 단위(포털 명세 "백만원" 오기, 2026-06-26 정정).
+        // 7,267,809,113,959 = 삼성전자 2026-06-15 실측값(약 7.27조원).
         return new KisInvestorTrendResponse.InvestorTrendRow(
-                date, "1000", "-2000", "3000", "7500", "-15000", "22500", "5000000", "375000");
+                date,
+                "1000",
+                "-2000",
+                "3000",
+                "7500",
+                "-15000",
+                "22500",
+                "5000000",
+                "7267809113959");
     }
 
     private KisInvestorTrendResponse response(
@@ -164,7 +174,7 @@ class InvestorTrendCollectionServiceTest {
     class Mapping {
 
         @Test
-        @DisplayName("누적 거래대금·순매수 거래대금 백만원→원 ×1,000,000 변환 (REQ-033, AC-4 S4-2)")
+        @DisplayName("누적 거래대금 원 단위 직접 저장, 순매수 거래대금 백만원→원 변환 (REQ-033, AC-4 S4-2)")
         @SuppressWarnings("unchecked")
         void valuesConvertedToWon() throws Exception {
             Stock stock = stockOf("005930");
@@ -192,11 +202,11 @@ class InvestorTrendCollectionServiceTest {
                             1000L,
                             -2000L,
                             3000L,
-                            7_500_000_000L,
-                            -15_000_000_000L,
-                            22_500_000_000L,
+                            7_500_000_000L, // 7500 × 1,000,000 (백만원 → 원)
+                            -15_000_000_000L, // -15000 × 1,000,000
+                            22_500_000_000L, // 22500 × 1,000,000
                             5_000_000L,
-                            375_000_000_000L);
+                            7_267_809_113_959L); // 원 단위 직접 저장 (삼성전자 실측값)
         }
     }
 

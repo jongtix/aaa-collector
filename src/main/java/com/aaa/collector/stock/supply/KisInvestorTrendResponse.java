@@ -47,6 +47,6 @@ public record KisInvestorTrendResponse(
             String prsnNtbyTrPbmn,
             /** 누적 거래량 (단위: 주) */
             String acmlVol,
-            /** 누적 거래 대금 (단위: 백만원 — 원 변환 ×1,000,000) */
+            /** 누적 거래 대금 (단위: 원 — 포털 명세 "백만원" 오기, 실측 역산 2026-06-26 정정) */
             String acmlTrPbmn) {}
 }

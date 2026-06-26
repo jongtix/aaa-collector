@@ -56,10 +56,9 @@ public class InvestorTrendCollectionService {
     /**
      * 백만원 → 원 변환 계수 (×1,000,000).
      *
-     * <p>{@code acml_tr_pbmn}(REQ-BATCH2-033 확정 "백만원")과 순매수 거래대금(OI-1 미확정, 기본 가정)에 공통 적용.
-     *
-     * <p>TODO(OI-1, REQ-BATCH2-034, T9): 순매수 거래대금(`*_ntby_tr_pbmn`) 단위는 api-specs 공란으로 미확정이다. 본 계수는
-     * 구현 진행용 기본 가정값이며, Run 단계 실데이터 1건으로 일봉 거래대금(원) 대비 자릿수 정합(AC-4 S4-3)을 검증한 후 확정해야 한다.
+     * <p>순매수 거래대금({@code *_ntby_tr_pbmn}) 전용. 실측 역산으로 단위 = 백만원 확정(REQ-BATCH2-033, api-specs 실측 노트
+     * 2026-06-14). {@code acml_tr_pbmn}(누적 거래 대금)에는 사용하지 않는다 — 해당 필드는 원 단위 반환(포털 명세 오기 정정
+     * 2026-06-26, api-specs/kis/03-종목별투자자매매동향.md 참조).
      */
     static final long MILLION_WON_TO_WON = 1_000_000L;
 
@@ -424,7 +423,8 @@ public class InvestorTrendCollectionService {
             LocalDate tradeDate,
             KisInvestorTrendResponse.InvestorTrendRow row) {
         long totalVolume = Long.parseLong(row.acmlVol());
-        long totalTradingValue = Long.parseLong(row.acmlTrPbmn()) * MILLION_WON_TO_WON;
+        // acml_tr_pbmn은 원 단위로 반환됨 — 포털 명세 "백만원" 표기는 오기(실측 역산 2026-06-26 확인).
+        long totalTradingValue = Long.parseLong(row.acmlTrPbmn());
 
         // 순매수 수량·거래대금은 매도 우위 시 음수가 정상이므로 음수 검증 제외(R-F).
         // 총거래량·총거래대금은 음수 비정상 — 저장 제외.
