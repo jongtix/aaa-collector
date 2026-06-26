@@ -25,6 +25,7 @@ import com.aaa.collector.stock.Stock;
 import com.aaa.collector.stock.StockRepository;
 import com.aaa.collector.stock.enums.AssetType;
 import com.aaa.collector.stock.enums.Market;
+import java.math.BigDecimal;
 import java.net.URI;
 import java.time.LocalDate;
 import java.util.List;
@@ -403,11 +404,10 @@ class DomesticDailyOhlcvCollectionServiceTest {
 
             service.collect(LocalDate.of(2026, 6, 5));
 
-            // Assert — 유효 행 1개를 담은 배치로 1회 적재
+            // Assert — 유효 행 1개를 담은 배치로 1회 적재 (ParsedOhlcvRow 2-param 오버로드)
             @SuppressWarnings("unchecked")
-            ArgumentCaptor<List<KisDailyOhlcvResponse.DailyOhlcvRow>> captor =
-                    ArgumentCaptor.forClass(List.class);
-            verify(ohlcvInserter, times(1)).insertBatch(any(), captor.capture(), any());
+            ArgumentCaptor<List<ParsedOhlcvRow>> captor = ArgumentCaptor.forClass(List.class);
+            verify(ohlcvInserter, times(1)).insertBatch(any(), captor.capture());
             assertThat(captor.getValue()).hasSize(1);
         }
     }
@@ -462,10 +462,10 @@ class DomesticDailyOhlcvCollectionServiceTest {
 
             CollectionResult result = service.collect(LocalDate.of(2026, 6, 5));
 
-            verify(mismatchDetector, times(1)).detectAndLog(any(), eq("005930"), any(), any());
+            verify(mismatchDetector, times(1)).detectAndLog(any(), eq("005930"), any());
 
             // No UPDATE/DELETE — INSERT IGNORE 배치가 유일한 쓰기 경로 (AC-4); 경고 캡처 inserter 1회 호출
-            verify(ohlcvInserter, times(1)).insertBatch(any(), any(), any());
+            verify(ohlcvInserter, times(1)).insertBatch(any(), any());
 
             assertThat(result.succeeded()).isEqualTo(1);
         }
@@ -496,7 +496,7 @@ class DomesticDailyOhlcvCollectionServiceTest {
 
             service.collect(LocalDate.of(2026, 6, 5));
 
-            verify(mismatchDetector, never()).detectAndLog(any(), any(), any(), any());
+            verify(mismatchDetector, never()).detectAndLog(any(), any(), any());
         }
     }
 
@@ -530,7 +530,7 @@ class DomesticDailyOhlcvCollectionServiceTest {
                     service.fetchWindow(FROM, ANCHOR, stockOf("005930"), openSession());
 
             // Assert — fetch 단계에서 DB INSERT 없음
-            verify(ohlcvInserter, never()).insertBatch(any(), any(), any());
+            verify(ohlcvInserter, never()).insertBatch(any(), any());
             assertThat(fetch.rowCount()).isEqualTo(1);
             assertThat(fetch.oldestTradeDate()).isEqualTo(LocalDate.of(2026, 1, 1));
         }
@@ -551,7 +551,7 @@ class DomesticDailyOhlcvCollectionServiceTest {
             assertThat(fetch.rows()).isEmpty();
             assertThat(fetch.oldestTradeDate()).isNull();
             assertThat(fetch.rowCount()).isZero();
-            verify(ohlcvInserter, never()).insertBatch(any(), any(), any());
+            verify(ohlcvInserter, never()).insertBatch(any(), any());
         }
 
         @Test
@@ -581,15 +581,23 @@ class DomesticDailyOhlcvCollectionServiceTest {
         void persistWindow_callsInserter() throws Exception {
             // Arrange
             Stock stock = stockOf("005930");
+            ParsedOhlcvRow parsedRow =
+                    new ParsedOhlcvRow(
+                            LocalDate.of(2026, 1, 1),
+                            new BigDecimal("74000"),
+                            new BigDecimal("76000"),
+                            new BigDecimal("73000"),
+                            new BigDecimal("75000"),
+                            1_000_000L,
+                            75_000_000_000L);
             DomesticDailyOhlcvFetch fetch =
-                    new DomesticDailyOhlcvFetch(
-                            List.of(validRow("20260101")), LocalDate.of(2026, 1, 1), 1);
+                    new DomesticDailyOhlcvFetch(List.of(parsedRow), LocalDate.of(2026, 1, 1), 1);
 
             // Act
             BackfillWindowResult result = service.persistWindow(stock, fetch);
 
-            // Assert — persist 단계에서 정확히 1회 INSERT
-            verify(ohlcvInserter, times(1)).insertBatch(any(), any(), any());
+            // Assert — persist 단계에서 정확히 1회 INSERT (ParsedOhlcvRow 2-param 오버로드)
+            verify(ohlcvInserter, times(1)).insertBatch(any(), any());
             assertThat(result.oldestTradeDate()).isEqualTo(LocalDate.of(2026, 1, 1));
             assertThat(result.rowCount()).isEqualTo(1);
         }
@@ -602,7 +610,7 @@ class DomesticDailyOhlcvCollectionServiceTest {
             BackfillWindowResult result = service.persistWindow(stockOf("005930"), emptyFetch);
 
             assertThat(result).isEqualTo(BackfillWindowResult.EMPTY);
-            verify(ohlcvInserter, never()).insertBatch(any(), any(), any());
+            verify(ohlcvInserter, never()).insertBatch(any(), any());
         }
 
         @Test
@@ -621,7 +629,7 @@ class DomesticDailyOhlcvCollectionServiceTest {
             CollectionResult result = service.collect(LocalDate.of(2026, 6, 5));
 
             assertThat(result.succeeded()).isEqualTo(1);
-            verify(ohlcvInserter, times(1)).insertBatch(any(), any(), any());
+            verify(ohlcvInserter, times(1)).insertBatch(any(), any());
         }
     }
 
@@ -689,7 +697,7 @@ class DomesticDailyOhlcvCollectionServiceTest {
                     LocalDate.of(2026, 1, 1),
                     LocalDate.of(2026, 5, 30));
 
-            verify(ohlcvInserter, times(1)).insertBatch(any(), any(), any());
+            verify(ohlcvInserter, times(1)).insertBatch(any(), any());
         }
 
         @Test
