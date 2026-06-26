@@ -15,6 +15,7 @@ import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Optional;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -45,6 +46,9 @@ import org.springframework.web.util.UriBuilder;
  *
  * <p>수집 대상: {@code asset_type IN (STOCK, ETF)} — INDEX 제외(REQ-BATCH3-024). INDEX는 U 전용 API
  * SectorIndexCollectionService가 담당한다.
+ *
+ * <p>REQ-INSERT-002: 행 검증(isValid) 시 파싱된 결과를 {@link ParsedOhlcvRow}로 반환하여, 불일치 탐지·JDBC 바인딩이 재파싱 없이
+ * 재사용한다 (W-1 불변식).
  */
 @Slf4j
 @Service
@@ -78,7 +82,7 @@ public class DomesticDailyOhlcvCollectionService {
     private final MismatchDetector mismatchDetector;
 
     /**
-     * 일봉 INSERT IGNORE를 단일 커넥션 배치로 실행하고 침묵 드롭 경고를 캡처하는 경로 (REQ-OBSV-023).
+     * 일봉 INSERT IGNORE를 단일 JDBC 커넥션 배치로 실행하고 침묵 드롭 경고를 캡처하는 경로 (REQ-OBSV-023).
      *
      * <p>JPA {@code DailyOhlcvRepository.insertIgnoreDuplicate}를 대체한다 — 동일한 INSERT IGNORE SQL이나
      * JDBC 경고 체인을 노출해 중복 외 침묵 드롭을 가시화할 수 있다.
@@ -195,19 +199,17 @@ public class DomesticDailyOhlcvCollectionService {
             throws InterruptedException {
         String symbol = stock.getSymbol();
         KisDailyOhlcvResponse response = fetch(session, symbol, from, to);
-        List<KisDailyOhlcvResponse.DailyOhlcvRow> validRows =
-                saveValidRows(stock, symbol, response);
+        List<ParsedOhlcvRow> validRows = saveValidRows(stock, symbol, response);
         if (validRows.isEmpty()) {
             return BackfillWindowResult.EMPTY;
         }
-        // 이미 검증·선별된 행에서 최소 거래일을 도출한다(2차 재파싱 없음) — BASIC_ISO_DATE(yyyyMMdd)는 사전식=연대순이므로
-        // 문자열 최소 = 최과거일. 승자 1건만 LocalDate로 파싱한다.
-        String oldest =
+        // ParsedOhlcvRow.tradeDate()로 최소 거래일 도출 — 문자열 재파싱 없음 (REQ-INSERT-002)
+        LocalDate oldest =
                 validRows.stream()
-                        .map(KisDailyOhlcvResponse.DailyOhlcvRow::stckBsopDate)
+                        .map(ParsedOhlcvRow::tradeDate)
                         .min(Comparator.naturalOrder())
                         .orElseThrow();
-        return new BackfillWindowResult(LocalDate.parse(oldest, DATE_FMT), validRows.size());
+        return new BackfillWindowResult(oldest, validRows.size());
     }
 
     private KisDailyOhlcvResponse fetch(
@@ -230,24 +232,26 @@ public class DomesticDailyOhlcvCollectionService {
     }
 
     /**
-     * [T2] fetch 경로 전용 — 수정주가 제외·검증·불일치 탐지만 수행하고 INSERT하지 않는다.
+     * 수정주가 제외·검증·불일치 탐지만 수행하고 INSERT하지 않는다.
      *
-     * <p>{@link #fetchWindow}가 사용하는 순수 검증 경로. {@link #saveValidRows}는 이 결과에 적재를
-     * 추가한다(REQ-BACKFILL-002).
+     * <p>REQ-INSERT-002: 각 행을 1회만 파싱하여 {@link ParsedOhlcvRow}로 수집한다.
      *
      * @return 검증 통과 행 목록 (없으면 빈 목록)
      */
-    private List<KisDailyOhlcvResponse.DailyOhlcvRow> filterAndValidate(
+    private List<ParsedOhlcvRow> filterAndValidate(
             Stock stock, String symbol, KisDailyOhlcvResponse response) {
-        List<KisDailyOhlcvResponse.DailyOhlcvRow> rows =
-                response.output2().stream().filter(row -> !"Y".equals(row.modYn())).toList();
-        List<KisDailyOhlcvResponse.DailyOhlcvRow> validRows =
-                rows.stream().filter(row -> isValid(symbol, row)).toList();
+        List<ParsedOhlcvRow> validRows =
+                response.output2().stream()
+                        .filter(row -> !"Y".equals(row.modYn()))
+                        .map(row -> isValid(symbol, row))
+                        .filter(Optional::isPresent)
+                        .map(Optional::get)
+                        .toList();
         if (validRows.isEmpty()) {
             return validRows;
         }
-        // REQ-OHLCV2-010,-011: 불일치 탐지 위임 (N+1 방지·BigDecimal compareTo·WARN 로그·행 수정 없음).
-        mismatchDetector.detectAndLog(stock.getId(), symbol, validRows, DATE_FMT);
+        // REQ-OHLCV2-010,-011: 불일치 탐지 위임 — ParsedOhlcvRow 재파싱 없이 전달 (REQ-INSERT-003)
+        mismatchDetector.detectAndLog(stock.getId(), symbol, validRows);
         return validRows;
     }
 
@@ -259,15 +263,15 @@ public class DomesticDailyOhlcvCollectionService {
      *
      * @return 적재한 검증 통과 행 목록 (없으면 빈 목록)
      */
-    private List<KisDailyOhlcvResponse.DailyOhlcvRow> saveValidRows(
+    private List<ParsedOhlcvRow> saveValidRows(
             Stock stock, String symbol, KisDailyOhlcvResponse response) {
-        List<KisDailyOhlcvResponse.DailyOhlcvRow> validRows =
-                filterAndValidate(stock, symbol, response);
+        List<ParsedOhlcvRow> validRows = filterAndValidate(stock, symbol, response);
         if (validRows.isEmpty()) {
             return validRows;
         }
         // REQ-OBSV-023: 한 종목의 유효 행들을 단일 커넥션 배치 INSERT IGNORE로 적재하고 침묵 드롭 경고를 캡처한다.
-        ohlcvInserter.insertBatch(stock.getId(), validRows, DATE_FMT);
+        // REQ-INSERT-004: ParsedOhlcvRow를 바인딩에 직접 사용 — 추가 파싱 없음.
+        ohlcvInserter.insertBatch(stock.getId(), validRows);
         return validRows;
     }
 
@@ -291,18 +295,16 @@ public class DomesticDailyOhlcvCollectionService {
             throws InterruptedException {
         String symbol = stock.getSymbol();
         KisDailyOhlcvResponse response = fetch(session, symbol, from, anchor);
-        List<KisDailyOhlcvResponse.DailyOhlcvRow> validRows =
-                filterAndValidate(stock, symbol, response);
+        List<ParsedOhlcvRow> validRows = filterAndValidate(stock, symbol, response);
         if (validRows.isEmpty()) {
             return new DomesticDailyOhlcvFetch(List.of(), null, 0);
         }
-        String oldest =
+        LocalDate oldest =
                 validRows.stream()
-                        .map(KisDailyOhlcvResponse.DailyOhlcvRow::stckBsopDate)
+                        .map(ParsedOhlcvRow::tradeDate)
                         .min(Comparator.naturalOrder())
                         .orElseThrow();
-        return new DomesticDailyOhlcvFetch(
-                validRows, LocalDate.parse(oldest, DATE_FMT), validRows.size());
+        return new DomesticDailyOhlcvFetch(validRows, oldest, validRows.size());
     }
 
     /**
@@ -327,26 +329,32 @@ public class DomesticDailyOhlcvCollectionService {
             }
             return BackfillWindowResult.EMPTY;
         }
-        ohlcvInserter.insertBatch(stock.getId(), fetch.rows(), DATE_FMT);
+        // REQ-INSERT-004: ParsedOhlcvRow를 직접 바인딩 — fmt 파라미터 불필요
+        ohlcvInserter.insertBatch(stock.getId(), fetch.rows());
         return new BackfillWindowResult(fetch.oldestTradeDate(), fetch.rowCount());
     }
 
     /**
-     * 일봉 행 검증 규칙 (REQ-BATCH-033).
+     * 일봉 행 검증 규칙 (REQ-BATCH-033, REQ-INSERT-002).
+     *
+     * <p>파싱 성공 시 파싱된 값을 담은 {@link ParsedOhlcvRow}를 반환한다 — 검증·불일치·바인딩이 동일 객체를 재사용하여 중복 파싱을 제거한다 (W-1
+     * 불변식).
      *
      * <ul>
-     *   <li>가격(close/open/high/low) ≤ 0 또는 극단값 초과 → invalid
-     *   <li>거래량 ≤ 0 또는 극단값 초과 → invalid
-     *   <li>null / 빈 문자열 필드 → invalid (NumberFormatException 처리)
+     *   <li>가격(close/open/high/low) ≤ 0 또는 극단값 초과 → empty
+     *   <li>거래량 ≤ 0 또는 극단값 초과 → empty
+     *   <li>null / 빈 문자열 필드 → empty (NumberFormatException 처리)
      * </ul>
      */
-    private boolean isValid(String symbol, KisDailyOhlcvResponse.DailyOhlcvRow row) {
+    private Optional<ParsedOhlcvRow> isValid(
+            String symbol, KisDailyOhlcvResponse.DailyOhlcvRow row) {
         try {
             BigDecimal close = new BigDecimal(row.stckClpr());
             BigDecimal open = new BigDecimal(row.stckOprc());
             BigDecimal high = new BigDecimal(row.stckHgpr());
             BigDecimal low = new BigDecimal(row.stckLwpr());
             long volume = Long.parseLong(row.acmlVol());
+            long tradingValue = Long.parseLong(row.acmlTrPbmn());
 
             boolean invalid =
                     close.compareTo(BigDecimal.ZERO) <= 0
@@ -367,9 +375,11 @@ public class DomesticDailyOhlcvCollectionService {
                         row.stckHgpr(),
                         row.stckLwpr(),
                         row.acmlVol());
-                return false;
+                return Optional.empty();
             }
-            return true;
+            LocalDate tradeDate = LocalDate.parse(row.stckBsopDate(), DATE_FMT);
+            return Optional.of(
+                    new ParsedOhlcvRow(tradeDate, open, high, low, close, volume, tradingValue));
         } catch (NumberFormatException e) {
             log.warn(
                     "[domestic-daily] 숫자 파싱 실패 (데이터 유실) — symbol={}, date={}, close={}, open={}, high={}, low={}, volume={}",
@@ -380,7 +390,7 @@ public class DomesticDailyOhlcvCollectionService {
                     row.stckHgpr(),
                     row.stckLwpr(),
                     row.acmlVol());
-            return false;
+            return Optional.empty();
         }
     }
 }

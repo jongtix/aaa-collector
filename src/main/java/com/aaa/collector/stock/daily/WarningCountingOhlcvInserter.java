@@ -78,6 +78,31 @@ public class WarningCountingOhlcvInserter {
         batchMetrics.recordSilentDrops(drops == null ? 0L : drops);
     }
 
+    /**
+     * 검증 단계에서 파싱된 {@link ParsedOhlcvRow} 행들을 단일 커넥션에서 행별로 멱등 삽입하고 침묵 드롭 경고를 기록한다 (REQ-INSERT-004,
+     * W-1 불변식).
+     *
+     * <p>파라미터로 전달된 {@link ParsedOhlcvRow}의 이미 파싱된 값을 바인딩에 그대로 사용한다 — JDBC 바인딩 시 추가 파싱 없음. 빈 목록이면
+     * JDBC를 사용하지 않는다.
+     *
+     * @param stockId stocks.id
+     * @param rows 검증 단계에서 파싱된 행 목록(빈 목록이면 무동작)
+     */
+    public void insertBatch(Long stockId, List<ParsedOhlcvRow> rows) {
+        if (rows.isEmpty()) {
+            return;
+        }
+        Long drops =
+                jdbcTemplate.execute(
+                        (Connection conn) -> {
+                            try (PreparedStatement ps = conn.prepareStatement(INSERT_IGNORE_SQL)) {
+                                return SilentDropWarningCounter.countDropsPerRow(
+                                        ps, rows, (s, row) -> bindParsedRow(s, stockId, row));
+                            }
+                        });
+        batchMetrics.recordSilentDrops(drops == null ? 0L : drops);
+    }
+
     /** 단일 행을 PreparedStatement에 바인딩한다(파싱·BigDecimal 생성을 루프 밖 메서드로 분리). */
     private void bindRow(
             PreparedStatement ps,
@@ -93,5 +118,18 @@ public class WarningCountingOhlcvInserter {
         ps.setBigDecimal(6, new BigDecimal(row.stckClpr()));
         ps.setLong(7, Long.parseLong(row.acmlVol()));
         ps.setLong(8, Long.parseLong(row.acmlTrPbmn()));
+    }
+
+    /** 파싱 완료된 {@link ParsedOhlcvRow}를 바인딩한다 — 추가 파싱 없음 (REQ-INSERT-004 W-1). */
+    private void bindParsedRow(PreparedStatement ps, Long stockId, ParsedOhlcvRow row)
+            throws SQLException {
+        ps.setObject(1, stockId);
+        ps.setObject(2, row.tradeDate());
+        ps.setBigDecimal(3, row.open());
+        ps.setBigDecimal(4, row.high());
+        ps.setBigDecimal(5, row.low());
+        ps.setBigDecimal(6, row.close());
+        ps.setLong(7, row.volume());
+        ps.setLong(8, row.tradingValue());
     }
 }
