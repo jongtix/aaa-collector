@@ -81,7 +81,7 @@ class DartDisclosurePollingServiceTest {
             pollingService.poll();
 
             // Assert — DisclosureRow 파라미터 캡처 후 필드 검증
-            verify(disclosureInserter).insertBatch(inserterCaptor.capture());
+            verify(disclosureInserter).insertBatchIsolated(inserterCaptor.capture(), any());
             DisclosureRow captured =
                     inserterCaptor.getAllValues().stream()
                             .flatMap(List::stream)
@@ -106,7 +106,7 @@ class DartDisclosurePollingServiceTest {
             pollingService.poll();
 
             // Assert
-            verify(disclosureInserter, never()).insertBatch(any());
+            verify(disclosureInserter, never()).insertBatchIsolated(any(), any());
         }
 
         @Test
@@ -122,7 +122,7 @@ class DartDisclosurePollingServiceTest {
             pollingService.poll();
 
             // Assert
-            verify(disclosureInserter, never()).insertBatch(any());
+            verify(disclosureInserter, never()).insertBatchIsolated(any(), any());
         }
 
         @Test

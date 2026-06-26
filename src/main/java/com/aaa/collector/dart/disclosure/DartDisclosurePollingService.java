@@ -8,8 +8,10 @@ import com.aaa.collector.stock.StockRepository;
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -41,7 +43,6 @@ public class DartDisclosurePollingService {
      * <p>각 행의 stock_code를 watchlist 집합과 매칭하여 매칭 행만 INSERT IGNORE 삽입한다. BatchMetrics 계측
      * 포함(REQ-DART-013).
      */
-    @SuppressWarnings("PMD.AvoidCatchingGenericException") // 항목 단위 예외 격리 — REQ-DART-030
     public void poll() {
         LocalDate today = LocalDate.now();
         LocalDate yesterday = today.minusDays(1);
@@ -64,6 +65,9 @@ public class DartDisclosurePollingService {
         int successCount = 0;
         int failCount = 0;
         int skipCount = 0;
+
+        // REQ-INSERT-011: 유효 행 누적 후 격리 삽입
+        List<DisclosureRow> batch = new ArrayList<>();
 
         for (DartListResponse.DisclosureItem item : items) {
             targetCount++;
@@ -95,17 +99,24 @@ public class DartDisclosurePollingService {
                 continue;
             }
 
-            try {
-                disclosureInserter.insertBatch(
-                        List.of(toRow(stock.getId(), stockCode, item, rceptDt)));
-                successCount++;
-            } catch (Exception e) {
-                log.warn(
-                        "[dart-polling] insertIgnore 실패 — rceptNo={}, error={}",
-                        item.rceptNo(),
-                        e.getMessage());
-                failCount++;
-            }
+            batch.add(toRow(stock.getId(), stockCode, item, rceptDt));
+        }
+
+        // REQ-INSERT-011: 격리 삽입 — 독성 행 skip·잔여 행 계속·커넥션 중단 없음
+        if (!batch.isEmpty()) {
+            AtomicInteger dbFailures = new AtomicInteger();
+            disclosureInserter.insertBatchIsolated(
+                    batch,
+                    (row, ex) -> {
+                        log.warn(
+                                "[dart-polling] insertIgnore 실패 — rceptNo={}, error={}",
+                                row.rceptNo(),
+                                ex.getMessage());
+                        dbFailures.incrementAndGet();
+                    });
+            int failures = dbFailures.get();
+            successCount = batch.size() - failures;
+            failCount += failures;
         }
 
         batchMetrics.recordCompletion(BATCH_LABEL, targetCount, successCount, failCount, skipCount);

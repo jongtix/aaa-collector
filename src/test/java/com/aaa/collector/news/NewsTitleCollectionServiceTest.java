@@ -3,6 +3,7 @@ package com.aaa.collector.news;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -11,6 +12,8 @@ import static org.mockito.Mockito.when;
 import com.aaa.collector.kis.gate.GuardedKisExecutor;
 import com.aaa.collector.kis.gate.KeyLeaseRegistry;
 import com.aaa.collector.kis.gate.KeyLeaseRegistry.LeaseSession;
+import com.aaa.collector.observability.RowFailureHandler;
+import java.sql.SQLException;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
@@ -24,7 +27,6 @@ import org.mockito.Captor;
 import org.mockito.Mock;
 import org.mockito.Mockito;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.dao.DataIntegrityViolationException;
 
 /**
  * SPEC-COLLECTOR-KISGATE-001 M6(T15) — {@link NewsTitleCollectionService} 게이트 경유 단위 테스트.
@@ -130,7 +132,7 @@ class NewsTitleCollectionServiceTest {
             service.collect();
 
             // Assert
-            verify(newsHeadlineInserter).insertBatch(inserterCaptor.capture());
+            verify(newsHeadlineInserter).insertBatchIsolated(inserterCaptor.capture(), any());
 
             DomesticNewsHeadline saved =
                     inserterCaptor.getAllValues().stream()
@@ -160,7 +162,7 @@ class NewsTitleCollectionServiceTest {
             service.collect();
 
             // Assert
-            verify(newsHeadlineInserter).insertBatch(inserterCaptor.capture());
+            verify(newsHeadlineInserter).insertBatchIsolated(inserterCaptor.capture(), any());
             DomesticNewsHeadline savedEntry =
                     inserterCaptor.getAllValues().stream()
                             .flatMap(List::stream)
@@ -189,7 +191,7 @@ class NewsTitleCollectionServiceTest {
 
             // Assert
             assertThat(result.succeeded()).isEqualTo(3);
-            verify(newsHeadlineInserter, times(3)).insertBatch(any());
+            verify(newsHeadlineInserter, times(1)).insertBatchIsolated(any(), any());
         }
     }
 
@@ -247,7 +249,7 @@ class NewsTitleCollectionServiceTest {
 
             // Assert — srno 1001이 2번 삽입 시도됨 (DB가 IGNORE 처리)
             // 총 43번 insertIgnoreDuplicate 호출
-            verify(newsHeadlineInserter, times(43)).insertBatch(any());
+            verify(newsHeadlineInserter, times(2)).insertBatchIsolated(any(), any());
         }
     }
 
@@ -343,7 +345,7 @@ class NewsTitleCollectionServiceTest {
 
             // Assert
             assertThat(result.skipped()).isEqualTo(1);
-            verify(newsHeadlineInserter, never()).insertBatch(any());
+            verify(newsHeadlineInserter, never()).insertBatchIsolated(any(), any());
         }
 
         @Test
@@ -374,7 +376,7 @@ class NewsTitleCollectionServiceTest {
 
             // Assert
             assertThat(result.skipped()).isEqualTo(1);
-            verify(newsHeadlineInserter, never()).insertBatch(any());
+            verify(newsHeadlineInserter, never()).insertBatchIsolated(any(), any());
         }
     }
 
@@ -397,7 +399,7 @@ class NewsTitleCollectionServiceTest {
             NewsCollectionResult result = service.collect();
 
             assertThat(result.succeeded()).isZero();
-            verify(newsHeadlineInserter, never()).insertBatch(any());
+            verify(newsHeadlineInserter, never()).insertBatchIsolated(any(), any());
         }
     }
 
@@ -467,7 +469,7 @@ class NewsTitleCollectionServiceTest {
 
             // Assert — 파싱 실패로 skip
             assertThat(result.skipped()).isEqualTo(1);
-            verify(newsHeadlineInserter, never()).insertBatch(any());
+            verify(newsHeadlineInserter, never()).insertBatchIsolated(any(), any());
         }
     }
 
@@ -491,25 +493,33 @@ class NewsTitleCollectionServiceTest {
                             eq(session), any(), eq(TR_ID), eq(KisNewsTitleResponse.class)))
                     .thenReturn(pageOf(List.of(poisonRow, row2, row3)));
 
-            // insertBatch: srno=1003 독성 행에서 예외 발생, 나머지는 정상
-            // lenient 필요: 엄격 모드에서는 argThat 미일치 호출에 PotentialStubbingProblem 발생
-            Mockito.lenient()
-                    .doThrow(
-                            new DataIntegrityViolationException("Data too long for column 'title'"))
+            // REQ-INSERT-011: insertBatchIsolated — srno=1003 독성 행에 대해 콜백 호출 시뮬레이션
+            doAnswer(
+                            invocation -> {
+                                final String toxicSrno = "1003";
+                                final SQLException toxicEx =
+                                        new SQLException(
+                                                "Data too long for column 'title'", "22001", 1406);
+                                List<DomesticNewsHeadline> rows = invocation.getArgument(0);
+                                @SuppressWarnings("unchecked")
+                                RowFailureHandler<DomesticNewsHeadline> handler =
+                                        invocation.getArgument(1);
+                                for (DomesticNewsHeadline entity : rows) {
+                                    if (toxicSrno.equals(entity.getSerialNo())) {
+                                        handler.onFailure(entity, toxicEx);
+                                    }
+                                }
+                                return null;
+                            })
                     .when(newsHeadlineInserter)
-                    .insertBatch(
-                            org.mockito.ArgumentMatchers.argThat(
-                                    list ->
-                                            list.stream()
-                                                    .anyMatch(
-                                                            e -> "1003".equals(e.getSerialNo()))));
+                    .insertBatchIsolated(any(), any());
 
             // Act
             NewsCollectionResult result = service.collect();
 
             // Assert
             // (a) 정상 행 2건 삽입됨
-            verify(newsHeadlineInserter, times(3)).insertBatch(any());
+            verify(newsHeadlineInserter, times(1)).insertBatchIsolated(any(), any());
             assertThat(result.succeeded()).isEqualTo(2);
             // (b) 독성 행은 skipped 집계
             assertThat(result.skipped()).isEqualTo(1);
@@ -531,15 +541,24 @@ class NewsTitleCollectionServiceTest {
                             eq(session), any(), eq(TR_ID), eq(KisNewsTitleResponse.class)))
                     .thenReturn(pageOf(List.of(row2, row3, poison)));
 
-            Mockito.lenient()
-                    .doThrow(new DataIntegrityViolationException("Data too long"))
+            // REQ-INSERT-011: 독성 행 1003에 대해 콜백 호출 시뮬레이션
+            doAnswer(
+                            invocation -> {
+                                final String toxicSrno = "1003";
+                                final SQLException toxicEx = new SQLException("Data too long");
+                                List<DomesticNewsHeadline> rows = invocation.getArgument(0);
+                                @SuppressWarnings("unchecked")
+                                RowFailureHandler<DomesticNewsHeadline> handler =
+                                        invocation.getArgument(1);
+                                for (DomesticNewsHeadline entity : rows) {
+                                    if (toxicSrno.equals(entity.getSerialNo())) {
+                                        handler.onFailure(entity, toxicEx);
+                                    }
+                                }
+                                return null;
+                            })
                     .when(newsHeadlineInserter)
-                    .insertBatch(
-                            org.mockito.ArgumentMatchers.argThat(
-                                    list ->
-                                            list.stream()
-                                                    .anyMatch(
-                                                            e -> "1003".equals(e.getSerialNo()))));
+                    .insertBatchIsolated(any(), any());
 
             // Act — 1페이지(3건, count<40)에서 종료
             NewsCollectionResult result = service.collect();
@@ -573,7 +592,7 @@ class NewsTitleCollectionServiceTest {
             service.collect();
 
             // Assert
-            verify(newsHeadlineInserter, times(2)).insertBatch(any());
+            verify(newsHeadlineInserter, times(2)).insertBatchIsolated(any(), any());
         }
     }
 }

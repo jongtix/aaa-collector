@@ -105,7 +105,7 @@ class ExtendedHoursCollectionServiceTest {
             service.collect(Session.PRE);
 
             verify(yahooClient, never()).fetch(any(), any());
-            verify(extendedHoursInserter, never()).insertBatch(any());
+            verify(extendedHoursInserter, never()).insertBatchIsolated(any(), any());
         }
     }
 
@@ -174,7 +174,7 @@ class ExtendedHoursCollectionServiceTest {
             service.collect(Session.PRE);
 
             // Assert — MSFT는 저장됨
-            verify(extendedHoursInserter, times(1)).insertBatch(any());
+            verify(extendedHoursInserter, times(1)).insertBatchIsolated(any(), any());
         }
     }
 
@@ -194,7 +194,7 @@ class ExtendedHoursCollectionServiceTest {
             service.collect(Session.PRE);
 
             // Assert
-            verify(extendedHoursInserter, never()).insertBatch(any());
+            verify(extendedHoursInserter, never()).insertBatchIsolated(any(), any());
         }
     }
 
@@ -214,7 +214,7 @@ class ExtendedHoursCollectionServiceTest {
             service.collect(Session.PRE);
 
             // Assert
-            verify(extendedHoursInserter).insertBatch(inserterCaptor.capture());
+            verify(extendedHoursInserter).insertBatchIsolated(inserterCaptor.capture(), any());
             ExtendedHours saved =
                     inserterCaptor.getAllValues().stream()
                             .flatMap(List::stream)
@@ -234,7 +234,7 @@ class ExtendedHoursCollectionServiceTest {
             service.collect(Session.PRE);
 
             // Assert
-            verify(extendedHoursInserter, never()).insertBatch(any());
+            verify(extendedHoursInserter, never()).insertBatchIsolated(any(), any());
         }
     }
 }

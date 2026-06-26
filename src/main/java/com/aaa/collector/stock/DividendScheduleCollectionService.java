@@ -9,12 +9,13 @@ import java.math.RoundingMode;
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicInteger;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.dao.DataAccessException;
 import org.springframework.stereotype.Service;
 
 /**
@@ -166,6 +167,9 @@ public class DividendScheduleCollectionService {
         int skippedNonWatchlist = 0;
         int skippedValidation = 0;
 
+        // REQ-INSERT-011: 유효 행 누적 후 격리 삽입
+        List<CorporateEvent> batch = new ArrayList<>();
+
         for (KisDividendScheduleResponse.DividendRow row : rows) {
             attempted++;
             String shtCd = row.shtCd();
@@ -189,21 +193,25 @@ public class DividendScheduleCollectionService {
                 continue;
             }
 
-            // REQ-BATCH3-053: uk_corporate_events 멱등 저장
-            // @MX:WARN: [AUTO] 독성 행 예외 흡수 — 영구 정체 방지 (W1)
-            // @MX:REASON: insertIgnoreDuplicate 예외 발생 시 다음 CTS 페이지 진행이 차단될 수 있으므로
-            //   예외를 흡수하고 현재 행만 skip하여 전체 배치 수집을 보호한다.
-            try {
-                corporateEventInserter.insertBatch(List.of(entity));
-                succeeded++;
-            } catch (DataAccessException ex) {
-                log.warn(
-                        "[dividend] 행 저장 실패 — skip (sht_cd={}, error={}: {})",
-                        shtCd,
-                        ex.getClass().getSimpleName(),
-                        ex.getMessage());
-                skippedValidation++;
-            }
+            batch.add(entity);
+            succeeded++;
+        }
+
+        // REQ-INSERT-011: 격리 삽입 — 독성 행 skip·잔여 행 계속·커넥션 중단 없음
+        if (!batch.isEmpty()) {
+            AtomicInteger dbFailures = new AtomicInteger();
+            corporateEventInserter.insertBatchIsolated(
+                    batch,
+                    (entity, ex) -> {
+                        log.warn(
+                                "[dividend] 행 저장 실패 — skip (stock={}, error={})",
+                                entity.getStock().getSymbol(),
+                                ex.getMessage());
+                        dbFailures.incrementAndGet();
+                    });
+            int failures = dbFailures.get();
+            succeeded -= failures;
+            skippedValidation += failures;
         }
 
         return new RowCounts(attempted, succeeded, skippedNonWatchlist, skippedValidation);

@@ -164,12 +164,13 @@ class SilentDropWarningCounterTest {
                 // Arrange — 1행은 SQLException, 2행은 성공
                 when(ps.getWarnings()).thenReturn(null);
 
+                final String toxicKey = "toxic";
                 List<String> processed = new ArrayList<>();
                 List<String> failed = new ArrayList<>();
 
                 SilentDropWarningCounter.RowBinder<String> binder =
                         (s, row) -> {
-                            if ("toxic".equals(row)) {
+                            if (toxicKey.equals(row)) {
                                 throw new SQLException("Data too long", "22001", 1406);
                             }
                             processed.add(row);
@@ -181,10 +182,10 @@ class SilentDropWarningCounterTest {
                 // Act
                 long drops =
                         SilentDropWarningCounter.countDropsPerRowIsolated(
-                                ps, List.of("toxic", "good1", "good2"), binder, onFailure);
+                                ps, List.of(toxicKey, "good1", "good2"), binder, onFailure);
 
                 // Assert — toxic 행 skip, good1/good2 처리됨
-                assertThat(failed).containsExactly("toxic");
+                assertThat(failed).containsExactly(toxicKey);
                 assertThat(processed).containsExactly("good1", "good2");
                 assertThat(drops).isZero();
             }
@@ -218,11 +219,12 @@ class SilentDropWarningCounterTest {
         @DisplayName("SQLException 발생 행에는 onFailure를 호출하고 드롭 카운트에 포함하지 않는다")
         void sqlExceptionRowNotCountedAsDropAndCallbackInvoked() throws Exception {
             try (PreparedStatement ps = mock(PreparedStatement.class)) {
+                final String toxicKey = "toxic";
                 List<String> failed = new ArrayList<>();
 
                 SilentDropWarningCounter.RowBinder<String> binder =
                         (s, row) -> {
-                            if ("toxic".equals(row)) {
+                            if (toxicKey.equals(row)) {
                                 throw new SQLException("FK violation", "23000", 1452);
                             }
                             s.setString(1, row);
@@ -234,9 +236,9 @@ class SilentDropWarningCounterTest {
 
                 long drops =
                         SilentDropWarningCounter.countDropsPerRowIsolated(
-                                ps, List.of("toxic"), binder, onFailure);
+                                ps, List.of(toxicKey), binder, onFailure);
 
-                assertThat(failed).containsExactly("toxic");
+                assertThat(failed).containsExactly(toxicKey);
                 assertThat(drops).isZero();
                 // executeUpdate should NOT be called for the failed bind row
                 verify(ps, never()).executeUpdate();

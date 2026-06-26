@@ -10,23 +10,18 @@ import com.aaa.collector.kis.token.KisTokenIssueException;
 import com.aaa.collector.stock.Stock;
 import com.aaa.collector.stock.StockRepository;
 import java.math.BigDecimal;
-import java.net.URI;
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
-import java.util.Comparator;
 import java.util.List;
-import java.util.Optional;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicInteger;
-import java.util.function.Function;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.client.RestClientException;
-import org.springframework.web.util.UriBuilder;
 
 /**
  * 국내 일봉 OHLCV 수집 서비스.
@@ -207,7 +202,7 @@ public class DomesticDailyOhlcvCollectionService {
         LocalDate oldest =
                 validRows.stream()
                         .map(ParsedOhlcvRow::tradeDate)
-                        .min(Comparator.naturalOrder())
+                        .min(LocalDate::compareTo)
                         .orElseThrow();
         return new BackfillWindowResult(oldest, validRows.size());
     }
@@ -217,7 +212,8 @@ public class DomesticDailyOhlcvCollectionService {
             throws InterruptedException {
         String from = fromDate.format(DATE_FMT);
         String to = toDate.format(DATE_FMT);
-        Function<UriBuilder, URI> uriCustomizer =
+        return guardedKisExecutor.execute(
+                session,
                 uri ->
                         uri.path("/uapi/domestic-stock/v1/quotations/inquire-daily-itemchartprice")
                                 .queryParam("FID_COND_MRKT_DIV_CODE", "J")
@@ -226,9 +222,9 @@ public class DomesticDailyOhlcvCollectionService {
                                 .queryParam("FID_INPUT_DATE_2", to)
                                 .queryParam("FID_PERIOD_DIV_CODE", "D")
                                 .queryParam("FID_ORG_ADJ_PRC", "1")
-                                .build();
-        return guardedKisExecutor.execute(
-                session, uriCustomizer, "FHKST03010100", KisDailyOhlcvResponse.class);
+                                .build(),
+                "FHKST03010100",
+                KisDailyOhlcvResponse.class);
     }
 
     /**
@@ -243,9 +239,8 @@ public class DomesticDailyOhlcvCollectionService {
         List<ParsedOhlcvRow> validRows =
                 response.output2().stream()
                         .filter(row -> !"Y".equals(row.modYn()))
-                        .map(row -> isValid(symbol, row))
-                        .filter(Optional::isPresent)
-                        .map(Optional::get)
+                        .map(row -> parseIfValid(symbol, row))
+                        .filter(parsed -> parsed != null)
                         .toList();
         if (validRows.isEmpty()) {
             return validRows;
@@ -302,7 +297,7 @@ public class DomesticDailyOhlcvCollectionService {
         LocalDate oldest =
                 validRows.stream()
                         .map(ParsedOhlcvRow::tradeDate)
-                        .min(Comparator.naturalOrder())
+                        .min(LocalDate::compareTo)
                         .orElseThrow();
         return new DomesticDailyOhlcvFetch(validRows, oldest, validRows.size());
     }
@@ -346,8 +341,7 @@ public class DomesticDailyOhlcvCollectionService {
      *   <li>null / 빈 문자열 필드 → empty (NumberFormatException 처리)
      * </ul>
      */
-    private Optional<ParsedOhlcvRow> isValid(
-            String symbol, KisDailyOhlcvResponse.DailyOhlcvRow row) {
+    private ParsedOhlcvRow parseIfValid(String symbol, KisDailyOhlcvResponse.DailyOhlcvRow row) {
         try {
             BigDecimal close = new BigDecimal(row.stckClpr());
             BigDecimal open = new BigDecimal(row.stckOprc());
@@ -375,11 +369,10 @@ public class DomesticDailyOhlcvCollectionService {
                         row.stckHgpr(),
                         row.stckLwpr(),
                         row.acmlVol());
-                return Optional.empty();
+                return null;
             }
             LocalDate tradeDate = LocalDate.parse(row.stckBsopDate(), DATE_FMT);
-            return Optional.of(
-                    new ParsedOhlcvRow(tradeDate, open, high, low, close, volume, tradingValue));
+            return new ParsedOhlcvRow(tradeDate, open, high, low, close, volume, tradingValue);
         } catch (NumberFormatException e) {
             log.warn(
                     "[domestic-daily] 숫자 파싱 실패 (데이터 유실) — symbol={}, date={}, close={}, open={}, high={}, low={}, volume={}",
@@ -390,7 +383,7 @@ public class DomesticDailyOhlcvCollectionService {
                     row.stckHgpr(),
                     row.stckLwpr(),
                     row.acmlVol());
-            return Optional.empty();
+            return null;
         }
     }
 }

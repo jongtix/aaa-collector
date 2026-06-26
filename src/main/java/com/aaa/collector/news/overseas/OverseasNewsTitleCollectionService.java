@@ -6,12 +6,13 @@ import com.aaa.collector.kis.gate.KeyLeaseRegistry.LeaseSession;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
+import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicInteger;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.dao.DataAccessException;
 import org.springframework.stereotype.Service;
 
 /**
@@ -172,14 +173,18 @@ public class OverseasNewsTitleCollectionService {
      *
      * <p>마지막 행의 {@code data_dt}/{@code data_tm}은 검증 통과 여부와 무관하게 응답 순서상 마지막 행(시간 역순 → 가장 과거)에서 추출해
      * 다음 커서로 쓴다(전진 보장).
+     *
+     * <p>REQ-INSERT-011: 유효 행 누적 후 {@code insertBatchIsolated}로 격리 삽입 — 독성 행 skip·잔여 행 계속.
      */
     private PageOutcome processPage(KisOverseasNewsTitleResponse response, Set<String> seenKeys) {
         int attempted = 0;
-        int succeeded = 0;
         int skipped = 0;
         int newKeys = 0;
         String lastDataDt = "";
         String lastDataTm = "";
+
+        // REQ-INSERT-011: 유효 행 누적
+        List<OverseasNewsHeadline> batch = new ArrayList<>();
 
         for (KisOverseasNewsTitleResponse.NewsRow row : response.outblock1()) {
             attempted++;
@@ -190,62 +195,60 @@ public class OverseasNewsTitleCollectionService {
                 lastDataTm = row.dataTm() != null ? row.dataTm() : "";
             }
 
-            RowOutcome rowOutcome = processRow(row, seenKeys);
-            succeeded += rowOutcome.succeeded;
-            skipped += rowOutcome.skipped;
-            newKeys += rowOutcome.newKey ? 1 : 0;
+            // REQ-OVE-045: news_key/data_dt null·공백 skip
+            if (isInvalidRow(row)) {
+                log.debug("[overseas-news] 검증 실패 (news_key/data_dt null) — skip");
+                skipped++;
+                continue;
+            }
+
+            String newsKey = row.newsKey();
+
+            // REQ-OVE-043a: 페이지 경계 inclusive 1건 중복 → Set dedup
+            if (!seenKeys.add(newsKey)) {
+                skipped++;
+                continue;
+            }
+
+            // REQ-OVE-042/060: 유효 행 누적
+            OverseasNewsHeadline entity = mapToEntity(row);
+            batch.add(entity);
+            newKeys++;
         }
+
+        // REQ-INSERT-011: 격리 삽입 — 독성 행 skip·잔여 행 계속·커넥션 중단 없음
+        int failures = insertIsolated(batch);
+        int succeeded = batch.size() - failures;
+        skipped += failures;
 
         return new PageOutcome(attempted, succeeded, skipped, newKeys, lastDataDt, lastDataTm);
     }
 
-    /** 단일 행을 처리한다 — 검증 skip, dedup skip, 멱등 저장. */
-    private RowOutcome processRow(KisOverseasNewsTitleResponse.NewsRow row, Set<String> seenKeys) {
+    /** 필수 필드(news_key, data_dt) 누락 여부를 판정한다(REQ-OVE-045). */
+    private boolean isInvalidRow(KisOverseasNewsTitleResponse.NewsRow row) {
         String newsKey = row.newsKey();
-
-        // REQ-OVE-045: news_key/data_dt null·공백 skip
-        if (newsKey == null
+        return newsKey == null
                 || newsKey.isBlank()
                 || row.dataDt() == null
-                || row.dataDt().isBlank()) {
-            log.debug("[overseas-news] 검증 실패 (news_key/data_dt null) — skip");
-            return RowOutcome.skipped(false);
-        }
-
-        // REQ-OVE-043a: 페이지 경계 inclusive 1건 중복 → Set dedup (이미 본 키는 신규 아님)
-        if (!seenKeys.add(newsKey)) {
-            return RowOutcome.skipped(false);
-        }
-
-        // REQ-OVE-042/060: news_key 유니크 멱등 INSERT IGNORE. mapToEntity는 필수 필드 선검증 후라 항상 비-null.
-        OverseasNewsHeadline entity = mapToEntity(row);
-        if (tryInsert(entity, newsKey)) {
-            return RowOutcome.succeeded(true);
-        }
-        return RowOutcome.skipped(true);
+                || row.dataDt().isBlank();
     }
 
-    /**
-     * 단건 삽입을 시도하고 성공 여부를 반환한다.
-     *
-     * <p>DataAccessException 발생 시 warn 로그 후 {@code false} 반환 — 커서 진행은 이 메서드와 무관하게 processPage에서 이미
-     * 완료되므로 영구 정체가 발생하지 않는다(REQ-OVE-046, W1).
-     */
-    // @MX:WARN: [AUTO] 독성 행 DataAccessException 흡수 — 영구 정체 방지 (W1)
-    // @MX:REASON: insertIgnoreDuplicate 예외(예: MySQL "Data too long") 발생 시 커서 진행이 차단되어 동일 페이지가 무한
-    // 재시도되는 영구 정체를 방지한다(REQ-OVE-046). 커서 추출은 processPage에서 이 호출과 무관하게 선행된다.
-    private boolean tryInsert(OverseasNewsHeadline entity, String newsKey) {
-        try {
-            overseasNewsHeadlineInserter.insertBatch(List.of(entity));
-            return true;
-        } catch (DataAccessException ex) {
-            log.warn(
-                    "[overseas-news] 행 저장 실패 — skip (news_key={}, error={}: {})",
-                    newsKey,
-                    ex.getClass().getSimpleName(),
-                    ex.getMessage());
-            return false;
+    /** 해외 뉴스 배치를 격리 삽입하고 실패 건수를 반환한다. */
+    private int insertIsolated(List<OverseasNewsHeadline> batch) {
+        if (batch.isEmpty()) {
+            return 0;
         }
+        AtomicInteger failures = new AtomicInteger();
+        overseasNewsHeadlineInserter.insertBatchIsolated(
+                batch,
+                (entity, ex) -> {
+                    log.warn(
+                            "[overseas-news] 행 저장 실패 — skip (news_key={}, error={})",
+                            entity.getNewsKey(),
+                            ex.getMessage());
+                    failures.incrementAndGet();
+                });
+        return failures.get();
     }
 
     /**
@@ -287,17 +290,6 @@ public class OverseasNewsTitleCollectionService {
                     dataTm,
                     e.getMessage());
             return null;
-        }
-    }
-
-    /** 행 처리 결과 (내부 전달용). */
-    private record RowOutcome(int succeeded, int skipped, boolean newKey) {
-        static RowOutcome succeeded(boolean newKey) {
-            return new RowOutcome(1, 0, newKey);
-        }
-
-        static RowOutcome skipped(boolean newKey) {
-            return new RowOutcome(0, 1, newKey);
         }
     }
 

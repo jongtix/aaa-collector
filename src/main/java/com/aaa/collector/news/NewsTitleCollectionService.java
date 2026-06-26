@@ -6,10 +6,11 @@ import com.aaa.collector.kis.gate.KeyLeaseRegistry.LeaseSession;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicInteger;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.dao.DataAccessException;
 import org.springframework.stereotype.Service;
 
 /**
@@ -138,103 +139,75 @@ public class NewsTitleCollectionService {
         }
     }
 
+    /**
+     * 페이지 행을 처리한다.
+     *
+     * <p>커서/minSrno 집계는 항상 실행되며 DB 저장 실패 여부와 무관하다. (W1 영구 정체 방지) REQ-INSERT-011: 유효 행 누적 후 {@code
+     * insertBatchIsolated}로 격리 삽입 — 독성 행 skip·잔여 행 계속.
+     */
     private PageResult processPage(KisNewsTitleResponse response, String storedMaxSerialNo) {
         int attempted = 0;
-        int succeeded = 0;
         int skipped = 0;
         boolean reachedStoredMax = false;
         String minSrno = null;
 
+        // REQ-INSERT-011: 유효 행 누적 (커서 추적은 누적 전에 완료)
+        List<DomesticNewsHeadline> batch = new ArrayList<>();
+
         for (KisNewsTitleResponse.NewsTitleRow row : response.output()) {
             attempted++;
-            RowOutcome outcome = processRow(row, storedMaxSerialNo, minSrno);
-            if (outcome.reachedStoredMax) {
+            String srnoVal = row.cnttUsiqSrno();
+
+            // REQ-BATCH3-070: null serial_no skip
+            if (srnoVal == null || srnoVal.isBlank()) {
+                log.debug("[news-title] 검증 실패 (serial_no null) — skip");
+                skipped++;
+                continue;
+            }
+
+            // REQ-BATCH3-063: 저장된 max serial_no 도달 시 정지
+            if (storedMaxSerialNo != null && srnoVal.compareTo(storedMaxSerialNo) <= 0) {
                 reachedStoredMax = true;
             }
-            if (outcome.minSrno != null) {
-                minSrno = outcome.minSrno;
+
+            // 현재 페이지의 최소 srno 추적 (inclusive SRNO 커서용)
+            if (minSrno == null || srnoVal.compareTo(minSrno) < 0) {
+                minSrno = srnoVal;
             }
-            succeeded += outcome.succeeded;
-            skipped += outcome.skipped;
+
+            DomesticNewsHeadline entity = mapToEntity(row);
+            if (entity == null) {
+                skipped++;
+                continue;
+            }
+
+            batch.add(entity);
         }
+
+        // REQ-INSERT-011: 격리 삽입 — 독성 행 skip·잔여 행 계속·커넥션 중단 없음
+        int failures = insertIsolated(batch);
+        int succeeded = batch.size() - failures;
+        skipped += failures;
 
         return new PageResult(attempted, succeeded, skipped, reachedStoredMax, minSrno);
     }
 
-    /**
-     * 단일 행을 처리하고 결과를 반환한다.
-     *
-     * <p>커서/minSrno 집계는 항상 실행되며 저장 실패(DataAccessException) 여부와 무관하다. (W1 영구 정체 방지)
-     */
-    private RowOutcome processRow(
-            KisNewsTitleResponse.NewsTitleRow row,
-            String storedMaxSerialNo,
-            String currentMinSrno) {
-        String srnoVal = row.cnttUsiqSrno();
-
-        // REQ-BATCH3-070: null serial_no skip
-        if (srnoVal == null || srnoVal.isBlank()) {
-            log.debug("[news-title] 검증 실패 (serial_no null) — skip");
-            return RowOutcome.skipped(false, currentMinSrno);
+    /** 뉴스 헤드라인 배치를 격리 삽입하고 실패 건수를 반환한다. */
+    private int insertIsolated(List<DomesticNewsHeadline> batch) {
+        if (batch.isEmpty()) {
+            return 0;
         }
-
-        // REQ-BATCH3-063: 저장된 max serial_no 도달 시 정지
-        boolean reachedStoredMax =
-                storedMaxSerialNo != null && srnoVal.compareTo(storedMaxSerialNo) <= 0;
-
-        // 현재 페이지의 최소 srno 추적 (inclusive SRNO 커서용)
-        String newMinSrno =
-                (currentMinSrno == null || srnoVal.compareTo(currentMinSrno) < 0)
-                        ? srnoVal
-                        : currentMinSrno;
-
-        DomesticNewsHeadline entity = mapToEntity(row);
-        if (entity == null) {
-            return RowOutcome.skipped(reachedStoredMax, newMinSrno);
-        }
-
-        // REQ-BATCH3-062: uk_domestic_news_headlines_serial 멱등 저장
-        if (tryInsert(entity, srnoVal)) {
-            return RowOutcome.succeeded(reachedStoredMax, newMinSrno);
-        }
-        return RowOutcome.skipped(reachedStoredMax, newMinSrno);
-    }
-
-    /** 행 처리 결과 (내부 전달용). */
-    private record RowOutcome(
-            int succeeded, int skipped, boolean reachedStoredMax, String minSrno) {
-        static RowOutcome succeeded(boolean reachedStoredMax, String minSrno) {
-            return new RowOutcome(1, 0, reachedStoredMax, minSrno);
-        }
-
-        static RowOutcome skipped(boolean reachedStoredMax, String minSrno) {
-            return new RowOutcome(0, 1, reachedStoredMax, minSrno);
-        }
-    }
-
-    /**
-     * 단건 삽입을 시도하고 성공 여부를 반환한다.
-     *
-     * <p>DataAccessException 발생 시 warn 로그 후 {@code false} 반환 — 커서/minSrno 집계는 호출 측에서 이미 완료되었으므로 이
-     * 메서드 내에서는 영향 없음.
-     *
-     * <p>커서/minSrno 집계는 이 메서드 호출 전에 processPage에서 반드시 실행되며, 예외 발생 여부와 무관하게 진행된다. (W1 영구 정체
-     * 방지) @MX:WARN: [AUTO] 독성 행 DataAccessException 흡수 — 영구 정체 방지 (W1) @MX:REASON:
-     * insertIgnoreDuplicate 예외(예: MySQL "Data too long") 발생 시 커서 진행이 차단되어 동일 페이지가 무한 재시도되는 영구 정체를
-     * 방지한다.
-     */
-    private boolean tryInsert(DomesticNewsHeadline entity, String srnoVal) {
-        try {
-            newsHeadlineInserter.insertBatch(List.of(entity));
-            return true;
-        } catch (DataAccessException ex) {
-            log.warn(
-                    "[news-title] 행 저장 실패 — skip (serial_no={}, error={}: {})",
-                    srnoVal,
-                    ex.getClass().getSimpleName(),
-                    ex.getMessage());
-            return false;
-        }
+        AtomicInteger failures = new AtomicInteger();
+        newsHeadlineInserter.insertBatchIsolated(
+                batch,
+                (entity, ex) -> {
+                    log.warn(
+                            "[news-title] 행 저장 실패 — skip (serial_no={}, error={})",
+                            entity.getSerialNo(),
+                            ex.getMessage());
+                    failures.incrementAndGet();
+                });
+        return failures.get();
     }
 
     private boolean shouldStopPaging(

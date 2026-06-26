@@ -3,8 +3,10 @@ package com.aaa.collector.stock.exthours;
 import com.aaa.collector.stock.Stock;
 import com.aaa.collector.stock.StockRepository;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
+import java.util.concurrent.atomic.AtomicInteger;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -50,6 +52,9 @@ public class ExtendedHoursCollectionService {
         int succeeded = 0;
         int skipped = 0;
 
+        // REQ-INSERT-011: 유효 행 누적 후 격리 삽입
+        List<ExtendedHours> batch = new ArrayList<>();
+
         for (Stock stock : stocks) {
             if (attempted > 0) {
                 applyDelay(stock.getSymbol(), session);
@@ -77,17 +82,7 @@ public class ExtendedHoursCollectionService {
                     continue;
                 }
 
-                ExtendedHours entity =
-                        ExtendedHours.builder()
-                                .stock(stock)
-                                .session(row.session())
-                                .tradeDate(row.tradeDate())
-                                .extPrice(row.extPrice())
-                                .referenceClose(row.referenceClose())
-                                .source(row.source())
-                                .collectedAt(LocalDateTime.now())
-                                .build();
-                extendedHoursInserter.insertBatch(List.of(entity));
+                batch.add(buildEntity(stock, row));
                 succeeded++;
             } catch (Exception e) {
                 log.warn(
@@ -99,12 +94,48 @@ public class ExtendedHoursCollectionService {
             }
         }
 
+        // REQ-INSERT-011: 격리 삽입 — 독성 행 skip·잔여 행 계속·커넥션 중단 없음
+        int failures = insertIsolated(batch);
+        succeeded -= failures;
+        skipped += failures;
+
         log.info(
                 "[extended-hours] {} 수집 완료 — attempted={}, succeeded={}, skipped={}",
                 session,
                 attempted,
                 succeeded,
                 skipped);
+    }
+
+    /** 시간외 가격 배치를 격리 삽입하고 실패 건수를 반환한다. */
+    private int insertIsolated(List<ExtendedHours> batch) {
+        if (batch.isEmpty()) {
+            return 0;
+        }
+        AtomicInteger failures = new AtomicInteger();
+        extendedHoursInserter.insertBatchIsolated(
+                batch,
+                (entity, ex) -> {
+                    log.warn(
+                            "[extended-hours] {} {} 저장 실패 — skip: {}",
+                            entity.getStock().getSymbol(),
+                            entity.getSession(),
+                            ex.getMessage());
+                    failures.incrementAndGet();
+                });
+        return failures.get();
+    }
+
+    private ExtendedHours buildEntity(Stock stock, ExtendedHoursRow row) {
+        return ExtendedHours.builder()
+                .stock(stock)
+                .session(row.session())
+                .tradeDate(row.tradeDate())
+                .extPrice(row.extPrice())
+                .referenceClose(row.referenceClose())
+                .source(row.source())
+                .collectedAt(LocalDateTime.now())
+                .build();
     }
 
     private void applyDelay(String symbol, Session session) {
