@@ -70,11 +70,11 @@ public class BackfillWindowExecutor {
     /**
      * [T7] 비트랜잭션 fetch 단계 — 해당 서비스의 fetchWindow를 라우팅한다 (REQ-TXB-020).
      *
-     * <p>@Transactional 없음 — DB 커넥션을 점유하지 않는다. 서비스의 fetchWindow는 {@code
-     * status.getLastCollectedDate()}를 앵커로 사용하므로, 호출자는 null이 아닌 유효한 lastCollectedDate를 갖는 status를
-     * 전달해야 한다. {@link #executeWindow}는 {@link #resolveAnchor}로 보정한 비영속 복사본(resolved status)을 전달한다.
+     * <p>@Transactional 없음 — DB 커넥션을 점유하지 않는다. 내부적으로 {@link #resolveAnchor}를 호출하여 null
+     * lastCollectedDate(PENDING 초기 상태)를 어제로 보정한 뒤, 비영속 복사본(resolved status)을 생성하여 서비스에 전달한다
+     * (REQ-BACKFILL-060). 호출자는 원본 status를 그대로 전달하면 된다.
      *
-     * @param status 백필 상태 (lastCollectedDate == anchor, non-null 필수)
+     * @param status 백필 상태 (lastCollectedDate null 허용 — 내부에서 보정)
      * @param stock 대상 종목 엔티티
      * @param session per-run 헬스 스냅샷 세션
      * @return 서비스별 fetch DTO ({@link DomesticDailyOhlcvFetch} 등), unknown dataTable이면 {@code null}
@@ -85,8 +85,9 @@ public class BackfillWindowExecutor {
     // @MX:SPEC: SPEC-COLLECTOR-TXBOUNDARY-001
     public Object fetchWindow(BackfillStatus status, Stock stock, LeaseSession session)
             throws InterruptedException {
-        String dataTable = status.getDataTable();
-        LocalDate anchor = status.getLastCollectedDate();
+        BackfillStatus resolved = resolvedStatus(status, resolveAnchor(status));
+        String dataTable = resolved.getDataTable();
+        LocalDate anchor = resolved.getLastCollectedDate();
         return switch (dataTable) {
             case "daily_ohlcv" -> {
                 if (OVERSEAS_MARKETS.contains(stock.getMarket())) {
@@ -95,9 +96,9 @@ public class BackfillWindowExecutor {
                 LocalDate from = windowAdvancer.groupASpanFromDate(anchor);
                 yield domesticOhlcvService.fetchWindow(from, anchor, stock, session);
             }
-            case "short_sale_domestic" -> shortSaleService.fetchWindow(status, stock, session);
+            case "short_sale_domestic" -> shortSaleService.fetchWindow(resolved, stock, session);
             case "investor_trend" -> investorTrendService.fetchWindow(anchor, stock, session);
-            case "credit_balance" -> creditBalanceService.fetchWindow(status, stock, session);
+            case "credit_balance" -> creditBalanceService.fetchWindow(resolved, stock, session);
             default -> {
                 log.warn(
                         "[backfill] 알 수 없는 data_table — symbol={}, table={}",
@@ -166,8 +167,7 @@ public class BackfillWindowExecutor {
      * 한 백필 항목의 윈도우 1구간을 수집하고, 동일 트랜잭션에서 status를 갱신한다.
      *
      * <p>T8 오케스트레이터 도입 전 호환성 유지를 위해 잔류한다. 내부적으로 {@link #fetchWindow} → {@link #persistWindow}를
-     * 호출한다. {@link #resolveAnchor}로 null anchor(→ 어제)·nextAnchor를 보정한 resolved status를 fetchWindow에
-     * 전달한다(REQ-BACKFILL-060).
+     * 호출한다. anchor 보정은 {@link #fetchWindow} 내부에서 수행된다(REQ-BACKFILL-060).
      *
      * @param status 처리할 BackfillStatus 항목
      * @param stock 대상 종목 엔티티 (활성, REQ-BACKFILL-006)
@@ -177,12 +177,7 @@ public class BackfillWindowExecutor {
     @Transactional
     public void executeWindow(BackfillStatus status, Stock stock, LeaseSession session)
             throws InterruptedException {
-        // resolveAnchor: null → 어제, non-null → nextAnchor(lastCollectedDate) (REQ-BACKFILL-060)
-        // 서비스의 fetchWindow는 status.getLastCollectedDate()를 anchor로 사용하므로
-        // 비영속 복사본(resolvedStatus)에 보정된 anchor를 주입해 전달한다.
-        LocalDate anchor = resolveAnchor(status);
-        BackfillStatus resolved = resolvedStatus(status, anchor);
-        Object fetchDto = fetchWindow(resolved, stock, session);
+        Object fetchDto = fetchWindow(status, stock, session);
         persistWindow(status, stock, fetchDto);
     }
 
@@ -217,21 +212,6 @@ public class BackfillWindowExecutor {
      */
     public boolean isRetryable(Exception e) {
         return !(e instanceof KisTokenIssueException);
-    }
-
-    /**
-     * [T8] 오케스트레이터용: {@link #fetchWindow} 교차 빈 호출 전 anchor를 보정한 비영속 복사본을 반환한다 (REQ-BACKFILL-060,
-     * REQ-TXB-020).
-     *
-     * <p>{@code null} lastCollectedDate(PENDING 초기 상태)는 어제로 초기화하고, non-null이면 {@link
-     * BackfillWindowAdvancer#nextAnchor}로 전진한다. 반환된 resolved status는 {@link #fetchWindow}에 전달하며,
-     * {@link #persistWindow}에는 원본 status를 사용한다.
-     *
-     * @param status 원본 BackfillStatus (lastCollectedDate는 null 허용)
-     * @return anchor가 보정된 비영속 BackfillStatus 복사본
-     */
-    public BackfillStatus resolveStatusForFetch(BackfillStatus status) {
-        return resolvedStatus(status, resolveAnchor(status));
     }
 
     // -------------------------------------------------------------------------

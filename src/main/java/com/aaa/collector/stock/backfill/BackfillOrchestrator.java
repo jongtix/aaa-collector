@@ -293,8 +293,7 @@ public class BackfillOrchestrator {
             BackfillStatus current, Stock stock, LeaseSession session, int windowsForThis) {
         try {
             // 교차 빈 호출: fetchWindow(비tx) → persistWindow(@Transactional) (REQ-TXB-012/-034/-040)
-            BackfillStatus resolved = windowExecutor.resolveStatusForFetch(current);
-            Object fetchDto = windowExecutor.fetchWindow(resolved, stock, session);
+            Object fetchDto = windowExecutor.fetchWindow(current, stock, session);
             windowExecutor.persistWindow(current, stock, fetchDto);
             return null; // 정상 — 루프 계속
         } catch (InterruptedException e) {
