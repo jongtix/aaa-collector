@@ -25,6 +25,8 @@ import java.util.function.Function;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.client.RestClientException;
 import org.springframework.web.util.UriBuilder;
 
@@ -273,6 +275,29 @@ public class OverseasDailyOhlcvCollectionService {
     }
 
     /**
+     * [T3] fetch 경로 전용 — ET 당일 행 제외·검증만 수행하고 INSERT하지 않는다.
+     *
+     * <p>{@link #fetchWindow}가 사용하는 순수 검증 경로. {@link #keepAndInsertRows}는 이 결과에 적재를
+     * 추가한다(REQ-BACKFILL-002). 호출자는 빈응답·zdiv 가드를 사전에 통과시킨 뒤 호출한다.
+     *
+     * @return 검증 통과 행 목록 (없으면 빈 목록)
+     */
+    private List<KisOverseasDailyOhlcvResponse.OverseasDailyOhlcvRow> keepValidRows(
+            String symbol, KisOverseasDailyOhlcvResponse response, LocalDate today) {
+        List<KisOverseasDailyOhlcvResponse.OverseasDailyOhlcvRow> kept = new ArrayList<>();
+        for (KisOverseasDailyOhlcvResponse.OverseasDailyOhlcvRow row : response.output2()) {
+            if (isEtToday(row.xymd(), today)) {
+                continue;
+            }
+            if (!isValid(symbol, row)) {
+                continue;
+            }
+            kept.add(row);
+        }
+        return kept;
+    }
+
+    /**
      * ET 당일 행 제외·검증 통과 행을 멱등 적재하고, 적재한 행 목록을 반환한다(REQ-OVOH-015, -012).
      *
      * <p>당일 경로({@link #saveValidRows})는 반환값을 무시하고, 백필 경로({@link #collectWindow})는 최소 거래일·행 수 도출에
@@ -282,19 +307,79 @@ public class OverseasDailyOhlcvCollectionService {
      */
     private List<KisOverseasDailyOhlcvResponse.OverseasDailyOhlcvRow> keepAndInsertRows(
             Stock stock, String symbol, KisOverseasDailyOhlcvResponse response, LocalDate today) {
-        List<KisOverseasDailyOhlcvResponse.OverseasDailyOhlcvRow> kept = new ArrayList<>();
-        for (KisOverseasDailyOhlcvResponse.OverseasDailyOhlcvRow row : response.output2()) {
-            // REQ-OVOH-015: ET 거래일 기준 당일 행 제외(미마감/장중 스냅샷). KST 비교 금지.
-            if (isEtToday(row.xymd(), today)) {
-                continue;
-            }
-            if (!isValid(symbol, row)) {
-                continue;
-            }
+        List<KisOverseasDailyOhlcvResponse.OverseasDailyOhlcvRow> kept =
+                keepValidRows(symbol, response, today);
+        for (KisOverseasDailyOhlcvResponse.OverseasDailyOhlcvRow row : kept) {
             insertRow(stock, row);
-            kept.add(row);
         }
         return kept;
+    }
+
+    /**
+     * [T3] fetch 단계 — HTTP 호출·빈응답/zdiv 가드·ET 당일 제외·검증을 수행하고 INSERT하지 않는다.
+     *
+     * <p>{@code anchor}(= BYMD)를 호출자가 직접 전달한다. 검증 통과 행과 최소 거래일을 {@link OverseasDailyOhlcvFetch}로
+     * 반환한다. DB 접촉 없음.
+     *
+     * @param anchor 윈도우 기준일 (BYMD, BackfillWindowExecutor가 resolveStatusForFetch로 계산해서 전달)
+     * @param stock 백필 대상 미국 종목
+     * @param session 호출자가 고정한 per-run 헬스 스냅샷 세션
+     * @return 검증 통과 행 목록 + 최소 거래일 + 행 수 (없으면 rows=빈목록, oldestTradeDate=null, rowCount=0)
+     * @throws InterruptedException 게이트 호출 인터럽트 시 전파
+     */
+    // @MX:NOTE: [AUTO] fetchWindow — 비tx HTTP 단계. DB 미접촉. BackfillWindowExecutor가 @Transactional
+    // persistWindow와 교차 빈으로 순차 호출.
+    public OverseasDailyOhlcvFetch fetchWindow(LocalDate anchor, Stock stock, LeaseSession session)
+            throws InterruptedException {
+        String symbol = stock.getSymbol();
+        String excd = stock.getMarket().toDailyPriceExcd();
+        KisOverseasDailyOhlcvResponse response = fetch(session, excd, symbol, anchor);
+
+        if (response.output1() == null || response.output2().isEmpty()) {
+            return new OverseasDailyOhlcvFetch(List.of(), null, 0);
+        }
+        if (parseZdiv(response.output1().zdiv()) > ZDIV_MAX) {
+            return new OverseasDailyOhlcvFetch(List.of(), null, 0);
+        }
+
+        List<KisOverseasDailyOhlcvResponse.OverseasDailyOhlcvRow> kept =
+                keepValidRows(symbol, response, anchor);
+        if (kept.isEmpty()) {
+            return new OverseasDailyOhlcvFetch(List.of(), null, 0);
+        }
+        String oldest =
+                kept.stream()
+                        .map(KisOverseasDailyOhlcvResponse.OverseasDailyOhlcvRow::xymd)
+                        .min(Comparator.naturalOrder())
+                        .orElseThrow();
+        return new OverseasDailyOhlcvFetch(kept, LocalDate.parse(oldest, DATE_FMT), kept.size());
+    }
+
+    /**
+     * [T3] persist 단계 — {@link OverseasDailyOhlcvFetch}의 행을 INSERT IGNORE로 적재한다.
+     *
+     * <p>@Transactional 없음 — 트랜잭션은 {@code BackfillWindowExecutor}(T7)가 소유한다(REQ-TXBOUNDARY-002).
+     *
+     * @param stock 백필 대상 종목
+     * @param fetch fetchWindow가 반환한 DTO
+     * @return 적재 대상 행의 최소 거래일 + 행 수 (fetch가 빈 경우 {@link BackfillWindowResult#EMPTY})
+     */
+    // @MX:NOTE: [AUTO] persistWindow — BackfillWindowExecutor @Transactional에 MANDATORY 전파로 합류.
+    // INSERT + 결과 구성 담당.
+    @Transactional(propagation = Propagation.MANDATORY)
+    public BackfillWindowResult persistWindow(Stock stock, OverseasDailyOhlcvFetch fetch) {
+        if (fetch.rows().isEmpty()) {
+            if (log.isDebugEnabled()) {
+                log.debug(
+                        "[overseas-daily][backfill] persistWindow 스킵 (빈 fetch) — symbol={}",
+                        stock.getSymbol());
+            }
+            return BackfillWindowResult.EMPTY;
+        }
+        for (KisOverseasDailyOhlcvResponse.OverseasDailyOhlcvRow row : fetch.rows()) {
+            insertRow(stock, row);
+        }
+        return new BackfillWindowResult(fetch.oldestTradeDate(), fetch.rowCount());
     }
 
     private int parseZdiv(String zdiv) {

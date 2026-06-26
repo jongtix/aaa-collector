@@ -719,6 +719,151 @@ class OverseasDailyOhlcvCollectionServiceTest {
         }
     }
 
+    @Nested
+    @DisplayName("fetchWindow / persistWindow — fetch·persist 분리 (T3, REQ-TXBOUNDARY-002)")
+    class FetchPersistWindow {
+
+        private static final LocalDate ANCHOR = LocalDate.of(2026, 1, 31);
+
+        private LeaseSession openSession() {
+            when(healthyKeySelector.selectHealthy()).thenReturn(List.of(ISA, GOLD));
+            return new KeyLeaseRegistry(healthyKeySelector).openSession();
+        }
+
+        @Test
+        @DisplayName("fetchWindow — DB(dailyOhlcvRepository.insertIgnoreDuplicate) 미호출 (INSERT 없음)")
+        void fetchWindow_doesNotCallRepository() throws Exception {
+            when(guardedKisExecutor.execute(
+                            any(LeaseSession.class),
+                            any(),
+                            anyString(),
+                            eq(KisOverseasDailyOhlcvResponse.class)))
+                    .thenReturn(
+                            response(
+                                    "4",
+                                    List.of(
+                                            row(
+                                                    "20260130",
+                                                    "296.9200",
+                                                    "42745060",
+                                                    "12697950974"))));
+
+            OverseasDailyOhlcvFetch fetch =
+                    service.fetchWindow(
+                            ANCHOR, stockOf("AAPL", Market.NASDAQ, AssetType.STOCK), openSession());
+
+            verify(dailyOhlcvRepository, never())
+                    .insertIgnoreDuplicate(
+                            any(),
+                            any(),
+                            any(),
+                            any(),
+                            any(),
+                            any(),
+                            any(Long.class),
+                            any(Long.class));
+            assertThat(fetch.rowCount()).isEqualTo(1);
+            assertThat(fetch.oldestTradeDate()).isEqualTo(LocalDate.of(2026, 1, 30));
+        }
+
+        @Test
+        @DisplayName("fetchWindow — 빈 응답(output null) → rows=빈목록, oldestTradeDate=null")
+        void fetchWindow_emptyOutput_emptyFetch() throws Exception {
+            when(guardedKisExecutor.execute(
+                            any(LeaseSession.class),
+                            any(),
+                            anyString(),
+                            eq(KisOverseasDailyOhlcvResponse.class)))
+                    .thenReturn(
+                            new KisOverseasDailyOhlcvResponse(
+                                    "0", "MCA00000", "정상", null, List.of()));
+
+            OverseasDailyOhlcvFetch fetch =
+                    service.fetchWindow(
+                            ANCHOR, stockOf("AAPL", Market.NASDAQ, AssetType.STOCK), openSession());
+
+            assertThat(fetch.rows()).isEmpty();
+            assertThat(fetch.oldestTradeDate()).isNull();
+            assertThat(fetch.rowCount()).isZero();
+        }
+
+        @Test
+        @DisplayName(
+                "persistWindow — dailyOhlcvRepository.insertIgnoreDuplicate 호출 (persist에서 INSERT)")
+        void persistWindow_callsRepository() {
+            Stock stock = stockOf("AAPL", Market.NASDAQ, AssetType.STOCK);
+            KisOverseasDailyOhlcvResponse.OverseasDailyOhlcvRow r =
+                    row("20260130", "296.9200", "42745060", "12697950974");
+            OverseasDailyOhlcvFetch fetch =
+                    new OverseasDailyOhlcvFetch(List.of(r), LocalDate.of(2026, 1, 30), 1);
+
+            BackfillWindowResult result = service.persistWindow(stock, fetch);
+
+            verify(dailyOhlcvRepository, times(1))
+                    .insertIgnoreDuplicate(
+                            any(),
+                            eq(LocalDate.of(2026, 1, 30)),
+                            any(),
+                            any(),
+                            any(),
+                            any(),
+                            eq(42_745_060L),
+                            eq(12_697_950_974L));
+            assertThat(result.oldestTradeDate()).isEqualTo(LocalDate.of(2026, 1, 30));
+            assertThat(result.rowCount()).isEqualTo(1);
+        }
+
+        @Test
+        @DisplayName("persistWindow — 빈 fetch → EMPTY 반환, repository 미호출")
+        void persistWindow_emptyFetch_returnsEmpty() {
+            OverseasDailyOhlcvFetch emptyFetch = new OverseasDailyOhlcvFetch(List.of(), null, 0);
+
+            BackfillWindowResult result =
+                    service.persistWindow(
+                            stockOf("AAPL", Market.NASDAQ, AssetType.STOCK), emptyFetch);
+
+            assertThat(result).isEqualTo(BackfillWindowResult.EMPTY);
+            verify(dailyOhlcvRepository, never())
+                    .insertIgnoreDuplicate(
+                            any(),
+                            any(),
+                            any(),
+                            any(),
+                            any(),
+                            any(),
+                            any(Long.class),
+                            any(Long.class));
+        }
+
+        @Test
+        @DisplayName("회귀 가드 — 당일 경로(collect) green 유지: keepAndInsertRows가 collect에서 정상 동작")
+        void dailyPathRegression_collectStillWorks() throws Exception {
+            Stock stock = stockOf("AAPL", Market.NASDAQ, AssetType.STOCK);
+            when(stockRepository.findAllActiveOverseasTradable()).thenReturn(List.of(stock));
+            when(healthyKeySelector.selectHealthy()).thenReturn(List.of(ISA));
+            when(guardedKisExecutor.execute(
+                            any(LeaseSession.class),
+                            any(),
+                            anyString(),
+                            eq(KisOverseasDailyOhlcvResponse.class)))
+                    .thenReturn(validResponse());
+
+            CollectionResult result = service.collect(TODAY);
+
+            assertThat(result.succeeded()).isEqualTo(1);
+            verify(dailyOhlcvRepository, times(1))
+                    .insertIgnoreDuplicate(
+                            any(),
+                            any(),
+                            any(),
+                            any(),
+                            any(),
+                            any(),
+                            any(Long.class),
+                            any(Long.class));
+        }
+    }
+
     // ── helpers ──
 
     private void stubSingle(String symbol, KisOverseasDailyOhlcvResponse resp)
