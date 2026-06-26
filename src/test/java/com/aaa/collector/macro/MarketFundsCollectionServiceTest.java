@@ -21,6 +21,7 @@ import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
+import org.mockito.Captor;
 import org.mockito.Mock;
 import org.mockito.Mockito;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -40,7 +41,10 @@ class MarketFundsCollectionServiceTest {
     @Mock private GuardedKisExecutor guardedKisExecutor;
     @Mock private KeyLeaseRegistry keyLeaseRegistry;
     @Mock private MacroIndicatorRepository macroIndicatorRepository;
+    @Mock private MacroIndicatorInserter macroIndicatorInserter;
     @Mock private LeaseSession session;
+
+    @Captor private ArgumentCaptor<List<MacroIndicator>> inserterCaptor;
 
     private MarketFundsCollectionService service;
 
@@ -48,7 +52,10 @@ class MarketFundsCollectionServiceTest {
     void setUp() {
         service =
                 new MarketFundsCollectionService(
-                        guardedKisExecutor, keyLeaseRegistry, macroIndicatorRepository);
+                        guardedKisExecutor,
+                        keyLeaseRegistry,
+                        macroIndicatorRepository,
+                        macroIndicatorInserter);
         Mockito.lenient().when(keyLeaseRegistry.openSession()).thenReturn(session);
     }
 
@@ -121,7 +128,7 @@ class MarketFundsCollectionServiceTest {
             assertThat(result.attempted()).isEqualTo(9);
             assertThat(result.succeeded()).isEqualTo(9);
             assertThat(result.skipped()).isZero();
-            verify(macroIndicatorRepository, times(9)).insertIgnoreDuplicate(any());
+            verify(macroIndicatorInserter, times(9)).insertBatch(any());
         }
 
         @Test
@@ -134,10 +141,10 @@ class MarketFundsCollectionServiceTest {
             service.collect("20260613");
 
             // Assert
-            ArgumentCaptor<MacroIndicator> captor = ArgumentCaptor.forClass(MacroIndicator.class);
-            verify(macroIndicatorRepository, times(9)).insertIgnoreDuplicate(captor.capture());
+            verify(macroIndicatorInserter, times(9)).insertBatch(inserterCaptor.capture());
 
-            List<MacroIndicator> saved = captor.getAllValues();
+            List<MacroIndicator> saved =
+                    inserterCaptor.getAllValues().stream().flatMap(List::stream).toList();
             assertThat(saved)
                     .extracting(MacroIndicator::getIndicatorCode)
                     .containsExactlyInAnyOrder(
@@ -162,11 +169,12 @@ class MarketFundsCollectionServiceTest {
             service.collect("20260613");
 
             // Assert
-            ArgumentCaptor<MacroIndicator> captor = ArgumentCaptor.forClass(MacroIndicator.class);
-            verify(macroIndicatorRepository, times(9)).insertIgnoreDuplicate(captor.capture());
+            verify(macroIndicatorInserter, times(9)).insertBatch(inserterCaptor.capture());
 
-            assertThat(captor.getAllValues()).allMatch(m -> m.getSource() == MacroSource.KIS);
-            assertThat(captor.getAllValues())
+            List<MacroIndicator> sourceAndDateSaved =
+                    inserterCaptor.getAllValues().stream().flatMap(List::stream).toList();
+            assertThat(sourceAndDateSaved).allMatch(m -> m.getSource() == MacroSource.KIS);
+            assertThat(sourceAndDateSaved)
                     .allMatch(m -> m.getTradeDate().equals(LocalDate.of(2026, 6, 13)));
         }
 
@@ -180,11 +188,11 @@ class MarketFundsCollectionServiceTest {
             service.collect("20260613");
 
             // Assert
-            ArgumentCaptor<MacroIndicator> captor = ArgumentCaptor.forClass(MacroIndicator.class);
-            verify(macroIndicatorRepository, times(9)).insertIgnoreDuplicate(captor.capture());
+            verify(macroIndicatorInserter, times(9)).insertBatch(inserterCaptor.capture());
 
             MacroIndicator custDeposit =
-                    captor.getAllValues().stream()
+                    inserterCaptor.getAllValues().stream()
+                            .flatMap(List::stream)
                             .filter(m -> "MKTFUND_CUST_DEPOSIT".equals(m.getIndicatorCode()))
                             .findFirst()
                             .orElseThrow();
@@ -220,11 +228,11 @@ class MarketFundsCollectionServiceTest {
             service.collect("20260613");
 
             // Assert
-            ArgumentCaptor<MacroIndicator> captor = ArgumentCaptor.forClass(MacroIndicator.class);
-            verify(macroIndicatorRepository, times(9)).insertIgnoreDuplicate(captor.capture());
+            verify(macroIndicatorInserter, times(9)).insertBatch(inserterCaptor.capture());
 
             MacroIndicator custDeposit =
-                    captor.getAllValues().stream()
+                    inserterCaptor.getAllValues().stream()
+                            .flatMap(List::stream)
                             .filter(m -> "MKTFUND_CUST_DEPOSIT".equals(m.getIndicatorCode()))
                             .findFirst()
                             .orElseThrow();
@@ -255,7 +263,7 @@ class MarketFundsCollectionServiceTest {
 
             assertThat(result.attempted()).isZero();
             assertThat(result.succeeded()).isZero();
-            verify(macroIndicatorRepository, never()).insertIgnoreDuplicate(any());
+            verify(macroIndicatorInserter, never()).insertBatch(any());
         }
     }
 
@@ -291,7 +299,7 @@ class MarketFundsCollectionServiceTest {
             // Assert — 8건 성공, 1건 skip
             assertThat(result.succeeded()).isEqualTo(8);
             assertThat(result.skipped()).isEqualTo(1);
-            verify(macroIndicatorRepository, times(8)).insertIgnoreDuplicate(any());
+            verify(macroIndicatorInserter, times(8)).insertBatch(any());
         }
 
         @Test
@@ -336,7 +344,7 @@ class MarketFundsCollectionServiceTest {
             // Assert — 9건 전부 skip
             assertThat(result.attempted()).isEqualTo(9);
             assertThat(result.skipped()).isEqualTo(9);
-            verify(macroIndicatorRepository, never()).insertIgnoreDuplicate(any());
+            verify(macroIndicatorInserter, never()).insertBatch(any());
         }
     }
 
@@ -358,7 +366,7 @@ class MarketFundsCollectionServiceTest {
             service.collect("20260613");
 
             // Assert — 2회 × 9건 = 18회 호출, 게이트도 2회·세션 2회 open
-            verify(macroIndicatorRepository, times(18)).insertIgnoreDuplicate(any());
+            verify(macroIndicatorInserter, times(18)).insertBatch(any());
             verify(keyLeaseRegistry, times(2)).openSession();
         }
     }

@@ -21,6 +21,7 @@ import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
+import org.mockito.Captor;
 import org.mockito.Mock;
 import org.mockito.Mockito;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -41,7 +42,10 @@ class CompInterestCollectionServiceTest {
     @Mock private GuardedKisExecutor guardedKisExecutor;
     @Mock private KeyLeaseRegistry keyLeaseRegistry;
     @Mock private MacroIndicatorRepository macroIndicatorRepository;
+    @Mock private MacroIndicatorInserter macroIndicatorInserter;
     @Mock private LeaseSession session;
+
+    @Captor private ArgumentCaptor<List<MacroIndicator>> inserterCaptor;
 
     private CompInterestCollectionService service;
 
@@ -49,7 +53,10 @@ class CompInterestCollectionServiceTest {
     void setUp() {
         service =
                 new CompInterestCollectionService(
-                        guardedKisExecutor, keyLeaseRegistry, macroIndicatorRepository);
+                        guardedKisExecutor,
+                        keyLeaseRegistry,
+                        macroIndicatorRepository,
+                        macroIndicatorInserter);
         Mockito.lenient().when(keyLeaseRegistry.openSession()).thenReturn(session);
     }
 
@@ -140,7 +147,7 @@ class CompInterestCollectionServiceTest {
             assertThat(result.attempted()).isEqualTo(8);
             assertThat(result.succeeded()).isEqualTo(8);
             assertThat(result.skipped()).isZero();
-            verify(macroIndicatorRepository, times(8)).insertIgnoreDuplicate(any());
+            verify(macroIndicatorInserter, times(8)).insertBatch(any());
         }
 
         @Test
@@ -153,10 +160,10 @@ class CompInterestCollectionServiceTest {
             service.collect();
 
             // Assert
-            ArgumentCaptor<MacroIndicator> captor = ArgumentCaptor.forClass(MacroIndicator.class);
-            verify(macroIndicatorRepository, times(8)).insertIgnoreDuplicate(captor.capture());
+            verify(macroIndicatorInserter, times(8)).insertBatch(inserterCaptor.capture());
 
-            List<MacroIndicator> saved = captor.getAllValues();
+            List<MacroIndicator> saved =
+                    inserterCaptor.getAllValues().stream().flatMap(List::stream).toList();
             assertThat(saved)
                     .extracting(MacroIndicator::getIndicatorCode)
                     .containsExactlyInAnyOrder(
@@ -182,9 +189,11 @@ class CompInterestCollectionServiceTest {
             service.collect();
 
             // Assert
-            ArgumentCaptor<MacroIndicator> captor = ArgumentCaptor.forClass(MacroIndicator.class);
-            verify(macroIndicatorRepository).insertIgnoreDuplicate(captor.capture());
-            assertThat(captor.getValue().getValue()).isEqualByComparingTo(new BigDecimal("3.72"));
+            verify(macroIndicatorInserter).insertBatch(inserterCaptor.capture());
+            List<MacroIndicator> saved =
+                    inserterCaptor.getAllValues().stream().flatMap(List::stream).toList();
+            assertThat(saved).hasSize(1);
+            assertThat(saved.getFirst().getValue()).isEqualByComparingTo(new BigDecimal("3.72"));
         }
     }
 
@@ -228,7 +237,7 @@ class CompInterestCollectionServiceTest {
             // Assert — 정확히 8개 저장, 10개 skip
             assertThat(result.succeeded()).isEqualTo(8);
             assertThat(result.skipped()).isEqualTo(10);
-            verify(macroIndicatorRepository, times(8)).insertIgnoreDuplicate(any());
+            verify(macroIndicatorInserter, times(8)).insertBatch(any());
         }
 
         @Test
@@ -267,7 +276,7 @@ class CompInterestCollectionServiceTest {
 
             assertThat(result.attempted()).isZero();
             assertThat(result.succeeded()).isZero();
-            verify(macroIndicatorRepository, never()).insertIgnoreDuplicate(any());
+            verify(macroIndicatorInserter, never()).insertBatch(any());
         }
     }
 
@@ -288,8 +297,8 @@ class CompInterestCollectionServiceTest {
             service.collect();
             service.collect();
 
-            // Assert — 2번 insertIgnoreDuplicate 호출 (DB가 IGNORE 처리), 게이트도 2회·세션 2회 open
-            verify(macroIndicatorRepository, times(2)).insertIgnoreDuplicate(any());
+            // Assert — 2번 insertBatch 호출 (DB가 IGNORE 처리), 게이트도 2회·세션 2회 open
+            verify(macroIndicatorInserter, times(2)).insertBatch(any());
             verify(keyLeaseRegistry, times(2)).openSession();
         }
     }
@@ -313,7 +322,7 @@ class CompInterestCollectionServiceTest {
             MacroCollectionResult result = service.collect();
 
             assertThat(result.skipped()).isEqualTo(1);
-            verify(macroIndicatorRepository, never()).insertIgnoreDuplicate(any());
+            verify(macroIndicatorInserter, never()).insertBatch(any());
         }
 
         @Test
@@ -327,7 +336,7 @@ class CompInterestCollectionServiceTest {
             MacroCollectionResult result = service.collect();
 
             assertThat(result.skipped()).isEqualTo(1);
-            verify(macroIndicatorRepository, never()).insertIgnoreDuplicate(any());
+            verify(macroIndicatorInserter, never()).insertBatch(any());
         }
     }
 }

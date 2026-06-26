@@ -1,6 +1,7 @@
 package com.aaa.collector.market.indicator.usdkrw;
 
 import com.aaa.collector.market.MarketIndicator;
+import com.aaa.collector.market.MarketIndicatorInserter;
 import com.aaa.collector.market.MarketIndicatorRepository;
 import com.aaa.collector.market.enums.IndicatorCode;
 import com.aaa.collector.market.indicator.MarketIndicatorRow;
@@ -22,12 +23,15 @@ public class UsdkrwCollectionService {
 
     private final MarketIndicatorSourceChain usdkrwChain;
     private final MarketIndicatorRepository marketIndicatorRepository;
+    private final MarketIndicatorInserter marketIndicatorInserter;
 
     public UsdkrwCollectionService(
             @Qualifier("usdkrwChain") MarketIndicatorSourceChain usdkrwChain,
-            MarketIndicatorRepository marketIndicatorRepository) {
+            MarketIndicatorRepository marketIndicatorRepository,
+            MarketIndicatorInserter marketIndicatorInserter) {
         this.usdkrwChain = usdkrwChain;
         this.marketIndicatorRepository = marketIndicatorRepository;
+        this.marketIndicatorInserter = marketIndicatorInserter;
     }
 
     /**
@@ -77,7 +81,7 @@ public class UsdkrwCollectionService {
                 log.warn("[usdkrw] 행 검증 실패 — skip: {}", row);
                 continue;
             }
-            marketIndicatorRepository.insertIgnoreDuplicate(toEntity(row));
+            marketIndicatorInserter.insertBatch(List.of(toEntity(row)));
             count++;
         }
         return count;

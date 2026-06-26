@@ -8,6 +8,7 @@ import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
+import java.util.List;
 import java.util.regex.Pattern;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -50,6 +51,7 @@ public class CompInterestCollectionService {
     private final GuardedKisExecutor guardedKisExecutor;
     private final KeyLeaseRegistry keyLeaseRegistry;
     private final MacroIndicatorRepository macroIndicatorRepository;
+    private final MacroIndicatorInserter macroIndicatorInserter;
 
     /**
      * 국내 채권금리 수집을 실행하고 집계 결과를 반환한다.
@@ -163,7 +165,7 @@ public class CompInterestCollectionService {
                             .build();
 
             // REQ-BATCH3-032: uk_macro_indicators 멱등 저장
-            macroIndicatorRepository.insertIgnoreDuplicate(entity);
+            macroIndicatorInserter.insertBatch(List.of(entity));
             return true;
         } catch (NumberFormatException | DateTimeParseException e) {
             log.warn(

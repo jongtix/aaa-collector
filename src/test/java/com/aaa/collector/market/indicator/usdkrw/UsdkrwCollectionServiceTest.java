@@ -8,6 +8,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.aaa.collector.market.MarketIndicator;
+import com.aaa.collector.market.MarketIndicatorInserter;
 import com.aaa.collector.market.MarketIndicatorRepository;
 import com.aaa.collector.market.enums.IndicatorCode;
 import com.aaa.collector.market.indicator.MarketIndicatorRow;
@@ -21,6 +22,7 @@ import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
+import org.mockito.Captor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
@@ -30,12 +32,17 @@ class UsdkrwCollectionServiceTest {
 
     @Mock private MarketIndicatorSourceChain usdkrwChain;
     @Mock private MarketIndicatorRepository marketIndicatorRepository;
+    @Mock private MarketIndicatorInserter marketIndicatorInserter;
+
+    @Captor private ArgumentCaptor<List<MarketIndicator>> inserterCaptor;
 
     private UsdkrwCollectionService service;
 
     @BeforeEach
     void setUp() {
-        service = new UsdkrwCollectionService(usdkrwChain, marketIndicatorRepository);
+        service =
+                new UsdkrwCollectionService(
+                        usdkrwChain, marketIndicatorRepository, marketIndicatorInserter);
     }
 
     private MarketIndicatorRow usdkrwRow(LocalDate date) {
@@ -54,28 +61,30 @@ class UsdkrwCollectionServiceTest {
     class CollectDaily {
 
         @Test
-        @DisplayName("정상 수집 — insertIgnoreDuplicate 호출, USDKRW 엔티티")
+        @DisplayName("정상 수집 — insertBatch 호출, USDKRW 엔티티")
         void normalCollect_insertsUsdkrwRow() {
             LocalDate date = LocalDate.of(2026, 6, 20);
             when(usdkrwChain.fetchDaily(date)).thenReturn(List.of(usdkrwRow(date)));
 
             service.collectDaily(date);
 
-            ArgumentCaptor<MarketIndicator> captor = ArgumentCaptor.forClass(MarketIndicator.class);
-            verify(marketIndicatorRepository).insertIgnoreDuplicate(captor.capture());
-            assertThat(captor.getValue().getIndicatorCode()).isEqualTo(IndicatorCode.USDKRW);
-            assertThat(captor.getValue().getCloseValue()).isEqualByComparingTo("1380.0000");
+            verify(marketIndicatorInserter).insertBatch(inserterCaptor.capture());
+            List<MarketIndicator> inserted =
+                    inserterCaptor.getAllValues().stream().flatMap(List::stream).toList();
+            assertThat(inserted).hasSize(1);
+            assertThat(inserted.getFirst().getIndicatorCode()).isEqualTo(IndicatorCode.USDKRW);
+            assertThat(inserted.getFirst().getCloseValue()).isEqualByComparingTo("1380.0000");
         }
 
         @Test
-        @DisplayName("빈 결과 — insertIgnoreDuplicate 미호출")
+        @DisplayName("빈 결과 — insertBatch 미호출")
         void emptyResult_noInsert() {
             LocalDate date = LocalDate.of(2026, 6, 20);
             when(usdkrwChain.fetchDaily(date)).thenReturn(List.of());
 
             service.collectDaily(date);
 
-            verify(marketIndicatorRepository, never()).insertIgnoreDuplicate(any());
+            verify(marketIndicatorInserter, never()).insertBatch(any());
         }
 
         @Test

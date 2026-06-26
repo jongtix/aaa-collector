@@ -1,6 +1,7 @@
 package com.aaa.collector.market.indicator.vix;
 
 import com.aaa.collector.market.MarketIndicator;
+import com.aaa.collector.market.MarketIndicatorInserter;
 import com.aaa.collector.market.MarketIndicatorRepository;
 import com.aaa.collector.market.enums.IndicatorCode;
 import com.aaa.collector.market.indicator.MarketIndicatorRow;
@@ -22,12 +23,15 @@ public class VixCollectionService {
 
     private final MarketIndicatorSourceChain vixChain;
     private final MarketIndicatorRepository marketIndicatorRepository;
+    private final MarketIndicatorInserter marketIndicatorInserter;
 
     public VixCollectionService(
             @Qualifier("vixChain") MarketIndicatorSourceChain vixChain,
-            MarketIndicatorRepository marketIndicatorRepository) {
+            MarketIndicatorRepository marketIndicatorRepository,
+            MarketIndicatorInserter marketIndicatorInserter) {
         this.vixChain = vixChain;
         this.marketIndicatorRepository = marketIndicatorRepository;
+        this.marketIndicatorInserter = marketIndicatorInserter;
     }
 
     /**
@@ -63,7 +67,7 @@ public class VixCollectionService {
                 log.warn("[vix] 행 검증 실패 — skip: {}", row);
                 continue;
             }
-            marketIndicatorRepository.insertIgnoreDuplicate(toEntity(row));
+            marketIndicatorInserter.insertBatch(List.of(toEntity(row)));
             count++;
         }
         return count;

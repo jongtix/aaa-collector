@@ -8,6 +8,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.aaa.collector.market.MarketIndicator;
+import com.aaa.collector.market.MarketIndicatorInserter;
 import com.aaa.collector.market.MarketIndicatorRepository;
 import com.aaa.collector.market.enums.IndicatorCode;
 import com.aaa.collector.market.indicator.MarketIndicatorRow;
@@ -21,6 +22,7 @@ import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
+import org.mockito.Captor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
@@ -30,12 +32,17 @@ class VixCollectionServiceTest {
 
     @Mock private MarketIndicatorSourceChain vixChain;
     @Mock private MarketIndicatorRepository marketIndicatorRepository;
+    @Mock private MarketIndicatorInserter marketIndicatorInserter;
+
+    @Captor private ArgumentCaptor<List<MarketIndicator>> inserterCaptor;
 
     private VixCollectionService service;
 
     @BeforeEach
     void setUp() {
-        service = new VixCollectionService(vixChain, marketIndicatorRepository);
+        service =
+                new VixCollectionService(
+                        vixChain, marketIndicatorRepository, marketIndicatorInserter);
     }
 
     private MarketIndicatorRow vixRow(LocalDate date) {
@@ -54,28 +61,30 @@ class VixCollectionServiceTest {
     class CollectDaily {
 
         @Test
-        @DisplayName("정상 수집 — insertIgnoreDuplicate 호출")
+        @DisplayName("정상 수집 — insertBatch 호출")
         void normalCollect_insertsRow() {
             LocalDate date = LocalDate.of(2026, 6, 20);
             when(vixChain.fetchDaily(date)).thenReturn(List.of(vixRow(date)));
 
             service.collectDaily(date);
 
-            ArgumentCaptor<MarketIndicator> captor = ArgumentCaptor.forClass(MarketIndicator.class);
-            verify(marketIndicatorRepository).insertIgnoreDuplicate(captor.capture());
-            assertThat(captor.getValue().getIndicatorCode()).isEqualTo(IndicatorCode.VIX);
-            assertThat(captor.getValue().getCloseValue()).isEqualByComparingTo("18.5000");
+            verify(marketIndicatorInserter).insertBatch(inserterCaptor.capture());
+            List<MarketIndicator> inserted =
+                    inserterCaptor.getAllValues().stream().flatMap(List::stream).toList();
+            assertThat(inserted).hasSize(1);
+            assertThat(inserted.getFirst().getIndicatorCode()).isEqualTo(IndicatorCode.VIX);
+            assertThat(inserted.getFirst().getCloseValue()).isEqualByComparingTo("18.5000");
         }
 
         @Test
-        @DisplayName("빈 결과 — insertIgnoreDuplicate 미호출")
+        @DisplayName("빈 결과 — insertBatch 미호출")
         void emptyResult_noInsert() {
             LocalDate date = LocalDate.of(2026, 6, 20);
             when(vixChain.fetchDaily(date)).thenReturn(List.of());
 
             service.collectDaily(date);
 
-            verify(marketIndicatorRepository, never()).insertIgnoreDuplicate(any());
+            verify(marketIndicatorInserter, never()).insertBatch(any());
         }
 
         @Test
@@ -88,7 +97,7 @@ class VixCollectionServiceTest {
 
             service.collectDaily(date);
 
-            verify(marketIndicatorRepository, never()).insertIgnoreDuplicate(any());
+            verify(marketIndicatorInserter, never()).insertBatch(any());
         }
 
         @Test

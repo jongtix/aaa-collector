@@ -10,6 +10,7 @@ import static org.mockito.Mockito.when;
 
 import com.aaa.collector.macro.MacroCollectionResult;
 import com.aaa.collector.macro.MacroIndicator;
+import com.aaa.collector.macro.MacroIndicatorInserter;
 import com.aaa.collector.macro.MacroIndicatorRepository;
 import com.aaa.collector.macro.enums.MacroSource;
 import java.time.LocalDate;
@@ -20,6 +21,7 @@ import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
+import org.mockito.Captor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.web.client.RestClient;
@@ -37,6 +39,7 @@ class FredCollectionServiceTest {
 
     @Mock private RestClient macroFredRestClient;
     @Mock private MacroIndicatorRepository macroIndicatorRepository;
+    @Mock private MacroIndicatorInserter macroIndicatorInserter;
 
     @Mock
     @SuppressWarnings("rawtypes")
@@ -44,11 +47,15 @@ class FredCollectionServiceTest {
 
     @Mock private ResponseSpec responseSpec;
 
+    @Captor private ArgumentCaptor<List<MacroIndicator>> inserterCaptor;
+
     private FredCollectionService service;
 
     @BeforeEach
     void setUp() {
-        service = new FredCollectionService(macroFredRestClient, macroIndicatorRepository);
+        service =
+                new FredCollectionService(
+                        macroFredRestClient, macroIndicatorRepository, macroIndicatorInserter);
     }
 
     @SuppressWarnings("unchecked")
@@ -102,10 +109,12 @@ class FredCollectionServiceTest {
             service.collect();
 
             // Assert
-            ArgumentCaptor<MacroIndicator> captor = ArgumentCaptor.forClass(MacroIndicator.class);
-            verify(macroIndicatorRepository, atLeastOnce()).insertIgnoreDuplicate(captor.capture());
-            assertThat(captor.getAllValues()).allMatch(m -> m.getSource() == MacroSource.FRED);
-            assertThat(captor.getAllValues())
+            verify(macroIndicatorInserter, atLeastOnce()).insertBatch(inserterCaptor.capture());
+            assertThat(inserterCaptor.getAllValues())
+                    .flatMap(l -> l)
+                    .allMatch(m -> m.getSource() == MacroSource.FRED);
+            assertThat(inserterCaptor.getAllValues())
+                    .flatMap(l -> l)
                     .anyMatch(m -> LocalDate.of(2026, 6, 17).equals(m.getTradeDate()));
         }
     }
@@ -130,7 +139,7 @@ class FredCollectionServiceTest {
             MacroCollectionResult result = service.collect();
 
             // Assert
-            verify(macroIndicatorRepository, never()).insertIgnoreDuplicate(any());
+            verify(macroIndicatorInserter, never()).insertBatch(any());
             assertThat(result.skipped()).isGreaterThanOrEqualTo(1);
         }
 
@@ -177,9 +186,9 @@ class FredCollectionServiceTest {
 
             // Assert — 주말 행도 저장됨 (skip 아님)
             assertThat(result.succeeded()).isGreaterThanOrEqualTo(2);
-            ArgumentCaptor<MacroIndicator> captor = ArgumentCaptor.forClass(MacroIndicator.class);
-            verify(macroIndicatorRepository, atLeastOnce()).insertIgnoreDuplicate(captor.capture());
-            assertThat(captor.getAllValues())
+            verify(macroIndicatorInserter, atLeastOnce()).insertBatch(inserterCaptor.capture());
+            assertThat(inserterCaptor.getAllValues())
+                    .flatMap(l -> l)
                     .anyMatch(m -> LocalDate.of(2026, 6, 13).equals(m.getTradeDate()));
         }
     }

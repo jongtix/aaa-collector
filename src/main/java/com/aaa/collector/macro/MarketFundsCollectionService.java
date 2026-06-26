@@ -8,6 +8,7 @@ import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
+import java.util.List;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -47,6 +48,7 @@ public class MarketFundsCollectionService {
     private final GuardedKisExecutor guardedKisExecutor;
     private final KeyLeaseRegistry keyLeaseRegistry;
     private final MacroIndicatorRepository macroIndicatorRepository;
+    private final MacroIndicatorInserter macroIndicatorInserter;
 
     /**
      * 증시자금 수집을 실행하고 집계 결과를 반환한다.
@@ -169,7 +171,7 @@ public class MarketFundsCollectionService {
                         .build();
 
         // REQ-BATCH3-043: uk_macro_indicators 멱등 저장
-        macroIndicatorRepository.insertIgnoreDuplicate(entity);
+        macroIndicatorInserter.insertBatch(List.of(entity));
         return 1;
     }
 }

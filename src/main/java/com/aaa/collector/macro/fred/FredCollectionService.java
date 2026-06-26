@@ -2,11 +2,13 @@ package com.aaa.collector.macro.fred;
 
 import com.aaa.collector.macro.MacroCollectionResult;
 import com.aaa.collector.macro.MacroIndicator;
+import com.aaa.collector.macro.MacroIndicatorInserter;
 import com.aaa.collector.macro.MacroIndicatorRepository;
 import com.aaa.collector.macro.enums.MacroSource;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
+import java.util.List;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -36,6 +38,7 @@ public class FredCollectionService {
     // (fan_in=2)
     private final RestClient macroFredRestClient;
     private final MacroIndicatorRepository macroIndicatorRepository;
+    private final MacroIndicatorInserter macroIndicatorInserter;
 
     @Value("${aaa.fred.api-key:}")
     private String apiKey;
@@ -139,7 +142,7 @@ public class FredCollectionService {
                             .value(value)
                             .build();
 
-            macroIndicatorRepository.insertIgnoreDuplicate(entity);
+            macroIndicatorInserter.insertBatch(List.of(entity));
             return true;
         } catch (Exception e) {
             log.warn(

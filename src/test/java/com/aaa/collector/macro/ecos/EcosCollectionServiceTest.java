@@ -11,6 +11,7 @@ import static org.mockito.Mockito.when;
 
 import com.aaa.collector.macro.MacroCollectionResult;
 import com.aaa.collector.macro.MacroIndicator;
+import com.aaa.collector.macro.MacroIndicatorInserter;
 import com.aaa.collector.macro.MacroIndicatorRepository;
 import com.aaa.collector.macro.enums.MacroSource;
 import java.math.BigDecimal;
@@ -22,6 +23,7 @@ import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
+import org.mockito.Captor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.web.client.RestClient;
@@ -39,6 +41,7 @@ class EcosCollectionServiceTest {
 
     @Mock private RestClient ecosRestClient;
     @Mock private MacroIndicatorRepository macroIndicatorRepository;
+    @Mock private MacroIndicatorInserter macroIndicatorInserter;
 
     @Mock
     @SuppressWarnings("rawtypes")
@@ -46,11 +49,15 @@ class EcosCollectionServiceTest {
 
     @Mock private ResponseSpec responseSpec;
 
+    @Captor private ArgumentCaptor<List<MacroIndicator>> inserterCaptor;
+
     private EcosCollectionService service;
 
     @BeforeEach
     void setUp() {
-        service = new EcosCollectionService(ecosRestClient, macroIndicatorRepository);
+        service =
+                new EcosCollectionService(
+                        ecosRestClient, macroIndicatorRepository, macroIndicatorInserter);
     }
 
     @SuppressWarnings("unchecked")
@@ -137,7 +144,7 @@ class EcosCollectionServiceTest {
     class CollectBehavior {
 
         @Test
-        @DisplayName("단일 정상 행(D주기) 수집 — source=ECOS, insertIgnoreDuplicate 호출")
+        @DisplayName("단일 정상 행(D주기) 수집 — source=ECOS, insertBatch 호출")
         void collectSingleRow_storesWithEcosSource() {
             // Arrange — YYYYMMDD 형식 행 (D 주기 시리즈에 적합)
             stubRestClientChain();
@@ -148,9 +155,10 @@ class EcosCollectionServiceTest {
             MacroCollectionResult result = service.collect();
 
             // Assert
-            ArgumentCaptor<MacroIndicator> captor = ArgumentCaptor.forClass(MacroIndicator.class);
-            verify(macroIndicatorRepository, atLeastOnce()).insertIgnoreDuplicate(captor.capture());
-            assertThat(captor.getAllValues()).allMatch(m -> m.getSource() == MacroSource.ECOS);
+            verify(macroIndicatorInserter, atLeastOnce()).insertBatch(inserterCaptor.capture());
+            assertThat(inserterCaptor.getAllValues())
+                    .flatMap(l -> l)
+                    .allMatch(m -> m.getSource() == MacroSource.ECOS);
             assertThat(result.succeeded()).isGreaterThanOrEqualTo(1);
         }
 
@@ -181,9 +189,9 @@ class EcosCollectionServiceTest {
             service.collect();
 
             // Assert
-            ArgumentCaptor<MacroIndicator> captor = ArgumentCaptor.forClass(MacroIndicator.class);
-            verify(macroIndicatorRepository, atLeastOnce()).insertIgnoreDuplicate(captor.capture());
-            assertThat(captor.getAllValues())
+            verify(macroIndicatorInserter, atLeastOnce()).insertBatch(inserterCaptor.capture());
+            assertThat(inserterCaptor.getAllValues())
+                    .flatMap(l -> l)
                     .anyMatch(
                             m ->
                                     m.getValue() != null
@@ -214,7 +222,7 @@ class EcosCollectionServiceTest {
             // Assert
             assertThat(result.attempted()).isZero();
             assertThat(result.succeeded()).isZero();
-            verify(macroIndicatorRepository, never()).insertIgnoreDuplicate(any());
+            verify(macroIndicatorInserter, never()).insertBatch(any());
         }
     }
 
