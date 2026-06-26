@@ -46,14 +46,18 @@ class BackfillSchedulerTest {
     class ScheduledAnnotation {
 
         @Test
-        @DisplayName("run() 메서드에 @Scheduled(cron=..., zone='Asia/Seoul')이 선언되어 있다")
-        void run_scheduledAnnotation_hasCronAndKstZone() throws NoSuchMethodException {
+        @DisplayName("run() 메서드에 평일 기본 cron(02:00 KST)과 주말 추가 cron(4시간 단위)이 모두 선언되어 있다")
+        void run_scheduledAnnotation_hasDailyAndWeekendCron() throws NoSuchMethodException {
             Method runMethod = BackfillScheduler.class.getMethod("run");
-            Scheduled scheduled = runMethod.getAnnotation(Scheduled.class);
+            Scheduled[] scheduleds = runMethod.getAnnotationsByType(Scheduled.class);
 
-            assertThat(scheduled).isNotNull();
-            assertThat(scheduled.cron()).isEqualTo("${aaa.backfill.cron:0 0 2 * * *}");
-            assertThat(scheduled.zone()).isEqualTo("Asia/Seoul");
+            assertThat(scheduleds).hasSize(2);
+            assertThat(scheduleds)
+                    .extracting(Scheduled::cron)
+                    .containsExactlyInAnyOrder(
+                            "${aaa.backfill.cron:0 0 2 * * *}",
+                            "${aaa.backfill.weekend-cron:0 0 6/4 * * SAT,SUN}");
+            assertThat(scheduleds).extracting(Scheduled::zone).containsOnly("Asia/Seoul");
         }
     }
 }
