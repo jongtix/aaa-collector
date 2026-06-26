@@ -1,5 +1,6 @@
 package com.aaa.collector.market.session;
 
+import com.aaa.collector.common.gate.MarketOpenGate;
 import com.aaa.collector.kis.websocket.KisMarketSchedule;
 import io.micrometer.core.instrument.Gauge;
 import io.micrometer.core.instrument.MeterRegistry;
@@ -41,7 +42,7 @@ import org.springframework.stereotype.Component;
 // @MX:SPEC: SPEC-COLLECTOR-OBSV-001
 @Slf4j
 @Component
-public class MarketSessionGate {
+public class MarketSessionGate implements MarketOpenGate {
 
     /** 시장 세션 게이트 gauge 이름 (장중 1 / 휴장·장외 0). */
     public static final String MARKET_OPEN_NAME = "aaa_collector_market_open";
@@ -100,6 +101,26 @@ public class MarketSessionGate {
                 "시장 세션 게이트 캘린더 갱신 완료 — dates={}, lastUpdate={}",
                 calendar.size(),
                 lastUpdateEpoch.get());
+    }
+
+    /**
+     * 지정 날짜가 KIS 캘린더 기준 개장일인지 반환한다 (배치 수집 게이트 전용).
+     *
+     * <p>판정 규칙:
+     *
+     * <ul>
+     *   <li>캘린더 미로드(boot-unset): {@code true} 반환 — 수집 억제 방향 오류 방지
+     *   <li>캘린더에 해당 날짜 없음: {@code true} 반환 — stale 캘린더가 수집을 막지 않도록
+     *   <li>캘린더에 해당 날짜 있음: {@code opnd_yn} 값 반환
+     * </ul>
+     *
+     * @param date 판정할 날짜 (KST)
+     * @return 개장일이면 {@code true}, 휴장일이면 {@code false}
+     */
+    @Override
+    public boolean isOpenDay(LocalDate date) {
+        Map<LocalDate, Boolean> calendar = calendarRef.get();
+        return calendar == null || calendar.getOrDefault(date, Boolean.TRUE);
     }
 
     /**

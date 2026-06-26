@@ -1,5 +1,6 @@
 package com.aaa.collector.stock.supply;
 
+import com.aaa.collector.common.gate.MarketOpenGate;
 import com.aaa.collector.observability.BatchMetrics;
 import com.aaa.collector.stock.Stock;
 import com.aaa.collector.stock.StockRepository;
@@ -29,6 +30,7 @@ public class DomesticSupplyDemandCollectionService {
     /** 배치 계측 라벨 접두사 — {@code kind}와 결합해 3 per-kind 라벨을 만든다 (REQ-OBSV-020/021). */
     private static final String BATCH_LABEL_PREFIX = "domestic-supply-";
 
+    private final MarketOpenGate marketSessionGate;
     private final StockRepository stockRepository;
     private final InvestorTrendCollectionService investorTrendService;
     private final ShortSaleCollectionService shortSaleService;
@@ -41,6 +43,10 @@ public class DomesticSupplyDemandCollectionService {
      * @param today 수집 기준일
      */
     public void collectAll(LocalDate today) {
+        if (!marketSessionGate.isOpenDay(today)) {
+            log.info("[supply-demand] 비개장일 — 수급 3종 수집 skip. date={}", today);
+            return;
+        }
         // KIS 국내 수급 API는 미국 종목에 null-dated 빈 행을 반환 → 국내 시장(KOSPI/KOSDAQ/KRX)만 조회
         List<Stock> activeStocks = stockRepository.findAllActiveDomesticTradable();
         log.info(

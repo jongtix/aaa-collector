@@ -8,6 +8,7 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.aaa.collector.common.gate.MarketOpenGate;
 import com.aaa.collector.observability.BatchMetrics;
 import com.aaa.collector.stock.Stock;
 import com.aaa.collector.stock.StockRepository;
@@ -30,6 +31,7 @@ class DomesticSupplyDemandCollectionServiceTest {
 
     private static final LocalDate TODAY = LocalDate.of(2026, 6, 13);
 
+    @Mock private MarketOpenGate marketSessionGate;
     @Mock private StockRepository stockRepository;
     @Mock private InvestorTrendCollectionService investorTrendService;
     @Mock private ShortSaleCollectionService shortSaleService;
@@ -42,11 +44,14 @@ class DomesticSupplyDemandCollectionServiceTest {
     void setUp() {
         service =
                 new DomesticSupplyDemandCollectionService(
+                        marketSessionGate,
                         stockRepository,
                         investorTrendService,
                         shortSaleService,
                         creditBalanceService,
                         batchMetrics);
+        // 기본값: 개장일로 설정 — 기존 테스트가 게이트 통과 후 동작을 검증하도록
+        when(marketSessionGate.isOpenDay(TODAY)).thenReturn(true);
     }
 
     private Stock stockOf(String symbol) {
@@ -57,6 +62,27 @@ class DomesticSupplyDemandCollectionServiceTest {
                 .assetType(AssetType.STOCK)
                 .listedDate(LocalDate.of(2015, 1, 1))
                 .build();
+    }
+
+    @Nested
+    @DisplayName("collectAll — 비개장일 게이트 (공휴일 헬스 오판 방지)")
+    class HolidayGate {
+
+        @Test
+        @DisplayName("비개장일이면 수급 3종 수집을 skip한다")
+        void collectAll_비개장일_수급수집skip() {
+            when(marketSessionGate.isOpenDay(TODAY)).thenReturn(false);
+
+            service.collectAll(TODAY);
+
+            verify(investorTrendService, never())
+                    .collect(eq(TODAY), org.mockito.ArgumentMatchers.any());
+            verify(shortSaleService, never())
+                    .collect(eq(TODAY), org.mockito.ArgumentMatchers.any());
+            verify(creditBalanceService, never())
+                    .collect(eq(TODAY), org.mockito.ArgumentMatchers.any());
+            verify(stockRepository, never()).findAllActiveDomesticTradable();
+        }
     }
 
     @Nested
