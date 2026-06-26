@@ -279,21 +279,30 @@ public class BackfillOrchestrator {
     /**
      * 윈도우 1회 실행. 예외 발생 시 조기 반환 값을 돌려주고, 정상 완료 시 {@code null}을 반환한다.
      *
-     * <p>{@code InterruptedException}: 인터럽트 플래그 복원 후 {@link InnerLoopResult#interrupted}=true 반환.
-     * {@code Exception}: 오류 기록 후 {@code windowsForThis}개 처리한 결과(not interrupted)를 반환.
+     * <p>{@code InterruptedException}: 인터럽트 플래그 복원 후 {@link InnerLoopResult#interrupted}=true 반환
+     * (REQ-TXB-032). {@code Exception}: 오류 기록 후 {@code windowsForThis}개 처리한 결과(not interrupted)를 반환
+     * (REQ-TXB-033).
+     *
+     * <p>fetch와 persist 양쪽을 단일 {@code try}로 감싸 예외 누락을 방지한다 (REQ-TXB-034).
      */
+    // @MX:WARN: [AUTO] self-invocation 방지: windowExecutor.persistWindow는 반드시 교차 빈 호출 유지.
+    // @MX:REASON: [AUTO] 오케스트레이터 외부에서 fetchWindow→persistWindow 순서를 변경하거나 실행기 내부에서
+    //             호출하면 @Transactional 프록시 우회로 원자성 소실(REQ-TXB-030/REQ-BACKFILL-011).
     @SuppressWarnings("PMD.AvoidCatchingGenericException") // 윈도우 단위 예외 격리 — REQ-BACKFILL-055
     private InnerLoopResult executeOneWindow(
             BackfillStatus current, Stock stock, LeaseSession session, int windowsForThis) {
         try {
-            windowExecutor.executeWindow(current, stock, session);
+            // 교차 빈 호출: fetchWindow(비tx) → persistWindow(@Transactional) (REQ-TXB-012/-034/-040)
+            BackfillStatus resolved = windowExecutor.resolveStatusForFetch(current);
+            Object fetchDto = windowExecutor.fetchWindow(resolved, stock, session);
+            windowExecutor.persistWindow(current, stock, fetchDto);
             return null; // 정상 — 루프 계속
         } catch (InterruptedException e) {
-            // 회차 즉시 중단 (REQ-BACKFILL-056)
+            // 회차 즉시 중단 (REQ-BACKFILL-056, REQ-TXB-032)
             Thread.currentThread().interrupt();
             return new InnerLoopResult(windowsForThis, true);
         } catch (Exception e) {
-            // status inner 루프 종료, 다음 status로 진행 (REQ-BACKFILL-055)
+            // status inner 루프 종료, 다음 status로 진행 (REQ-BACKFILL-055, REQ-TXB-033)
             log.warn(
                     "[backfill-orchestrator] 윈도우 오류 (항목 격리) — symbol={}, table={}, error={}",
                     current.getTargetCode(),

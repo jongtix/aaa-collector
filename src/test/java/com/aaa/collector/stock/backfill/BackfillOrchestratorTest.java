@@ -5,6 +5,7 @@ import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
@@ -30,6 +31,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.InOrder;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -62,6 +64,11 @@ class BackfillOrchestratorTest {
         // 기본 테이블별 완성 캡·윈도우 상한 설정 (lenient — 일부 테스트는 도달하지 않음)
         when(properties.getPerTableCompletionCap()).thenReturn(10);
         when(properties.getMaxWindowsPerTarget()).thenReturn(120);
+
+        // resolveStatusForFetch: 테스트에서 anchor 보정 로직을 우회하고 원본 status를 그대로 반환.
+        // 이를 통해 fetchWindow/persistWindow 스텁에서 eq(status) 매처를 그대로 사용할 수 있다.
+        when(windowExecutor.resolveStatusForFetch(any()))
+                .thenAnswer(invocation -> invocation.getArgument(0));
     }
 
     private Stock buildDomesticStock(String symbol) {
@@ -141,8 +148,13 @@ class BackfillOrchestratorTest {
             // Act
             orchestrator.run();
 
-            // Assert — 같은 회차에서 3회 호출됨
-            verify(windowExecutor, times(3)).executeWindow(any(), eq(stock), eq(session));
+            // Assert — 같은 회차에서 fetchWindow·persistWindow 각 3회 호출됨
+            verify(windowExecutor, times(3)).fetchWindow(any(), eq(stock), eq(session));
+            verify(windowExecutor, times(3)).persistWindow(any(), eq(stock), any());
+            // fetch → persist 순서 검증 (InOrder: 첫 쌍이 순서대로 실행됨)
+            InOrder inOrder = inOrder(windowExecutor);
+            inOrder.verify(windowExecutor).fetchWindow(any(), eq(stock), eq(session));
+            inOrder.verify(windowExecutor).persistWindow(any(), eq(stock), any());
         }
 
         @Test
@@ -171,7 +183,8 @@ class BackfillOrchestratorTest {
             orchestrator.run();
 
             // Assert — 3회 호출됨(첫 무전진에서 중단되지 않음)
-            verify(windowExecutor, times(3)).executeWindow(any(), eq(stock), eq(session));
+            verify(windowExecutor, times(3)).fetchWindow(any(), eq(stock), eq(session));
+            verify(windowExecutor, times(3)).persistWindow(any(), eq(stock), any());
         }
 
         @Test
@@ -191,8 +204,12 @@ class BackfillOrchestratorTest {
             // Act
             orchestrator.run();
 
-            // Assert — 1회만 호출됨
-            verify(windowExecutor, times(1)).executeWindow(any(), eq(stock), eq(session));
+            // Assert — 1회만 호출됨 (fetch → persist 순서 InOrder 검증)
+            InOrder inOrder = inOrder(windowExecutor);
+            inOrder.verify(windowExecutor).fetchWindow(any(), eq(stock), eq(session));
+            inOrder.verify(windowExecutor).persistWindow(any(), eq(stock), any());
+            verify(windowExecutor, times(1)).fetchWindow(any(), eq(stock), eq(session));
+            verify(windowExecutor, times(1)).persistWindow(any(), eq(stock), any());
         }
     }
 
@@ -233,7 +250,8 @@ class BackfillOrchestratorTest {
             orchestrator.run();
 
             // Assert — 정확히 3회(하드 캡 도달)
-            verify(windowExecutor, times(3)).executeWindow(any(), eq(stock), eq(session));
+            verify(windowExecutor, times(3)).fetchWindow(any(), eq(stock), eq(session));
+            verify(windowExecutor, times(3)).persistWindow(any(), eq(stock), any());
         }
 
         @Test
@@ -258,7 +276,8 @@ class BackfillOrchestratorTest {
             orchestrator.run();
 
             // Assert — 1회만 호출(첫 무전진에서 즉시 중단)
-            verify(windowExecutor, times(1)).executeWindow(any(), eq(stock), eq(session));
+            verify(windowExecutor, times(1)).fetchWindow(any(), eq(stock), eq(session));
+            verify(windowExecutor, times(1)).persistWindow(any(), eq(stock), any());
         }
 
         @Test
@@ -287,7 +306,8 @@ class BackfillOrchestratorTest {
             orchestrator.run();
 
             // Assert — 3회 모두 호출됨(무전진 break 없음)
-            verify(windowExecutor, times(3)).executeWindow(any(), eq(stock), eq(session));
+            verify(windowExecutor, times(3)).fetchWindow(any(), eq(stock), eq(session));
+            verify(windowExecutor, times(3)).persistWindow(any(), eq(stock), any());
         }
 
         @Test
@@ -313,8 +333,9 @@ class BackfillOrchestratorTest {
             // Act
             orchestrator.run();
 
-            // Assert — 2회 호출됨(첫 무전진에서 중단되지 않고 executeWindow 재호출)
-            verify(windowExecutor, times(2)).executeWindow(any(), eq(stock), eq(session));
+            // Assert — 2회 호출됨(첫 무전진에서 중단되지 않고 fetchWindow 재호출)
+            verify(windowExecutor, times(2)).fetchWindow(any(), eq(stock), eq(session));
+            verify(windowExecutor, times(2)).persistWindow(any(), eq(stock), any());
         }
     }
 
@@ -348,7 +369,8 @@ class BackfillOrchestratorTest {
             orchestrator.run();
 
             // Assert: 4개 테이블 각각 1회씩 = 총 4회 처리됨 (병렬, 비결정적 순서)
-            verify(windowExecutor, times(4)).executeWindow(any(), eq(stock), eq(session));
+            verify(windowExecutor, times(4)).fetchWindow(any(), eq(stock), eq(session));
+            verify(windowExecutor, times(4)).persistWindow(any(), eq(stock), any());
         }
 
         @Test
@@ -378,7 +400,8 @@ class BackfillOrchestratorTest {
 
             // Assert: investor_trend 1개 + daily_ohlcv 1개 = 총 2회 처리
             // (기존 전역 캡 구현이었다면 investor_trend cap=1 소진 후 daily_ohlcv가 처리되지 않았음)
-            verify(windowExecutor, times(2)).executeWindow(any(), eq(stock), eq(session));
+            verify(windowExecutor, times(2)).fetchWindow(any(), eq(stock), eq(session));
+            verify(windowExecutor, times(2)).persistWindow(any(), eq(stock), any());
         }
     }
 
@@ -417,7 +440,8 @@ class BackfillOrchestratorTest {
             orchestrator.run();
 
             // Assert — 2개 status만 처리(3번째는 per-table cap 도달로 스킵)
-            verify(windowExecutor, times(2)).executeWindow(any(), any(), eq(session));
+            verify(windowExecutor, times(2)).fetchWindow(any(), any(), eq(session));
+            verify(windowExecutor, times(2)).persistWindow(any(), any(), any());
         }
 
         @Test
@@ -463,7 +487,8 @@ class BackfillOrchestratorTest {
             orchestrator.run();
 
             // Assert — s1만 처리(5회), s2는 슬롯 소진으로 미처리
-            verify(windowExecutor, times(5)).executeWindow(any(), any(), eq(session));
+            verify(windowExecutor, times(5)).fetchWindow(any(), any(), eq(session));
+            verify(windowExecutor, times(5)).persistWindow(any(), any(), any());
         }
 
         @Test
@@ -489,8 +514,9 @@ class BackfillOrchestratorTest {
             orchestrator.run();
 
             // Assert — 000660은 스킵, 005930은 처리됨(슬롯 1 소비)
-            verify(windowExecutor, never()).executeWindow(eq(inactive), any(), any());
-            verify(windowExecutor, times(1)).executeWindow(any(), eq(activeStock), eq(session));
+            verify(windowExecutor, never()).fetchWindow(eq(inactive), any(), any());
+            verify(windowExecutor, times(1)).fetchWindow(any(), eq(activeStock), eq(session));
+            verify(windowExecutor, times(1)).persistWindow(any(), eq(activeStock), any());
         }
 
         @Test
@@ -524,7 +550,8 @@ class BackfillOrchestratorTest {
             orchestrator.run();
 
             // Assert — 총 4회 이상 (각 테이블 독립적으로 2개씩, 합 ≥4)
-            verify(windowExecutor, times(4)).executeWindow(any(), any(), eq(session));
+            verify(windowExecutor, times(4)).fetchWindow(any(), any(), eq(session));
+            verify(windowExecutor, times(4)).persistWindow(any(), any(), any());
         }
     }
 
@@ -562,18 +589,21 @@ class BackfillOrchestratorTest {
             when(backfillStatusRepository.findById(eq(2L)))
                     .thenReturn(Optional.of(secondCompleted));
 
-            // first status 두 번째 executeWindow 호출 시 예외
+            // first status 두 번째 fetchWindow 호출(firstInProg 처리 시점) 시 예외
+            // resolveStatusForFetch identity 스텁으로 인해 resolved == firstInProg → eq() 매처 사용 가능
             doThrow(new RuntimeException("KIS 오류 시뮬레이션"))
                     .when(windowExecutor)
-                    .executeWindow(eq(firstInProg), any(), any());
+                    .fetchWindow(eq(firstInProg), any(), any());
 
             // Act
             orchestrator.run();
 
-            // Assert
+            // Assert — executeWindowOnError: firstInProg 기준(current가 firstInProg일 때 예외 처리)
             verify(windowExecutor).executeWindowOnError(eq(firstInProg), anyString(), anyBoolean());
             // second status도 처리됨 (별도 테이블 스트림)
-            verify(windowExecutor).executeWindow(eq(second), eq(stock), eq(session));
+            InOrder inOrder = inOrder(windowExecutor);
+            inOrder.verify(windowExecutor).fetchWindow(eq(second), eq(stock), eq(session));
+            inOrder.verify(windowExecutor).persistWindow(eq(second), eq(stock), any());
         }
 
         @Test
@@ -590,10 +620,11 @@ class BackfillOrchestratorTest {
             when(backfillStatusRepository.findByStatusInAndTargetTypeOrderById(any(), anyString()))
                     .thenReturn(List.of(first, second));
 
-            // daily_ohlcv 스트림: InterruptedException 발생
+            // daily_ohlcv 스트림: fetchWindow에서 InterruptedException 발생
+            // resolveStatusForFetch identity 스텁으로 인해 resolved == first → eq() 매처 사용 가능
             doThrow(new InterruptedException("인터럽트 시뮬레이션"))
                     .when(windowExecutor)
-                    .executeWindow(eq(first), any(), any());
+                    .fetchWindow(eq(first), any(), any());
 
             // investor_trend 스트림: 정상 처리
             BackfillStatus secondCompleted = buildCompletedStatus("005930", "investor_trend");
@@ -604,7 +635,8 @@ class BackfillOrchestratorTest {
 
             // Assert — daily_ohlcv 스트림은 중단되었지만 investor_trend 스트림은 정상 처리됨
             // (기존 전역 중단 동작과 다른 핵심 변경점: 한 테이블의 인터럽트가 다른 테이블에 전파되지 않음)
-            verify(windowExecutor).executeWindow(eq(second), eq(stock), eq(session));
+            verify(windowExecutor).fetchWindow(eq(second), eq(stock), eq(session));
+            verify(windowExecutor).persistWindow(eq(second), eq(stock), any());
         }
     }
 
@@ -644,6 +676,9 @@ class BackfillOrchestratorTest {
 
             // Assert — openSession 정확히 1회 (VT 스트림 기동 전 공유 세션)
             verify(keyLeaseRegistry, times(1)).openSession();
+            // 총 4회 fetchWindow·persistWindow 호출 (2 status × 2 window 각)
+            verify(windowExecutor, times(4)).fetchWindow(any(), any(), eq(session));
+            verify(windowExecutor, times(4)).persistWindow(any(), any(), any());
         }
 
         @Test
@@ -703,7 +738,9 @@ class BackfillOrchestratorTest {
 
             // Assert
             verify(seeder).seedActiveStocks();
-            verify(windowExecutor).executeWindow(eq(status), eq(stock), eq(session));
+            InOrder inOrder = inOrder(windowExecutor);
+            inOrder.verify(windowExecutor).fetchWindow(eq(status), eq(stock), eq(session));
+            inOrder.verify(windowExecutor).persistWindow(eq(status), eq(stock), any());
         }
 
         @Test
@@ -714,7 +751,8 @@ class BackfillOrchestratorTest {
 
             orchestrator.run();
 
-            verify(windowExecutor, never()).executeWindow(any(), any(), any());
+            verify(windowExecutor, never()).fetchWindow(any(), any(), any());
+            verify(windowExecutor, never()).persistWindow(any(), any(), any());
         }
 
         @Test
@@ -728,7 +766,8 @@ class BackfillOrchestratorTest {
 
             orchestrator.run();
 
-            verify(windowExecutor, never()).executeWindow(any(), any(), any());
+            verify(windowExecutor, never()).fetchWindow(any(), any(), any());
+            verify(windowExecutor, never()).persistWindow(any(), any(), any());
         }
     }
 }
