@@ -16,6 +16,7 @@ import com.aaa.collector.kis.gate.KeyLeaseRegistry.LeaseSession;
 import com.aaa.collector.kis.token.HealthyKeySelector;
 import com.aaa.collector.kis.token.KisAccountCredential;
 import com.aaa.collector.stock.CorporateEvent;
+import com.aaa.collector.stock.CorporateEventInserter;
 import com.aaa.collector.stock.CorporateEventRepository;
 import com.aaa.collector.stock.Stock;
 import com.aaa.collector.stock.StockRepository;
@@ -32,6 +33,7 @@ import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
+import org.mockito.Captor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.dao.DataIntegrityViolationException;
@@ -54,8 +56,11 @@ class OverseasRightsCollectionServiceTest {
 
     @Mock private StockRepository stockRepository;
     @Mock private CorporateEventRepository corporateEventRepository;
+    @Mock private CorporateEventInserter corporateEventInserter;
     @Mock private GuardedKisExecutor guardedKisExecutor;
     @Mock private HealthyKeySelector healthyKeySelector;
+
+    @Captor private ArgumentCaptor<List<CorporateEvent>> inserterCaptor;
 
     private OverseasRightsCollectionService service;
 
@@ -66,6 +71,7 @@ class OverseasRightsCollectionServiceTest {
                 new OverseasRightsCollectionService(
                         stockRepository,
                         corporateEventRepository,
+                        corporateEventInserter,
                         guardedKisExecutor,
                         keyLeaseRegistry);
     }
@@ -201,14 +207,17 @@ class OverseasRightsCollectionServiceTest {
                     .thenReturn(
                             response(List.of(cashDividendRow("20260511", "20260511", "20260514"))));
 
-            ArgumentCaptor<CorporateEvent> captor = ArgumentCaptor.forClass(CorporateEvent.class);
-
             // Act
             OverseasRightsCollectionResult result = service.collect();
 
             // Assert
-            verify(corporateEventRepository).insertIgnoreDuplicate(captor.capture());
-            assertThat(captor.getValue())
+            verify(corporateEventInserter).insertBatch(inserterCaptor.capture());
+            CorporateEvent savedMapping =
+                    inserterCaptor.getAllValues().stream()
+                            .flatMap(List::stream)
+                            .findFirst()
+                            .orElseThrow();
+            assertThat(savedMapping)
                     .extracting(
                             CorporateEvent::getEventType,
                             CorporateEvent::getEventDate,
@@ -235,7 +244,7 @@ class OverseasRightsCollectionServiceTest {
 
             OverseasRightsCollectionResult result = service.collect();
 
-            verify(corporateEventRepository, never()).insertIgnoreDuplicate(any());
+            verify(corporateEventInserter, never()).insertBatch(any());
             assertThat(result.succeededRows()).isZero();
             // W1: 검증 skip은 validation 카운터로만 — 독성 카운터와 분리됨을 함께 검증
             assertThat(result.skippedValidationRows()).isEqualTo(1);
@@ -251,13 +260,16 @@ class OverseasRightsCollectionServiceTest {
             when(guardedKisExecutor.execute(any(LeaseSession.class), any(), anyString(), any()))
                     .thenReturn(response(List.of(cashDividendRow("20260511", "", ""))));
 
-            ArgumentCaptor<CorporateEvent> captor = ArgumentCaptor.forClass(CorporateEvent.class);
-
             service.collect();
 
-            verify(corporateEventRepository).insertIgnoreDuplicate(captor.capture());
-            assertThat(captor.getValue().getExDividendDate()).isNull();
-            assertThat(captor.getValue().getPayDate()).isNull();
+            verify(corporateEventInserter).insertBatch(inserterCaptor.capture());
+            CorporateEvent savedNullDates =
+                    inserterCaptor.getAllValues().stream()
+                            .flatMap(List::stream)
+                            .findFirst()
+                            .orElseThrow();
+            assertThat(savedNullDates.getExDividendDate()).isNull();
+            assertThat(savedNullDates.getPayDate()).isNull();
         }
     }
 
@@ -307,7 +319,7 @@ class OverseasRightsCollectionServiceTest {
             OverseasRightsCollectionResult result = service.collect();
 
             // Assert
-            verify(corporateEventRepository, never()).insertIgnoreDuplicate(any());
+            verify(corporateEventInserter, never()).insertBatch(any());
             assertThat(result.succeededRows()).isZero();
             assertThat(result.skippedNonCashRows()).isEqualTo(2);
         }
@@ -341,7 +353,7 @@ class OverseasRightsCollectionServiceTest {
 
             OverseasRightsCollectionResult result = service.collect();
 
-            verify(corporateEventRepository, atLeastOnce()).insertIgnoreDuplicate(any());
+            verify(corporateEventInserter, atLeastOnce()).insertBatch(any());
             assertThat(result.succeededRows()).isEqualTo(1);
             assertThat(result.skippedNonCashRows()).isEqualTo(1);
         }
@@ -362,7 +374,7 @@ class OverseasRightsCollectionServiceTest {
 
             OverseasRightsCollectionResult result = service.collect();
 
-            verify(corporateEventRepository, never()).insertIgnoreDuplicate(any());
+            verify(corporateEventInserter, never()).insertBatch(any());
             assertThat(result.skippedStocks()).isEqualTo(1);
         }
 
@@ -376,8 +388,8 @@ class OverseasRightsCollectionServiceTest {
                     .thenReturn(
                             response(List.of(cashDividendRow("20260511", "20260511", "20260514"))));
             doThrow(new DataIntegrityViolationException("toxic"))
-                    .when(corporateEventRepository)
-                    .insertIgnoreDuplicate(any());
+                    .when(corporateEventInserter)
+                    .insertBatch(any());
 
             // Act & Assert — 예외 전파 없이 흡수
             OverseasRightsCollectionResult result = service.collect();
@@ -417,7 +429,7 @@ class OverseasRightsCollectionServiceTest {
             // Assert
             assertThat(result.attemptedStocks()).isEqualTo(3);
             assertThat(result.succeededRows()).isEqualTo(3);
-            verify(corporateEventRepository, atLeastOnce()).insertIgnoreDuplicate(any());
+            verify(corporateEventInserter, atLeastOnce()).insertBatch(any());
         }
     }
 }

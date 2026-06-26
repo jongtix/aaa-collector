@@ -7,6 +7,7 @@ import com.aaa.collector.kis.gate.KeyLeaseRegistry.LeaseSession;
 import com.aaa.collector.kis.gate.NoHealthyKeyException;
 import com.aaa.collector.kis.token.KisTokenIssueException;
 import com.aaa.collector.stock.CorporateEvent;
+import com.aaa.collector.stock.CorporateEventInserter;
 import com.aaa.collector.stock.CorporateEventRepository;
 import com.aaa.collector.stock.Stock;
 import com.aaa.collector.stock.StockRepository;
@@ -69,6 +70,7 @@ public class OverseasRightsCollectionService {
 
     private final StockRepository stockRepository;
     private final CorporateEventRepository corporateEventRepository;
+    private final CorporateEventInserter corporateEventInserter;
     private final GuardedKisExecutor guardedKisExecutor;
     private final KeyLeaseRegistry keyLeaseRegistry;
 
@@ -226,7 +228,7 @@ public class OverseasRightsCollectionService {
 
         // REQ-OVE-024/061: uk_corporate_events 멱등 저장
         try {
-            corporateEventRepository.insertIgnoreDuplicate(entity);
+            corporateEventInserter.insertBatch(List.of(entity));
             succeededRows.incrementAndGet();
         } catch (DataAccessException ex) {
             // W1: DB 독성 행 — 검증 skip과 별도 카운터로 집계해 침묵 드롭 관측성 보존(42,460-failure 사건군)

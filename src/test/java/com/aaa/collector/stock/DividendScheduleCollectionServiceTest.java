@@ -22,6 +22,7 @@ import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
+import org.mockito.Captor;
 import org.mockito.Mock;
 import org.mockito.Mockito;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -43,7 +44,10 @@ class DividendScheduleCollectionServiceTest {
     @Mock private KeyLeaseRegistry keyLeaseRegistry;
     @Mock private StockRepository stockRepository;
     @Mock private CorporateEventRepository corporateEventRepository;
+    @Mock private CorporateEventInserter corporateEventInserter;
     @Mock private LeaseSession session;
+
+    @Captor private ArgumentCaptor<List<CorporateEvent>> inserterCaptor;
 
     private DividendScheduleCollectionService service;
 
@@ -54,7 +58,8 @@ class DividendScheduleCollectionServiceTest {
                         guardedKisExecutor,
                         keyLeaseRegistry,
                         stockRepository,
-                        corporateEventRepository);
+                        corporateEventRepository,
+                        corporateEventInserter);
         Mockito.lenient().when(keyLeaseRegistry.openSession()).thenReturn(session);
     }
 
@@ -124,10 +129,13 @@ class DividendScheduleCollectionServiceTest {
             assertThat(result.skippedNonWatchlist()).isZero();
             assertThat(result.skippedValidation()).isZero();
 
-            ArgumentCaptor<CorporateEvent> captor = ArgumentCaptor.forClass(CorporateEvent.class);
-            verify(corporateEventRepository).insertIgnoreDuplicate(captor.capture());
+            verify(corporateEventInserter).insertBatch(inserterCaptor.capture());
 
-            CorporateEvent saved = captor.getValue();
+            CorporateEvent saved =
+                    inserterCaptor.getAllValues().stream()
+                            .flatMap(List::stream)
+                            .findFirst()
+                            .orElseThrow();
             assertThat(saved.getEventType()).isEqualTo(EventType.DIVIDEND);
             assertThat(saved.getStock()).isSameAs(stock);
             assertThat(saved.getEventDate()).hasYear(2026).hasMonthValue(6).hasDayOfMonth(13);
@@ -149,10 +157,13 @@ class DividendScheduleCollectionServiceTest {
             service.collect("20260601", "20260630");
 
             // Assert
-            ArgumentCaptor<CorporateEvent> captor = ArgumentCaptor.forClass(CorporateEvent.class);
-            verify(corporateEventRepository).insertIgnoreDuplicate(captor.capture());
+            verify(corporateEventInserter).insertBatch(inserterCaptor.capture());
 
-            CorporateEvent saved = captor.getValue();
+            CorporateEvent saved =
+                    inserterCaptor.getAllValues().stream()
+                            .flatMap(List::stream)
+                            .findFirst()
+                            .orElseThrow();
             assertThat(saved.getPayDate()).hasYear(2026).hasMonthValue(6).hasDayOfMonth(30);
             assertThat(saved.getFaceValue()).isEqualTo(5000L);
             assertThat(saved.getHighDividendFlag()).isEqualTo("0");
@@ -188,7 +199,7 @@ class DividendScheduleCollectionServiceTest {
             // Assert
             assertThat(result.succeeded()).isEqualTo(1);
             assertThat(result.skippedNonWatchlist()).isEqualTo(2);
-            verify(corporateEventRepository, times(1)).insertIgnoreDuplicate(any());
+            verify(corporateEventInserter, times(1)).insertBatch(any());
         }
 
         @Test
@@ -206,7 +217,7 @@ class DividendScheduleCollectionServiceTest {
 
             // Assert
             assertThat(result.skippedNonWatchlist()).isEqualTo(2);
-            verify(corporateEventRepository, never()).insertIgnoreDuplicate(any());
+            verify(corporateEventInserter, never()).insertBatch(any());
         }
     }
 
@@ -242,7 +253,7 @@ class DividendScheduleCollectionServiceTest {
 
             // Assert — 2건 저장
             assertThat(result.succeeded()).isEqualTo(2);
-            verify(corporateEventRepository, times(2)).insertIgnoreDuplicate(any());
+            verify(corporateEventInserter, times(2)).insertBatch(any());
             // 게이트 2회 경유 확인(2페이지), 동일 세션 공유 + per-batch 스냅샷 1회
             verify(guardedKisExecutor, times(2))
                     .execute(eq(session), any(), eq(TR_ID), eq(KisDividendScheduleResponse.class));
@@ -263,7 +274,7 @@ class DividendScheduleCollectionServiceTest {
 
             // Assert
             assertThat(result.succeeded()).isZero();
-            verify(corporateEventRepository, never()).insertIgnoreDuplicate(any());
+            verify(corporateEventInserter, never()).insertBatch(any());
         }
     }
 
@@ -304,7 +315,7 @@ class DividendScheduleCollectionServiceTest {
 
             // Assert
             assertThat(result.skippedValidation()).isEqualTo(1);
-            verify(corporateEventRepository, never()).insertIgnoreDuplicate(any());
+            verify(corporateEventInserter, never()).insertBatch(any());
         }
 
         @Test
@@ -335,7 +346,7 @@ class DividendScheduleCollectionServiceTest {
 
             // Assert
             assertThat(result.skippedValidation()).isEqualTo(1);
-            verify(corporateEventRepository, never()).insertIgnoreDuplicate(any());
+            verify(corporateEventInserter, never()).insertBatch(any());
         }
     }
 
@@ -362,7 +373,7 @@ class DividendScheduleCollectionServiceTest {
             service.collect("20260601", "20260630");
 
             // Assert
-            verify(corporateEventRepository, times(2)).insertIgnoreDuplicate(any());
+            verify(corporateEventInserter, times(2)).insertBatch(any());
         }
     }
 
@@ -403,9 +414,13 @@ class DividendScheduleCollectionServiceTest {
 
             // Assert — 저장 성공, pay_date=null
             assertThat(result.succeeded()).isEqualTo(1);
-            ArgumentCaptor<CorporateEvent> captor = ArgumentCaptor.forClass(CorporateEvent.class);
-            verify(corporateEventRepository).insertIgnoreDuplicate(captor.capture());
-            assertThat(captor.getValue().getPayDate()).isNull();
+            verify(corporateEventInserter).insertBatch(inserterCaptor.capture());
+            CorporateEvent savedNullPayDate =
+                    inserterCaptor.getAllValues().stream()
+                            .flatMap(List::stream)
+                            .findFirst()
+                            .orElseThrow();
+            assertThat(savedNullPayDate.getPayDate()).isNull();
         }
     }
 
@@ -446,9 +461,13 @@ class DividendScheduleCollectionServiceTest {
 
             // Assert — 저장 성공, cash_rate=null (parseRateOrNull이 경계 초과 시 null 반환)
             assertThat(result.succeeded()).isEqualTo(1);
-            ArgumentCaptor<CorporateEvent> captor = ArgumentCaptor.forClass(CorporateEvent.class);
-            verify(corporateEventRepository).insertIgnoreDuplicate(captor.capture());
-            assertThat(captor.getValue().getCashRate()).isNull();
+            verify(corporateEventInserter).insertBatch(inserterCaptor.capture());
+            CorporateEvent savedNullRate =
+                    inserterCaptor.getAllValues().stream()
+                            .flatMap(List::stream)
+                            .findFirst()
+                            .orElseThrow();
+            assertThat(savedNullRate.getCashRate()).isNull();
         }
     }
 
@@ -477,21 +496,28 @@ class DividendScheduleCollectionServiceTest {
                                             sampleRow("000660"), // 정상
                                             sampleRow("035420")))); // 정상
 
-            // insertIgnoreDuplicate: 005930 독성 행에서 예외 발생
+            // insertBatch: 005930 독성 행에서 예외 발생
             // lenient 필요: 엄격 모드에서는 argThat 미일치 호출에 PotentialStubbingProblem 발생
             Mockito.lenient()
                     .doThrow(new DataIntegrityViolationException("Data too long"))
-                    .when(corporateEventRepository)
-                    .insertIgnoreDuplicate(
+                    .when(corporateEventInserter)
+                    .insertBatch(
                             org.mockito.ArgumentMatchers.argThat(
-                                    e -> "005930".equals(e.getStock().getSymbol())));
+                                    list ->
+                                            list.stream()
+                                                    .anyMatch(
+                                                            e ->
+                                                                    "005930"
+                                                                            .equals(
+                                                                                    e.getStock()
+                                                                                            .getSymbol()))));
 
             // Act
             DividendCollectionResult result = service.collect("20260601", "20260630");
 
             // Assert
             // (a) 정상 행 2건 삽입
-            verify(corporateEventRepository, times(3)).insertIgnoreDuplicate(any());
+            verify(corporateEventInserter, times(3)).insertBatch(any());
             assertThat(result.succeeded()).isEqualTo(2);
             // (b) 독성 행은 skippedValidation 집계
             assertThat(result.skippedValidation()).isEqualTo(1);
@@ -524,9 +550,10 @@ class DividendScheduleCollectionServiceTest {
             service.collect("20260601", "20260630");
 
             // Assert
-            ArgumentCaptor<CorporateEvent> captor = ArgumentCaptor.forClass(CorporateEvent.class);
-            verify(corporateEventRepository, atLeastOnce()).insertIgnoreDuplicate(captor.capture());
-            assertThat(captor.getAllValues()).allMatch(e -> e.getEventType() == EventType.DIVIDEND);
+            verify(corporateEventInserter, atLeastOnce()).insertBatch(inserterCaptor.capture());
+            assertThat(inserterCaptor.getAllValues())
+                    .flatMap(l -> l)
+                    .allMatch(e -> e.getEventType() == EventType.DIVIDEND);
         }
     }
 }

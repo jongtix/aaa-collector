@@ -57,6 +57,7 @@ public class DividendScheduleCollectionService {
     private final KeyLeaseRegistry keyLeaseRegistry;
     private final StockRepository stockRepository;
     private final CorporateEventRepository corporateEventRepository;
+    private final CorporateEventInserter corporateEventInserter;
 
     /**
      * 배당 일정 수집을 실행하고 집계 결과를 반환한다.
@@ -193,7 +194,7 @@ public class DividendScheduleCollectionService {
             // @MX:REASON: insertIgnoreDuplicate 예외 발생 시 다음 CTS 페이지 진행이 차단될 수 있으므로
             //   예외를 흡수하고 현재 행만 skip하여 전체 배치 수집을 보호한다.
             try {
-                corporateEventRepository.insertIgnoreDuplicate(entity);
+                corporateEventInserter.insertBatch(List.of(entity));
                 succeeded++;
             } catch (DataAccessException ex) {
                 log.warn(

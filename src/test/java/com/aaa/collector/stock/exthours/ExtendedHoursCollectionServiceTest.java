@@ -3,7 +3,6 @@ package com.aaa.collector.stock.exthours;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
-import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
@@ -24,6 +23,7 @@ import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
+import org.mockito.Captor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
@@ -34,7 +34,10 @@ class ExtendedHoursCollectionServiceTest {
     @Mock private StockRepository stockRepository;
     @Mock private YahooExtendedHoursClient yahooClient;
     @Mock private ExtendedHoursRepository extendedHoursRepository;
+    @Mock private ExtendedHoursInserter extendedHoursInserter;
     @Mock private ExtendedHoursSleeper sleeper;
+
+    @Captor private ArgumentCaptor<List<ExtendedHours>> inserterCaptor;
 
     private ExtendedHoursCollectionService service;
 
@@ -45,7 +48,11 @@ class ExtendedHoursCollectionServiceTest {
     void setUp() throws Exception {
         service =
                 new ExtendedHoursCollectionService(
-                        stockRepository, yahooClient, extendedHoursRepository, sleeper);
+                        stockRepository,
+                        yahooClient,
+                        extendedHoursRepository,
+                        extendedHoursInserter,
+                        sleeper);
 
         aaplStock =
                 Stock.builder()
@@ -98,9 +105,7 @@ class ExtendedHoursCollectionServiceTest {
             service.collect(Session.PRE);
 
             verify(yahooClient, never()).fetch(any(), any());
-            verify(extendedHoursRepository, never())
-                    .insertIgnoreDuplicate(
-                            anyLong(), anyString(), any(), any(), any(), anyString(), any());
+            verify(extendedHoursInserter, never()).insertBatch(any());
         }
     }
 
@@ -169,9 +174,7 @@ class ExtendedHoursCollectionServiceTest {
             service.collect(Session.PRE);
 
             // Assert — MSFT는 저장됨
-            verify(extendedHoursRepository, times(1))
-                    .insertIgnoreDuplicate(
-                            any(), eq("PRE"), any(), any(), any(), anyString(), any());
+            verify(extendedHoursInserter, times(1)).insertBatch(any());
         }
     }
 
@@ -191,9 +194,7 @@ class ExtendedHoursCollectionServiceTest {
             service.collect(Session.PRE);
 
             // Assert
-            verify(extendedHoursRepository, never())
-                    .insertIgnoreDuplicate(
-                            anyLong(), anyString(), any(), any(), any(), anyString(), any());
+            verify(extendedHoursInserter, never()).insertBatch(any());
         }
     }
 
@@ -202,8 +203,8 @@ class ExtendedHoursCollectionServiceTest {
     class IdempotentSave {
 
         @Test
-        @DisplayName("정상 행 → insertIgnoreDuplicate 호출, session name 문자열 전달")
-        void normalRow_callsInsertIgnoreDuplicate() {
+        @DisplayName("정상 행 → insertBatch 호출, session=PRE 엔티티 전달")
+        void normalRow_callsInsertBatch() {
             // Arrange
             when(stockRepository.findAllActiveOverseasTradable()).thenReturn(List.of(aaplStock));
             ExtendedHoursRow row = buildRow(aaplStock, Session.PRE, new BigDecimal("295.25"));
@@ -213,21 +214,17 @@ class ExtendedHoursCollectionServiceTest {
             service.collect(Session.PRE);
 
             // Assert
-            ArgumentCaptor<String> sessionCaptor = ArgumentCaptor.forClass(String.class);
-            verify(extendedHoursRepository)
-                    .insertIgnoreDuplicate(
-                            any(),
-                            sessionCaptor.capture(),
-                            any(),
-                            any(),
-                            any(),
-                            anyString(),
-                            any());
-            assertThat(sessionCaptor.getValue()).isEqualTo("PRE");
+            verify(extendedHoursInserter).insertBatch(inserterCaptor.capture());
+            ExtendedHours saved =
+                    inserterCaptor.getAllValues().stream()
+                            .flatMap(List::stream)
+                            .findFirst()
+                            .orElseThrow();
+            assertThat(saved.getSession()).isEqualTo(Session.PRE);
         }
 
         @Test
-        @DisplayName("fetch가 empty → insertIgnoreDuplicate 미호출")
+        @DisplayName("fetch가 empty → insertBatch 미호출")
         void emptyFetchResult_noInsert() {
             // Arrange
             when(stockRepository.findAllActiveOverseasTradable()).thenReturn(List.of(aaplStock));
@@ -237,9 +234,7 @@ class ExtendedHoursCollectionServiceTest {
             service.collect(Session.PRE);
 
             // Assert
-            verify(extendedHoursRepository, never())
-                    .insertIgnoreDuplicate(
-                            anyLong(), anyString(), any(), any(), any(), anyString(), any());
+            verify(extendedHoursInserter, never()).insertBatch(any());
         }
     }
 }

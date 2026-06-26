@@ -24,6 +24,7 @@ public class ExtendedHoursCollectionService {
     private final StockRepository stockRepository;
     private final YahooExtendedHoursClient yahooClient;
     private final ExtendedHoursRepository extendedHoursRepository;
+    private final ExtendedHoursInserter extendedHoursInserter;
     private final ExtendedHoursSleeper sleeper;
 
     @Value("${aaa.extended-hours.request-delay-ms:2500}")
@@ -76,14 +77,17 @@ public class ExtendedHoursCollectionService {
                     continue;
                 }
 
-                extendedHoursRepository.insertIgnoreDuplicate(
-                        row.stockId(),
-                        row.session().name(),
-                        row.tradeDate(),
-                        row.extPrice(),
-                        row.referenceClose(),
-                        row.source(),
-                        LocalDateTime.now());
+                ExtendedHours entity =
+                        ExtendedHours.builder()
+                                .stock(stock)
+                                .session(row.session())
+                                .tradeDate(row.tradeDate())
+                                .extPrice(row.extPrice())
+                                .referenceClose(row.referenceClose())
+                                .source(row.source())
+                                .collectedAt(LocalDateTime.now())
+                                .build();
+                extendedHoursInserter.insertBatch(List.of(entity));
                 succeeded++;
             } catch (Exception e) {
                 log.warn(

@@ -62,6 +62,7 @@ public class RevSplitCollectionService {
     private final KeyLeaseRegistry keyLeaseRegistry;
     private final StockRepository stockRepository;
     private final CorporateEventRepository corporateEventRepository;
+    private final CorporateEventInserter corporateEventInserter;
 
     /**
      * 액면교체 일정 수집을 실행하고 집계 결과를 반환한다.
@@ -182,7 +183,7 @@ public class RevSplitCollectionService {
             // @MX:WARN: [AUTO] 독성 행 예외 흡수 — 영구 정체 방지
             // @MX:REASON: insertIgnoreDuplicate 예외 시 다음 행 처리 보호
             try {
-                corporateEventRepository.insertIgnoreDuplicate(entity);
+                corporateEventInserter.insertBatch(List.of(entity));
                 succeeded++;
             } catch (DataAccessException ex) {
                 log.warn(

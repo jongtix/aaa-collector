@@ -25,6 +25,7 @@ import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
+import org.mockito.Captor;
 import org.mockito.Mock;
 import org.mockito.Mockito;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -46,7 +47,10 @@ class RevSplitCollectionServiceTest {
     @Mock private KeyLeaseRegistry keyLeaseRegistry;
     @Mock private StockRepository stockRepository;
     @Mock private CorporateEventRepository corporateEventRepository;
+    @Mock private CorporateEventInserter corporateEventInserter;
     @Mock private LeaseSession session;
+
+    @Captor private ArgumentCaptor<List<CorporateEvent>> inserterCaptor;
 
     private RevSplitCollectionService service;
 
@@ -57,7 +61,8 @@ class RevSplitCollectionServiceTest {
                         guardedKisExecutor,
                         keyLeaseRegistry,
                         stockRepository,
-                        corporateEventRepository);
+                        corporateEventRepository,
+                        corporateEventInserter);
         Mockito.lenient().when(keyLeaseRegistry.openSession()).thenReturn(session);
     }
 
@@ -129,10 +134,14 @@ class RevSplitCollectionServiceTest {
             assertThat(result.skippedNonWatchlist()).isZero();
             assertThat(result.skippedValidation()).isZero();
 
-            ArgumentCaptor<CorporateEvent> captor = ArgumentCaptor.forClass(CorporateEvent.class);
-            verify(corporateEventRepository).insertIgnoreDuplicate(captor.capture());
+            // inserterCaptor is a @Captor field
+            verify(corporateEventInserter).insertBatch(inserterCaptor.capture());
 
-            CorporateEvent saved = captor.getValue();
+            CorporateEvent saved =
+                    inserterCaptor.getAllValues().stream()
+                            .flatMap(List::stream)
+                            .findFirst()
+                            .orElseThrow();
             assertThat(saved.getEventType()).isEqualTo(EventType.SPLIT);
             assertThat(saved.getEventSubtype()).isEqualTo("분할");
             assertThat(saved.getEventDate()).isEqualTo(LocalDate.of(2026, 6, 13));
@@ -161,10 +170,14 @@ class RevSplitCollectionServiceTest {
             // Assert
             assertThat(result.succeeded()).isEqualTo(1);
 
-            ArgumentCaptor<CorporateEvent> captor = ArgumentCaptor.forClass(CorporateEvent.class);
-            verify(corporateEventRepository).insertIgnoreDuplicate(captor.capture());
+            // inserterCaptor is a @Captor field
+            verify(corporateEventInserter).insertBatch(inserterCaptor.capture());
 
-            CorporateEvent saved = captor.getValue();
+            CorporateEvent saved =
+                    inserterCaptor.getAllValues().stream()
+                            .flatMap(List::stream)
+                            .findFirst()
+                            .orElseThrow();
             assertThat(saved.getEventType()).isEqualTo(EventType.SPLIT);
             assertThat(saved.getEventSubtype()).isEqualTo("병합");
             assertThat(saved.getFaceValue()).isEqualTo(2500L);
@@ -190,7 +203,7 @@ class RevSplitCollectionServiceTest {
             assertThat(result.attempted()).isEqualTo(1);
             assertThat(result.succeeded()).isZero();
             assertThat(result.skippedValidation()).isEqualTo(1);
-            verify(corporateEventRepository, never()).insertIgnoreDuplicate(any());
+            verify(corporateEventInserter, never()).insertBatch(any());
         }
 
         @Test
@@ -212,7 +225,7 @@ class RevSplitCollectionServiceTest {
             assertThat(result.attempted()).isEqualTo(1);
             assertThat(result.succeeded()).isZero();
             assertThat(result.skippedValidation()).isEqualTo(1);
-            verify(corporateEventRepository, never()).insertIgnoreDuplicate(any());
+            verify(corporateEventInserter, never()).insertBatch(any());
         }
 
         @Test
@@ -229,9 +242,14 @@ class RevSplitCollectionServiceTest {
             service.collect(LocalDate.of(2026, 5, 30), LocalDate.of(2026, 8, 15));
 
             // Assert
-            ArgumentCaptor<CorporateEvent> captor = ArgumentCaptor.forClass(CorporateEvent.class);
-            verify(corporateEventRepository).insertIgnoreDuplicate(captor.capture());
-            assertThat(captor.getValue().getFaceValue()).isEqualTo(100L);
+            // inserterCaptor is a @Captor field
+            verify(corporateEventInserter).insertBatch(inserterCaptor.capture());
+            CorporateEvent savedFaceValue =
+                    inserterCaptor.getAllValues().stream()
+                            .flatMap(List::stream)
+                            .findFirst()
+                            .orElseThrow();
+            assertThat(savedFaceValue.getFaceValue()).isEqualTo(100L);
         }
 
         @Test
@@ -254,9 +272,14 @@ class RevSplitCollectionServiceTest {
 
             // Assert — 병합(af>bf): stock_rate = 100/300 ≈ 0.3333
             assertThat(result.succeeded()).isEqualTo(1);
-            ArgumentCaptor<CorporateEvent> captor = ArgumentCaptor.forClass(CorporateEvent.class);
-            verify(corporateEventRepository).insertIgnoreDuplicate(captor.capture());
-            assertThat(captor.getValue().getStockRate())
+            // inserterCaptor is a @Captor field
+            verify(corporateEventInserter).insertBatch(inserterCaptor.capture());
+            CorporateEvent savedStockRate =
+                    inserterCaptor.getAllValues().stream()
+                            .flatMap(List::stream)
+                            .findFirst()
+                            .orElseThrow();
+            assertThat(savedStockRate.getStockRate())
                     .isEqualByComparingTo(new BigDecimal("0.3333"));
         }
 
@@ -275,9 +298,14 @@ class RevSplitCollectionServiceTest {
             service.collect(LocalDate.of(2026, 5, 30), LocalDate.of(2026, 8, 15));
 
             // Assert — SPLIT 행 미사용 컬럼은 null
-            ArgumentCaptor<CorporateEvent> captor = ArgumentCaptor.forClass(CorporateEvent.class);
-            verify(corporateEventRepository).insertIgnoreDuplicate(captor.capture());
-            assertThat(captor.getValue())
+            // inserterCaptor is a @Captor field
+            verify(corporateEventInserter).insertBatch(inserterCaptor.capture());
+            CorporateEvent savedNullCols =
+                    inserterCaptor.getAllValues().stream()
+                            .flatMap(List::stream)
+                            .findFirst()
+                            .orElseThrow();
+            assertThat(savedNullCols)
                     .extracting(
                             CorporateEvent::getPayDate,
                             CorporateEvent::getStockPayDate,
@@ -313,7 +341,7 @@ class RevSplitCollectionServiceTest {
             service.collect(LocalDate.of(2026, 5, 30), LocalDate.of(2026, 8, 15));
 
             // Assert — 서비스는 2회 호출, DB는 ON DUPLICATE KEY로 중복 무시
-            verify(corporateEventRepository, times(2)).insertIgnoreDuplicate(any());
+            verify(corporateEventInserter, times(2)).insertBatch(any());
         }
     }
 
@@ -360,7 +388,7 @@ class RevSplitCollectionServiceTest {
             // Assert — 0건 성공 (정상)
             assertThat(result.attempted()).isZero();
             assertThat(result.succeeded()).isZero();
-            verify(corporateEventRepository, never()).insertIgnoreDuplicate(any());
+            verify(corporateEventInserter, never()).insertBatch(any());
         }
 
         @Test
@@ -439,7 +467,7 @@ class RevSplitCollectionServiceTest {
             assertThat(result.attempted()).isEqualTo(3);
             assertThat(result.succeeded()).isEqualTo(1);
             assertThat(result.skippedNonWatchlist()).isEqualTo(2);
-            verify(corporateEventRepository, times(1)).insertIgnoreDuplicate(any());
+            verify(corporateEventInserter, times(1)).insertBatch(any());
         }
 
         @Test
@@ -460,7 +488,7 @@ class RevSplitCollectionServiceTest {
 
             // Assert
             assertThat(result.skippedValidation()).isEqualTo(1);
-            verify(corporateEventRepository, never()).insertIgnoreDuplicate(any());
+            verify(corporateEventInserter, never()).insertBatch(any());
         }
 
         @Test
@@ -482,7 +510,7 @@ class RevSplitCollectionServiceTest {
 
             // Assert
             assertThat(result.skippedValidation()).isEqualTo(1);
-            verify(corporateEventRepository, never()).insertIgnoreDuplicate(any());
+            verify(corporateEventInserter, never()).insertBatch(any());
         }
 
         @Test
@@ -504,7 +532,7 @@ class RevSplitCollectionServiceTest {
 
             // Assert
             assertThat(result.skippedValidation()).isEqualTo(1);
-            verify(corporateEventRepository, never()).insertIgnoreDuplicate(any());
+            verify(corporateEventInserter, never()).insertBatch(any());
         }
 
         @Test
@@ -579,7 +607,7 @@ class RevSplitCollectionServiceTest {
 
             // Assert
             assertThat(result.skippedValidation()).isEqualTo(1);
-            verify(corporateEventRepository, never()).insertIgnoreDuplicate(any());
+            verify(corporateEventInserter, never()).insertBatch(any());
         }
 
         @Test
@@ -655,7 +683,7 @@ class RevSplitCollectionServiceTest {
                     service.collect(LocalDate.of(2026, 5, 30), LocalDate.of(2026, 8, 15));
 
             assertThat(result.skippedValidation()).isEqualTo(1);
-            verify(corporateEventRepository, never()).insertIgnoreDuplicate(any());
+            verify(corporateEventInserter, never()).insertBatch(any());
         }
 
         @Test
@@ -676,7 +704,7 @@ class RevSplitCollectionServiceTest {
                     service.collect(LocalDate.of(2026, 5, 30), LocalDate.of(2026, 8, 15));
 
             assertThat(result.skippedValidation()).isEqualTo(1);
-            verify(corporateEventRepository, never()).insertIgnoreDuplicate(any());
+            verify(corporateEventInserter, never()).insertBatch(any());
         }
 
         @Test
@@ -689,8 +717,8 @@ class RevSplitCollectionServiceTest {
                             eq(session), any(), eq(TR_ID), eq(KisRevSplitResponse.class)))
                     .thenReturn(singlePageResponse(List.of(splitRow("096960"))));
             Mockito.doThrow(new DataIntegrityViolationException("dup"))
-                    .when(corporateEventRepository)
-                    .insertIgnoreDuplicate(any());
+                    .when(corporateEventInserter)
+                    .insertBatch(any());
 
             // Act
             RevSplitCollectionResult result =
