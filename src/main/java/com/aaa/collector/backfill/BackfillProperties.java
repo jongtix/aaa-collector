@@ -11,9 +11,9 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
  *
  * <ul>
  *   <li>{@code cron}: 02:00 KST — 장 마감(16:00~21:00) 이후 비즈니스 임팩트 최소 시각(AC-7.2 회피 시각대).
- *   <li>{@code perRunCompletionCap}: 10 — 한 cron 회차에서 inner 완성 루프를 개시할 최대 status 슬롯
- *       수(REQ-BACKFILL-054, AC-3.1). 각 슬롯은 status 1개를 COMPLETED까지 반복하며, 캡은 status 수 단위(window 수가
- *       아님).
+ *   <li>{@code perTableCompletionCap}: 10 — 한 테이블 스트림이 한 회차에 완주할 status 슬롯 수 = 테이블별 런타임 바운드 (window
+ *       수 아님, KIS rate limit과 무관 — rate는 KisRateLimiter 책임)(REQ-BACKFILL-064).
+ *       SPEC-COLLECTOR-BACKFILL-004 도입으로 perRunCompletionCap에서 리네임됨.
  *   <li>{@code maxWindowsPerTarget}: 120 — status당 inner 루프 최대 윈도우 횟수 공통 하드 캡(REQ-BACKFILL-053a).
  *       SPAN 150 달력일 × 120 window ≈ 18,000 달력일 ≈ 49년(~9,000 거래일) 커버 — 최장 상장 종목도 단일 회차 완성 여유. 정상 종료는
  *       그룹별 종료 정책으로 상한 도달 전에 발생한다. GROUP_A·GROUP_B 모두 적용되는 최종 방어선.
@@ -29,11 +29,13 @@ public class BackfillProperties {
     private String cron = "0 0 2 * * *";
 
     /**
-     * 한 cron 회차에서 inner 완성 루프를 개시할 최대 status 슬롯 수 (REQ-BACKFILL-054, AC-3.1).
+     * 한 테이블 스트림이 한 회차에 완주할 최대 status 슬롯 수 — 테이블별 런타임 바운드 (REQ-BACKFILL-064).
      *
-     * <p>캡은 window 수가 아닌 status(종목×데이터테이블) 수 단위다. inner 루프를 개시한 status 1개가 슬롯 1개를 소비한다.
+     * <p>캡은 window 수가 아닌 status(종목×데이터테이블) 수 단위다. inner 루프를 개시한 status 1개가 슬롯 1개를 소비한다. KIS rate
+     * limit과 무관(rate는 KisRateLimiter 책임). SPEC-COLLECTOR-BACKFILL-004 도입, perRunCompletionCap
+     * 리네임(REQ-BACKFILL-064a).
      */
-    private int perRunCompletionCap = 10;
+    private int perTableCompletionCap = 10;
 
     /**
      * status당 inner 루프 최대 윈도우 반복 횟수 — 무한 루프 하드 방어 공통 상한 (REQ-BACKFILL-053a).
@@ -60,12 +62,12 @@ public class BackfillProperties {
         this.cron = cron;
     }
 
-    public int getPerRunCompletionCap() {
-        return perRunCompletionCap;
+    public int getPerTableCompletionCap() {
+        return perTableCompletionCap;
     }
 
-    public void setPerRunCompletionCap(int perRunCompletionCap) {
-        this.perRunCompletionCap = perRunCompletionCap;
+    public void setPerTableCompletionCap(int perTableCompletionCap) {
+        this.perTableCompletionCap = perTableCompletionCap;
     }
 
     public int getMaxWindowsPerTarget() {

@@ -7,10 +7,10 @@ import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 
 /**
- * BackfillProperties 기본값 명세 (SPEC-COLLECTOR-BACKFILL-002 T1, AC-5.2).
+ * BackfillProperties 기본값 명세 (SPEC-COLLECTOR-BACKFILL-002 T1, SPEC-COLLECTOR-BACKFILL-004 T1).
  *
- * <p>{@code perRunCompletionCap}=10, {@code maxWindowsPerTarget}=120 기본값 검증. {@code
- * perRunWindowCap}·{@code perRunStockCap} 식별자 제거 확인(컴파일 레벨).
+ * <p>{@code perTableCompletionCap}=10, {@code maxWindowsPerTarget}=120 기본값 검증. {@code
+ * perRunCompletionCap} 리네임(REQ-BACKFILL-064a) 결과 확인(컴파일 레벨).
  */
 @DisplayName("BackfillProperties 기본값 명세")
 class BackfillPropertiesTest {
@@ -22,9 +22,10 @@ class BackfillPropertiesTest {
     class NewFieldDefaults {
 
         @Test
-        @DisplayName("perRunCompletionCap 기본값 = 10 (REQ-BACKFILL-058a, AC-5.2)")
-        void perRunCompletionCap_defaultIs10() {
-            assertThat(properties.getPerRunCompletionCap()).isEqualTo(10);
+        @DisplayName(
+                "perTableCompletionCap 기본값 = 10 (REQ-BACKFILL-064, SPEC-COLLECTOR-BACKFILL-004)")
+        void perTableCompletionCap_defaultIs10() {
+            assertThat(properties.getPerTableCompletionCap()).isEqualTo(10);
         }
 
         @Test
@@ -62,10 +63,10 @@ class BackfillPropertiesTest {
     class GetterSetter {
 
         @Test
-        @DisplayName("perRunCompletionCap setter 적용")
-        void setPerRunCompletionCap_appliesValue() {
-            properties.setPerRunCompletionCap(20);
-            assertThat(properties.getPerRunCompletionCap()).isEqualTo(20);
+        @DisplayName("perTableCompletionCap setter 적용")
+        void setPerTableCompletionCap_appliesValue() {
+            properties.setPerTableCompletionCap(20);
+            assertThat(properties.getPerTableCompletionCap()).isEqualTo(20);
         }
 
         @Test
