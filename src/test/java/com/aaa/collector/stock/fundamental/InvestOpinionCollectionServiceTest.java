@@ -37,6 +37,7 @@ import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
+import org.mockito.Captor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.slf4j.LoggerFactory;
@@ -61,8 +62,11 @@ class InvestOpinionCollectionServiceTest {
 
     @Mock private StockRepository stockRepository;
     @Mock private AnalystEstimateRepository analystEstimateRepository;
+    @Mock private AnalystEstimateInserter analystEstimateInserter;
     @Mock private GuardedKisExecutor guardedKisExecutor;
     @Mock private HealthyKeySelector healthyKeySelector;
+
+    @Captor private ArgumentCaptor<List<AnalystEstimate>> inserterCaptor;
 
     private InvestOpinionCollectionService service;
 
@@ -73,6 +77,7 @@ class InvestOpinionCollectionServiceTest {
                 new InvestOpinionCollectionService(
                         stockRepository,
                         analystEstimateRepository,
+                        analystEstimateInserter,
                         guardedKisExecutor,
                         keyLeaseRegistry);
     }
@@ -134,9 +139,11 @@ class InvestOpinionCollectionServiceTest {
 
             service.collect(TODAY);
 
-            ArgumentCaptor<AnalystEstimate> captor = ArgumentCaptor.forClass(AnalystEstimate.class);
-            verify(analystEstimateRepository).insertIgnoreDuplicate(captor.capture());
-            return captor.getValue();
+            verify(analystEstimateInserter).insertBatch(inserterCaptor.capture());
+            return inserterCaptor.getAllValues().stream()
+                    .flatMap(List::stream)
+                    .findFirst()
+                    .orElseThrow();
         }
 
         @Test
@@ -185,9 +192,13 @@ class InvestOpinionCollectionServiceTest {
 
             service.collect(TODAY);
 
-            ArgumentCaptor<AnalystEstimate> captor = ArgumentCaptor.forClass(AnalystEstimate.class);
-            verify(analystEstimateRepository).insertIgnoreDuplicate(captor.capture());
-            assertThat(captor.getValue().getInstitutionName()).isEqualTo("");
+            verify(analystEstimateInserter).insertBatch(inserterCaptor.capture());
+            AnalystEstimate savedInst =
+                    inserterCaptor.getAllValues().stream()
+                            .flatMap(List::stream)
+                            .findFirst()
+                            .orElseThrow();
+            assertThat(savedInst.getInstitutionName()).isEqualTo("");
         }
 
         @Test
@@ -213,10 +224,14 @@ class InvestOpinionCollectionServiceTest {
 
             service.collect(TODAY);
 
-            ArgumentCaptor<AnalystEstimate> captor = ArgumentCaptor.forClass(AnalystEstimate.class);
-            verify(analystEstimateRepository).insertIgnoreDuplicate(captor.capture());
-            assertThat(captor.getValue().getTargetPrice()).isEqualTo(95_000L);
-            assertThat(captor.getValue().getPrevClose()).isEqualTo(82_000L);
+            verify(analystEstimateInserter).insertBatch(inserterCaptor.capture());
+            AnalystEstimate savedBigInt =
+                    inserterCaptor.getAllValues().stream()
+                            .flatMap(List::stream)
+                            .findFirst()
+                            .orElseThrow();
+            assertThat(savedBigInt.getTargetPrice()).isEqualTo(95_000L);
+            assertThat(savedBigInt.getPrevClose()).isEqualTo(82_000L);
         }
 
         @Test
@@ -242,10 +257,14 @@ class InvestOpinionCollectionServiceTest {
 
             service.collect(TODAY);
 
-            ArgumentCaptor<AnalystEstimate> captor = ArgumentCaptor.forClass(AnalystEstimate.class);
-            verify(analystEstimateRepository).insertIgnoreDuplicate(captor.capture());
-            assertThat(captor.getValue().getGapNDay()).isEqualByComparingTo("-13000");
-            assertThat(captor.getValue().getGapRateNDay()).isEqualByComparingTo("-15.85");
+            verify(analystEstimateInserter).insertBatch(inserterCaptor.capture());
+            AnalystEstimate savedGap =
+                    inserterCaptor.getAllValues().stream()
+                            .flatMap(List::stream)
+                            .findFirst()
+                            .orElseThrow();
+            assertThat(savedGap.getGapNDay()).isEqualByComparingTo("-13000");
+            assertThat(savedGap.getGapRateNDay()).isEqualByComparingTo("-15.85");
         }
     }
 
@@ -294,8 +313,7 @@ class InvestOpinionCollectionServiceTest {
 
             assertThat(result.succeeded()).isEqualTo(1);
             assertThat(result.skipped()).isEqualTo(0);
-            verify(analystEstimateRepository, never())
-                    .insertIgnoreDuplicate(any(AnalystEstimate.class));
+            verify(analystEstimateInserter, never()).insertBatch(any());
         }
 
         @Test
@@ -310,9 +328,13 @@ class InvestOpinionCollectionServiceTest {
 
             service.collect(TODAY);
 
-            ArgumentCaptor<AnalystEstimate> captor = ArgumentCaptor.forClass(AnalystEstimate.class);
-            verify(analystEstimateRepository, times(1)).insertIgnoreDuplicate(captor.capture());
-            assertThat(captor.getValue().getTradeDate()).isEqualTo(LocalDate.of(2026, 6, 12));
+            verify(analystEstimateInserter, times(1)).insertBatch(inserterCaptor.capture());
+            AnalystEstimate savedBad =
+                    inserterCaptor.getAllValues().stream()
+                            .flatMap(List::stream)
+                            .findFirst()
+                            .orElseThrow();
+            assertThat(savedBad.getTradeDate()).isEqualTo(LocalDate.of(2026, 6, 12));
         }
 
         @Test
@@ -324,8 +346,7 @@ class InvestOpinionCollectionServiceTest {
 
             service.collect(TODAY);
 
-            verify(analystEstimateRepository, never())
-                    .insertIgnoreDuplicate(any(AnalystEstimate.class));
+            verify(analystEstimateInserter, never()).insertBatch(any());
         }
 
         @Test
@@ -449,8 +470,7 @@ class InvestOpinionCollectionServiceTest {
 
             service.collect(TODAY);
 
-            verify(analystEstimateRepository, times(1))
-                    .insertIgnoreDuplicate(any(AnalystEstimate.class));
+            verify(analystEstimateInserter, times(1)).insertBatch(any());
         }
     }
 

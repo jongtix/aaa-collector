@@ -61,6 +61,7 @@ public class InvestOpinionCollectionService {
 
     private final StockRepository stockRepository;
     private final AnalystEstimateRepository analystEstimateRepository;
+    private final AnalystEstimateInserter analystEstimateInserter;
     private final GuardedKisExecutor guardedKisExecutor;
     private final KeyLeaseRegistry keyLeaseRegistry;
 
@@ -255,7 +256,7 @@ public class InvestOpinionCollectionService {
                             .gapFutures(FundamentalValueParser.parseDecimal(row.stftEsdg()))
                             .gapRateFutures(FundamentalValueParser.parseDecimal(row.dprt()))
                             .build();
-            analystEstimateRepository.insertIgnoreDuplicate(entity);
+            analystEstimateInserter.insertBatch(List.of(entity));
             return true;
         } catch (NumberFormatException | ArithmeticException e) {
             // 파싱 실패·DECIMAL 정수부 경계 초과·BIGINT 비0 소수부·long 범위 초과 → 건별 skip (REQ-BATCH4-070a)

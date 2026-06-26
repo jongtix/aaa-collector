@@ -62,6 +62,7 @@ public class FinancialRatioCollectionService {
 
     private final StockRepository stockRepository;
     private final FinancialRepository financialRepository;
+    private final FinancialInserter financialInserter;
     private final GuardedKisExecutor guardedKisExecutor;
     private final KeyLeaseRegistry keyLeaseRegistry;
 
@@ -286,7 +287,7 @@ public class FinancialRatioCollectionService {
                             .retentionRate(FundamentalValueParser.parseDecimal(row.rsrvRate()))
                             .debtRatio(FundamentalValueParser.parseDecimal(row.lbltRate()))
                             .build();
-            financialRepository.insertIgnoreDuplicate(entity);
+            financialInserter.insertBatch(List.of(entity));
             return true;
         } catch (NumberFormatException | ArithmeticException e) {
             // 파싱 실패·DECIMAL 정수부 경계 초과·BIGINT 비0 소수부·long 범위 초과 → 건별 skip (REQ-BATCH4-070a)

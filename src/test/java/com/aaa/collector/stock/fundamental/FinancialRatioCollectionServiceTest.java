@@ -36,6 +36,7 @@ import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
+import org.mockito.Captor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.slf4j.LoggerFactory;
@@ -60,8 +61,11 @@ class FinancialRatioCollectionServiceTest {
 
     @Mock private StockRepository stockRepository;
     @Mock private FinancialRepository financialRepository;
+    @Mock private FinancialInserter financialInserter;
     @Mock private GuardedKisExecutor guardedKisExecutor;
     @Mock private HealthyKeySelector healthyKeySelector;
+
+    @Captor private ArgumentCaptor<List<Financial>> inserterCaptor;
 
     private FinancialRatioCollectionService service;
 
@@ -70,7 +74,11 @@ class FinancialRatioCollectionServiceTest {
         KeyLeaseRegistry keyLeaseRegistry = new KeyLeaseRegistry(healthyKeySelector);
         service =
                 new FinancialRatioCollectionService(
-                        stockRepository, financialRepository, guardedKisExecutor, keyLeaseRegistry);
+                        stockRepository,
+                        financialRepository,
+                        financialInserter,
+                        guardedKisExecutor,
+                        keyLeaseRegistry);
     }
 
     private Stock stockOf(String symbol) {
@@ -165,9 +173,9 @@ class FinancialRatioCollectionServiceTest {
 
             service.collect();
 
-            ArgumentCaptor<Financial> captor = ArgumentCaptor.forClass(Financial.class);
-            verify(financialRepository, times(2)).insertIgnoreDuplicate(captor.capture());
-            assertThat(captor.getAllValues())
+            verify(financialInserter, times(2)).insertBatch(inserterCaptor.capture());
+            assertThat(inserterCaptor.getAllValues())
+                    .flatMap(l -> l)
                     .extracting(Financial::getPeriodType)
                     .containsExactlyInAnyOrder(PeriodType.ANNUAL, PeriodType.QUARTERLY);
         }
@@ -185,9 +193,11 @@ class FinancialRatioCollectionServiceTest {
 
             service.collect();
 
-            ArgumentCaptor<Financial> captor = ArgumentCaptor.forClass(Financial.class);
-            verify(financialRepository, times(1)).insertIgnoreDuplicate(captor.capture());
-            return captor.getValue();
+            verify(financialInserter, times(1)).insertBatch(inserterCaptor.capture());
+            return inserterCaptor.getAllValues().stream()
+                    .flatMap(List::stream)
+                    .findFirst()
+                    .orElseThrow();
         }
 
         @Test
@@ -286,7 +296,7 @@ class FinancialRatioCollectionServiceTest {
 
             service.collect();
 
-            verify(financialRepository, times(3)).insertIgnoreDuplicate(any(Financial.class));
+            verify(financialInserter, times(3)).insertBatch(any());
         }
     }
 
@@ -314,7 +324,7 @@ class FinancialRatioCollectionServiceTest {
 
             service.collect();
 
-            verify(financialRepository, never()).insertIgnoreDuplicate(any(Financial.class));
+            verify(financialInserter, never()).insertBatch(any());
         }
 
         @Test
@@ -337,7 +347,7 @@ class FinancialRatioCollectionServiceTest {
 
             service.collect();
 
-            verify(financialRepository, never()).insertIgnoreDuplicate(any(Financial.class));
+            verify(financialInserter, never()).insertBatch(any());
         }
 
         @Test
@@ -358,9 +368,13 @@ class FinancialRatioCollectionServiceTest {
 
             service.collect();
 
-            ArgumentCaptor<Financial> captor = ArgumentCaptor.forClass(Financial.class);
-            verify(financialRepository, times(1)).insertIgnoreDuplicate(captor.capture());
-            assertThat(captor.getValue().getPeriodDate()).isEqualTo(LocalDate.of(2024, 3, 1));
+            verify(financialInserter, times(1)).insertBatch(inserterCaptor.capture());
+            Financial capturedEntity =
+                    inserterCaptor.getAllValues().stream()
+                            .flatMap(List::stream)
+                            .findFirst()
+                            .orElseThrow();
+            assertThat(capturedEntity.getPeriodDate()).isEqualTo(LocalDate.of(2024, 3, 1));
         }
 
         @Test
@@ -390,7 +404,7 @@ class FinancialRatioCollectionServiceTest {
 
             FundamentalResult result = service.collect();
 
-            verify(financialRepository, times(1)).insertIgnoreDuplicate(any(Financial.class));
+            verify(financialInserter, times(1)).insertBatch(any());
             assertThat(result.attempted()).isEqualTo(result.succeeded() + result.skipped());
         }
 
@@ -414,7 +428,7 @@ class FinancialRatioCollectionServiceTest {
 
             service.collect();
 
-            verify(financialRepository, never()).insertIgnoreDuplicate(any(Financial.class));
+            verify(financialInserter, never()).insertBatch(any());
         }
     }
 
@@ -433,7 +447,7 @@ class FinancialRatioCollectionServiceTest {
 
             assertThat(result.succeeded()).isEqualTo(2);
             assertThat(result.skipped()).isEqualTo(0);
-            verify(financialRepository, never()).insertIgnoreDuplicate(any(Financial.class));
+            verify(financialInserter, never()).insertBatch(any());
         }
 
         @Test
@@ -619,7 +633,7 @@ class FinancialRatioCollectionServiceTest {
 
             service.collect();
 
-            verify(financialRepository, times(1)).insertIgnoreDuplicate(any(Financial.class));
+            verify(financialInserter, times(1)).insertBatch(any());
         }
     }
 }
