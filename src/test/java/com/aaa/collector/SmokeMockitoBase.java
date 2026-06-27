@@ -27,6 +27,7 @@ import com.aaa.collector.market.indicator.usdkrw.UsdkrwCollectionService;
 import com.aaa.collector.market.indicator.vix.CboeVixClient;
 import com.aaa.collector.market.indicator.vix.FredVixClient;
 import com.aaa.collector.market.indicator.vix.VixCollectionService;
+import com.aaa.collector.market.session.UsMarketSessionGate;
 import com.aaa.collector.news.DomesticNewsHeadlineRepository;
 import com.aaa.collector.news.overseas.OverseasNewsHeadlineRepository;
 import com.aaa.collector.stock.AnalystEstimateRepository;
@@ -129,7 +130,9 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
             CorpCodeUpdateScheduler.class,
             DartDisclosureBackfillWindowService.class,
             DartDisclosureBackfillOrchestrator.class,
-            DartDisclosureBackfillScheduler.class
+            DartDisclosureBackfillScheduler.class,
+            // SPEC-COLLECTOR-USMKT-001: 미국 시장 게이트 신규 빈 모킹 (smoke 회귀 방지)
+            UsMarketSessionGate.class
         })
 class SmokeMockitoBase {
 
