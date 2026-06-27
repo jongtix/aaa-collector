@@ -58,13 +58,15 @@ public class BackfillStatus extends BaseEntity {
     private final String dataTable;
 
     /**
-     * 진행 상태.
+     * 진행 상태 ({@link BackfillStatusType}).
      *
-     * <p>{@code PENDING} / {@code IN_PROGRESS} / {@code COMPLETED} / {@code FAILED}. DB DEFAULT
-     * {@code 'PENDING'}은 Flyway DDL이 단독 관리한다.
+     * <p>{@link BackfillStatusType#PENDING} / {@link BackfillStatusType#IN_PROGRESS} / {@link
+     * BackfillStatusType#COMPLETED} / {@link BackfillStatusType#FAILED}. DB 컬럼 값은 {@link
+     * BackfillStatusConverter}가 String↔enum 변환을 담당한다(autoApply = true). DB DEFAULT {@code
+     * 'PENDING'}은 Flyway DDL이 단독 관리한다.
      */
     @Column(name = "status", length = 16)
-    private String status;
+    private BackfillStatusType status;
 
     /** 지금까지 도달한 최소(가장 과거) 거래일 = 재개 anchor. NULL=미착수. */
     @Column(name = "last_collected_date")
@@ -92,7 +94,8 @@ public class BackfillStatus extends BaseEntity {
      * <p>JPA dirty-check 경로 — 관리 엔티티에서 호출해야 {@code @LastModifiedDate}(updated_at)가 발화한다. {@code
      * lastRowCount}가 {@code null}이면 직전값을 유지한다.
      *
-     * @param status 새 상태 ({@code "IN_PROGRESS"} 또는 {@code "COMPLETED"})
+     * @param status 새 상태 ({@link BackfillStatusType#IN_PROGRESS} 또는 {@link
+     *     BackfillStatusType#COMPLETED})
      * @param lastCollectedDate 이번 윈도우 최소 거래일
      * @param staleCount 새 stale_count (전진 시 0, 무전진 시 현재값+1)
      * @param lastRowCount 이번 윈도우 행 수 (null이면 직전값 유지)
@@ -102,7 +105,10 @@ public class BackfillStatus extends BaseEntity {
     // @MX:SPEC: SPEC-COLLECTOR-UPDATEDAT-001
     @SuppressWarnings("PMD.NullAssignment") // lastError 초기화 의도적 null 대입 (오류 없음 = null)
     public void advance(
-            String status, LocalDate lastCollectedDate, int staleCount, Integer lastRowCount) {
+            BackfillStatusType status,
+            LocalDate lastCollectedDate,
+            int staleCount,
+            Integer lastRowCount) {
         this.status = status;
         this.lastCollectedDate = lastCollectedDate;
         this.staleCount = staleCount;
@@ -119,13 +125,14 @@ public class BackfillStatus extends BaseEntity {
      * <p>JPA dirty-check 경로 — 관리 엔티티에서 호출해야 {@code @LastModifiedDate}(updated_at)가 발화한다. {@code
      * last_collected_date}는 변경하지 않는다.
      *
-     * @param status 새 상태 ({@code "IN_PROGRESS"} 또는 {@code "FAILED"})
+     * @param status 새 상태 ({@link BackfillStatusType#IN_PROGRESS} 또는 {@link
+     *     BackfillStatusType#FAILED})
      * @param lastError 오류 메시지 (최대 512자)
      */
     // @MX:ANCHOR: [AUTO] 백필 오류 상태 기록 — @Transactional / TransactionTemplate 경계 내 관리 엔티티 변경
     // @MX:REASON: [AUTO] JPA dirty-check 경로 필수 — @LastModifiedDate 발화는 MANAGED 상태에서만 보장. 5개 호출처.
     // @MX:SPEC: SPEC-COLLECTOR-UPDATEDAT-001
-    public void fail(String status, String lastError) {
+    public void fail(BackfillStatusType status, String lastError) {
         this.status = status;
         this.lastError = lastError;
         this.attemptCount++;
@@ -136,7 +143,7 @@ public class BackfillStatus extends BaseEntity {
             String targetType,
             String targetCode,
             String dataTable,
-            String status,
+            BackfillStatusType status,
             LocalDate lastCollectedDate,
             int staleCount,
             Integer lastRowCount,

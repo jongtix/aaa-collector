@@ -3,6 +3,7 @@ package com.aaa.collector.dart.backfill;
 import com.aaa.collector.backfill.BackfillProperties;
 import com.aaa.collector.backfill.BackfillStatus;
 import com.aaa.collector.backfill.BackfillStatusRepository;
+import com.aaa.collector.backfill.BackfillStatusType;
 import com.aaa.collector.stock.Stock;
 import com.aaa.collector.stock.StockRepository;
 import java.util.List;
@@ -27,8 +28,6 @@ public class DartDisclosureBackfillOrchestrator {
 
     static final String TARGET_TYPE = "STOCK";
     static final String DATA_TABLE = "disclosures";
-    static final String STATUS_PENDING = "PENDING";
-    static final String STATUS_IN_PROGRESS = "IN_PROGRESS";
 
     private final BackfillStatusRepository backfillStatusRepository;
     private final DartDisclosureBackfillWindowService windowService;
@@ -58,7 +57,9 @@ public class DartDisclosureBackfillOrchestrator {
         // Step 2: 미완료 항목 조회 — data_table='disclosures' 한정 (CR-01: 타 도메인 진행점 오염 방지)
         List<BackfillStatus> pending =
                 backfillStatusRepository.findByStatusInAndTargetTypeAndDataTableOrderById(
-                        List.of(STATUS_PENDING, STATUS_IN_PROGRESS), TARGET_TYPE, DATA_TABLE);
+                        List.of(BackfillStatusType.PENDING, BackfillStatusType.IN_PROGRESS),
+                        TARGET_TYPE,
+                        DATA_TABLE);
 
         if (pending.isEmpty()) {
             log.info("[dart-backfill] 처리 대상 없음");

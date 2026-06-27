@@ -9,6 +9,7 @@ import static org.mockito.Mockito.when;
 
 import com.aaa.collector.backfill.BackfillStatus;
 import com.aaa.collector.backfill.BackfillStatusRepository;
+import com.aaa.collector.backfill.BackfillStatusType;
 import com.aaa.collector.dart.backfill.DartDisclosureBackfillWindowService;
 import com.aaa.collector.dart.corpcode.CorpCodeMappingRepository;
 import com.aaa.collector.dart.disclosure.DisclosureInserter;
@@ -97,7 +98,8 @@ class DartDisclosureBackfillWindowServiceTest {
 
             // Assert
             verify(backfillStatusRepository).findById(1L);
-            verify(mockManaged).fail(eq("IN_PROGRESS"), eq("corp_code 매핑 없음: " + SYMBOL));
+            verify(mockManaged)
+                    .fail(eq(BackfillStatusType.IN_PROGRESS), eq("corp_code 매핑 없음: " + SYMBOL));
             verify(disclosureInserter, never()).insertBatchIsolated(any(), any());
         }
     }
@@ -124,7 +126,8 @@ class DartDisclosureBackfillWindowServiceTest {
 
             // Assert
             verify(backfillStatusRepository).findById(1L);
-            verify(mockManaged).advance(eq("COMPLETED"), eq(expectedBgnDe), eq(0), eq(0));
+            verify(mockManaged)
+                    .advance(eq(BackfillStatusType.COMPLETED), eq(expectedBgnDe), eq(0), eq(0));
         }
     }
 
@@ -153,7 +156,8 @@ class DartDisclosureBackfillWindowServiceTest {
             // Assert
             verify(disclosureInserter).insertBatchIsolated(any(), any());
             verify(backfillStatusRepository).findById(1L);
-            verify(mockManaged).advance(eq("IN_PROGRESS"), eq(expectedBgnDe), eq(0), eq(1));
+            verify(mockManaged)
+                    .advance(eq(BackfillStatusType.IN_PROGRESS), eq(expectedBgnDe), eq(0), eq(1));
         }
     }
 

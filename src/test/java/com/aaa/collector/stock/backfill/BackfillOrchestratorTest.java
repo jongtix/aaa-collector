@@ -17,6 +17,7 @@ import com.aaa.collector.backfill.BackfillProperties;
 import com.aaa.collector.backfill.BackfillStatus;
 import com.aaa.collector.backfill.BackfillStatusRepository;
 import com.aaa.collector.backfill.BackfillStatusSeeder;
+import com.aaa.collector.backfill.BackfillStatusType;
 import com.aaa.collector.kis.gate.KeyLeaseRegistry;
 import com.aaa.collector.kis.gate.KeyLeaseRegistry.LeaseSession;
 import com.aaa.collector.stock.Stock;
@@ -83,7 +84,7 @@ class BackfillOrchestratorTest {
                 .targetType("STOCK")
                 .targetCode(symbol)
                 .dataTable(dataTable)
-                .status("PENDING")
+                .status(BackfillStatusType.PENDING)
                 .staleCount(0)
                 .attemptCount(0)
                 .build();
@@ -95,7 +96,7 @@ class BackfillOrchestratorTest {
                 .targetType("STOCK")
                 .targetCode(symbol)
                 .dataTable(dataTable)
-                .status("IN_PROGRESS")
+                .status(BackfillStatusType.IN_PROGRESS)
                 .lastCollectedDate(lastCollectedDate)
                 .staleCount(0)
                 .attemptCount(0)
@@ -107,7 +108,7 @@ class BackfillOrchestratorTest {
                 .targetType("STOCK")
                 .targetCode(symbol)
                 .dataTable(dataTable)
-                .status("COMPLETED")
+                .status(BackfillStatusType.COMPLETED)
                 .staleCount(0)
                 .attemptCount(0)
                 .build();
@@ -711,7 +712,7 @@ class BackfillOrchestratorTest {
             BackfillStatus completed = buildCompletedStatus("005930", "daily_ohlcv");
             when(backfillStatusRepository.findById(any())).thenReturn(Optional.of(completed));
 
-            when(backfillStatusRepository.countByStatusAndTargetType(anyString(), anyString()))
+            when(backfillStatusRepository.countByStatusAndTargetType(any(), anyString()))
                     .thenReturn(5L);
             when(backfillStatusRepository.countByTargetType(anyString())).thenReturn(10L);
 

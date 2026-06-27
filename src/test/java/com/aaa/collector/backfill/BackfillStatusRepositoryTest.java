@@ -50,7 +50,7 @@ class BackfillStatusRepositoryTest {
                 .targetType("STOCK")
                 .targetCode(targetCode)
                 .dataTable(dataTable)
-                .status("PENDING");
+                .status(BackfillStatusType.PENDING);
     }
 
     @Nested
@@ -104,7 +104,7 @@ class BackfillStatusRepositoryTest {
             BackfillStatus saved = backfillStatusRepository.findAll().getFirst();
 
             // Assert
-            assertThat(saved.getStatus()).isEqualTo("PENDING");
+            assertThat(saved.getStatus()).isEqualTo(BackfillStatusType.PENDING);
             assertThat(saved.getStaleCount()).isZero();
             assertThat(saved.getAttemptCount()).isZero();
         }
@@ -165,7 +165,7 @@ class BackfillStatusRepositoryTest {
                                     .targetType("STOCK")
                                     .targetCode("005930")
                                     .dataTable("daily_ohlcv")
-                                    .status("PENDING")
+                                    .status(BackfillStatusType.PENDING)
                                     .build());
             // DB에서 다시 로드해 seededUpdatedAt 획득 (DATETIME = 초 단위 정밀도)
             LocalDateTime seededUpdatedAt =
@@ -179,7 +179,8 @@ class BackfillStatusRepositoryTest {
                     tx -> {
                         BackfillStatus managed =
                                 backfillStatusRepository.findById(seeded.getId()).orElseThrow();
-                        managed.advance("IN_PROGRESS", LocalDate.of(2025, 1, 1), 0, 10);
+                        managed.advance(
+                                BackfillStatusType.IN_PROGRESS, LocalDate.of(2025, 1, 1), 0, 10);
                         // save() 없음 — MANAGED 상태에서 트랜잭션 커밋 시 dirty-check → @LastModifiedDate 발화
                     });
 
@@ -199,7 +200,7 @@ class BackfillStatusRepositoryTest {
                                     .targetType("STOCK")
                                     .targetCode("005930")
                                     .dataTable("investor_trend")
-                                    .status("PENDING")
+                                    .status(BackfillStatusType.PENDING)
                                     .build());
             // DB에서 다시 로드해 seededUpdatedAt 획득 (DATETIME = 초 단위 정밀도)
             LocalDateTime seededUpdatedAt =
@@ -212,7 +213,7 @@ class BackfillStatusRepositoryTest {
                     tx -> {
                         BackfillStatus managed =
                                 backfillStatusRepository.findById(seeded.getId()).orElseThrow();
-                        managed.fail("FAILED", "test error");
+                        managed.fail(BackfillStatusType.FAILED, "test error");
                         // save() 없음 — MANAGED 상태에서 트랜잭션 커밋 시 dirty-check → @LastModifiedDate 발화
                     });
 
@@ -232,7 +233,7 @@ class BackfillStatusRepositoryTest {
                     .targetType("STOCK")
                     .targetCode("AAPL")
                     .dataTable("daily_ohlcv")
-                    .status("IN_PROGRESS")
+                    .status(BackfillStatusType.IN_PROGRESS)
                     .lastCollectedDate(LocalDate.of(2024, 6, 7))
                     .staleCount(2)
                     .lastRowCount(61)

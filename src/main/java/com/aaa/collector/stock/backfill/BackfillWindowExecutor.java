@@ -4,6 +4,7 @@ import com.aaa.collector.backfill.BackfillGroup;
 import com.aaa.collector.backfill.BackfillMetrics;
 import com.aaa.collector.backfill.BackfillStatus;
 import com.aaa.collector.backfill.BackfillStatusRepository;
+import com.aaa.collector.backfill.BackfillStatusType;
 import com.aaa.collector.backfill.BackfillTerminationPolicy;
 import com.aaa.collector.backfill.BackfillWindowAdvancer;
 import com.aaa.collector.backfill.BackfillWindowOutcome;
@@ -148,7 +149,10 @@ public class BackfillWindowExecutor {
         }
         backfillMetrics.recordWindow(result.rowCount());
 
-        String newStatus = decision.completed() ? "COMPLETED" : "IN_PROGRESS";
+        BackfillStatusType newStatus =
+                decision.completed()
+                        ? BackfillStatusType.COMPLETED
+                        : BackfillStatusType.IN_PROGRESS;
         LocalDate newDate =
                 result.oldestTradeDate() != null
                         ? result.oldestTradeDate()
@@ -197,7 +201,8 @@ public class BackfillWindowExecutor {
      */
     @SuppressWarnings("PMD.AvoidCatchingGenericException") // 베스트에포트 — DB 장애 포함 모든 예외를 흡수
     public void executeWindowOnError(BackfillStatus status, String errorMsg, boolean retryable) {
-        String newStatus = retryable ? "IN_PROGRESS" : "FAILED";
+        BackfillStatusType newStatus =
+                retryable ? BackfillStatusType.IN_PROGRESS : BackfillStatusType.FAILED;
         String truncated = truncate(errorMsg, MAX_ERROR_LENGTH);
         try {
             transactionTemplate.executeWithoutResult(

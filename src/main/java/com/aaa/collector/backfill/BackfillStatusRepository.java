@@ -60,12 +60,13 @@ public interface BackfillStatusRepository extends JpaRepository<BackfillStatus, 
      *
      * <p>COMPLETED·FAILED 항목은 반환하지 않는다 — 오케스트레이터가 미완료 항목만 처리한다(AC-6.1/6.4).
      *
-     * @param statuses 포함할 상태 집합 (예: {@code List.of("PENDING","IN_PROGRESS")})
+     * @param statuses 포함할 상태 집합 (예: {@code List.of(BackfillStatusType.PENDING,
+     *     BackfillStatusType.IN_PROGRESS)})
      * @param targetType 대상 유형 필터 (예: {@code "STOCK"})
      * @return id 오름차순 정렬된 처리 대상 항목 목록
      */
     List<BackfillStatus> findByStatusInAndTargetTypeOrderById(
-            Collection<String> statuses, String targetType);
+            Collection<BackfillStatusType> statuses, String targetType);
 
     /**
      * 처리 대상 항목을 targetType + dataTable 기준으로 id 순으로 조회한다.
@@ -79,7 +80,7 @@ public interface BackfillStatusRepository extends JpaRepository<BackfillStatus, 
      * @return id 오름차순 정렬된 처리 대상 항목 목록
      */
     List<BackfillStatus> findByStatusInAndTargetTypeAndDataTableOrderById(
-            Collection<String> statuses, String targetType, String dataTable);
+            Collection<BackfillStatusType> statuses, String targetType, String dataTable);
 
     /**
      * 대상 유형 기준 전체 항목 수를 반환한다 (T9 BackfillMetrics 진행률 분모).
@@ -92,9 +93,9 @@ public interface BackfillStatusRepository extends JpaRepository<BackfillStatus, 
     /**
      * 상태·대상 유형 기준 항목 수를 반환한다 (T9 BackfillMetrics 진행률 분자).
      *
-     * @param status 상태 필터 (예: {@code "COMPLETED"})
+     * @param status 상태 필터 ({@link BackfillStatusType#COMPLETED} 등)
      * @param targetType 대상 유형 (예: {@code "STOCK"})
      * @return 해당 상태·유형 항목 수
      */
-    long countByStatusAndTargetType(String status, String targetType);
+    long countByStatusAndTargetType(BackfillStatusType status, String targetType);
 }

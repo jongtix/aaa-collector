@@ -4,7 +4,6 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
-import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.verify;
@@ -12,6 +11,7 @@ import static org.mockito.Mockito.when;
 
 import com.aaa.collector.backfill.BackfillStatus;
 import com.aaa.collector.backfill.BackfillStatusRepository;
+import com.aaa.collector.backfill.BackfillStatusType;
 import com.aaa.collector.backfill.BackfillWindowResult;
 import com.aaa.collector.kis.gate.KeyLeaseRegistry.LeaseSession;
 import com.aaa.collector.kis.token.KisTokenIssueException;
@@ -90,7 +90,7 @@ class BackfillWindowExecutorTransactionTest {
     private BackfillStatus seedPending(String symbol, String dataTable) {
         backfillStatusRepository.insertIgnoreSeed("STOCK", symbol, dataTable);
         return backfillStatusRepository
-                .findByStatusInAndTargetTypeOrderById(List.of("PENDING"), "STOCK")
+                .findByStatusInAndTargetTypeOrderById(List.of(BackfillStatusType.PENDING), "STOCK")
                 .stream()
                 .filter(s -> s.getTargetCode().equals(symbol) && s.getDataTable().equals(dataTable))
                 .findFirst()
@@ -121,7 +121,7 @@ class BackfillWindowExecutorTransactionTest {
             // Assert
             BackfillStatus updated =
                     backfillStatusRepository.findById(status.getId()).orElseThrow();
-            assertThat(updated.getStatus()).isEqualTo("IN_PROGRESS");
+            assertThat(updated.getStatus()).isEqualTo(BackfillStatusType.IN_PROGRESS);
             assertThat(updated.getLastCollectedDate()).isEqualTo(oldest);
         }
 
@@ -141,7 +141,7 @@ class BackfillWindowExecutorTransactionTest {
             BackfillStatus spyStatus = Mockito.spy(status);
             doThrow(new RuntimeException("DB write failure — rollback trigger"))
                     .when(spyStatus)
-                    .advance(anyString(), any(), anyInt(), any());
+                    .advance(any(), any(), anyInt(), any());
             when(backfillStatusRepository.findById(status.getId()))
                     .thenReturn(Optional.of(spyStatus));
 
@@ -153,7 +153,7 @@ class BackfillWindowExecutorTransactionTest {
             // Assert — 롤백: spyStatus는 advance() 실패로 상태가 변경되지 않음 (PENDING 유지)
             BackfillStatus afterRollback =
                     backfillStatusRepository.findById(status.getId()).orElseThrow();
-            assertThat(afterRollback.getStatus()).isEqualTo("PENDING");
+            assertThat(afterRollback.getStatus()).isEqualTo(BackfillStatusType.PENDING);
             assertThat(afterRollback.getLastCollectedDate()).isNull();
         }
     }
@@ -173,7 +173,7 @@ class BackfillWindowExecutorTransactionTest {
             BackfillStatus status = seedPending("005930", "investor_trend");
             BackfillStatus managedSetup =
                     backfillStatusRepository.findById(status.getId()).orElseThrow();
-            managedSetup.advance("IN_PROGRESS", LocalDate.of(2025, 1, 1), 0, 0);
+            managedSetup.advance(BackfillStatusType.IN_PROGRESS, LocalDate.of(2025, 1, 1), 0, 0);
             backfillStatusRepository.saveAndFlush(managedSetup);
             BackfillStatus populated =
                     backfillStatusRepository.findById(status.getId()).orElseThrow();
@@ -226,7 +226,7 @@ class BackfillWindowExecutorTransactionTest {
             // Assert
             BackfillStatus updated =
                     backfillStatusRepository.findById(status.getId()).orElseThrow();
-            assertThat(updated.getStatus()).isEqualTo("IN_PROGRESS");
+            assertThat(updated.getStatus()).isEqualTo(BackfillStatusType.IN_PROGRESS);
             assertThat(updated.getLastCollectedDate()).isEqualTo(oldest);
             assertThat(updated.getAttemptCount()).isEqualTo(1);
         }
@@ -249,7 +249,7 @@ class BackfillWindowExecutorTransactionTest {
             // Assert
             BackfillStatus updated =
                     backfillStatusRepository.findById(status.getId()).orElseThrow();
-            assertThat(updated.getStatus()).isEqualTo("COMPLETED");
+            assertThat(updated.getStatus()).isEqualTo(BackfillStatusType.COMPLETED);
         }
     }
 
@@ -279,7 +279,7 @@ class BackfillWindowExecutorTransactionTest {
             BackfillStatus spyStatus = Mockito.spy(status);
             doThrow(new RuntimeException("DB write failure — rollback trigger"))
                     .when(spyStatus)
-                    .advance(anyString(), any(), anyInt(), any());
+                    .advance(any(), any(), anyInt(), any());
             when(backfillStatusRepository.findById(status.getId()))
                     .thenReturn(Optional.of(spyStatus));
 
@@ -289,7 +289,7 @@ class BackfillWindowExecutorTransactionTest {
                     .hasMessageContaining("DB write failure");
 
             // Assert — 롤백: spyStatus는 advance() 실패로 상태가 변경되지 않음
-            String originalStatus = status.getStatus(); // PENDING
+            BackfillStatusType originalStatus = status.getStatus(); // PENDING
             LocalDate originalDate = status.getLastCollectedDate(); // null
             BackfillStatus afterRollback =
                     backfillStatusRepository.findById(status.getId()).orElseThrow();
@@ -321,7 +321,7 @@ class BackfillWindowExecutorTransactionTest {
             // Assert
             BackfillStatus updated =
                     backfillStatusRepository.findById(status.getId()).orElseThrow();
-            assertThat(updated.getStatus()).isEqualTo("IN_PROGRESS");
+            assertThat(updated.getStatus()).isEqualTo(BackfillStatusType.IN_PROGRESS);
             assertThat(updated.getLastError()).contains("HTTP 500");
             // last_collected_date는 변경되지 않음
             assertThat(updated.getLastCollectedDate()).isNull();
@@ -344,7 +344,7 @@ class BackfillWindowExecutorTransactionTest {
             // Assert
             BackfillStatus updated =
                     backfillStatusRepository.findById(status.getId()).orElseThrow();
-            assertThat(updated.getStatus()).isEqualTo("FAILED");
+            assertThat(updated.getStatus()).isEqualTo(BackfillStatusType.FAILED);
         }
     }
 
@@ -369,7 +369,7 @@ class BackfillWindowExecutorTransactionTest {
             BackfillStatus spyStatus = Mockito.spy(status);
             doThrow(new RuntimeException("advance rollback trigger"))
                     .when(spyStatus)
-                    .advance(anyString(), any(), anyInt(), any());
+                    .advance(any(), any(), anyInt(), any());
             when(backfillStatusRepository.findById(status.getId()))
                     .thenReturn(Optional.of(spyStatus));
 
@@ -381,7 +381,7 @@ class BackfillWindowExecutorTransactionTest {
             // Assert — spyStatus는 advance() 실패로 상태 미변경
             BackfillStatus afterRollback =
                     backfillStatusRepository.findById(status.getId()).orElseThrow();
-            assertThat(afterRollback.getStatus()).isEqualTo("PENDING");
+            assertThat(afterRollback.getStatus()).isEqualTo(BackfillStatusType.PENDING);
             assertThat(afterRollback.getAttemptCount()).isZero();
         }
     }
@@ -420,7 +420,8 @@ class BackfillWindowExecutorTransactionTest {
             backfillStatusRepository.insertIgnoreSeed("STOCK", "005930", "investor_trend");
             BackfillStatus raw =
                     backfillStatusRepository
-                            .findByStatusInAndTargetTypeOrderById(List.of("PENDING"), "STOCK")
+                            .findByStatusInAndTargetTypeOrderById(
+                                    List.of(BackfillStatusType.PENDING), "STOCK")
                             .stream()
                             .filter(
                                     s ->
@@ -432,7 +433,7 @@ class BackfillWindowExecutorTransactionTest {
             LocalDate lastCollected = LocalDate.of(2025, 6, 1);
             BackfillStatus managedRaw =
                     backfillStatusRepository.findById(raw.getId()).orElseThrow();
-            managedRaw.advance("IN_PROGRESS", lastCollected, 0, 30);
+            managedRaw.advance(BackfillStatusType.IN_PROGRESS, lastCollected, 0, 30);
             backfillStatusRepository.saveAndFlush(managedRaw);
             BackfillStatus status = backfillStatusRepository.findById(raw.getId()).orElseThrow();
 
@@ -465,7 +466,8 @@ class BackfillWindowExecutorTransactionTest {
             backfillStatusRepository.insertIgnoreSeed("STOCK", "005930", "investor_trend");
             BackfillStatus raw =
                     backfillStatusRepository
-                            .findByStatusInAndTargetTypeOrderById(List.of("PENDING"), "STOCK")
+                            .findByStatusInAndTargetTypeOrderById(
+                                    List.of(BackfillStatusType.PENDING), "STOCK")
                             .stream()
                             .filter(
                                     s ->
@@ -477,7 +479,7 @@ class BackfillWindowExecutorTransactionTest {
             // staleCount=2 으로 설정 (직전 2회 무전진)
             BackfillStatus managedRaw =
                     backfillStatusRepository.findById(raw.getId()).orElseThrow();
-            managedRaw.advance("IN_PROGRESS", LocalDate.of(2024, 6, 1), 2, 5);
+            managedRaw.advance(BackfillStatusType.IN_PROGRESS, LocalDate.of(2024, 6, 1), 2, 5);
             backfillStatusRepository.saveAndFlush(managedRaw);
 
             BackfillStatus status = backfillStatusRepository.findById(raw.getId()).orElseThrow();
@@ -494,7 +496,7 @@ class BackfillWindowExecutorTransactionTest {
             // Assert
             BackfillStatus updated =
                     backfillStatusRepository.findById(status.getId()).orElseThrow();
-            assertThat(updated.getStatus()).isEqualTo("COMPLETED");
+            assertThat(updated.getStatus()).isEqualTo(BackfillStatusType.COMPLETED);
         }
     }
 }

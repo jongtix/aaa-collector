@@ -6,6 +6,7 @@ import com.aaa.collector.backfill.BackfillProperties;
 import com.aaa.collector.backfill.BackfillStatus;
 import com.aaa.collector.backfill.BackfillStatusRepository;
 import com.aaa.collector.backfill.BackfillStatusSeeder;
+import com.aaa.collector.backfill.BackfillStatusType;
 import com.aaa.collector.kis.gate.KeyLeaseRegistry;
 import com.aaa.collector.kis.gate.KeyLeaseRegistry.LeaseSession;
 import com.aaa.collector.stock.Stock;
@@ -44,9 +45,6 @@ import org.springframework.stereotype.Component;
 @RequiredArgsConstructor
 public class BackfillOrchestrator {
 
-    private static final String STATUS_PENDING = "PENDING";
-    private static final String STATUS_IN_PROGRESS = "IN_PROGRESS";
-    private static final String STATUS_COMPLETED = "COMPLETED";
     private static final String TARGET_TYPE_STOCK = "STOCK";
 
     private final BackfillStatusSeeder seeder;
@@ -81,7 +79,8 @@ public class BackfillOrchestrator {
         // Step 4: 미완료 항목 조회 (PENDING | IN_PROGRESS, STOCK 유형)
         List<BackfillStatus> pending =
                 backfillStatusRepository.findByStatusInAndTargetTypeOrderById(
-                        List.of(STATUS_PENDING, STATUS_IN_PROGRESS), TARGET_TYPE_STOCK);
+                        List.of(BackfillStatusType.PENDING, BackfillStatusType.IN_PROGRESS),
+                        TARGET_TYPE_STOCK);
 
         if (pending.isEmpty()) {
             log.info("[backfill-orchestrator] 처리 대상 없음 (AC-6.5)");
@@ -98,7 +97,7 @@ public class BackfillOrchestrator {
         // Step 7: 진행률 gauge 갱신 (REQ-BACKFILL-040)
         long completedCount =
                 backfillStatusRepository.countByStatusAndTargetType(
-                        STATUS_COMPLETED, TARGET_TYPE_STOCK);
+                        BackfillStatusType.COMPLETED, TARGET_TYPE_STOCK);
         long totalCount = backfillStatusRepository.countByTargetType(TARGET_TYPE_STOCK);
         backfillMetrics.recordProgress(completedCount, totalCount);
 
@@ -316,7 +315,7 @@ public class BackfillOrchestrator {
     /** 재조회 status가 COMPLETED인지 확인하고 debug 로그를 남긴다. */
     private boolean isCompleted(
             BackfillStatus refreshed, BackfillStatus current, int windowsForThis) {
-        if (!STATUS_COMPLETED.equals(refreshed.getStatus())) {
+        if (BackfillStatusType.COMPLETED != refreshed.getStatus()) {
             return false;
         }
         if (log.isDebugEnabled()) {

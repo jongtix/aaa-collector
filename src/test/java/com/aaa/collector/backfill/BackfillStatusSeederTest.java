@@ -101,7 +101,7 @@ class BackfillStatusSeederTest {
                             .filter(s -> "daily_ohlcv".equals(s.getDataTable()))
                             .findFirst()
                             .orElseThrow();
-            assertThat(row.getStatus()).isEqualTo("PENDING");
+            assertThat(row.getStatus()).isEqualTo(BackfillStatusType.PENDING);
             assertThat(row.getLastCollectedDate()).isNull();
             assertThat(row.getStaleCount()).isZero();
             assertThat(row.getAttemptCount()).isZero();
@@ -137,7 +137,7 @@ class BackfillStatusSeederTest {
                             .targetType("STOCK")
                             .targetCode("005930")
                             .dataTable("daily_ohlcv")
-                            .status("IN_PROGRESS")
+                            .status(BackfillStatusType.IN_PROGRESS)
                             .lastCollectedDate(LocalDate.of(2024, 6, 10))
                             .build());
 
@@ -150,7 +150,7 @@ class BackfillStatusSeederTest {
                             .filter(s -> "daily_ohlcv".equals(s.getDataTable()))
                             .findFirst()
                             .orElseThrow();
-            assertThat(existing.getStatus()).isEqualTo("IN_PROGRESS");
+            assertThat(existing.getStatus()).isEqualTo(BackfillStatusType.IN_PROGRESS);
             assertThat(existing.getLastCollectedDate()).isEqualTo(LocalDate.of(2024, 6, 10));
             assertThat(dataTablesOf("005930")).containsExactlyInAnyOrderElementsOf(DOMESTIC_TABLES);
         }

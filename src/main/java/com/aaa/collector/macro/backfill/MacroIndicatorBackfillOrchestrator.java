@@ -2,6 +2,7 @@ package com.aaa.collector.macro.backfill;
 
 import com.aaa.collector.backfill.BackfillStatus;
 import com.aaa.collector.backfill.BackfillStatusRepository;
+import com.aaa.collector.backfill.BackfillStatusType;
 import com.aaa.collector.macro.MacroCollectionResult;
 import com.aaa.collector.macro.MacroIndicatorRepository;
 import com.aaa.collector.macro.ecos.EcosCollectionService;
@@ -60,7 +61,8 @@ public class MacroIndicatorBackfillOrchestrator {
 
         List<BackfillStatus> pending =
                 backfillStatusRepository.findByStatusInAndTargetTypeOrderById(
-                        List.of("PENDING", "IN_PROGRESS"), TARGET_TYPE);
+                        List.of(BackfillStatusType.PENDING, BackfillStatusType.IN_PROGRESS),
+                        TARGET_TYPE);
 
         log.info("[macro-backfill] 처리 대상 {} 건", pending.size());
 
@@ -97,7 +99,8 @@ public class MacroIndicatorBackfillOrchestrator {
                     tx -> {
                         BackfillStatus managed =
                                 backfillStatusRepository.findById(status.getId()).orElseThrow();
-                        managed.advance("COMPLETED", minDate, 0, result.succeeded());
+                        managed.advance(
+                                BackfillStatusType.COMPLETED, minDate, 0, result.succeeded());
                     });
 
             log.info(
@@ -112,7 +115,7 @@ public class MacroIndicatorBackfillOrchestrator {
                     tx -> {
                         BackfillStatus managed =
                                 backfillStatusRepository.findById(status.getId()).orElseThrow();
-                        managed.fail("FAILED", errMsg);
+                        managed.fail(BackfillStatusType.FAILED, errMsg);
                     });
         }
     }

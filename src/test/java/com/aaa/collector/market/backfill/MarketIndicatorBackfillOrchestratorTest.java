@@ -14,6 +14,7 @@ import static org.mockito.Mockito.when;
 
 import com.aaa.collector.backfill.BackfillStatus;
 import com.aaa.collector.backfill.BackfillStatusRepository;
+import com.aaa.collector.backfill.BackfillStatusType;
 import com.aaa.collector.market.MarketIndicatorRepository;
 import com.aaa.collector.market.enums.IndicatorCode;
 import com.aaa.collector.market.indicator.usdkrw.UsdkrwCollectionService;
@@ -79,7 +80,7 @@ class MarketIndicatorBackfillOrchestratorTest {
         mockManaged = Mockito.mock(BackfillStatus.class);
     }
 
-    private BackfillStatus buildStatus(Long id, String code, String status) {
+    private BackfillStatus buildStatus(Long id, String code, BackfillStatusType status) {
         BackfillStatus s =
                 BackfillStatus.builder()
                         .targetType("MARKET_INDICATOR")
@@ -115,7 +116,7 @@ class MarketIndicatorBackfillOrchestratorTest {
         @DisplayName(
                 "VIX PENDING — collectHistory 후 MIN(trade_date) anchor로 COMPLETED (REQ-041~043, W-4)")
         void vix_pending_collectHistoryAndComplete() {
-            BackfillStatus vixStatus = buildStatus(1L, "VIX", "PENDING");
+            BackfillStatus vixStatus = buildStatus(1L, "VIX", BackfillStatusType.PENDING);
             LocalDate minDate = LocalDate.of(1990, 1, 2);
             when(backfillStatusRepository.findByStatusInAndTargetTypeOrderById(any(), anyString()))
                     .thenReturn(List.of(vixStatus));
@@ -128,13 +129,14 @@ class MarketIndicatorBackfillOrchestratorTest {
 
             verify(vixCollectionService).collectHistory();
             verify(backfillStatusRepository).findById(1L);
-            verify(mockManaged).advance(eq("COMPLETED"), eq(minDate), eq(0), eq(100));
+            verify(mockManaged)
+                    .advance(eq(BackfillStatusType.COMPLETED), eq(minDate), eq(0), eq(100));
         }
 
         @Test
         @DisplayName("VIX 수집 0건 — anchor=today fallback, COMPLETED (W-4: DB empty → today)")
         void vix_zeroRows_anchorFallbackToday() {
-            BackfillStatus vixStatus = buildStatus(1L, "VIX", "PENDING");
+            BackfillStatus vixStatus = buildStatus(1L, "VIX", BackfillStatusType.PENDING);
             when(backfillStatusRepository.findByStatusInAndTargetTypeOrderById(any(), anyString()))
                     .thenReturn(List.of(vixStatus));
             when(vixCollectionService.collectHistory()).thenReturn(0);
@@ -144,7 +146,8 @@ class MarketIndicatorBackfillOrchestratorTest {
 
             orchestrator.runBackfill();
 
-            verify(mockManaged).advance(eq("COMPLETED"), any(LocalDate.class), eq(0), eq(0));
+            verify(mockManaged)
+                    .advance(eq(BackfillStatusType.COMPLETED), any(LocalDate.class), eq(0), eq(0));
         }
     }
 
@@ -155,7 +158,7 @@ class MarketIndicatorBackfillOrchestratorTest {
         @Test
         @DisplayName("USDKRW PENDING — staleWeekdayCount 누적 후 COMPLETED (REQ-044)")
         void usdkrw_staleThresholdReached_completed() {
-            BackfillStatus status = buildStatus(2L, "USDKRW", "PENDING");
+            BackfillStatus status = buildStatus(2L, "USDKRW", BackfillStatusType.PENDING);
             when(backfillStatusRepository.findByStatusInAndTargetTypeOrderById(any(), anyString()))
                     .thenReturn(List.of(status));
             when(usdkrwCollectionService.collectDailyForBackfill(any(LocalDate.class)))
@@ -165,13 +168,14 @@ class MarketIndicatorBackfillOrchestratorTest {
             orchestrator.runBackfill();
 
             // stale threshold 도달 후 COMPLETED 처리
-            verify(mockManaged, atLeastOnce()).advance(eq("COMPLETED"), any(), anyInt(), anyInt());
+            verify(mockManaged, atLeastOnce())
+                    .advance(eq(BackfillStatusType.COMPLETED), any(), anyInt(), anyInt());
         }
 
         @Test
         @DisplayName("USDKRW — 데이터 수신 시 staleCount 리셋")
         void usdkrw_dataReceived_staleCountReset() {
-            BackfillStatus status = buildStatus(2L, "USDKRW", "PENDING");
+            BackfillStatus status = buildStatus(2L, "USDKRW", BackfillStatusType.PENDING);
             when(backfillStatusRepository.findByStatusInAndTargetTypeOrderById(any(), anyString()))
                     .thenReturn(List.of(status));
             when(usdkrwCollectionService.collectDailyForBackfill(any(LocalDate.class)))
@@ -182,14 +186,14 @@ class MarketIndicatorBackfillOrchestratorTest {
             orchestrator.runBackfill();
 
             // 최소한 한 번은 advance 호출
-            verify(mockManaged, atLeastOnce()).advance(anyString(), any(), anyInt(), anyInt());
+            verify(mockManaged, atLeastOnce()).advance(any(), any(), anyInt(), anyInt());
         }
 
         @Test
         @DisplayName("USDKRW — 10일 미만 수집 시 IN_PROGRESS 갱신 없이 COMPLETED 1회만 (W-3, MA-01)")
         void usdkrw_lessThan10Days_noInProgressUpdate() {
             // staleWeekdayThreshold=3, 5일 데이터 수신 후 stale
-            BackfillStatus status = buildStatus(2L, "USDKRW", "PENDING");
+            BackfillStatus status = buildStatus(2L, "USDKRW", BackfillStatusType.PENDING);
             when(backfillStatusRepository.findByStatusInAndTargetTypeOrderById(any(), anyString()))
                     .thenReturn(List.of(status));
             when(usdkrwCollectionService.collectDailyForBackfill(any(LocalDate.class)))
@@ -204,9 +208,11 @@ class MarketIndicatorBackfillOrchestratorTest {
             orchestrator.runBackfill();
 
             // 5일 < PROGRESS_BATCH_SIZE(10) → IN_PROGRESS advance 갱신 없음
-            verify(mockManaged, never()).advance(eq("IN_PROGRESS"), any(), anyInt(), anyInt());
+            verify(mockManaged, never())
+                    .advance(eq(BackfillStatusType.IN_PROGRESS), any(), anyInt(), anyInt());
             // 루프 종료 후 COMPLETED 1회
-            verify(mockManaged, times(1)).advance(eq("COMPLETED"), any(), anyInt(), anyInt());
+            verify(mockManaged, times(1))
+                    .advance(eq(BackfillStatusType.COMPLETED), any(), anyInt(), anyInt());
         }
     }
 
@@ -217,8 +223,8 @@ class MarketIndicatorBackfillOrchestratorTest {
         @Test
         @DisplayName("VIX 예외 — findById 후 fail() 호출, USDKRW 계속")
         void vixException_updateError_usdkrwContinues() {
-            BackfillStatus vixStatus = buildStatus(1L, "VIX", "PENDING");
-            BackfillStatus usdkrwStatus = buildStatus(2L, "USDKRW", "PENDING");
+            BackfillStatus vixStatus = buildStatus(1L, "VIX", BackfillStatusType.PENDING);
+            BackfillStatus usdkrwStatus = buildStatus(2L, "USDKRW", BackfillStatusType.PENDING);
             BackfillStatus mockManagedVix = Mockito.mock(BackfillStatus.class);
             BackfillStatus mockManagedUsdkrw = Mockito.mock(BackfillStatus.class);
             when(backfillStatusRepository.findByStatusInAndTargetTypeOrderById(any(), anyString()))
@@ -231,7 +237,7 @@ class MarketIndicatorBackfillOrchestratorTest {
 
             assertThatCode(orchestrator::runBackfill).doesNotThrowAnyException();
 
-            verify(mockManagedVix).fail(anyString(), anyString());
+            verify(mockManagedVix).fail(any(), anyString());
         }
 
         @Test

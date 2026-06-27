@@ -12,6 +12,7 @@ import static org.mockito.Mockito.when;
 
 import com.aaa.collector.backfill.BackfillStatus;
 import com.aaa.collector.backfill.BackfillStatusRepository;
+import com.aaa.collector.backfill.BackfillStatusType;
 import com.aaa.collector.macro.MacroCollectionResult;
 import com.aaa.collector.macro.MacroIndicatorRepository;
 import com.aaa.collector.macro.ecos.EcosCollectionService;
@@ -146,7 +147,8 @@ class MacroIndicatorBackfillOrchestratorTest {
             // Assert
             verify(ecosCollectionService).collectAll();
             verify(backfillStatusRepository).findById(1L);
-            verify(mockManaged).advance(eq("COMPLETED"), any(LocalDate.class), eq(0), any());
+            verify(mockManaged)
+                    .advance(eq(BackfillStatusType.COMPLETED), any(LocalDate.class), eq(0), any());
         }
 
         @Test
@@ -170,7 +172,8 @@ class MacroIndicatorBackfillOrchestratorTest {
             // Assert
             verify(fredCollectionService).collectAll();
             verify(backfillStatusRepository).findById(2L);
-            verify(mockManaged).advance(eq("COMPLETED"), any(LocalDate.class), eq(0), any());
+            verify(mockManaged)
+                    .advance(eq(BackfillStatusType.COMPLETED), any(LocalDate.class), eq(0), any());
         }
 
         @Test
@@ -219,7 +222,9 @@ class MacroIndicatorBackfillOrchestratorTest {
 
             // Assert — minDate가 오늘이 아닌 실제 최소 거래일
             ArgumentCaptor<LocalDate> dateCaptor = ArgumentCaptor.forClass(LocalDate.class);
-            verify(mockManaged).advance(eq("COMPLETED"), dateCaptor.capture(), eq(0), eq(200));
+            verify(mockManaged)
+                    .advance(
+                            eq(BackfillStatusType.COMPLETED), dateCaptor.capture(), eq(0), eq(200));
             assertThat(dateCaptor.getValue()).isEqualTo(expectedMin);
         }
 
@@ -242,7 +247,8 @@ class MacroIndicatorBackfillOrchestratorTest {
 
             // Assert — empty 시 오늘 날짜로 fallback
             ArgumentCaptor<LocalDate> dateCaptor = ArgumentCaptor.forClass(LocalDate.class);
-            verify(mockManaged).advance(eq("COMPLETED"), dateCaptor.capture(), eq(0), eq(0));
+            verify(mockManaged)
+                    .advance(eq(BackfillStatusType.COMPLETED), dateCaptor.capture(), eq(0), eq(0));
             assertThat(dateCaptor.getValue()).isEqualTo(LocalDate.now());
         }
     }
@@ -284,7 +290,9 @@ class MacroIndicatorBackfillOrchestratorTest {
             // Assert
             verify(fredCollectionService).collectAll();
             verify(ecosCollectionService, never()).collectAll();
-            verify(mockManaged).advance(eq("COMPLETED"), any(LocalDate.class), eq(0), eq(100));
+            verify(mockManaged)
+                    .advance(
+                            eq(BackfillStatusType.COMPLETED), any(LocalDate.class), eq(0), eq(100));
         }
 
         @ParameterizedTest(name = "ECOS 코드={0} → ecosCollectionService.collectAll() 호출")
@@ -319,7 +327,8 @@ class MacroIndicatorBackfillOrchestratorTest {
             // Assert
             verify(ecosCollectionService).collectAll();
             verify(fredCollectionService, never()).collectAll();
-            verify(mockManaged).advance(eq("COMPLETED"), any(LocalDate.class), eq(0), eq(80));
+            verify(mockManaged)
+                    .advance(eq(BackfillStatusType.COMPLETED), any(LocalDate.class), eq(0), eq(80));
         }
     }
 
@@ -348,7 +357,7 @@ class MacroIndicatorBackfillOrchestratorTest {
 
             // Assert
             verify(backfillStatusRepository).findById(3L);
-            verify(mockManaged).fail(eq("FAILED"), anyString());
+            verify(mockManaged).fail(eq(BackfillStatusType.FAILED), anyString());
             verify(mockManaged, never()).advance(any(), any(), any(Integer.class), any());
         }
     }

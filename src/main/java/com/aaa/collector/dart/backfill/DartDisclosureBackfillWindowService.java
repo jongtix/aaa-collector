@@ -2,6 +2,7 @@ package com.aaa.collector.dart.backfill;
 
 import com.aaa.collector.backfill.BackfillStatus;
 import com.aaa.collector.backfill.BackfillStatusRepository;
+import com.aaa.collector.backfill.BackfillStatusType;
 import com.aaa.collector.dart.corpcode.CorpCodeMappingRepository;
 import com.aaa.collector.dart.disclosure.DisclosureInserter;
 import com.aaa.collector.dart.disclosure.DisclosureRepository;
@@ -30,8 +31,6 @@ import org.springframework.transaction.support.TransactionTemplate;
 @RequiredArgsConstructor
 public class DartDisclosureBackfillWindowService {
 
-    static final String STATUS_IN_PROGRESS = "IN_PROGRESS";
-    static final String STATUS_COMPLETED = "COMPLETED";
     static final String DATA_TABLE = "disclosures";
     static final DateTimeFormatter DATE_FMT = DateTimeFormatter.ofPattern("yyyyMMdd");
 
@@ -61,7 +60,7 @@ public class DartDisclosureBackfillWindowService {
                     tx -> {
                         BackfillStatus managed =
                                 backfillStatusRepository.findById(status.getId()).orElseThrow();
-                        managed.fail(STATUS_IN_PROGRESS, "corp_code 매핑 없음: " + symbol);
+                        managed.fail(BackfillStatusType.IN_PROGRESS, "corp_code 매핑 없음: " + symbol);
                     });
             return;
         }
@@ -86,7 +85,7 @@ public class DartDisclosureBackfillWindowService {
                     tx -> {
                         BackfillStatus managed =
                                 backfillStatusRepository.findById(status.getId()).orElseThrow();
-                        managed.fail(STATUS_IN_PROGRESS, errMsg);
+                        managed.fail(BackfillStatusType.IN_PROGRESS, errMsg);
                     });
             return;
         }
@@ -129,7 +128,7 @@ public class DartDisclosureBackfillWindowService {
                     tx -> {
                         BackfillStatus managed =
                                 backfillStatusRepository.findById(status.getId()).orElseThrow();
-                        managed.advance(STATUS_COMPLETED, bgnDe, 0, 0);
+                        managed.advance(BackfillStatusType.COMPLETED, bgnDe, 0, 0);
                     });
         } else {
             // anchor 전진 — bgnDe를 새 anchor로 갱신
@@ -138,7 +137,7 @@ public class DartDisclosureBackfillWindowService {
                     tx -> {
                         BackfillStatus managed =
                                 backfillStatusRepository.findById(status.getId()).orElseThrow();
-                        managed.advance(STATUS_IN_PROGRESS, bgnDe, 0, insertedCount);
+                        managed.advance(BackfillStatusType.IN_PROGRESS, bgnDe, 0, insertedCount);
                     });
         }
     }

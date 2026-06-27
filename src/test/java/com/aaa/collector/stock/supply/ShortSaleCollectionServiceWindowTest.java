@@ -11,6 +11,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.aaa.collector.backfill.BackfillStatus;
+import com.aaa.collector.backfill.BackfillStatusType;
 import com.aaa.collector.backfill.BackfillWindowResult;
 import com.aaa.collector.kis.gate.GuardedKisExecutor;
 import com.aaa.collector.kis.gate.KeyLeaseRegistry;
@@ -89,7 +90,7 @@ class ShortSaleCollectionServiceWindowTest {
                 .targetType("STOCK")
                 .targetCode("005930")
                 .dataTable("short_sale_domestic")
-                .status("IN_PROGRESS")
+                .status(BackfillStatusType.IN_PROGRESS)
                 .lastCollectedDate(lastCollectedDate)
                 .build();
     }

@@ -2,6 +2,7 @@ package com.aaa.collector.market.backfill;
 
 import com.aaa.collector.backfill.BackfillStatus;
 import com.aaa.collector.backfill.BackfillStatusRepository;
+import com.aaa.collector.backfill.BackfillStatusType;
 import com.aaa.collector.market.MarketIndicatorRepository;
 import com.aaa.collector.market.enums.IndicatorCode;
 import com.aaa.collector.market.indicator.usdkrw.UsdkrwCollectionService;
@@ -64,7 +65,8 @@ public class MarketIndicatorBackfillOrchestrator {
     public void runBackfill() {
         List<BackfillStatus> targets =
                 backfillStatusRepository.findByStatusInAndTargetTypeOrderById(
-                        List.of("PENDING", "IN_PROGRESS"), TARGET_TYPE);
+                        List.of(BackfillStatusType.PENDING, BackfillStatusType.IN_PROGRESS),
+                        TARGET_TYPE);
 
         if (targets.isEmpty()) {
             log.info("[market-ind-backfill] 처리 대상 없음");
@@ -84,7 +86,7 @@ public class MarketIndicatorBackfillOrchestrator {
                         tx -> {
                             BackfillStatus managed =
                                     backfillStatusRepository.findById(target.getId()).orElseThrow();
-                            managed.fail("IN_PROGRESS", errMsg);
+                            managed.fail(BackfillStatusType.IN_PROGRESS, errMsg);
                         });
             }
         }
@@ -117,7 +119,7 @@ public class MarketIndicatorBackfillOrchestrator {
                 tx -> {
                     BackfillStatus managed =
                             backfillStatusRepository.findById(target.getId()).orElseThrow();
-                    managed.advance("COMPLETED", anchor, 0, saved);
+                    managed.advance(BackfillStatusType.COMPLETED, anchor, 0, saved);
                 });
         log.info("[market-ind-backfill] VIX 백필 완료 — saved={}, anchor={}", saved, anchor);
     }
@@ -159,7 +161,8 @@ public class MarketIndicatorBackfillOrchestrator {
                                         backfillStatusRepository
                                                 .findById(target.getId())
                                                 .orElseThrow();
-                                managed.advance("IN_PROGRESS", snapAnchor, 0, snapTotal);
+                                managed.advance(
+                                        BackfillStatusType.IN_PROGRESS, snapAnchor, 0, snapTotal);
                             });
                     daysSinceLastUpdate = 0;
                 }
@@ -182,7 +185,8 @@ public class MarketIndicatorBackfillOrchestrator {
                 tx -> {
                     BackfillStatus managed =
                             backfillStatusRepository.findById(target.getId()).orElseThrow();
-                    managed.advance("COMPLETED", lastCollected, 0, finalTotalSaved);
+                    managed.advance(
+                            BackfillStatusType.COMPLETED, lastCollected, 0, finalTotalSaved);
                 });
         log.info(
                 "[market-ind-backfill] USDKRW 백필 완료 — totalSaved={}, anchor={}",
