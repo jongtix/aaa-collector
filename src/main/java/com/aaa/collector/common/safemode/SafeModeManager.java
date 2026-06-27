@@ -1,5 +1,7 @@
 package com.aaa.collector.common.safemode;
 
+import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.MeterRegistry;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 
@@ -11,12 +13,19 @@ import lombok.extern.slf4j.Slf4j;
  *
  * <p>토큰 컨텍스트(safe_mode:collector:token:)와 WebSocket 컨텍스트(safe_mode:collector:ws:)가 각각 별도 Bean으로
  * 등록되어 서로 다른 네임스페이스를 사용한다. {@link SafeModeConfig} 참조.
+ *
+ * <p>진입/해제 시 {@code aaa_collector_safe_mode_enter_total}/{@code aaa_collector_safe_mode_exit_total}
+ * 메트릭을 계측한다.
  */
+// @MX:NOTE: [AUTO] 안전 모드 진입/해제 시 aaa_collector_safe_mode_enter/exit_total 메트릭 계측 — vmalert
+// CollectorSafeMode 룰의 입력 소스
 @Slf4j
 @RequiredArgsConstructor
 public class SafeModeManager {
 
     private final SafeModeRepository safeModeRepository;
+    private final MeterRegistry registry;
+    private final String module;
 
     /**
      * 안전 모드에 진입한다.
@@ -27,7 +36,7 @@ public class SafeModeManager {
     public void enter(String alias, Throwable cause) {
         safeModeRepository.setSafeMode(alias, true);
         log.error("[{}] 안전 모드 진입", alias, cause);
-        // TODO: stream:system:collector 이벤트 발행 (1-9)
+        counter("aaa_collector_safe_mode_enter_total", alias).increment();
     }
 
     /**
@@ -38,7 +47,7 @@ public class SafeModeManager {
     public void exit(String alias) {
         safeModeRepository.setSafeMode(alias, false);
         log.info("[{}] 안전 모드 해제", alias);
-        // TODO: stream:system:collector 이벤트 발행 (1-9)
+        counter("aaa_collector_safe_mode_exit_total", alias).increment();
     }
 
     /**
@@ -49,5 +58,9 @@ public class SafeModeManager {
      */
     public boolean isActive(String alias) {
         return safeModeRepository.isSafeMode(alias);
+    }
+
+    private Counter counter(String name, String alias) {
+        return Counter.builder(name).tag("module", module).tag("alias", alias).register(registry);
     }
 }

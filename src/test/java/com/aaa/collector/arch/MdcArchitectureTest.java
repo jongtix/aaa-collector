@@ -85,6 +85,7 @@ class MdcArchitectureTest {
                             "lombok..",
                             "org.slf4j..",
                             "org.springframework..",
-                            "com.fasterxml..")
+                            "com.fasterxml..",
+                            "io.micrometer..")
                     .because("common 패키지는 공용 유틸리티로서 특정 피처 패키지에 의존해서는 안 된다.");
 }
