@@ -4,8 +4,6 @@ import com.aaa.collector.common.entity.BaseEntity;
 import com.aaa.collector.stock.Stock;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
-import jakarta.persistence.EnumType;
-import jakarta.persistence.Enumerated;
 import jakarta.persistence.FetchType;
 import jakarta.persistence.ForeignKey;
 import jakarta.persistence.GeneratedValue;
@@ -16,12 +14,14 @@ import jakarta.persistence.ManyToOne;
 import jakarta.persistence.Table;
 import jakarta.persistence.UniqueConstraint;
 import java.math.BigDecimal;
+import java.sql.Types;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import lombok.AccessLevel;
 import lombok.Builder;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
+import org.hibernate.annotations.JdbcTypeCode;
 
 /**
  * 미국 시간외(Pre/After-Hours) 가격 스냅샷 엔티티 (SPEC-COLLECTOR-EXTHOURS-001).
@@ -48,7 +48,9 @@ public class ExtendedHours extends BaseEntity {
     @JoinColumn(name = "stock_id", foreignKey = @ForeignKey(name = "fk_extended_hours_stock"))
     private final Stock stock;
 
-    @Enumerated(EnumType.STRING)
+    // V29 마이그레이션이 ENUM('PRE','AFTER')로 정의 → JDBC Types#CHAR 보고. Hibernate validator가 VARCHAR를 기대하는
+    // 것을 방지하기 위해 @JdbcTypeCode(Types.CHAR)로 실제 DB 타입을 명시 (columnDefinition 금지 규칙 준수).
+    @JdbcTypeCode(Types.CHAR)
     @Column(name = "session")
     private final Session session;
 

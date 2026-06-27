@@ -4,8 +4,6 @@ import com.aaa.collector.common.entity.BaseEntity;
 import com.aaa.collector.macro.enums.MacroSource;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
-import jakarta.persistence.EnumType;
-import jakarta.persistence.Enumerated;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
@@ -37,7 +35,6 @@ public class MacroIndicator extends BaseEntity {
     @Column(name = "indicator_code", length = 32)
     private final String indicatorCode;
 
-    @Enumerated(EnumType.STRING)
     @Column(name = "source", length = 10)
     private final MacroSource source;
 

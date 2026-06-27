@@ -4,8 +4,6 @@ import com.aaa.collector.common.entity.BaseEntity;
 import com.aaa.collector.stock.enums.EventType;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
-import jakarta.persistence.EnumType;
-import jakarta.persistence.Enumerated;
 import jakarta.persistence.FetchType;
 import jakarta.persistence.ForeignKey;
 import jakarta.persistence.GeneratedValue;
@@ -42,7 +40,6 @@ public class CorporateEvent extends BaseEntity {
     @JoinColumn(name = "stock_id", foreignKey = @ForeignKey(name = "fk_corporate_events_stock"))
     private final Stock stock;
 
-    @Enumerated(EnumType.STRING)
     @Column(name = "event_type", length = 20)
     private final EventType eventType;
 

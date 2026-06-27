@@ -5,8 +5,6 @@ import com.aaa.collector.stock.enums.AssetType;
 import com.aaa.collector.stock.enums.Market;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
-import jakarta.persistence.EnumType;
-import jakarta.persistence.Enumerated;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
@@ -46,11 +44,9 @@ public class Stock extends BaseEntity {
     private String nameEn;
 
     // @MX:SPEC: SPEC-COLLECTOR-STOCKMETA-001
-    @Enumerated(EnumType.STRING)
     @Column(name = "market", length = 10)
     private Market market; // correctable — REQ-STOCKMETA-004,011
 
-    @Enumerated(EnumType.STRING)
     @Column(name = "asset_type", length = 10)
     private final AssetType assetType;
 

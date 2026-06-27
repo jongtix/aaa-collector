@@ -4,8 +4,6 @@ import com.aaa.collector.common.entity.BaseEntity;
 import com.aaa.collector.market.enums.IndicatorCode;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
-import jakarta.persistence.EnumType;
-import jakarta.persistence.Enumerated;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
@@ -34,7 +32,6 @@ public class MarketIndicator extends BaseEntity {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    @Enumerated(EnumType.STRING)
     @Column(name = "indicator_code", length = 20)
     private final IndicatorCode indicatorCode;
 

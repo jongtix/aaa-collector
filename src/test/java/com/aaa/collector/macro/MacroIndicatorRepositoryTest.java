@@ -95,6 +95,33 @@ class MacroIndicatorRepositoryTest {
     }
 
     @Nested
+    @DisplayName("AC-14 — JPA 컨버터 왕복 (persist → find → enum 복원)")
+    class JpaConverterRoundtrip {
+
+        @Test
+        @DisplayName("MacroSource.KIS 로 저장 후 조회 시 동일 enum 값 복원")
+        void persistAndFind_macroSourceKis_enumRestored() {
+            // Arrange
+            MacroIndicator entity =
+                    buildIndicator(
+                            "CONVERTER_ROUNDTRIP",
+                            LocalDate.of(2026, 6, 27),
+                            new BigDecimal("1.234"));
+
+            // Act
+            macroIndicatorRepository.save(entity);
+            MacroIndicator found =
+                    macroIndicatorRepository.findAll().stream()
+                            .filter(m -> "CONVERTER_ROUNDTRIP".equals(m.getIndicatorCode()))
+                            .findFirst()
+                            .orElseThrow();
+
+            // Assert
+            assertThat(found.getSource()).isEqualTo(MacroSource.KIS);
+        }
+    }
+
+    @Nested
     @DisplayName("V21 마이그레이션 — DECIMAL(24,8) 정밀도 (REQ-BATCH3-045)")
     class V21MigrationPrecision {
 
