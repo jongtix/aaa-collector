@@ -165,9 +165,12 @@ class BackfillStatusRepositoryTest {
                                     .dataTable("daily_ohlcv")
                                     .status("PENDING")
                                     .build());
-            java.time.LocalDateTime seededUpdatedAt = seeded.getUpdatedAt();
+            // DB에서 다시 로드해 seededUpdatedAt 획득 (DATETIME = 초 단위 정밀도)
+            LocalDateTime seededUpdatedAt =
+                    backfillStatusRepository.findById(seeded.getId()).orElseThrow().getUpdatedAt();
 
-            Thread.sleep(2); // ensure at least 1ms gap for DATETIME(6)
+            // DATETIME 컬럼은 초 단위 정밀도 — 갱신 감지에 1초 이상 경과 필요
+            Thread.sleep(1100);
 
             // Act — find managed entity and call domain method
             BackfillStatus managed =
@@ -193,9 +196,12 @@ class BackfillStatusRepositoryTest {
                                     .dataTable("investor_trend")
                                     .status("PENDING")
                                     .build());
-            java.time.LocalDateTime seededUpdatedAt = seeded.getUpdatedAt();
+            // DB에서 다시 로드해 seededUpdatedAt 획득 (DATETIME = 초 단위 정밀도)
+            LocalDateTime seededUpdatedAt =
+                    backfillStatusRepository.findById(seeded.getId()).orElseThrow().getUpdatedAt();
 
-            Thread.sleep(2);
+            // DATETIME 컬럼은 초 단위 정밀도 — 갱신 감지에 1초 이상 경과 필요
+            Thread.sleep(1100);
 
             // Act
             BackfillStatus managed =

@@ -166,12 +166,14 @@ class DartDisclosureBackfillWindowServiceTest {
         void apiReturnsTwoItems_onlyMatchingSymbolInserted() {
             // Arrange
             BackfillStatus status = mockStatus(1L, LocalDate.of(2026, 6, 20));
+            BackfillStatus mockManaged = Mockito.mock(BackfillStatus.class);
             when(corpCodeMappingRepository.findCorpCodeByStockCode(SYMBOL))
                     .thenReturn(Optional.of("00000001"));
             DartListResponse.DisclosureItem matching = makeItem(SYMBOL, "20260601");
             DartListResponse.DisclosureItem mismatch = makeItem("000660", "20260601");
             when(dartDisclosureClient.fetchAllPages(any(), any(), any()))
                     .thenReturn(List.of(matching, mismatch));
+            when(backfillStatusRepository.findById(1L)).thenReturn(Optional.of(mockManaged));
 
             // Act
             windowService.executeWindow(status, STOCK_ID, SYMBOL);

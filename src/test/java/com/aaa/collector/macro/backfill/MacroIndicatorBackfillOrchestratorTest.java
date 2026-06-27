@@ -354,7 +354,7 @@ class MacroIndicatorBackfillOrchestratorTest {
     }
 
     private BackfillStatus mockStatus(Long id, String targetCode) {
-        BackfillStatus status = org.mockito.Mockito.mock(BackfillStatus.class);
+        BackfillStatus status = Mockito.mock(BackfillStatus.class);
         when(status.getId()).thenReturn(id);
         when(status.getTargetCode()).thenReturn(targetCode);
         return status;

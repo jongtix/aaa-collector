@@ -75,7 +75,7 @@ class BackfillWindowExecutorTransactionTest {
 
     @BeforeEach
     void setUp() {
-        session = org.mockito.Mockito.mock(LeaseSession.class);
+        session = Mockito.mock(LeaseSession.class);
         domesticStock =
                 Stock.builder()
                         .symbol("005930")
@@ -132,8 +132,6 @@ class BackfillWindowExecutorTransactionTest {
         void persistWindow_rollback_onUpdateProgressFailure() {
             // Arrange
             BackfillStatus status = seedPending("005930", "investor_trend");
-            String originalStatus = status.getStatus(); // PENDING
-
             LocalDate oldest = LocalDate.of(2025, 1, 1);
             InvestorTrendFetch fetch = new InvestorTrendFetch(List.of(), oldest, 30);
             when(investorTrendService.persistWindow(any(), eq(fetch)))
@@ -152,10 +150,10 @@ class BackfillWindowExecutorTransactionTest {
                     .isInstanceOf(RuntimeException.class)
                     .hasMessageContaining("DB write failure");
 
-            // Assert — 롤백: spyStatus는 advance() 실패로 상태가 변경되지 않음
+            // Assert — 롤백: spyStatus는 advance() 실패로 상태가 변경되지 않음 (PENDING 유지)
             BackfillStatus afterRollback =
                     backfillStatusRepository.findById(status.getId()).orElseThrow();
-            assertThat(afterRollback.getStatus()).isEqualTo(originalStatus);
+            assertThat(afterRollback.getStatus()).isEqualTo("PENDING");
             assertThat(afterRollback.getLastCollectedDate()).isNull();
         }
     }
