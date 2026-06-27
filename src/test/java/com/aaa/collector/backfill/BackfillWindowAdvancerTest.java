@@ -3,22 +3,21 @@ package com.aaa.collector.backfill;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import java.time.LocalDate;
-import java.time.temporal.ChronoUnit;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 
 /**
- * 백필 윈도우 anchor 전진기 명세 (SPEC-COLLECTOR-BACKFILL-001 T5, AC-3).
+ * 백필 윈도우 anchor 전진기 명세 (SPEC-COLLECTOR-BACKFILL-001 T5, SPEC-COLLECTOR-BACKFILL-005 T2).
  *
- * <p>순수 로직 — KIS/Spring 비의존. SPAN(기본 150 달력일)·anchor-skip-max(기본 10)는 생성자 주입.
+ * <p>순수 로직 — KIS/Spring 비의존. floorDate·anchor-skip-max는 생성자 주입.
  */
 class BackfillWindowAdvancerTest {
 
-    private static final int SPAN_CALENDAR_DAYS = 150;
+    private static final LocalDate FLOOR_DATE = LocalDate.of(1950, 1, 1);
     private static final int ANCHOR_SKIP_MAX = 10;
     private final BackfillWindowAdvancer advancer =
-            new BackfillWindowAdvancer(SPAN_CALENDAR_DAYS, ANCHOR_SKIP_MAX);
+            new BackfillWindowAdvancer(FLOOR_DATE, ANCHOR_SKIP_MAX);
 
     @Nested
     @DisplayName("anchor 전진 — −1 달력일 (AC-3.2, MA-02)")
@@ -43,27 +42,35 @@ class BackfillWindowAdvancerTest {
     }
 
     @Nested
-    @DisplayName("그룹 A SPAN — ≥150 달력일 보장 (AC-1.2b, REQ-013a)")
-    class GroupASpan {
+    @DisplayName("그룹 A 고정 플로어 — anchor 무관 floorDate 반환 (AC-2, SPEC-COLLECTOR-BACKFILL-005)")
+    class GroupAFromDate {
 
         @Test
-        @DisplayName("anchor로부터 from-date는 최소 150 달력일 이전")
-        void fromDate_atLeast150CalendarDaysBack() {
-            LocalDate anchor = LocalDate.of(2024, 6, 30);
+        @DisplayName("AC-2: groupAFromDate()는 anchor와 무관하게 항상 floorDate(1950-01-01) 반환")
+        void fromDate_alwaysReturnFloorDate() {
+            LocalDate from = advancer.groupAFromDate();
 
-            LocalDate from = advancer.groupASpanFromDate(anchor);
-
-            assertThat(ChronoUnit.DAYS.between(from, anchor)).isGreaterThanOrEqualTo(150);
+            assertThat(from).isEqualTo(LocalDate.of(1950, 1, 1));
         }
 
         @Test
-        @DisplayName("AC-1.2b: 좁은 SPAN(100 달력일)은 사용 불가 — from-date가 그보다 더 과거여야 함")
-        void fromDate_widerThan100CalendarDays() {
-            LocalDate anchor = LocalDate.of(2024, 6, 30);
+        @DisplayName("AC-2: 다양한 시점에서 호출해도 floorDate는 변하지 않음")
+        void fromDate_anchorIndependent() {
+            LocalDate first = advancer.groupAFromDate();
+            LocalDate second = advancer.groupAFromDate();
 
-            LocalDate from = advancer.groupASpanFromDate(anchor);
+            assertThat(first).isEqualTo(second).isEqualTo(LocalDate.of(1950, 1, 1));
+        }
 
-            assertThat(from).isBefore(anchor.minusDays(100));
+        @Test
+        @DisplayName("floorDate=2000-01-01로 생성 시 groupAFromDate()도 2000-01-01 반환")
+        void fromDate_respectsCustomFloor() {
+            BackfillWindowAdvancer customAdvancer =
+                    new BackfillWindowAdvancer(LocalDate.of(2000, 1, 1), ANCHOR_SKIP_MAX);
+
+            LocalDate from = customAdvancer.groupAFromDate();
+
+            assertThat(from).isEqualTo(LocalDate.of(2000, 1, 1));
         }
     }
 

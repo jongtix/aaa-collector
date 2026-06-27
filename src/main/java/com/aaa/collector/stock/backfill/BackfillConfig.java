@@ -30,13 +30,14 @@ class BackfillConfig {
     }
 
     /**
-     * 백필 윈도우 anchor 전진기 빈 — spanCalendarDays·anchorSkipMax는 {@link BackfillProperties}에서 주입.
+     * 백필 윈도우 anchor 전진기 빈 — floorDate·anchorSkipMax는 {@link BackfillProperties}에서 주입
+     * (SPEC-COLLECTOR-BACKFILL-005).
      *
      * @param props 백필 설정 프로퍼티
      * @return {@link BackfillWindowAdvancer} 인스턴스
      */
     @Bean
     BackfillWindowAdvancer backfillWindowAdvancer(BackfillProperties props) {
-        return new BackfillWindowAdvancer(props.getSpanCalendarDays(), props.getAnchorSkipMax());
+        return new BackfillWindowAdvancer(props.getFloorDate(), props.getAnchorSkipMax());
     }
 }

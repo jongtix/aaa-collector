@@ -63,7 +63,7 @@ class InvestorTrendCollectionServiceWindowTest {
         KeyLeaseRegistry keyLeaseRegistry = new KeyLeaseRegistry(healthyKeySelector);
         session = keyLeaseRegistry.openSession();
         // anchorSkipMax=10 (BackfillProperties 기본값과 동일, REQ-BACKFILL-016)
-        windowAdvancer = new BackfillWindowAdvancer(150, 10);
+        windowAdvancer = new BackfillWindowAdvancer(LocalDate.of(1950, 1, 1), 10);
         service =
                 new InvestorTrendCollectionService(
                         stockRepository,

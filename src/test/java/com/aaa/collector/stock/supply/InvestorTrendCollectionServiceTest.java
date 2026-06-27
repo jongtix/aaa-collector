@@ -74,7 +74,7 @@ class InvestorTrendCollectionServiceTest {
                         inserter,
                         guardedKisExecutor,
                         keyLeaseRegistry,
-                        new BackfillWindowAdvancer(150, 10));
+                        new BackfillWindowAdvancer(LocalDate.of(1950, 1, 1), 10));
     }
 
     private Stock stockOf(String symbol) {
