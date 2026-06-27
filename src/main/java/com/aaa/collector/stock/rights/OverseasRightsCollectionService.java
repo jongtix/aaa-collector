@@ -1,5 +1,6 @@
 package com.aaa.collector.stock.rights;
 
+import com.aaa.collector.common.gate.UsMarketOpenGate;
 import com.aaa.collector.kis.KisRateLimitException;
 import com.aaa.collector.kis.gate.GuardedKisExecutor;
 import com.aaa.collector.kis.gate.KeyLeaseRegistry;
@@ -14,6 +15,7 @@ import com.aaa.collector.stock.StockRepository;
 import com.aaa.collector.stock.enums.EventType;
 import java.net.URI;
 import java.time.LocalDate;
+import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
@@ -73,6 +75,7 @@ public class OverseasRightsCollectionService {
     private final CorporateEventInserter corporateEventInserter;
     private final GuardedKisExecutor guardedKisExecutor;
     private final KeyLeaseRegistry keyLeaseRegistry;
+    private final UsMarketOpenGate usMarketOpenGate;
 
     /**
      * 해외 현금배당 수집을 실행하고 집계 결과를 반환한다.
@@ -80,6 +83,13 @@ public class OverseasRightsCollectionService {
      * @return 시도 종목/저장 행/skip 집계
      */
     public OverseasRightsCollectionResult collect() {
+        // REQ-USMKT-014: NY 기준 오늘이 미장 휴장일 → skip
+        LocalDate nyToday = LocalDate.now(ZoneId.of("America/New_York"));
+        if (!usMarketOpenGate.isOpenDay(nyToday)) {
+            log.info("[overseas-rights] {} 미장 휴장일(NY 기준) → skip", nyToday);
+            return new OverseasRightsCollectionResult(0, 0, 0, 0, 0, 0);
+        }
+
         // REQ-OVE-020: 활성 미국 STOCK+ETF만 — 셀렉션은 StockRepository 계층에 캡슐화
         List<Stock> activeStocks = stockRepository.findAllActiveOverseasTradable();
 

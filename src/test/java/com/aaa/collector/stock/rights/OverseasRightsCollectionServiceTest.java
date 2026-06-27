@@ -10,6 +10,7 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.aaa.collector.common.gate.UsMarketOpenGate;
 import com.aaa.collector.kis.gate.GuardedKisExecutor;
 import com.aaa.collector.kis.gate.KeyLeaseRegistry;
 import com.aaa.collector.kis.gate.KeyLeaseRegistry.LeaseSession;
@@ -58,6 +59,7 @@ class OverseasRightsCollectionServiceTest {
     @Mock private CorporateEventInserter corporateEventInserter;
     @Mock private GuardedKisExecutor guardedKisExecutor;
     @Mock private HealthyKeySelector healthyKeySelector;
+    @Mock private UsMarketOpenGate usMarketOpenGate;
 
     @Captor private ArgumentCaptor<List<CorporateEvent>> inserterCaptor;
 
@@ -66,13 +68,16 @@ class OverseasRightsCollectionServiceTest {
     @BeforeEach
     void setUp() {
         KeyLeaseRegistry keyLeaseRegistry = new KeyLeaseRegistry(healthyKeySelector);
+        // 기존 테스트는 휴장일 게이트 행동을 검증하지 않으므로 always-open으로 스텁한다
+        lenient().when(usMarketOpenGate.isOpenDay(any(LocalDate.class))).thenReturn(true);
         service =
                 new OverseasRightsCollectionService(
                         stockRepository,
                         corporateEventRepository,
                         corporateEventInserter,
                         guardedKisExecutor,
-                        keyLeaseRegistry);
+                        keyLeaseRegistry,
+                        usMarketOpenGate);
     }
 
     private Stock stockOf(String symbol, Market market, AssetType assetType) {

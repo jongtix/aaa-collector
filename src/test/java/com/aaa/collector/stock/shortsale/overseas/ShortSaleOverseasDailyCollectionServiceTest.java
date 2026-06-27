@@ -10,6 +10,7 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.aaa.collector.common.gate.UsMarketOpenGate;
 import com.aaa.collector.observability.BatchMetrics;
 import com.aaa.collector.stock.ShortSaleOverseasRepository;
 import com.aaa.collector.stock.Stock;
@@ -41,14 +42,21 @@ class ShortSaleOverseasDailyCollectionServiceTest {
     @Mock private StockRepository stockRepository;
     @Mock private ShortSaleOverseasRepository shortSaleOverseasRepository;
     @Mock private BatchMetrics batchMetrics;
+    @Mock private UsMarketOpenGate usMarketOpenGate;
 
     private ShortSaleOverseasDailyCollectionService service;
 
     @BeforeEach
     void setUp() {
+        // 기존 테스트는 휴장일 게이트 행동을 검증하지 않으므로 always-open으로 스텁한다
+        Mockito.lenient().when(usMarketOpenGate.isOpenDay(any())).thenReturn(true);
         service =
                 new ShortSaleOverseasDailyCollectionService(
-                        finraClient, stockRepository, shortSaleOverseasRepository, batchMetrics);
+                        finraClient,
+                        stockRepository,
+                        shortSaleOverseasRepository,
+                        batchMetrics,
+                        usMarketOpenGate);
         // T5 LOCF forward 배치 조회 — Daily 테스트는 forward 매칭 없음(빈 Map) 기본값으로 둔다(lenient)
         Mockito.lenient()
                 .when(
