@@ -61,6 +61,8 @@ public class SafeModeManager {
     }
 
     private Counter counter(String name, String alias) {
+        // alias = KIS 계좌/세션 식별자 (isa, key1~key4, ws 세션). 최대 ~10종 고정값 — cardinality 안전.
+        // Micrometer.register()는 멱등 — 동일 name+tags는 캐시된 counter를 반환한다.
         return Counter.builder(name).tag("module", module).tag("alias", alias).register(registry);
     }
 }
