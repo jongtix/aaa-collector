@@ -29,6 +29,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 
 /**
  * 백필 윈도우 1구간 실행기 (SPEC-COLLECTOR-BACKFILL-001 T6, SPEC-COLLECTOR-TXBOUNDARY-001 T7).
@@ -66,6 +67,7 @@ public class BackfillWindowExecutor {
     private final BackfillTerminationPolicy terminationPolicy;
     private final BackfillWindowAdvancer windowAdvancer;
     private final BackfillMetrics backfillMetrics;
+    private final TransactionTemplate transactionTemplate;
 
     /**
      * [T7] 비트랜잭션 fetch 단계 — 해당 서비스의 fetchWindow를 라우팅한다 (REQ-TXB-020).
@@ -149,10 +151,13 @@ public class BackfillWindowExecutor {
                 result.oldestTradeDate() != null
                         ? result.oldestTradeDate()
                         : status.getLastCollectedDate();
-        Integer newRowCount = resolveNewRowCount(result.rowCount(), status.getLastRowCount());
 
-        backfillStatusRepository.updateProgress(
-                status.getId(), newStatus, newDate, decision.nextStaleCount(), newRowCount);
+        BackfillStatus managed = backfillStatusRepository.findById(status.getId()).orElseThrow();
+        managed.advance(
+                newStatus,
+                newDate,
+                decision.nextStaleCount(),
+                resolveNewRowCount(result.rowCount(), status.getLastRowCount()));
 
         log.debug(
                 "[backfill] 윈도우 완료 — symbol={}, table={}, status={}, oldest={}",
@@ -193,7 +198,12 @@ public class BackfillWindowExecutor {
         String newStatus = retryable ? "IN_PROGRESS" : "FAILED";
         String truncated = truncate(errorMsg, MAX_ERROR_LENGTH);
         try {
-            backfillStatusRepository.updateError(status.getId(), newStatus, truncated);
+            transactionTemplate.executeWithoutResult(
+                    tx -> {
+                        BackfillStatus managed =
+                                backfillStatusRepository.findById(status.getId()).orElseThrow();
+                        managed.fail(newStatus, truncated);
+                    });
         } catch (Exception e) {
             log.warn(
                     "[backfill] 오류 상태 갱신 실패 (베스트에포트) — id={}, cause={}",
