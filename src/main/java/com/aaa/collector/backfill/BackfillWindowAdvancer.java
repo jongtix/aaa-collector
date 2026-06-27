@@ -1,6 +1,7 @@
 package com.aaa.collector.backfill;
 
 import java.time.LocalDate;
+import java.util.Objects;
 
 /**
  * 백필 윈도우 anchor 전진기 (SPEC-COLLECTOR-BACKFILL-001 T5, SPEC-COLLECTOR-BACKFILL-005 T2).
@@ -33,7 +34,7 @@ public final class BackfillWindowAdvancer {
      * @param anchorSkipMax 그룹 B anchor 보정 한도(기본 10)
      */
     public BackfillWindowAdvancer(LocalDate floorDate, int anchorSkipMax) {
-        this.floorDate = floorDate;
+        this.floorDate = Objects.requireNonNull(floorDate, "floorDate cannot be null");
         this.anchorSkipMax = anchorSkipMax;
     }
 
