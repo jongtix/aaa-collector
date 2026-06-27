@@ -37,6 +37,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - `BaseEntity`의 `createdAt`/`updatedAt`은 `nullable=false`, `updatable=false` 유지 — JPA Auditing 동작에 필요
 - `DEFAULT` 값은 Flyway DDL이 단독 관리 — 엔티티에서 `columnDefinition`으로 중복 선언하지 않음
 - `TINYINT`/`SMALLINT` 등 좁은 정수 컬럼은 `@JdbcTypeCode(Types.TINYINT)` + `int` 로 매핑 — Java 타입은 도메인 의미 기준(`int`), DB 타입 일치는 `@JdbcTypeCode`로 명시. `columnDefinition` 사용 금지
+- **[HARD] enum 영속 필드 `@Enumerated` 사용 금지** — 전용 `AttributeConverter`(`autoApply = true`, 저장값 `enum.name()`)를 사용한다. 배치 규칙(ADR-010):
+  - 추상 베이스 `AbstractStringEnumConverter<E>`는 `com.aaa.collector.common.converter` 패키지
+  - 구체 컨버터는 해당 enum의 feature 패키지(`backfill/`, `macro/`, `market/`, `stock/`, `stock/exthours/` 등)
+- **네이티브 `@Query` 주의**: 네이티브 SQL 경로는 `AttributeConverter`가 적용되지 않는다. enum 컬럼을 다루는 네이티브 쿼리에서는 SpEL `.name()`·리터럴·`String @Param`으로 변환을 명시해야 한다(`autoApply`에 의존 금지).
 
 ## API Specs (`api-specs/kis/`)
 
