@@ -38,6 +38,7 @@ class EventTypeConverterTest {
 
         @Test
         void 저장문자열을_상수로_변환한다() {
+            // Act & Assert
             assertThat(converter.convertToEntityAttribute("DIVIDEND"))
                     .isEqualTo(EventType.DIVIDEND);
             assertThat(converter.convertToEntityAttribute("RIGHTS_ISSUE"))

@@ -39,6 +39,7 @@ class AssetTypeConverterTest {
 
         @Test
         void 저장문자열을_상수로_변환한다() {
+            // Act & Assert
             assertThat(converter.convertToEntityAttribute("STOCK")).isEqualTo(AssetType.STOCK);
             assertThat(converter.convertToEntityAttribute("ETF")).isEqualTo(AssetType.ETF);
             assertThat(converter.convertToEntityAttribute("ETN")).isEqualTo(AssetType.ETN);

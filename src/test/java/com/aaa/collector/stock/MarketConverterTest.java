@@ -45,6 +45,7 @@ class MarketConverterTest {
 
         @Test
         void 국내_시장_문자열을_상수로_변환한다() {
+            // Act & Assert
             assertThat(converter.convertToEntityAttribute("KOSPI")).isEqualTo(Market.KOSPI);
             assertThat(converter.convertToEntityAttribute("KOSDAQ")).isEqualTo(Market.KOSDAQ);
             assertThat(converter.convertToEntityAttribute("KRX")).isEqualTo(Market.KRX);
@@ -52,6 +53,7 @@ class MarketConverterTest {
 
         @Test
         void 해외_시장_문자열을_상수로_변환한다() {
+            // Act & Assert
             assertThat(converter.convertToEntityAttribute("NYSE")).isEqualTo(Market.NYSE);
             assertThat(converter.convertToEntityAttribute("NASDAQ")).isEqualTo(Market.NASDAQ);
             assertThat(converter.convertToEntityAttribute("AMEX")).isEqualTo(Market.AMEX);

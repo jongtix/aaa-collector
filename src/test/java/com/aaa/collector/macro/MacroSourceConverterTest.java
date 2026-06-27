@@ -36,6 +36,7 @@ class MacroSourceConverterTest {
 
         @Test
         void 저장문자열을_상수로_변환한다() {
+            // Act & Assert
             assertThat(converter.convertToEntityAttribute("KIS")).isEqualTo(MacroSource.KIS);
             assertThat(converter.convertToEntityAttribute("ECOS")).isEqualTo(MacroSource.ECOS);
             assertThat(converter.convertToEntityAttribute("FRED")).isEqualTo(MacroSource.FRED);
