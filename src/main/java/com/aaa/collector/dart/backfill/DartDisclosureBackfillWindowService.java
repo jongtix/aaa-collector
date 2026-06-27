@@ -17,6 +17,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.support.TransactionTemplate;
 
 /**
  * DART 공시 백필 윈도우 단건 실행 서비스 (SPEC-COLLECTOR-DART-001 REQ-DART-020~023).
@@ -39,6 +40,7 @@ public class DartDisclosureBackfillWindowService {
     private final DisclosureInserter disclosureInserter;
     private final CorpCodeMappingRepository corpCodeMappingRepository;
     private final BackfillStatusRepository backfillStatusRepository;
+    private final TransactionTemplate transactionTemplate;
 
     /**
      * 단일 종목에 대해 1 윈도우(기간 조회 + INSERT IGNORE)를 실행한다.
@@ -55,8 +57,12 @@ public class DartDisclosureBackfillWindowService {
         String corpCode = corpCodeMappingRepository.findCorpCodeByStockCode(symbol).orElse(null);
         if (corpCode == null) {
             log.warn("[dart-backfill] corp_code 매핑 없음 — symbol={}", symbol);
-            backfillStatusRepository.updateError(
-                    status.getId(), STATUS_IN_PROGRESS, "corp_code 매핑 없음: " + symbol);
+            transactionTemplate.executeWithoutResult(
+                    tx -> {
+                        BackfillStatus managed =
+                                backfillStatusRepository.findById(status.getId()).orElseThrow();
+                        managed.fail(STATUS_IN_PROGRESS, "corp_code 매핑 없음: " + symbol);
+                    });
             return;
         }
 
@@ -75,8 +81,13 @@ public class DartDisclosureBackfillWindowService {
             items = dartDisclosureClient.fetchAllPages(bgnDe, endDe, corpCode);
         } catch (Exception e) {
             log.warn("[dart-backfill] API 호출 실패 — symbol={}, error={}", symbol, e.getMessage());
-            backfillStatusRepository.updateError(
-                    status.getId(), STATUS_IN_PROGRESS, truncate(e.getMessage(), 512));
+            final String errMsg = truncate(e.getMessage(), 512);
+            transactionTemplate.executeWithoutResult(
+                    tx -> {
+                        BackfillStatus managed =
+                                backfillStatusRepository.findById(status.getId()).orElseThrow();
+                        managed.fail(STATUS_IN_PROGRESS, errMsg);
+                    });
             return;
         }
 
@@ -114,12 +125,21 @@ public class DartDisclosureBackfillWindowService {
         // stale-window: 해당 기간 신규 공시 0건 → 최대 과거 도달로 판정
         if (inserted == 0) {
             log.info("[dart-backfill] stale-window — COMPLETED. symbol={}", symbol);
-            backfillStatusRepository.updateProgress(
-                    status.getId(), STATUS_COMPLETED, bgnDe, 0, inserted);
+            transactionTemplate.executeWithoutResult(
+                    tx -> {
+                        BackfillStatus managed =
+                                backfillStatusRepository.findById(status.getId()).orElseThrow();
+                        managed.advance(STATUS_COMPLETED, bgnDe, 0, inserted);
+                    });
         } else {
             // anchor 전진 — bgnDe를 새 anchor로 갱신
-            backfillStatusRepository.updateProgress(
-                    status.getId(), STATUS_IN_PROGRESS, bgnDe, 0, inserted);
+            final int insertedCount = inserted;
+            transactionTemplate.executeWithoutResult(
+                    tx -> {
+                        BackfillStatus managed =
+                                backfillStatusRepository.findById(status.getId()).orElseThrow();
+                        managed.advance(STATUS_IN_PROGRESS, bgnDe, 0, insertedCount);
+                    });
         }
     }
 
