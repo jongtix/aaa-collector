@@ -47,6 +47,7 @@ import org.springframework.transaction.support.TransactionTemplate;
 // @MX:ANCHOR: [AUTO] 백필 윈도우 실행 진입점 — INSERT IGNORE+status UPDATE 동일 트랜잭션 묶음 담당
 // @MX:REASON: [AUTO] AC-4.1/4.2 부분 커밋 방지. T7에서 fetchWindow(비tx)/persistWindow(tx)로 경계 분리.
 // @MX:SPEC: SPEC-COLLECTOR-TXBOUNDARY-001
+@SuppressWarnings("PMD.ExcessiveImports") // 다중 수집 서비스 라우팅 구조상 불가피한 import 수
 @Slf4j
 @Component
 @RequiredArgsConstructor

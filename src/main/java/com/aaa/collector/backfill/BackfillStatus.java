@@ -97,6 +97,7 @@ public class BackfillStatus extends BaseEntity {
      * @param staleCount 새 stale_count (전진 시 0, 무전진 시 현재값+1)
      * @param lastRowCount 이번 윈도우 행 수 (null이면 직전값 유지)
      */
+    @SuppressWarnings("PMD.NullAssignment") // lastError 초기화 의도적 null 대입 (오류 없음 = null)
     public void advance(
             String status, LocalDate lastCollectedDate, int staleCount, Integer lastRowCount) {
         this.status = status;

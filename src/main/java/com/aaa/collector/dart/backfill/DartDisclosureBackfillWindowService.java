@@ -129,7 +129,7 @@ public class DartDisclosureBackfillWindowService {
                     tx -> {
                         BackfillStatus managed =
                                 backfillStatusRepository.findById(status.getId()).orElseThrow();
-                        managed.advance(STATUS_COMPLETED, bgnDe, 0, inserted);
+                        managed.advance(STATUS_COMPLETED, bgnDe, 0, 0);
                     });
         } else {
             // anchor 전진 — bgnDe를 새 anchor로 갱신
