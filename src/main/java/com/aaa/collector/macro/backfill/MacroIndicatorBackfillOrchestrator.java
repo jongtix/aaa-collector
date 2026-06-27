@@ -15,6 +15,7 @@ import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
+import org.springframework.transaction.support.TransactionTemplate;
 
 /**
  * 거시경제 지표 백필 오케스트레이터 (SPEC-COLLECTOR-MACRO-EXT-001 REQ-MACRO-EXT-051~060).
@@ -43,6 +44,7 @@ public class MacroIndicatorBackfillOrchestrator {
     private final MacroIndicatorRepository macroIndicatorRepository;
     private final EcosCollectionService ecosCollectionService;
     private final FredCollectionService fredCollectionService;
+    private final TransactionTemplate transactionTemplate;
 
     /**
      * 백필 실행 진입점.
@@ -91,8 +93,12 @@ public class MacroIndicatorBackfillOrchestrator {
                             .findMinTradeDateByIndicatorCode(indicatorCode)
                             .orElse(LocalDate.now());
 
-            backfillStatusRepository.updateProgress(
-                    status.getId(), "COMPLETED", minDate, 0, result.succeeded());
+            transactionTemplate.executeWithoutResult(
+                    tx -> {
+                        BackfillStatus managed =
+                                backfillStatusRepository.findById(status.getId()).orElseThrow();
+                        managed.advance("COMPLETED", minDate, 0, result.succeeded());
+                    });
 
             log.info(
                     "[macro-backfill] 완료 — code={}, attempted={}, succeeded={}",
@@ -101,8 +107,13 @@ public class MacroIndicatorBackfillOrchestrator {
                     result.succeeded());
         } catch (Exception e) {
             log.error("[macro-backfill] 예외 — code={}", indicatorCode, e);
-            backfillStatusRepository.updateError(
-                    status.getId(), "FAILED", truncate(e.getMessage(), 512));
+            final String errMsg = truncate(e.getMessage(), 512);
+            transactionTemplate.executeWithoutResult(
+                    tx -> {
+                        BackfillStatus managed =
+                                backfillStatusRepository.findById(status.getId()).orElseThrow();
+                        managed.fail("FAILED", errMsg);
+                    });
         }
     }
 
