@@ -97,6 +97,9 @@ public class BackfillStatus extends BaseEntity {
      * @param staleCount 새 stale_count (전진 시 0, 무전진 시 현재값+1)
      * @param lastRowCount 이번 윈도우 행 수 (null이면 직전값 유지)
      */
+    // @MX:ANCHOR: [AUTO] 백필 진행점 전진 — @Transactional 경계 내 관리 엔티티 상태 변경
+    // @MX:REASON: [AUTO] JPA dirty-check 경로 필수 — @LastModifiedDate 발화는 MANAGED 상태에서만 보장. 7개 호출처.
+    // @MX:SPEC: SPEC-COLLECTOR-UPDATEDAT-001
     @SuppressWarnings("PMD.NullAssignment") // lastError 초기화 의도적 null 대입 (오류 없음 = null)
     public void advance(
             String status, LocalDate lastCollectedDate, int staleCount, Integer lastRowCount) {
@@ -119,6 +122,9 @@ public class BackfillStatus extends BaseEntity {
      * @param status 새 상태 ({@code "IN_PROGRESS"} 또는 {@code "FAILED"})
      * @param lastError 오류 메시지 (최대 512자)
      */
+    // @MX:ANCHOR: [AUTO] 백필 오류 상태 기록 — @Transactional / TransactionTemplate 경계 내 관리 엔티티 변경
+    // @MX:REASON: [AUTO] JPA dirty-check 경로 필수 — @LastModifiedDate 발화는 MANAGED 상태에서만 보장. 5개 호출처.
+    // @MX:SPEC: SPEC-COLLECTOR-UPDATEDAT-001
     public void fail(String status, String lastError) {
         this.status = status;
         this.lastError = lastError;

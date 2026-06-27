@@ -67,7 +67,7 @@ class BackfillWindowExecutorTransactionTest {
     @MockitoBean private CreditBalanceCollectionService creditBalanceService;
 
     @Autowired private BackfillWindowExecutor windowExecutor;
-    // SpyBean: 실제 구현 유지, updateProgress 선택적 stubbing 가능 (AC-4.2 롤백 테스트)
+    // SpyBean: 실제 구현 유지, advance() spy 기반 예외 주입 가능 (AC-4.2 롤백 테스트)
     @MockitoSpyBean private BackfillStatusRepository backfillStatusRepository;
 
     private LeaseSession session;
@@ -106,7 +106,7 @@ class BackfillWindowExecutorTransactionTest {
     class PersistWindowTransaction {
 
         @Test
-        @DisplayName("persistWindow() — 성공 시 INSERT + updateProgress 커밋 (AC-1 커밋)")
+        @DisplayName("persistWindow() — 성공 시 INSERT + advance() dirty-check 커밋 (AC-1 커밋)")
         void persistWindow_commit_updatesStatus() {
             // Arrange
             BackfillStatus status = seedPending("005930", "investor_trend");
@@ -263,8 +263,7 @@ class BackfillWindowExecutorTransactionTest {
 
         @Test
         @DisplayName(
-                "executeWindow() — updateProgress 예외 시 수집 데이터·status 변경 모두 롤백된다"
-                        + " (REQ-BACKFILL-031)")
+                "executeWindow() — advance() 예외 시 수집 데이터·status 변경 모두 롤백된다" + " (REQ-BACKFILL-031)")
         void executeWindow_rollbackOnUpdateProgressFailure_neitherDataNorStatusPersists()
                 throws InterruptedException {
             // Arrange

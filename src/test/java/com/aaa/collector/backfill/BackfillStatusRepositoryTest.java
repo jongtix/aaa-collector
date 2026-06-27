@@ -17,6 +17,7 @@ import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import org.springframework.transaction.support.TransactionTemplate;
 import org.testcontainers.containers.MySQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
@@ -36,6 +37,7 @@ class BackfillStatusRepositoryTest {
 
     @Autowired private BackfillStatusRepository backfillStatusRepository;
     @Autowired private JdbcTemplate jdbcTemplate;
+    @Autowired private TransactionTemplate transactionTemplate;
 
     @BeforeEach
     void cleanUp() {
@@ -172,11 +174,14 @@ class BackfillStatusRepositoryTest {
             // DATETIME 컬럼은 초 단위 정밀도 — 갱신 감지에 1초 이상 경과 필요
             Thread.sleep(1100);
 
-            // Act — find managed entity and call domain method
-            BackfillStatus managed =
-                    backfillStatusRepository.findById(seeded.getId()).orElseThrow();
-            managed.advance("IN_PROGRESS", LocalDate.of(2025, 1, 1), 0, 10);
-            backfillStatusRepository.saveAndFlush(managed); // flush dirty-check
+            // Act — 프로덕션 @Transactional persistWindow() 경로 재현: MANAGED 엔티티 dirty-check
+            transactionTemplate.executeWithoutResult(
+                    tx -> {
+                        BackfillStatus managed =
+                                backfillStatusRepository.findById(seeded.getId()).orElseThrow();
+                        managed.advance("IN_PROGRESS", LocalDate.of(2025, 1, 1), 0, 10);
+                        // save() 없음 — MANAGED 상태에서 트랜잭션 커밋 시 dirty-check → @LastModifiedDate 발화
+                    });
 
             // Assert
             BackfillStatus updated =
@@ -200,14 +205,16 @@ class BackfillStatusRepositoryTest {
             LocalDateTime seededUpdatedAt =
                     backfillStatusRepository.findById(seeded.getId()).orElseThrow().getUpdatedAt();
 
-            // DATETIME 컬럼은 초 단위 정밀도 — 갱신 감지에 1초 이상 경과 필요
             Thread.sleep(1100);
 
-            // Act
-            BackfillStatus managed =
-                    backfillStatusRepository.findById(seeded.getId()).orElseThrow();
-            managed.fail("FAILED", "test error");
-            backfillStatusRepository.saveAndFlush(managed);
+            // Act — 프로덕션 TransactionTemplate 실패 기록 경로 재현: MANAGED 엔티티 dirty-check
+            transactionTemplate.executeWithoutResult(
+                    tx -> {
+                        BackfillStatus managed =
+                                backfillStatusRepository.findById(seeded.getId()).orElseThrow();
+                        managed.fail("FAILED", "test error");
+                        // save() 없음 — MANAGED 상태에서 트랜잭션 커밋 시 dirty-check → @LastModifiedDate 발화
+                    });
 
             // Assert
             BackfillStatus updated =
