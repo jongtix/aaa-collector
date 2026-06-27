@@ -46,9 +46,9 @@ class BackfillPropertiesTest {
         }
 
         @Test
-        @DisplayName("spanCalendarDays 기본값 = 150")
-        void spanCalendarDays_defaultIs150() {
-            assertThat(properties.getSpanCalendarDays()).isEqualTo(150);
+        @DisplayName("spanCalendarDays 기본값 = 200")
+        void spanCalendarDays_defaultIs200() {
+            assertThat(properties.getSpanCalendarDays()).isEqualTo(200);
         }
 
         @Test
