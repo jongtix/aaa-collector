@@ -64,27 +64,65 @@ public class BackfillStatus extends BaseEntity {
      * {@code 'PENDING'}은 Flyway DDL이 단독 관리한다.
      */
     @Column(name = "status", length = 16)
-    private final String status;
+    private String status;
 
     /** 지금까지 도달한 최소(가장 과거) 거래일 = 재개 anchor. NULL=미착수. */
     @Column(name = "last_collected_date")
-    private final LocalDate lastCollectedDate;
+    private LocalDate lastCollectedDate;
 
     /** 그룹 B(공매도·investor·credit) 연속 무전진 횟수(REQ-BACKFILL-014). 전진 시 0 리셋. */
     @Column(name = "stale_count")
-    private final int staleCount;
+    private int staleCount;
 
     /** 직전 윈도우 응답 행 수. {@code last_collected_date}와 함께 동일하면 클램프 의심(REQ-BACKFILL-014a). */
     @Column(name = "last_row_count")
-    private final Integer lastRowCount;
+    private Integer lastRowCount;
 
     /** 누적 윈도우 시도 횟수(관측용). */
     @Column(name = "attempt_count")
-    private final int attemptCount;
+    private int attemptCount;
 
     /** 마지막 실패 사유(REQ-BACKFILL-030). */
     @Column(name = "last_error", length = 512)
-    private final String lastError;
+    private String lastError;
+
+    /**
+     * 윈도우 수집 성공 후 진행점·상태·stale_count·attempt_count를 갱신한다 (REQ-UPDATEDAT-002, REQ-UPDATEDAT-003).
+     *
+     * <p>JPA dirty-check 경로 — 관리 엔티티에서 호출해야 {@code @LastModifiedDate}(updated_at)가 발화한다. {@code
+     * lastRowCount}가 {@code null}이면 직전값을 유지한다.
+     *
+     * @param status 새 상태 ({@code "IN_PROGRESS"} 또는 {@code "COMPLETED"})
+     * @param lastCollectedDate 이번 윈도우 최소 거래일
+     * @param staleCount 새 stale_count (전진 시 0, 무전진 시 현재값+1)
+     * @param lastRowCount 이번 윈도우 행 수 (null이면 직전값 유지)
+     */
+    public void advance(
+            String status, LocalDate lastCollectedDate, int staleCount, Integer lastRowCount) {
+        this.status = status;
+        this.lastCollectedDate = lastCollectedDate;
+        this.staleCount = staleCount;
+        if (lastRowCount != null) {
+            this.lastRowCount = lastRowCount;
+        }
+        this.attemptCount++;
+        this.lastError = null;
+    }
+
+    /**
+     * 윈도우 수집 실패 시 오류 메시지와 상태를 갱신한다 (REQ-UPDATEDAT-008).
+     *
+     * <p>JPA dirty-check 경로 — 관리 엔티티에서 호출해야 {@code @LastModifiedDate}(updated_at)가 발화한다. {@code
+     * last_collected_date}는 변경하지 않는다.
+     *
+     * @param status 새 상태 ({@code "IN_PROGRESS"} 또는 {@code "FAILED"})
+     * @param lastError 오류 메시지 (최대 512자)
+     */
+    public void fail(String status, String lastError) {
+        this.status = status;
+        this.lastError = lastError;
+        this.attemptCount++;
+    }
 
     @Builder
     private BackfillStatus(
