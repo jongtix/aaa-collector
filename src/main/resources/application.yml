@@ -121,10 +121,10 @@ aaa:
     # 주말 추가 실행 cron (기본: 4시간 단위 00/04/08/12/16/20 KST). 주말은 WebSocket 미운영으로 HikariPool 여유.
     weekend-cron: "0 0 6/4 * * SAT,SUN"
     # 한 테이블 스트림이 한 회차에 완주할 최대 status 슬롯 수 — 테이블별 런타임 바운드 (REQ-BACKFILL-064)
-    per-table-completion-cap: 10
+    per-table-completion-cap: 300
     # status당 inner 루프 최대 윈도우 반복 횟수 — 공통 하드 캡 (REQ-BACKFILL-053a)
-    # SPAN 150일 × 120 ≈ 49년 커버
-    max-windows-per-target: 120
+    # SPAN 150일 × 160 ≈ 65년 커버 (최장 상장 종목 유한양행 1962년 기준 155 윈도우 + 여유)
+    max-windows-per-target: 160
     # 그룹 B 연속 무전진 종료 임계 (REQ-BACKFILL-014)
     stale-window-threshold: 3
     # 그룹 A SPAN 폭(달력일). 100거래일 충족을 위해 ≥150 (REQ-BACKFILL-013a)
