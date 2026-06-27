@@ -21,6 +21,7 @@ import com.aaa.collector.macro.fred.FredCollectionService;
 import com.aaa.collector.market.MarketIndicatorRepository;
 import com.aaa.collector.market.backfill.MarketIndicatorBackfillOrchestrator;
 import com.aaa.collector.market.backfill.MarketIndicatorBackfillScheduler;
+import com.aaa.collector.market.indicator.MarketIndicatorMetrics;
 import com.aaa.collector.market.indicator.YahooFinanceClient;
 import com.aaa.collector.market.indicator.usdkrw.KoreaeximExchangeRateClient;
 import com.aaa.collector.market.indicator.usdkrw.UsdkrwCollectionService;
@@ -132,7 +133,9 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
             DartDisclosureBackfillOrchestrator.class,
             DartDisclosureBackfillScheduler.class,
             // SPEC-COLLECTOR-USMKT-001: 미국 시장 게이트 신규 빈 모킹 (smoke 회귀 방지)
-            UsMarketSessionGate.class
+            UsMarketSessionGate.class,
+            // SPEC-COLLECTOR-MARKETIND-002: 시장지표 메트릭 신규 빈 모킹 (smoke 회귀 방지)
+            MarketIndicatorMetrics.class
         })
 class SmokeMockitoBase {
 
