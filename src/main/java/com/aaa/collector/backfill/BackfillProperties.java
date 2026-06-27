@@ -1,9 +1,11 @@
 package com.aaa.collector.backfill;
 
+import java.time.LocalDate;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 
 /**
- * 백필 스케줄러·오케스트레이터 설정 프로퍼티 (SPEC-COLLECTOR-BACKFILL-001 T7, SPEC-COLLECTOR-BACKFILL-002 T1).
+ * 백필 스케줄러·오케스트레이터 설정 프로퍼티 (SPEC-COLLECTOR-BACKFILL-001 T7, SPEC-COLLECTOR-BACKFILL-002 T1,
+ * SPEC-COLLECTOR-BACKFILL-005 T1).
  *
  * <p>{@code aaa.backfill.*} 프리픽스로 바인딩된다. 모든 필드는 기본값을 보유하므로 YAML 미설정 시에도 동작한다.
  *
@@ -19,8 +21,8 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
  *       아닌 windows × KIS 응답 거래일로 결정된다. 정상 종료는 그룹별 종료 정책으로 상한 도달 전에 발생한다. GROUP_A·GROUP_B 모두 적용되는 최종
  *       방어선.
  *   <li>{@code staleWindowThreshold}: 3 — 그룹 B 연속 무전진 종료 임계(REQ-BACKFILL-014).
- *   <li>{@code spanCalendarDays}: 200 — 그룹 A SPAN 폭(달력일). 100거래일 충족 여유(REQ-BACKFILL-013a). 150일은
- *       거래일 ~99로 조기 종료 버그.
+ *   <li>{@code floorDate}: 1950-01-01 — 그룹 A from-date 고정 플로어. KRX 개장일(1956-03-03)보다 이전으로 설정해 상폐 종목
+ *       초기 윈도우 0건 오종료를 해소한다(SPEC-COLLECTOR-BACKFILL-005).
  *   <li>{@code anchorSkipMax}: 10 — investor_trend rt_cd=2 anchor 보정 최대 재시도(REQ-BACKFILL-016).
  * </ul>
  */
@@ -50,8 +52,12 @@ public class BackfillProperties {
     /** 그룹 B 연속 무전진 종료 임계 (REQ-BACKFILL-014). */
     private int staleWindowThreshold = 3;
 
-    /** 그룹 A 기간 윈도우 from-date 폭(달력일). 100거래일 충족 위해 ≥200 (REQ-BACKFILL-013a). */
-    private int spanCalendarDays = 200;
+    /**
+     * 그룹 A from-date 고정 플로어 — KRX 개장일(1956-03-03)보다 이전으로 설정 (SPEC-COLLECTOR-BACKFILL-005).
+     *
+     * <p>상폐 종목의 초기 윈도우가 0건으로 종료되는 오종료 버그를 해소한다. anchor 기반 슬라이딩 방식(span-calendar-days)을 대체한다.
+     */
+    private LocalDate floorDate = LocalDate.of(1950, 1, 1);
 
     /** 그룹 B rt_cd=2 anchor 보정 최대 시도 횟수 (REQ-BACKFILL-016). */
     private int anchorSkipMax = 10;
@@ -88,12 +94,12 @@ public class BackfillProperties {
         this.staleWindowThreshold = staleWindowThreshold;
     }
 
-    public int getSpanCalendarDays() {
-        return spanCalendarDays;
+    public LocalDate getFloorDate() {
+        return floorDate;
     }
 
-    public void setSpanCalendarDays(int spanCalendarDays) {
-        this.spanCalendarDays = spanCalendarDays;
+    public void setFloorDate(LocalDate floorDate) {
+        this.floorDate = floorDate;
     }
 
     public int getAnchorSkipMax() {

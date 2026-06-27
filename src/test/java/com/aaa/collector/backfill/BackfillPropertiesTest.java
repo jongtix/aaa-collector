@@ -2,15 +2,17 @@ package com.aaa.collector.backfill;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import java.time.LocalDate;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 
 /**
- * BackfillProperties 기본값 명세 (SPEC-COLLECTOR-BACKFILL-002 T1, SPEC-COLLECTOR-BACKFILL-004 T1).
+ * BackfillProperties 기본값 명세 (SPEC-COLLECTOR-BACKFILL-002 T1, SPEC-COLLECTOR-BACKFILL-004 T1,
+ * SPEC-COLLECTOR-BACKFILL-005 T1).
  *
- * <p>{@code perTableCompletionCap}=10, {@code maxWindowsPerTarget}=120 기본값 검증. {@code
- * perRunCompletionCap} 리네임(REQ-BACKFILL-064a) 결과 확인(컴파일 레벨).
+ * <p>{@code perTableCompletionCap}=10, {@code maxWindowsPerTarget}=120, {@code
+ * floorDate}=1950-01-01 기본값 검증.
  */
 @DisplayName("BackfillProperties 기본값 명세")
 class BackfillPropertiesTest {
@@ -46,15 +48,27 @@ class BackfillPropertiesTest {
         }
 
         @Test
-        @DisplayName("spanCalendarDays 기본값 = 200")
-        void spanCalendarDays_defaultIs200() {
-            assertThat(properties.getSpanCalendarDays()).isEqualTo(200);
-        }
-
-        @Test
         @DisplayName("anchorSkipMax 기본값 = 10")
         void anchorSkipMax_defaultIs10() {
             assertThat(properties.getAnchorSkipMax()).isEqualTo(10);
+        }
+    }
+
+    @Nested
+    @DisplayName("BACKFILL-005 floorDate 필드 (AC-1)")
+    class FloorDateField {
+
+        @Test
+        @DisplayName("AC-1: floorDate 기본값 = 1950-01-01 (KRX 개장일 이전, 상폐 종목 초기 윈도우 오종료 해소)")
+        void floorDate_defaultIs_1950_01_01() {
+            assertThat(properties.getFloorDate()).isEqualTo(LocalDate.of(1950, 1, 1));
+        }
+
+        @Test
+        @DisplayName("floorDate setter 적용")
+        void setFloorDate_appliesValue() {
+            properties.setFloorDate(LocalDate.of(2000, 1, 1));
+            assertThat(properties.getFloorDate()).isEqualTo(LocalDate.of(2000, 1, 1));
         }
     }
 
