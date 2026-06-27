@@ -107,6 +107,13 @@
         <!-- 테스트에서 mock/assertion/도메인 클래스 import가 많은 것은 자연스러우므로 별도 설정 -->
         <exclude name="ExcessiveImports"/>
     </rule>
+    <!-- CouplingBetweenObjects: 기본 20에서 25로 상향 — 해외 수집 서비스(KIS게이트+멀티키+VT+집계)가 다수 협력자를 수렴하는
+         fan-in 진입점으로 설계되어 20 초과가 구조적으로 불가피함 (SPEC-COLLECTOR-KISGATE-001, SPEC-COLLECTOR-USMKT-001) -->
+    <rule ref="category/java/design.xml/CouplingBetweenObjects">
+        <properties>
+            <property name="threshold" value="25"/>
+        </properties>
+    </rule>
     <rule ref="category/java/design.xml/ExcessiveImports">
         <properties>
             <property name="violationSuppressXPath"
