@@ -506,7 +506,10 @@ class DomesticDailyOhlcvCollectionServiceTest {
 
         private static final LocalDate ANCHOR = LocalDate.of(2026, 5, 30);
 
-        /** groupASpanFromDate(ANCHOR) = ANCHOR.minusDays(150) = 2025-12-31 */
+        /**
+         * 테스트 고정 from-date — SPEC-COLLECTOR-BACKFILL-005 이후 floorDate(1950-01-01) 사용; 여기선 직접 파라미터로
+         * 주입
+         */
         private static final LocalDate FROM = ANCHOR.minusDays(150);
 
         private LeaseSession openSession() {
