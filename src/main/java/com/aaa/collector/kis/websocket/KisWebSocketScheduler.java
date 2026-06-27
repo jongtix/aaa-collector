@@ -1,6 +1,7 @@
 package com.aaa.collector.kis.websocket;
 
 import com.aaa.collector.common.gate.MarketOpenGate;
+import com.aaa.collector.common.gate.UsMarketOpenGate;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
 import lombok.RequiredArgsConstructor;
@@ -30,6 +31,9 @@ public class KisWebSocketScheduler {
     // @MX:NOTE: [AUTO] MarketOpenGate 인터페이스 타입 주입 — kis→common.gate 단방향 (ArchUnit CR-01 순환 방지)
     // @MX:SPEC: SPEC-COLLECTOR-WS-RECOVERY-001
     private final MarketOpenGate marketOpenGate;
+    // @MX:NOTE: [AUTO] UsMarketOpenGate 인터페이스 타입 주입 — kis→common.gate 단방향 (ArchUnit CR-01 순환 방지)
+    // @MX:SPEC: SPEC-COLLECTOR-USMKT-001
+    private final UsMarketOpenGate usMarketOpenGate;
     private final WsRecoveryProperties wsRecoveryProperties;
 
     // 재진입 방지 플래그 (EtfRepresentativeScheduler 패턴 참고)
@@ -37,12 +41,39 @@ public class KisWebSocketScheduler {
     final AtomicBoolean domesticRunning = new AtomicBoolean(false);
     final AtomicBoolean overseasRunning = new AtomicBoolean(false);
 
-    // @MX:NOTE: [AUTO] 부팅 완료 시 국내 WS 복구 트리거 — 재배포 시 구독 공백 해소 (REQ-WSREC-001)
-    // @MX:SPEC: SPEC-COLLECTOR-WS-RECOVERY-001
-    /** 부팅 완료 이벤트 수신 후 별도 Virtual Thread에서 복구를 실행한다 (REQ-WSREC-001). */
+    // @MX:NOTE: [AUTO] 부팅 완료 시 국내·해외 WS 복구 트리거 — 재배포 시 구독 공백 해소 (REQ-WSREC-001, REQ-USMKT-015)
+    // @MX:SPEC: SPEC-COLLECTOR-WS-RECOVERY-001, SPEC-COLLECTOR-USMKT-001
+    /** 부팅 완료 이벤트 수신 후 별도 Virtual Thread에서 복구를 실행한다 (REQ-WSREC-001, REQ-USMKT-015). */
     @EventListener(ApplicationReadyEvent.class)
     public void onApplicationReady() {
         Thread.ofVirtual().name("ws-recovery").start(this::recoverDomesticSessionOnStartup);
+        Thread.ofVirtual()
+                .name("ws-overseas-recovery")
+                .start(this::recoverOverseasSessionOnStartup);
+    }
+
+    /**
+     * 미장 중 재배포 시 해외 WebSocket 구독 복구 본체 (REQ-USMKT-015/016).
+     *
+     * <p>3-가드 순서: (1) enabled — (2) isRunning 미기동 — (3) UsMarketSessionGate.isMarketOpenNow 장중. 미장외
+     * 부팅 → 복구 생략+로그(REQ-USMKT-016).
+     *
+     * <p>package-private: 단위 테스트에서 직접 호출 가능.
+     */
+    void recoverOverseasSessionOnStartup() {
+        if (!wsRecoveryProperties.isEnabled()) {
+            return;
+        }
+        if (sessionManager.isRunning()) {
+            log.info("해외 WebSocket 세션 이미 기동됨 → 복구 생략");
+            return;
+        }
+        if (!usMarketOpenGate.isMarketOpenNow()) {
+            log.info("미장외 → 해외 WebSocket 복구 생략");
+            return;
+        }
+        log.info("미장 중 → 해외 WebSocket 구독 복구");
+        openOverseasSession();
     }
 
     /**

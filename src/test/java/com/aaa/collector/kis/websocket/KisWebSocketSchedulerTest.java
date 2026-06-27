@@ -7,6 +7,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.aaa.collector.common.gate.MarketOpenGate;
+import com.aaa.collector.common.gate.UsMarketOpenGate;
 import java.lang.reflect.Method;
 import java.util.List;
 import org.junit.jupiter.api.DisplayName;
@@ -25,6 +26,7 @@ class KisWebSocketSchedulerTest {
     @Mock private KisWebSocketSessionManager sessionManager;
     @Mock private SubscriptionTargetResolver subscriptionTargetResolver;
     @Mock private MarketOpenGate marketOpenGate;
+    @Mock private UsMarketOpenGate usMarketOpenGate;
     @Mock private WsRecoveryProperties wsRecoveryProperties;
 
     @InjectMocks private KisWebSocketScheduler scheduler;

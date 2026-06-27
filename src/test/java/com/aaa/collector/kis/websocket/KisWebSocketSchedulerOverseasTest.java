@@ -7,6 +7,7 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.aaa.collector.common.gate.UsMarketOpenGate;
 import java.util.List;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -22,6 +23,7 @@ class KisWebSocketSchedulerOverseasTest {
 
     @Mock private KisWebSocketSessionManager sessionManager;
     @Mock private SubscriptionTargetResolver subscriptionTargetResolver;
+    @Mock private UsMarketOpenGate usMarketOpenGate;
 
     @InjectMocks private KisWebSocketScheduler scheduler;
 
