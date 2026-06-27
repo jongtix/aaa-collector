@@ -66,17 +66,20 @@ public class MarketIndicatorChainConfig {
     @Qualifier("vixChain") MarketIndicatorSourceChain vixChain(
             CboeVixClient cboeVixClient,
             FredVixClient fredVixClient,
-            @Qualifier("yahooVixSource") MarketIndicatorSource yahooVixSource) {
+            @Qualifier("yahooVixSource") MarketIndicatorSource yahooVixSource,
+            MarketIndicatorMetrics metrics) {
         return new MarketIndicatorSourceChain(
-                List.of(cboeVixClient, fredVixClient, yahooVixSource));
+                List.of(cboeVixClient, fredVixClient, yahooVixSource), "VIX", metrics);
     }
 
     /** USDKRW 소스 체인: KOREAEXIM → Yahoo USDKRW=X. */
     @Bean
     @Qualifier("usdkrwChain") MarketIndicatorSourceChain usdkrwChain(
             KoreaeximExchangeRateClient koreaeximClient,
-            @Qualifier("yahooUsdkrwSource") MarketIndicatorSource yahooUsdkrwSource) {
-        return new MarketIndicatorSourceChain(List.of(koreaeximClient, yahooUsdkrwSource));
+            @Qualifier("yahooUsdkrwSource") MarketIndicatorSource yahooUsdkrwSource,
+            MarketIndicatorMetrics metrics) {
+        return new MarketIndicatorSourceChain(
+                List.of(koreaeximClient, yahooUsdkrwSource), "USDKRW", metrics);
     }
 
     /**
