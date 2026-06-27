@@ -2,6 +2,7 @@ package com.aaa.collector.backfill;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import java.time.LocalDate;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
@@ -9,10 +10,11 @@ import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 
 /**
  * BackfillProperties YAML 바인딩 통합 테스트 (SPEC-COLLECTOR-BACKFILL-002 T3, SPEC-COLLECTOR-BACKFILL-004
- * T3).
+ * T3, SPEC-COLLECTOR-BACKFILL-005 T5).
  *
  * <p>{@code aaa.backfill.*} 키가 올바른 부모 아래에 배치되어 {@link BackfillProperties}에 바인딩됨을 검증한다. {@code
  * per-run-completion-cap} → {@code per-table-completion-cap} 리네임(REQ-BACKFILL-064a) 바인딩 정합 확인.
+ * {@code floor-date} ISO-8601 문자열 → {@link LocalDate} 바인딩 확인 (AC-8).
  */
 @DisplayName("BackfillProperties YAML 바인딩 통합 테스트")
 class BackfillPropertiesBindingTest {
@@ -71,6 +73,28 @@ class BackfillPropertiesBindingTest {
                     BackfillProperties props = ctx.getBean(BackfillProperties.class);
                     assertThat(props.getPerTableCompletionCap()).isEqualTo(10);
                     assertThat(props.getMaxWindowsPerTarget()).isEqualTo(120);
+                });
+    }
+
+    @Test
+    @DisplayName("AC-8 — aaa.backfill.floor-date ISO-8601 문자열이 LocalDate로 바인딩된다")
+    void floorDate_bindsFromIso8601String() {
+        contextRunner
+                .withPropertyValues("aaa.backfill.floor-date=2000-01-01")
+                .run(
+                        ctx -> {
+                            BackfillProperties props = ctx.getBean(BackfillProperties.class);
+                            assertThat(props.getFloorDate()).isEqualTo(LocalDate.of(2000, 1, 1));
+                        });
+    }
+
+    @Test
+    @DisplayName("AC-1 — aaa.backfill 미설정 시 floorDate 기본값 1950-01-01이 유지된다")
+    void noFloorDateProperty_defaultIs1950() {
+        contextRunner.run(
+                ctx -> {
+                    BackfillProperties props = ctx.getBean(BackfillProperties.class);
+                    assertThat(props.getFloorDate()).isEqualTo(LocalDate.of(1950, 1, 1));
                 });
     }
 

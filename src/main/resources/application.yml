@@ -127,8 +127,8 @@ aaa:
     max-windows-per-target: 160
     # 그룹 B 연속 무전진 종료 임계 (REQ-BACKFILL-014)
     stale-window-threshold: 3
-    # 그룹 A SPAN 폭(달력일). 100거래일 충족을 위해 ≥200 — 150일은 거래일 ~99로 조기 종료 버그(REQ-BACKFILL-013a)
-    span-calendar-days: 200
+    # 그룹 A from-date 고정 플로어 — KRX 개장일(1956-03-03)보다 이전, 상폐 종목 초기 윈도우 오종료 해소
+    floor-date: "1950-01-01"
     # 그룹 B rt_cd=2 anchor 보정 최대 시도 횟수 (REQ-BACKFILL-016)
     anchor-skip-max: 10
   macro:
