@@ -55,7 +55,7 @@ public class BackfillProperties {
     /**
      * 그룹 A from-date 고정 플로어 — KRX 개장일(1956-03-03)보다 이전으로 설정 (SPEC-COLLECTOR-BACKFILL-005).
      *
-     * <p>상폐 종목의 초기 윈도우가 0건으로 종료되는 오종료 버그를 해소한다. anchor 기반 슬라이딩 방식(span-calendar-days)을 대체한다.
+     * <p>상폐 종목의 초기 윈도우가 0건으로 종료되는 오종료 버그를 해소한다(anchor 기반 슬라이딩 방식을 고정 플로어로 대체).
      */
     private LocalDate floorDate = LocalDate.of(1950, 1, 1);
 
