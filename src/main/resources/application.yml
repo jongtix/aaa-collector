@@ -154,6 +154,10 @@ aaa:
     # 장 중 재배포 시 국내 WebSocket 구독 복구 활성화 (SPEC-COLLECTOR-WS-RECOVERY-001)
     # 기본값 true(default-active) — 클래스 기본값도 true이므로 키 누락 시에도 활성화됨
     enabled: true
+  us-market:
+    # NYSE 표준 10개 휴장일 외 추가 오버라이드 날짜 (SPEC-COLLECTOR-USMKT-001 REQ-002)
+    # 빈 목록이면 알고리즘 결과만 사용한다. 형식: yyyy-MM-dd
+    extra-holidays: []
   catchup:
     # 재시작 후 누락 배치 즉시 재실행 활성화 (SPEC-COLLECTOR-CATCHUP-001)
     enabled: true
