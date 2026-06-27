@@ -14,6 +14,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
+import org.springframework.transaction.support.TransactionTemplate;
 
 /**
  * 시장 지표 백필 오케스트레이터 (SPEC-COLLECTOR-MARKETIND-001, REQ-040~047).
@@ -41,6 +42,7 @@ public class MarketIndicatorBackfillOrchestrator {
     private final MarketIndicatorRepository marketIndicatorRepository;
     private final VixCollectionService vixCollectionService;
     private final UsdkrwCollectionService usdkrwCollectionService;
+    private final TransactionTemplate transactionTemplate;
 
     /**
      * 백필 시딩: USDKRW, VIX 2행 {@code insertIgnoreSeed} (REQ-050~052).
@@ -77,8 +79,13 @@ public class MarketIndicatorBackfillOrchestrator {
                         "[market-ind-backfill] 지표 예외 — code={}, 다음 회차 재개",
                         target.getTargetCode(),
                         e);
-                backfillStatusRepository.updateError(
-                        target.getId(), "IN_PROGRESS", truncate(e.getMessage(), 512));
+                final String errMsg = truncate(e.getMessage(), 512);
+                transactionTemplate.executeWithoutResult(
+                        tx -> {
+                            BackfillStatus managed =
+                                    backfillStatusRepository.findById(target.getId()).orElseThrow();
+                            managed.fail("IN_PROGRESS", errMsg);
+                        });
             }
         }
     }
@@ -106,7 +113,12 @@ public class MarketIndicatorBackfillOrchestrator {
                 marketIndicatorRepository
                         .findMinTradeDateByIndicatorCode(IndicatorCode.VIX)
                         .orElseGet(() -> LocalDate.now(KST)); // 수집 데이터 없으면 today fallback
-        backfillStatusRepository.updateProgress(target.getId(), "COMPLETED", anchor, 0, saved);
+        transactionTemplate.executeWithoutResult(
+                tx -> {
+                    BackfillStatus managed =
+                            backfillStatusRepository.findById(target.getId()).orElseThrow();
+                    managed.advance("COMPLETED", anchor, 0, saved);
+                });
         log.info("[market-ind-backfill] VIX 백필 완료 — saved={}, anchor={}", saved, anchor);
     }
 
@@ -139,8 +151,16 @@ public class MarketIndicatorBackfillOrchestrator {
                 daysSinceLastUpdate++;
                 // 매 PROGRESS_BATCH_SIZE일마다 중간 IN_PROGRESS 저장
                 if (daysSinceLastUpdate >= PROGRESS_BATCH_SIZE) {
-                    backfillStatusRepository.updateProgress(
-                            target.getId(), "IN_PROGRESS", anchor, 0, totalSaved);
+                    LocalDate snapAnchor = anchor;
+                    int snapTotal = totalSaved;
+                    transactionTemplate.executeWithoutResult(
+                            tx -> {
+                                BackfillStatus managed =
+                                        backfillStatusRepository
+                                                .findById(target.getId())
+                                                .orElseThrow();
+                                managed.advance("IN_PROGRESS", snapAnchor, 0, snapTotal);
+                            });
                     daysSinceLastUpdate = 0;
                 }
                 log.debug("[usdkrw-backfill] 수집 완료 — date={}, saved={}", cursor, saved);
@@ -155,10 +175,15 @@ public class MarketIndicatorBackfillOrchestrator {
             cursor = cursor.minusDays(1);
         }
 
-        // 루프 종료 후 반드시 최종 updateProgress 호출
+        // 루프 종료 후 반드시 최종 갱신
         LocalDate lastCollected = anchor != null ? anchor : LocalDate.now(KST);
-        backfillStatusRepository.updateProgress(
-                target.getId(), "COMPLETED", lastCollected, 0, totalSaved);
+        int finalTotalSaved = totalSaved;
+        transactionTemplate.executeWithoutResult(
+                tx -> {
+                    BackfillStatus managed =
+                            backfillStatusRepository.findById(target.getId()).orElseThrow();
+                    managed.advance("COMPLETED", lastCollected, 0, finalTotalSaved);
+                });
         log.info(
                 "[market-ind-backfill] USDKRW 백필 완료 — totalSaved={}, anchor={}",
                 totalSaved,
