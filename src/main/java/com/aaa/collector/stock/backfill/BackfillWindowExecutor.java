@@ -96,7 +96,8 @@ public class BackfillWindowExecutor {
                 if (OVERSEAS_MARKETS.contains(stock.getMarket())) {
                     yield overseasOhlcvService.fetchWindow(anchor, stock, session);
                 }
-                LocalDate from = windowAdvancer.groupASpanFromDate(anchor);
+                // @MX:NOTE SPEC-COLLECTOR-BACKFILL-005 고정 플로어 — 상폐 종목 초기 윈도우 오종료 해소
+                LocalDate from = windowAdvancer.groupAFromDate();
                 yield domesticOhlcvService.fetchWindow(from, anchor, stock, session);
             }
             case "short_sale_domestic" -> shortSaleService.fetchWindow(resolved, stock, session);
