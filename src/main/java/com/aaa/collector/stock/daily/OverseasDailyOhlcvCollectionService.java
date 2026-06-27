@@ -1,6 +1,7 @@
 package com.aaa.collector.stock.daily;
 
 import com.aaa.collector.backfill.BackfillWindowResult;
+import com.aaa.collector.common.gate.UsMarketOpenGate;
 import com.aaa.collector.kis.KisRateLimitException;
 import com.aaa.collector.kis.gate.GuardedKisExecutor;
 import com.aaa.collector.kis.gate.KeyLeaseRegistry;
@@ -84,6 +85,7 @@ public class OverseasDailyOhlcvCollectionService {
     private final GuardedKisExecutor guardedKisExecutor;
     private final KeyLeaseRegistry keyLeaseRegistry;
     private final WarningCountingOhlcvInserter ohlcvInserter;
+    private final UsMarketOpenGate usMarketOpenGate;
 
     /**
      * 미국 일봉 수집을 실행하고 집계 결과를 반환한다.
@@ -92,6 +94,12 @@ public class OverseasDailyOhlcvCollectionService {
      * @return 시도/성공/skip 종목 수 집계
      */
     public CollectionResult collect(LocalDate today) {
+        // REQ-USMKT-012: 미장 휴장일 → skip (UsMarketSessionGate 게이트)
+        if (!usMarketOpenGate.isOpenDay(today)) {
+            log.info("[overseas-daily] {} 미장 휴장일 → skip", today);
+            return new CollectionResult(0, 0, 0);
+        }
+
         // REQ-OVOH-001: 활성 미국(NYSE/NASDAQ/AMEX) STOCK+ETF만 — 국내·INDEX 제외(StockRepository 계층 캡슐화)
         List<Stock> activeStocks = stockRepository.findAllActiveOverseasTradable();
 

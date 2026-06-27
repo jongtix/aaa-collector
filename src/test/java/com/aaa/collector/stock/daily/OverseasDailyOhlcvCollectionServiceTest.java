@@ -15,6 +15,7 @@ import ch.qos.logback.classic.Logger;
 import ch.qos.logback.classic.spi.ILoggingEvent;
 import ch.qos.logback.core.read.ListAppender;
 import com.aaa.collector.backfill.BackfillWindowResult;
+import com.aaa.collector.common.gate.UsMarketOpenGate;
 import com.aaa.collector.kis.KisRateLimitException;
 import com.aaa.collector.kis.gate.GuardedKisExecutor;
 import com.aaa.collector.kis.gate.KeyLeaseRegistry;
@@ -69,6 +70,7 @@ class OverseasDailyOhlcvCollectionServiceTest {
     @Mock private GuardedKisExecutor guardedKisExecutor;
     @Mock private HealthyKeySelector healthyKeySelector;
     @Mock private WarningCountingOhlcvInserter ohlcvInserter;
+    @Mock private UsMarketOpenGate usMarketOpenGate;
 
     private OverseasDailyOhlcvCollectionService service;
 
@@ -77,9 +79,15 @@ class OverseasDailyOhlcvCollectionServiceTest {
         // 실제 KeyLeaseRegistry + mock HealthyKeySelector — openSession()이 진짜 LeaseSession을 생성하여
         // selectHealthy() per-batch 1회 호출(REQ-KISGATE-006a)을 검증 가능하게 한다.
         KeyLeaseRegistry keyLeaseRegistry = new KeyLeaseRegistry(healthyKeySelector);
+        // 기존 테스트는 휴장일 게이트 행동을 검증하지 않으므로 always-open으로 스텁한다
+        lenient().when(usMarketOpenGate.isOpenDay(any(LocalDate.class))).thenReturn(true);
         service =
                 new OverseasDailyOhlcvCollectionService(
-                        stockRepository, guardedKisExecutor, keyLeaseRegistry, ohlcvInserter);
+                        stockRepository,
+                        guardedKisExecutor,
+                        keyLeaseRegistry,
+                        ohlcvInserter,
+                        usMarketOpenGate);
     }
 
     private Stock stockOf(String symbol, Market market, AssetType assetType) {

@@ -1,5 +1,6 @@
 package com.aaa.collector.stock.shortsale.overseas;
 
+import com.aaa.collector.common.gate.UsMarketOpenGate;
 import com.aaa.collector.observability.BatchMetrics;
 import com.aaa.collector.stock.ShortSaleOverseasRepository;
 import com.aaa.collector.stock.ShortSaleOverseasRepository.ShortInterestSnapshot;
@@ -42,6 +43,7 @@ public class ShortSaleOverseasDailyCollectionService {
     private final StockRepository stockRepository;
     private final ShortSaleOverseasRepository shortSaleOverseasRepository;
     private final BatchMetrics batchMetrics;
+    private final UsMarketOpenGate usMarketOpenGate;
 
     /**
      * FINRA Daily 공매도 거래량을 수집한다. reportingFacility 다중 행을 종목·거래일당 합산(REQ-SSO-011)하고, 미국 활성 STOCK+ETF
@@ -52,6 +54,12 @@ public class ShortSaleOverseasDailyCollectionService {
      * @return 시도/성공/skip 집계
      */
     public DailyResult collectDaily(LocalDate tradeReportDate) {
+        // REQ-USMKT-013: 미장 휴장일 → skip
+        if (!usMarketOpenGate.isOpenDay(tradeReportDate)) {
+            log.info("[overseas-shortsale-daily] {} 미장 휴장일 → skip", tradeReportDate);
+            return new DailyResult(0, 0, 0);
+        }
+
         List<FinraRegShoDailyResponse> rows = finraClient.fetchRegShoDaily(tradeReportDate);
         if (rows.isEmpty()) {
             // REQ-SSO-020/-030: 내용까지 본 결과 빈 응답(휴장일·미발표) — 적재 0건 정상 skip, 예외 없음. 0건도

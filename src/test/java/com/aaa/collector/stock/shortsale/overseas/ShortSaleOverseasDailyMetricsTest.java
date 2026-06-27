@@ -5,6 +5,7 @@ import static org.mockito.ArgumentMatchers.anyCollection;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.aaa.collector.common.gate.UsMarketOpenGate;
 import com.aaa.collector.observability.BatchMetrics;
 import com.aaa.collector.stock.ShortSaleOverseasRepository;
 import com.aaa.collector.stock.Stock;
@@ -35,14 +36,20 @@ class ShortSaleOverseasDailyMetricsTest {
     @Mock private StockRepository stockRepository;
     @Mock private ShortSaleOverseasRepository shortSaleOverseasRepository;
     @Mock private BatchMetrics batchMetrics;
+    @Mock private UsMarketOpenGate usMarketOpenGate;
 
     private ShortSaleOverseasDailyCollectionService service;
 
     @BeforeEach
     void setUp() {
+        Mockito.lenient().when(usMarketOpenGate.isOpenDay(any())).thenReturn(true);
         service =
                 new ShortSaleOverseasDailyCollectionService(
-                        finraClient, stockRepository, shortSaleOverseasRepository, batchMetrics);
+                        finraClient,
+                        stockRepository,
+                        shortSaleOverseasRepository,
+                        batchMetrics,
+                        usMarketOpenGate);
         Mockito.lenient()
                 .when(
                         shortSaleOverseasRepository.findLatestShortInterestByStockIds(
