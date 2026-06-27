@@ -6,6 +6,7 @@ import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.atLeastOnce;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -20,17 +21,24 @@ import com.aaa.collector.market.indicator.vix.VixCollectionService;
 import java.time.LocalDate;
 import java.util.List;
 import java.util.Optional;
+import java.util.function.Consumer;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
+import org.mockito.Mockito;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.mockito.junit.jupiter.MockitoSettings;
+import org.mockito.quality.Strictness;
 import org.springframework.test.util.ReflectionTestUtils;
+import org.springframework.transaction.TransactionStatus;
+import org.springframework.transaction.support.TransactionTemplate;
 
 /** BackfillStatus 빌더 접근용 패키지 private 서브클래스. */
 @ExtendWith(MockitoExtension.class)
+@MockitoSettings(strictness = Strictness.LENIENT)
 @DisplayName("MarketIndicatorBackfillOrchestrator 단위 테스트")
 class MarketIndicatorBackfillOrchestratorTest {
 
@@ -38,19 +46,37 @@ class MarketIndicatorBackfillOrchestratorTest {
     @Mock private MarketIndicatorRepository marketIndicatorRepository;
     @Mock private VixCollectionService vixCollectionService;
     @Mock private UsdkrwCollectionService usdkrwCollectionService;
+    @Mock private TransactionTemplate transactionTemplate;
 
     private MarketIndicatorBackfillOrchestrator orchestrator;
 
+    // mock managed entity shared across tests
+    private BackfillStatus mockManaged;
+
     @BeforeEach
+    @SuppressWarnings("unchecked")
     void setUp() {
         orchestrator =
                 new MarketIndicatorBackfillOrchestrator(
                         backfillStatusRepository,
                         marketIndicatorRepository,
                         vixCollectionService,
-                        usdkrwCollectionService);
+                        usdkrwCollectionService,
+                        transactionTemplate);
         // @Value 필드는 DI가 없으므로 테스트용 값 직접 주입
         ReflectionTestUtils.setField(orchestrator, "staleWeekdayThreshold", 3);
+
+        // TransactionTemplate.executeWithoutResult 실제 Consumer 실행
+        doAnswer(
+                        inv -> {
+                            Consumer<TransactionStatus> action = inv.getArgument(0);
+                            action.accept(Mockito.mock(TransactionStatus.class));
+                            return null;
+                        })
+                .when(transactionTemplate)
+                .executeWithoutResult(any());
+
+        mockManaged = Mockito.mock(BackfillStatus.class);
     }
 
     private BackfillStatus buildStatus(Long id, String code, String status) {
@@ -96,12 +122,13 @@ class MarketIndicatorBackfillOrchestratorTest {
             when(vixCollectionService.collectHistory()).thenReturn(100);
             when(marketIndicatorRepository.findMinTradeDateByIndicatorCode(IndicatorCode.VIX))
                     .thenReturn(Optional.of(minDate));
+            when(backfillStatusRepository.findById(1L)).thenReturn(Optional.of(mockManaged));
 
             orchestrator.runBackfill();
 
             verify(vixCollectionService).collectHistory();
-            verify(backfillStatusRepository)
-                    .updateProgress(eq(1L), eq("COMPLETED"), eq(minDate), eq(0), eq(100));
+            verify(backfillStatusRepository).findById(1L);
+            verify(mockManaged).advance(eq("COMPLETED"), eq(minDate), eq(0), eq(100));
         }
 
         @Test
@@ -113,11 +140,11 @@ class MarketIndicatorBackfillOrchestratorTest {
             when(vixCollectionService.collectHistory()).thenReturn(0);
             when(marketIndicatorRepository.findMinTradeDateByIndicatorCode(IndicatorCode.VIX))
                     .thenReturn(Optional.empty()); // DB에 VIX 데이터 없음
+            when(backfillStatusRepository.findById(1L)).thenReturn(Optional.of(mockManaged));
 
             orchestrator.runBackfill();
 
-            verify(backfillStatusRepository)
-                    .updateProgress(eq(1L), eq("COMPLETED"), any(LocalDate.class), eq(0), eq(0));
+            verify(mockManaged).advance(eq("COMPLETED"), any(LocalDate.class), eq(0), eq(0));
         }
     }
 
@@ -131,15 +158,14 @@ class MarketIndicatorBackfillOrchestratorTest {
             BackfillStatus status = buildStatus(2L, "USDKRW", "PENDING");
             when(backfillStatusRepository.findByStatusInAndTargetTypeOrderById(any(), anyString()))
                     .thenReturn(List.of(status));
-            // collectDailyForBackfill은 always 0건 반환 → stale 누적
             when(usdkrwCollectionService.collectDailyForBackfill(any(LocalDate.class)))
                     .thenReturn(0);
+            when(backfillStatusRepository.findById(2L)).thenReturn(Optional.of(mockManaged));
 
             orchestrator.runBackfill();
 
             // stale threshold 도달 후 COMPLETED 처리
-            verify(backfillStatusRepository, atLeastOnce())
-                    .updateProgress(eq(2L), eq("COMPLETED"), any(), anyInt(), anyInt());
+            verify(mockManaged, atLeastOnce()).advance(eq("COMPLETED"), any(), anyInt(), anyInt());
         }
 
         @Test
@@ -148,16 +174,15 @@ class MarketIndicatorBackfillOrchestratorTest {
             BackfillStatus status = buildStatus(2L, "USDKRW", "PENDING");
             when(backfillStatusRepository.findByStatusInAndTargetTypeOrderById(any(), anyString()))
                     .thenReturn(List.of(status));
-            // 처음 몇 번은 데이터 수신, 이후 stale
             when(usdkrwCollectionService.collectDailyForBackfill(any(LocalDate.class)))
                     .thenReturn(1) // 첫 호출: 데이터
                     .thenReturn(0); // 이후: stale
+            when(backfillStatusRepository.findById(2L)).thenReturn(Optional.of(mockManaged));
 
             orchestrator.runBackfill();
 
-            // 최소한 한 번은 updateProgress(데이터 있음)
-            verify(backfillStatusRepository, atLeastOnce())
-                    .updateProgress(eq(2L), anyString(), any(), anyInt(), anyInt());
+            // 최소한 한 번은 advance 호출
+            verify(mockManaged, atLeastOnce()).advance(anyString(), any(), anyInt(), anyInt());
         }
 
         @Test
@@ -174,15 +199,14 @@ class MarketIndicatorBackfillOrchestratorTest {
                     .thenReturn(1)
                     .thenReturn(1)
                     .thenReturn(0); // 이후 stale
+            when(backfillStatusRepository.findById(2L)).thenReturn(Optional.of(mockManaged));
 
             orchestrator.runBackfill();
 
-            // 5일 < PROGRESS_BATCH_SIZE(10) → IN_PROGRESS 갱신 없음
-            verify(backfillStatusRepository, never())
-                    .updateProgress(eq(2L), eq("IN_PROGRESS"), any(), anyInt(), anyInt());
+            // 5일 < PROGRESS_BATCH_SIZE(10) → IN_PROGRESS advance 갱신 없음
+            verify(mockManaged, never()).advance(eq("IN_PROGRESS"), any(), anyInt(), anyInt());
             // 루프 종료 후 COMPLETED 1회
-            verify(backfillStatusRepository, times(1))
-                    .updateProgress(eq(2L), eq("COMPLETED"), any(), anyInt(), anyInt());
+            verify(mockManaged, times(1)).advance(eq("COMPLETED"), any(), anyInt(), anyInt());
         }
     }
 
@@ -191,19 +215,23 @@ class MarketIndicatorBackfillOrchestratorTest {
     class ExceptionIsolation {
 
         @Test
-        @DisplayName("VIX 예외 — updateError 호출, USDKRW 계속")
+        @DisplayName("VIX 예외 — findById 후 fail() 호출, USDKRW 계속")
         void vixException_updateError_usdkrwContinues() {
             BackfillStatus vixStatus = buildStatus(1L, "VIX", "PENDING");
             BackfillStatus usdkrwStatus = buildStatus(2L, "USDKRW", "PENDING");
+            BackfillStatus mockManagedVix = Mockito.mock(BackfillStatus.class);
+            BackfillStatus mockManagedUsdkrw = Mockito.mock(BackfillStatus.class);
             when(backfillStatusRepository.findByStatusInAndTargetTypeOrderById(any(), anyString()))
                     .thenReturn(List.of(vixStatus, usdkrwStatus));
             when(vixCollectionService.collectHistory()).thenThrow(new RuntimeException("VIX 실패"));
             when(usdkrwCollectionService.collectDailyForBackfill(any(LocalDate.class)))
                     .thenReturn(0);
+            when(backfillStatusRepository.findById(1L)).thenReturn(Optional.of(mockManagedVix));
+            when(backfillStatusRepository.findById(2L)).thenReturn(Optional.of(mockManagedUsdkrw));
 
             assertThatCode(orchestrator::runBackfill).doesNotThrowAnyException();
 
-            verify(backfillStatusRepository).updateError(eq(1L), anyString(), anyString());
+            verify(mockManagedVix).fail(anyString(), anyString());
         }
 
         @Test

@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -20,6 +21,8 @@ import com.aaa.collector.macro.fred.FredSeriesConfig;
 import java.time.LocalDate;
 import java.util.List;
 import java.util.Optional;
+import java.util.function.Consumer;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
@@ -29,7 +32,12 @@ import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
+import org.mockito.Mockito;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.mockito.junit.jupiter.MockitoSettings;
+import org.mockito.quality.Strictness;
+import org.springframework.transaction.TransactionStatus;
+import org.springframework.transaction.support.TransactionTemplate;
 
 /**
  * T6 RED — MacroIndicatorBackfillOrchestrator 단위 테스트 (SPEC-COLLECTOR-MACRO-EXT-001).
@@ -37,6 +45,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
  * <p>13개 시딩, PENDING/IN_PROGRESS 조회, collectAll 호출, updateProgress(COMPLETED), updateError 검증.
  */
 @ExtendWith(MockitoExtension.class)
+@MockitoSettings(strictness = Strictness.LENIENT)
 @DisplayName("MacroIndicatorBackfillOrchestrator — 단위 테스트")
 class MacroIndicatorBackfillOrchestratorTest {
 
@@ -44,8 +53,22 @@ class MacroIndicatorBackfillOrchestratorTest {
     @Mock private MacroIndicatorRepository macroIndicatorRepository;
     @Mock private EcosCollectionService ecosCollectionService;
     @Mock private FredCollectionService fredCollectionService;
+    @Mock private TransactionTemplate transactionTemplate;
 
     @InjectMocks private MacroIndicatorBackfillOrchestrator orchestrator;
+
+    @BeforeEach
+    @SuppressWarnings("unchecked")
+    void setUpTransactionTemplate() {
+        doAnswer(
+                        inv -> {
+                            Consumer<TransactionStatus> action = inv.getArgument(0);
+                            action.accept(Mockito.mock(TransactionStatus.class));
+                            return null;
+                        })
+                .when(transactionTemplate)
+                .executeWithoutResult(any());
+    }
 
     // ────────────────────────────────────────────────────────────────────
     // 시딩
@@ -107,6 +130,7 @@ class MacroIndicatorBackfillOrchestratorTest {
         void pendingEcosEntry_callsCollectAllAndUpdatesCompleted() {
             // Arrange
             BackfillStatus status = mockStatus(1L, "ECOS_BASE_RATE");
+            BackfillStatus mockManaged = Mockito.mock(BackfillStatus.class);
             when(backfillStatusRepository.findByStatusInAndTargetTypeOrderById(
                             any(), eq("MACRO_INDICATOR")))
                     .thenReturn(List.of(status));
@@ -114,14 +138,15 @@ class MacroIndicatorBackfillOrchestratorTest {
                     .thenReturn(new MacroCollectionResult(100, 95, 5));
             when(macroIndicatorRepository.findMinTradeDateByIndicatorCode("ECOS_BASE_RATE"))
                     .thenReturn(Optional.of(LocalDate.of(2020, 1, 2)));
+            when(backfillStatusRepository.findById(1L)).thenReturn(Optional.of(mockManaged));
 
             // Act
             orchestrator.run();
 
             // Assert
             verify(ecosCollectionService).collectAll();
-            verify(backfillStatusRepository)
-                    .updateProgress(eq(1L), eq("COMPLETED"), any(LocalDate.class), eq(0), any());
+            verify(backfillStatusRepository).findById(1L);
+            verify(mockManaged).advance(eq("COMPLETED"), any(LocalDate.class), eq(0), any());
         }
 
         @Test
@@ -129,6 +154,7 @@ class MacroIndicatorBackfillOrchestratorTest {
         void pendingFredEntry_callsCollectAllAndUpdatesCompleted() {
             // Arrange
             BackfillStatus status = mockStatus(2L, "FRED_DFF");
+            BackfillStatus mockManaged = Mockito.mock(BackfillStatus.class);
             when(backfillStatusRepository.findByStatusInAndTargetTypeOrderById(
                             any(), eq("MACRO_INDICATOR")))
                     .thenReturn(List.of(status));
@@ -136,14 +162,15 @@ class MacroIndicatorBackfillOrchestratorTest {
                     .thenReturn(new MacroCollectionResult(50, 48, 2));
             when(macroIndicatorRepository.findMinTradeDateByIndicatorCode("FRED_DFF"))
                     .thenReturn(Optional.of(LocalDate.of(2019, 6, 1)));
+            when(backfillStatusRepository.findById(2L)).thenReturn(Optional.of(mockManaged));
 
             // Act
             orchestrator.run();
 
             // Assert
             verify(fredCollectionService).collectAll();
-            verify(backfillStatusRepository)
-                    .updateProgress(eq(2L), eq("COMPLETED"), any(LocalDate.class), eq(0), any());
+            verify(backfillStatusRepository).findById(2L);
+            verify(mockManaged).advance(eq("COMPLETED"), any(LocalDate.class), eq(0), any());
         }
 
         @Test
@@ -172,11 +199,12 @@ class MacroIndicatorBackfillOrchestratorTest {
     class MinDateUpdate {
 
         @Test
-        @DisplayName("수집 후 findMinTradeDateByIndicatorCode 반환값으로 updateProgress 호출")
+        @DisplayName("수집 후 findMinTradeDateByIndicatorCode 반환값으로 advance() 호출")
         void processEntry_usesActualMinDateFromRepository() {
             // Arrange
             LocalDate expectedMin = LocalDate.of(2015, 3, 20);
             BackfillStatus status = mockStatus(10L, "ECOS_BASE_RATE");
+            BackfillStatus mockManaged = Mockito.mock(BackfillStatus.class);
             when(backfillStatusRepository.findByStatusInAndTargetTypeOrderById(
                             any(), eq("MACRO_INDICATOR")))
                     .thenReturn(List.of(status));
@@ -184,14 +212,14 @@ class MacroIndicatorBackfillOrchestratorTest {
                     .thenReturn(new MacroCollectionResult(200, 200, 0));
             when(macroIndicatorRepository.findMinTradeDateByIndicatorCode("ECOS_BASE_RATE"))
                     .thenReturn(Optional.of(expectedMin));
+            when(backfillStatusRepository.findById(10L)).thenReturn(Optional.of(mockManaged));
 
             // Act
             orchestrator.run();
 
             // Assert — minDate가 오늘이 아닌 실제 최소 거래일
             ArgumentCaptor<LocalDate> dateCaptor = ArgumentCaptor.forClass(LocalDate.class);
-            verify(backfillStatusRepository)
-                    .updateProgress(eq(10L), eq("COMPLETED"), dateCaptor.capture(), eq(0), eq(200));
+            verify(mockManaged).advance(eq("COMPLETED"), dateCaptor.capture(), eq(0), eq(200));
             assertThat(dateCaptor.getValue()).isEqualTo(expectedMin);
         }
 
@@ -200,20 +228,21 @@ class MacroIndicatorBackfillOrchestratorTest {
         void processEntry_fallsBackToTodayWhenRepositoryReturnsEmpty() {
             // Arrange
             BackfillStatus status = mockStatus(11L, "ECOS_BASE_RATE");
+            BackfillStatus mockManaged = Mockito.mock(BackfillStatus.class);
             when(backfillStatusRepository.findByStatusInAndTargetTypeOrderById(
                             any(), eq("MACRO_INDICATOR")))
                     .thenReturn(List.of(status));
             when(ecosCollectionService.collectAll()).thenReturn(new MacroCollectionResult(0, 0, 0));
             when(macroIndicatorRepository.findMinTradeDateByIndicatorCode("ECOS_BASE_RATE"))
                     .thenReturn(Optional.empty());
+            when(backfillStatusRepository.findById(11L)).thenReturn(Optional.of(mockManaged));
 
             // Act
             orchestrator.run();
 
-            // Assert — empty 시 오늘 날짜로 fallback (오늘과 동일한 날짜여야 함)
+            // Assert — empty 시 오늘 날짜로 fallback
             ArgumentCaptor<LocalDate> dateCaptor = ArgumentCaptor.forClass(LocalDate.class);
-            verify(backfillStatusRepository)
-                    .updateProgress(eq(11L), eq("COMPLETED"), dateCaptor.capture(), eq(0), eq(0));
+            verify(mockManaged).advance(eq("COMPLETED"), dateCaptor.capture(), eq(0), eq(0));
             assertThat(dateCaptor.getValue()).isEqualTo(LocalDate.now());
         }
     }
@@ -239,6 +268,7 @@ class MacroIndicatorBackfillOrchestratorTest {
         void fredIndicatorCode_routesToFredCollectionService(String indicatorCode) {
             // Arrange
             BackfillStatus status = mockStatus(20L, indicatorCode);
+            BackfillStatus mockManaged = Mockito.mock(BackfillStatus.class);
             when(backfillStatusRepository.findByStatusInAndTargetTypeOrderById(
                             any(), eq("MACRO_INDICATOR")))
                     .thenReturn(List.of(status));
@@ -246,6 +276,7 @@ class MacroIndicatorBackfillOrchestratorTest {
                     .thenReturn(new MacroCollectionResult(100, 100, 0));
             when(macroIndicatorRepository.findMinTradeDateByIndicatorCode(indicatorCode))
                     .thenReturn(Optional.of(LocalDate.of(2000, 1, 3)));
+            when(backfillStatusRepository.findById(20L)).thenReturn(Optional.of(mockManaged));
 
             // Act
             orchestrator.run();
@@ -253,8 +284,7 @@ class MacroIndicatorBackfillOrchestratorTest {
             // Assert
             verify(fredCollectionService).collectAll();
             verify(ecosCollectionService, never()).collectAll();
-            verify(backfillStatusRepository)
-                    .updateProgress(eq(20L), eq("COMPLETED"), any(LocalDate.class), eq(0), eq(100));
+            verify(mockManaged).advance(eq("COMPLETED"), any(LocalDate.class), eq(0), eq(100));
         }
 
         @ParameterizedTest(name = "ECOS 코드={0} → ecosCollectionService.collectAll() 호출")
@@ -273,6 +303,7 @@ class MacroIndicatorBackfillOrchestratorTest {
         void ecosIndicatorCode_routesToEcosCollectionService(String indicatorCode) {
             // Arrange
             BackfillStatus status = mockStatus(21L, indicatorCode);
+            BackfillStatus mockManaged = Mockito.mock(BackfillStatus.class);
             when(backfillStatusRepository.findByStatusInAndTargetTypeOrderById(
                             any(), eq("MACRO_INDICATOR")))
                     .thenReturn(List.of(status));
@@ -280,6 +311,7 @@ class MacroIndicatorBackfillOrchestratorTest {
                     .thenReturn(new MacroCollectionResult(80, 80, 0));
             when(macroIndicatorRepository.findMinTradeDateByIndicatorCode(indicatorCode))
                     .thenReturn(Optional.of(LocalDate.of(2005, 1, 4)));
+            when(backfillStatusRepository.findById(21L)).thenReturn(Optional.of(mockManaged));
 
             // Act
             orchestrator.run();
@@ -287,8 +319,7 @@ class MacroIndicatorBackfillOrchestratorTest {
             // Assert
             verify(ecosCollectionService).collectAll();
             verify(fredCollectionService, never()).collectAll();
-            verify(backfillStatusRepository)
-                    .updateProgress(eq(21L), eq("COMPLETED"), any(LocalDate.class), eq(0), eq(80));
+            verify(mockManaged).advance(eq("COMPLETED"), any(LocalDate.class), eq(0), eq(80));
         }
     }
 
@@ -301,22 +332,24 @@ class MacroIndicatorBackfillOrchestratorTest {
     class ErrorHandling {
 
         @Test
-        @DisplayName("collectAll() 예외 — updateError 호출")
+        @DisplayName("collectAll() 예외 — findById 후 fail() 호출")
         void collectAllException_callsUpdateError() {
             // Arrange
             BackfillStatus status = mockStatus(3L, "ECOS_BASE_RATE");
+            BackfillStatus mockManaged = Mockito.mock(BackfillStatus.class);
             when(backfillStatusRepository.findByStatusInAndTargetTypeOrderById(
                             any(), eq("MACRO_INDICATOR")))
                     .thenReturn(List.of(status));
             when(ecosCollectionService.collectAll()).thenThrow(new RuntimeException("API error"));
+            when(backfillStatusRepository.findById(3L)).thenReturn(Optional.of(mockManaged));
 
             // Act
             orchestrator.run();
 
             // Assert
-            verify(backfillStatusRepository).updateError(eq(3L), eq("FAILED"), anyString());
-            verify(backfillStatusRepository, never())
-                    .updateProgress(any(), anyString(), any(), any(Integer.class), any());
+            verify(backfillStatusRepository).findById(3L);
+            verify(mockManaged).fail(eq("FAILED"), anyString());
+            verify(mockManaged, never()).advance(any(), any(), any(Integer.class), any());
         }
     }
 

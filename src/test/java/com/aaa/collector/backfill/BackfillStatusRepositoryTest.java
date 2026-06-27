@@ -149,6 +149,68 @@ class BackfillStatusRepositoryTest {
     }
 
     @Nested
+    @DisplayName(
+            "updatedAt Auditing 발화 — JPA dirty-check 경로 (REQ-UPDATEDAT-001, REQ-UPDATEDAT-007)")
+    class UpdatedAtAuditing {
+
+        @Test
+        @DisplayName("advance() 호출 후 updatedAt이 created_at과 달라진다 (REQ-007 AC-1)")
+        void advance_updatesUpdatedAt() throws InterruptedException {
+            // Arrange
+            BackfillStatus seeded =
+                    backfillStatusRepository.saveAndFlush(
+                            BackfillStatus.builder()
+                                    .targetType("STOCK")
+                                    .targetCode("005930")
+                                    .dataTable("daily_ohlcv")
+                                    .status("PENDING")
+                                    .build());
+            java.time.LocalDateTime seededUpdatedAt = seeded.getUpdatedAt();
+
+            Thread.sleep(2); // ensure at least 1ms gap for DATETIME(6)
+
+            // Act — find managed entity and call domain method
+            BackfillStatus managed =
+                    backfillStatusRepository.findById(seeded.getId()).orElseThrow();
+            managed.advance("IN_PROGRESS", LocalDate.of(2025, 1, 1), 0, 10);
+            backfillStatusRepository.saveAndFlush(managed); // flush dirty-check
+
+            // Assert
+            BackfillStatus updated =
+                    backfillStatusRepository.findById(seeded.getId()).orElseThrow();
+            assertThat(updated.getUpdatedAt()).isAfter(seededUpdatedAt);
+        }
+
+        @Test
+        @DisplayName("fail() 호출 후 updatedAt이 seed 시각과 달라진다 (REQ-007 AC-2)")
+        void fail_updatesUpdatedAt() throws InterruptedException {
+            // Arrange
+            BackfillStatus seeded =
+                    backfillStatusRepository.saveAndFlush(
+                            BackfillStatus.builder()
+                                    .targetType("STOCK")
+                                    .targetCode("005930")
+                                    .dataTable("investor_trend")
+                                    .status("PENDING")
+                                    .build());
+            java.time.LocalDateTime seededUpdatedAt = seeded.getUpdatedAt();
+
+            Thread.sleep(2);
+
+            // Act
+            BackfillStatus managed =
+                    backfillStatusRepository.findById(seeded.getId()).orElseThrow();
+            managed.fail("FAILED", "test error");
+            backfillStatusRepository.saveAndFlush(managed);
+
+            // Assert
+            BackfillStatus updated =
+                    backfillStatusRepository.findById(seeded.getId()).orElseThrow();
+            assertThat(updated.getUpdatedAt()).isAfter(seededUpdatedAt);
+        }
+    }
+
+    @Nested
     @DisplayName("엔티티 매핑 round-trip")
     class EntityMapping {
 

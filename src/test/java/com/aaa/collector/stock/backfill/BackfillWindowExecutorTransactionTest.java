@@ -4,7 +4,6 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
-import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
@@ -28,11 +27,13 @@ import com.aaa.collector.stock.supply.InvestorTrendFetch;
 import com.aaa.collector.stock.supply.ShortSaleCollectionService;
 import java.time.LocalDate;
 import java.util.List;
+import java.util.Optional;
 import java.util.concurrent.atomic.AtomicBoolean;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
+import org.mockito.Mockito;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
@@ -126,7 +127,7 @@ class BackfillWindowExecutorTransactionTest {
 
         @Test
         @DisplayName(
-                "persistWindow() — updateProgress 예외 시 INSERT + status 변경 모두 롤백 (AC-1 롤백,"
+                "persistWindow() — advance() 예외 시 INSERT + status 변경 모두 롤백 (AC-1 롤백,"
                         + " REQ-BACKFILL-031)")
         void persistWindow_rollback_onUpdateProgressFailure() {
             // Arrange
@@ -138,17 +139,20 @@ class BackfillWindowExecutorTransactionTest {
             when(investorTrendService.persistWindow(any(), eq(fetch)))
                     .thenReturn(new BackfillWindowResult(oldest, 30));
 
-            // updateProgress 호출 시 RuntimeException → 트랜잭션 롤백
+            // advance() 호출 시 RuntimeException → 트랜잭션 롤백
+            BackfillStatus spyStatus = Mockito.spy(status);
             doThrow(new RuntimeException("DB write failure — rollback trigger"))
-                    .when(backfillStatusRepository)
-                    .updateProgress(anyLong(), anyString(), any(), anyInt(), any());
+                    .when(spyStatus)
+                    .advance(anyString(), any(), anyInt(), any());
+            when(backfillStatusRepository.findById(status.getId()))
+                    .thenReturn(Optional.of(spyStatus));
 
             // Act & Assert — 예외 전파
             assertThatThrownBy(() -> windowExecutor.persistWindow(status, domesticStock, fetch))
                     .isInstanceOf(RuntimeException.class)
                     .hasMessageContaining("DB write failure");
 
-            // Assert — 롤백: status 행은 원래 값 유지
+            // Assert — 롤백: spyStatus는 advance() 실패로 상태가 변경되지 않음
             BackfillStatus afterRollback =
                     backfillStatusRepository.findById(status.getId()).orElseThrow();
             assertThat(afterRollback.getStatus()).isEqualTo(originalStatus);
@@ -169,8 +173,10 @@ class BackfillWindowExecutorTransactionTest {
         void fetchWindow_noActiveTransaction_duringServiceCall() throws InterruptedException {
             // Arrange: investor_trend status (lastCollectedDate를 non-null로 설정)
             BackfillStatus status = seedPending("005930", "investor_trend");
-            backfillStatusRepository.updateProgress(
-                    status.getId(), "IN_PROGRESS", LocalDate.of(2025, 1, 1), 0, 0);
+            BackfillStatus managedSetup =
+                    backfillStatusRepository.findById(status.getId()).orElseThrow();
+            managedSetup.advance("IN_PROGRESS", LocalDate.of(2025, 1, 1), 0, 0);
+            backfillStatusRepository.saveAndFlush(managedSetup);
             BackfillStatus populated =
                     backfillStatusRepository.findById(status.getId()).orElseThrow();
 
@@ -272,17 +278,20 @@ class BackfillWindowExecutorTransactionTest {
             when(domesticOhlcvService.persistWindow(any(), any()))
                     .thenReturn(new BackfillWindowResult(oldest, 50));
 
-            // updateProgress 호출 시 RuntimeException 발생 → 트랜잭션 롤백
+            // advance() 호출 시 RuntimeException 발생 → 트랜잭션 롤백
+            BackfillStatus spyStatus = Mockito.spy(status);
             doThrow(new RuntimeException("DB write failure — rollback trigger"))
-                    .when(backfillStatusRepository)
-                    .updateProgress(anyLong(), anyString(), any(), anyInt(), any());
+                    .when(spyStatus)
+                    .advance(anyString(), any(), anyInt(), any());
+            when(backfillStatusRepository.findById(status.getId()))
+                    .thenReturn(Optional.of(spyStatus));
 
             // Act & Assert — 예외가 전파됨
             assertThatThrownBy(() -> windowExecutor.executeWindow(status, domesticStock, session))
                     .isInstanceOf(RuntimeException.class)
                     .hasMessageContaining("DB write failure");
 
-            // Assert — 롤백: status 행은 원래 값 유지 (seeded PENDING = status/null date)
+            // Assert — 롤백: spyStatus는 advance() 실패로 상태가 변경되지 않음
             String originalStatus = status.getStatus(); // PENDING
             LocalDate originalDate = status.getLastCollectedDate(); // null
             BackfillStatus afterRollback =
@@ -343,6 +352,44 @@ class BackfillWindowExecutorTransactionTest {
     }
 
     // -------------------------------------------------------------------------
+    // REQ-UPDATEDAT-009: advance() 예외 시 롤백 보장
+    // -------------------------------------------------------------------------
+
+    @Nested
+    @DisplayName("REQ-UPDATEDAT-009 진행 갱신 경로 트랜잭션 롤백 보장")
+    class AdvanceRollback {
+
+        @Test
+        @DisplayName("advance()가 RuntimeException을 던지면 INSERT 행과 attempt_count 변경 모두 롤백")
+        void persistWindow_advanceThrows_rollsBackInsertAndStatus() {
+            // Arrange
+            BackfillStatus status = seedPending("005930", "investor_trend");
+            LocalDate oldest = LocalDate.of(2025, 1, 1);
+            InvestorTrendFetch fetch = new InvestorTrendFetch(List.of(), oldest, 30);
+            when(investorTrendService.persistWindow(any(), eq(fetch)))
+                    .thenReturn(new BackfillWindowResult(oldest, 30));
+
+            BackfillStatus spyStatus = Mockito.spy(status);
+            doThrow(new RuntimeException("advance rollback trigger"))
+                    .when(spyStatus)
+                    .advance(anyString(), any(), anyInt(), any());
+            when(backfillStatusRepository.findById(status.getId()))
+                    .thenReturn(Optional.of(spyStatus));
+
+            // Act & Assert
+            assertThatThrownBy(() -> windowExecutor.persistWindow(status, domesticStock, fetch))
+                    .isInstanceOf(RuntimeException.class)
+                    .hasMessageContaining("advance rollback trigger");
+
+            // Assert — spyStatus는 advance() 실패로 상태 미변경
+            BackfillStatus afterRollback =
+                    backfillStatusRepository.findById(status.getId()).orElseThrow();
+            assertThat(afterRollback.getStatus()).isEqualTo("PENDING");
+            assertThat(afterRollback.getAttemptCount()).isZero();
+        }
+    }
+
+    // -------------------------------------------------------------------------
     // AC-1 resolveAnchor — 초기 anchor 날짜 (REQ-BACKFILL-060)
     // -------------------------------------------------------------------------
 
@@ -386,8 +433,10 @@ class BackfillWindowExecutorTransactionTest {
                             .orElseThrow();
 
             LocalDate lastCollected = LocalDate.of(2025, 6, 1);
-            backfillStatusRepository.updateProgress(
-                    raw.getId(), "IN_PROGRESS", lastCollected, 0, 30);
+            BackfillStatus managedRaw =
+                    backfillStatusRepository.findById(raw.getId()).orElseThrow();
+            managedRaw.advance("IN_PROGRESS", lastCollected, 0, 30);
+            backfillStatusRepository.saveAndFlush(managedRaw);
             BackfillStatus status = backfillStatusRepository.findById(raw.getId()).orElseThrow();
 
             when(investorTrendService.fetchWindow(any(), any(), any()))
@@ -429,8 +478,10 @@ class BackfillWindowExecutorTransactionTest {
                             .orElseThrow();
 
             // staleCount=2 으로 설정 (직전 2회 무전진)
-            backfillStatusRepository.updateProgress(
-                    raw.getId(), "IN_PROGRESS", LocalDate.of(2024, 6, 1), 2, 5);
+            BackfillStatus managedRaw =
+                    backfillStatusRepository.findById(raw.getId()).orElseThrow();
+            managedRaw.advance("IN_PROGRESS", LocalDate.of(2024, 6, 1), 2, 5);
+            backfillStatusRepository.saveAndFlush(managedRaw);
 
             BackfillStatus status = backfillStatusRepository.findById(raw.getId()).orElseThrow();
 
