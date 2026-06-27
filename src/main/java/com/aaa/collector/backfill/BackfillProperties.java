@@ -15,10 +15,12 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
  *       수 아님, KIS rate limit과 무관 — rate는 KisRateLimiter 책임)(REQ-BACKFILL-064).
  *       SPEC-COLLECTOR-BACKFILL-004 도입으로 perRunCompletionCap에서 리네임됨.
  *   <li>{@code maxWindowsPerTarget}: 120 — status당 inner 루프 최대 윈도우 횟수 공통 하드 캡(REQ-BACKFILL-053a).
- *       SPAN 150 달력일 × 120 window ≈ 18,000 달력일 ≈ 49년(~9,000 거래일) 커버 — 최장 상장 종목도 단일 회차 완성 여유. 정상 종료는
- *       그룹별 종료 정책으로 상한 도달 전에 발생한다. GROUP_A·GROUP_B 모두 적용되는 최종 방어선.
+ *       KIS 100거래일/window × 120 window ≈ 12,000 거래일 ≈ 49년 커버 — 최장 상장 종목도 단일 회차 완성 여유. 커버리지는 SPAN이
+ *       아닌 windows × KIS 응답 거래일로 결정된다. 정상 종료는 그룹별 종료 정책으로 상한 도달 전에 발생한다. GROUP_A·GROUP_B 모두 적용되는 최종
+ *       방어선.
  *   <li>{@code staleWindowThreshold}: 3 — 그룹 B 연속 무전진 종료 임계(REQ-BACKFILL-014).
- *   <li>{@code spanCalendarDays}: 150 — 그룹 A SPAN 폭(달력일). 100거래일 충족 여유(REQ-BACKFILL-013a).
+ *   <li>{@code spanCalendarDays}: 200 — 그룹 A SPAN 폭(달력일). 100거래일 충족 여유(REQ-BACKFILL-013a). 150일은
+ *       거래일 ~99로 조기 종료 버그.
  *   <li>{@code anchorSkipMax}: 10 — investor_trend rt_cd=2 anchor 보정 최대 재시도(REQ-BACKFILL-016).
  * </ul>
  */
@@ -40,16 +42,16 @@ public class BackfillProperties {
     /**
      * status당 inner 루프 최대 윈도우 반복 횟수 — 무한 루프 하드 방어 공통 상한 (REQ-BACKFILL-053a).
      *
-     * <p>GROUP_A·GROUP_B 모두 적용되는 최종 방어선. 이 상한에 도달하면 status를 IN_PROGRESS로 남긴 채 다음 cron에서 재개한다. SPAN
-     * 150 달력일 × 120 window ≈ 49년 커버.
+     * <p>GROUP_A·GROUP_B 모두 적용되는 최종 방어선. 이 상한에 도달하면 status를 IN_PROGRESS로 남긴 채 다음 cron에서 재개한다. KIS
+     * 100거래일/window × 120 window ≈ 49년 커버.
      */
     private int maxWindowsPerTarget = 120;
 
     /** 그룹 B 연속 무전진 종료 임계 (REQ-BACKFILL-014). */
     private int staleWindowThreshold = 3;
 
-    /** 그룹 A 기간 윈도우 from-date 폭(달력일). 100거래일 충족 위해 ≥150 (REQ-BACKFILL-013a). */
-    private int spanCalendarDays = 150;
+    /** 그룹 A 기간 윈도우 from-date 폭(달력일). 100거래일 충족 위해 ≥200 (REQ-BACKFILL-013a). */
+    private int spanCalendarDays = 200;
 
     /** 그룹 B rt_cd=2 anchor 보정 최대 시도 횟수 (REQ-BACKFILL-016). */
     private int anchorSkipMax = 10;
