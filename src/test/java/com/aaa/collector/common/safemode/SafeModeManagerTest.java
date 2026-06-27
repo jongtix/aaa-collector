@@ -4,10 +4,11 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
@@ -16,7 +17,14 @@ class SafeModeManagerTest {
 
     @Mock private SafeModeRepository safeModeRepository;
 
-    @InjectMocks private SafeModeManager safeModeManager;
+    private SimpleMeterRegistry registry;
+    private SafeModeManager safeModeManager;
+
+    @BeforeEach
+    void setUp() {
+        registry = new SimpleMeterRegistry();
+        safeModeManager = new SafeModeManager(safeModeRepository, registry, "token");
+    }
 
     @Test
     @DisplayName("enter — safeModeRepository.setSafeMode(alias, true) 호출")
@@ -59,5 +67,33 @@ class SafeModeManagerTest {
         boolean result = safeModeManager.isActive(alias);
 
         assertThat(result).isFalse();
+    }
+
+    @Test
+    @DisplayName("enter — aaa_collector_safe_mode_enter_total{module=token,alias=isa} 카운터 1 증가")
+    void enter_incrementsEnterCounter() {
+        safeModeManager.enter("isa", new RuntimeException("test"));
+
+        double count =
+                registry.get("aaa_collector_safe_mode_enter_total")
+                        .tags("module", "token", "alias", "isa")
+                        .counter()
+                        .count();
+
+        assertThat(count).isEqualTo(1.0);
+    }
+
+    @Test
+    @DisplayName("exit — aaa_collector_safe_mode_exit_total{module=token,alias=isa} 카운터 1 증가")
+    void exit_incrementsExitCounter() {
+        safeModeManager.exit("isa");
+
+        double count =
+                registry.get("aaa_collector_safe_mode_exit_total")
+                        .tags("module", "token", "alias", "isa")
+                        .counter()
+                        .count();
+
+        assertThat(count).isEqualTo(1.0);
     }
 }

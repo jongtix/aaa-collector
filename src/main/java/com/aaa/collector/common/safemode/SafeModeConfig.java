@@ -1,5 +1,6 @@
 package com.aaa.collector.common.safemode;
 
+import io.micrometer.core.instrument.MeterRegistry;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.data.redis.core.StringRedisTemplate;
@@ -14,15 +15,21 @@ public class SafeModeConfig {
 
     /** KIS 토큰 안전 모드 관리자. Redis 키: {@code safe_mode:collector:token:{alias}} */
     @Bean
-    public SafeModeManager tokenSafeModeManager(StringRedisTemplate redisTemplate) {
+    public SafeModeManager tokenSafeModeManager(
+            StringRedisTemplate redisTemplate, MeterRegistry meterRegistry) {
         return new SafeModeManager(
-                new SafeModeRepository(redisTemplate, "safe_mode:collector:token:"));
+                new SafeModeRepository(redisTemplate, "safe_mode:collector:token:"),
+                meterRegistry,
+                "token");
     }
 
     /** KIS WebSocket 안전 모드 관리자. Redis 키: {@code safe_mode:collector:ws:{alias}} */
     @Bean
-    public SafeModeManager webSocketSafeModeManager(StringRedisTemplate redisTemplate) {
+    public SafeModeManager webSocketSafeModeManager(
+            StringRedisTemplate redisTemplate, MeterRegistry meterRegistry) {
         return new SafeModeManager(
-                new SafeModeRepository(redisTemplate, "safe_mode:collector:ws:"));
+                new SafeModeRepository(redisTemplate, "safe_mode:collector:ws:"),
+                meterRegistry,
+                "ws");
     }
 }
