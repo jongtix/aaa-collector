@@ -32,24 +32,27 @@ class MarketIndicatorMetricsTest {
     }
 
     @Nested
-    @DisplayName("init — @PostConstruct 사전 등록")
-    class Init {
+    @DisplayName("PostConstruct — @PostConstruct 사전 등록")
+    class PostConstructPhase {
 
         @Test
         @DisplayName("VIX 3종 + USDKRW 2종 last_success Gauge 0.0으로 사전 등록")
-        void init_preRegistersAllKnownCombinations() {
-            // Assert: VIX 소스 3종 등록 확인
+        void init_preRegistersLastSuccess() {
             assertGaugeValue(MarketIndicatorMetrics.LAST_SUCCESS, "VIX", "CBOE", 0.0);
             assertGaugeValue(MarketIndicatorMetrics.LAST_SUCCESS, "VIX", "FRED", 0.0);
             assertGaugeValue(MarketIndicatorMetrics.LAST_SUCCESS, "VIX", "YAHOO_VIX", 0.0);
-
-            // Assert: USDKRW 소스 2종 등록 확인
             assertGaugeValue(MarketIndicatorMetrics.LAST_SUCCESS, "USDKRW", "KOREAEXIM", 0.0);
             assertGaugeValue(MarketIndicatorMetrics.LAST_SUCCESS, "USDKRW", "YAHOO_USDKRW", 0.0);
+        }
 
-            // Assert: active_source도 사전 등록
+        @Test
+        @DisplayName("active_source Gauge 0.0으로 사전 등록")
+        void init_preRegistersActiveSource() {
             assertGaugeValue(MarketIndicatorMetrics.ACTIVE_SOURCE, "VIX", "CBOE", 0.0);
+            assertGaugeValue(MarketIndicatorMetrics.ACTIVE_SOURCE, "VIX", "FRED", 0.0);
+            assertGaugeValue(MarketIndicatorMetrics.ACTIVE_SOURCE, "VIX", "YAHOO_VIX", 0.0);
             assertGaugeValue(MarketIndicatorMetrics.ACTIVE_SOURCE, "USDKRW", "KOREAEXIM", 0.0);
+            assertGaugeValue(MarketIndicatorMetrics.ACTIVE_SOURCE, "USDKRW", "YAHOO_USDKRW", 0.0);
         }
     }
 

@@ -52,8 +52,7 @@ public class UsMarketSessionGate implements UsMarketOpenGate {
     public static final String US_MARKET_HOLIDAY_COUNT_NAME =
             "aaa_collector_us_market_gate_holiday_count";
 
-    /** 미국 동부 시간대 — 호출자에서 ZoneId 문자열 중복 방지용 공개 상수. */
-    public static final ZoneId NEW_YORK = ZoneId.of("America/New_York");
+    private static final ZoneId NEW_YORK = ZoneId.of("America/New_York");
 
     private final KisMarketSchedule marketSchedule;
     private final Clock clock;
