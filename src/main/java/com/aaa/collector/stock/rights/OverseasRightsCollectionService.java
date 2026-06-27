@@ -7,6 +7,7 @@ import com.aaa.collector.kis.gate.KeyLeaseRegistry;
 import com.aaa.collector.kis.gate.KeyLeaseRegistry.LeaseSession;
 import com.aaa.collector.kis.gate.NoHealthyKeyException;
 import com.aaa.collector.kis.token.KisTokenIssueException;
+import com.aaa.collector.market.session.UsMarketSessionGate;
 import com.aaa.collector.stock.CorporateEvent;
 import com.aaa.collector.stock.CorporateEventInserter;
 import com.aaa.collector.stock.CorporateEventRepository;
@@ -15,7 +16,6 @@ import com.aaa.collector.stock.StockRepository;
 import com.aaa.collector.stock.enums.EventType;
 import java.net.URI;
 import java.time.LocalDate;
-import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
@@ -84,7 +84,7 @@ public class OverseasRightsCollectionService {
      */
     public OverseasRightsCollectionResult collect() {
         // REQ-USMKT-014: NY 기준 오늘이 미장 휴장일 → skip
-        LocalDate nyToday = LocalDate.now(ZoneId.of("America/New_York"));
+        LocalDate nyToday = LocalDate.now(UsMarketSessionGate.NEW_YORK);
         if (!usMarketOpenGate.isOpenDay(nyToday)) {
             log.info("[overseas-rights] {} 미장 휴장일(NY 기준) → skip", nyToday);
             return new OverseasRightsCollectionResult(0, 0, 0, 0, 0, 0);
