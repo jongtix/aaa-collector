@@ -779,7 +779,7 @@ class RevSplitCollectionServiceTest {
         private final LocalDate today = LocalDate.of(2026, 6, 28);
 
         @SuppressWarnings("unchecked")
-        private URI capturedUri() throws Exception {
+        private URI capturedUri() throws InterruptedException {
             ArgumentCaptor<Function<UriBuilder, URI>> uriCaptor =
                     ArgumentCaptor.forClass(Function.class);
             verify(guardedKisExecutor).execute(eq(session), uriCaptor.capture(), eq(TR_ID), any());
@@ -811,6 +811,7 @@ class RevSplitCollectionServiceTest {
         }
 
         @Test
+        @SuppressWarnings("PMD.UnitTestContainsTooManyAsserts")
         @DisplayName("AC-6: 분할 행(bf=5000,af=100) 매핑 재사용 — SPLIT·분할·rate=50.0000·face=100")
         void backfillFetch_reusesSplitMapping() throws Exception {
             // Arrange — 50:1 분할 (bf=5000, af=100)
@@ -828,7 +829,7 @@ class RevSplitCollectionServiceTest {
 
             // Assert
             assertThat(fetch.validRows()).hasSize(1);
-            CorporateEvent e = fetch.validRows().get(0);
+            CorporateEvent e = fetch.validRows().getFirst();
             assertThat(e.getEventType()).isEqualTo(EventType.SPLIT);
             assertThat(e.getEventSubtype()).isEqualTo("분할");
             assertThat(e.getFaceValue()).isEqualTo(100L);
@@ -890,7 +891,7 @@ class RevSplitCollectionServiceTest {
             // 적재는 유효 분할 1행만 (degenerate skip)
             verify(corporateEventInserter).insertBatch(inserterCaptor.capture());
             assertThat(inserterCaptor.getValue()).hasSize(1);
-            assertThat(inserterCaptor.getValue().get(0).getEventDate())
+            assertThat(inserterCaptor.getValue().getFirst().getEventDate())
                     .isEqualTo(LocalDate.of(2018, 5, 2));
         }
 
@@ -908,7 +909,7 @@ class RevSplitCollectionServiceTest {
             RevSplitBackfillFetch fetch =
                     service.fetchWindowForBackfill(stock, session, floor, today);
 
-            CorporateEvent e = fetch.validRows().get(0);
+            CorporateEvent e = fetch.validRows().getFirst();
             assertThat(e.getEventType()).isEqualTo(EventType.SPLIT);
             assertThat(e.getEventSubtype()).isEqualTo("병합");
             assertThat(e.getStockRate()).isEqualByComparingTo(new BigDecimal("0.2000"));
