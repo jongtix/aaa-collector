@@ -15,6 +15,8 @@ import com.aaa.collector.backfill.BackfillStatusType;
 import com.aaa.collector.backfill.BackfillWindowResult;
 import com.aaa.collector.kis.gate.KeyLeaseRegistry.LeaseSession;
 import com.aaa.collector.kis.token.KisTokenIssueException;
+import com.aaa.collector.stock.RevSplitBackfillFetch;
+import com.aaa.collector.stock.RevSplitCollectionService;
 import com.aaa.collector.stock.Stock;
 import com.aaa.collector.stock.daily.DomesticDailyOhlcvCollectionService;
 import com.aaa.collector.stock.daily.DomesticDailyOhlcvFetch;
@@ -65,6 +67,7 @@ class BackfillWindowExecutorTransactionTest {
     @MockitoBean private ShortSaleCollectionService shortSaleService;
     @MockitoBean private InvestorTrendCollectionService investorTrendService;
     @MockitoBean private CreditBalanceCollectionService creditBalanceService;
+    @MockitoBean private RevSplitCollectionService revSplitService;
 
     @Autowired private BackfillWindowExecutor windowExecutor;
     // SpyBean: 실제 구현 유지, advance() spy 기반 예외 주입 가능 (AC-4.2 롤백 테스트)
@@ -489,6 +492,81 @@ class BackfillWindowExecutorTransactionTest {
             when(investorTrendService.fetchWindow(any(), any(), any()))
                     .thenReturn(new InvestorTrendFetch(List.of(), null, 0));
             when(investorTrendService.persistWindow(any(), any()))
+                    .thenReturn(BackfillWindowResult.EMPTY);
+
+            // Act
+            windowExecutor.executeWindow(status, domesticStock, session);
+
+            // Assert
+            BackfillStatus updated =
+                    backfillStatusRepository.findById(status.getId()).orElseThrow();
+            assertThat(updated.getStatus()).isEqualTo(BackfillStatusType.COMPLETED);
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // SPEC-COLLECTOR-BACKFILL-007 W3+W4 — corporate_events GROUP_A 라우팅
+    // -------------------------------------------------------------------------
+
+    @Nested
+    @DisplayName("BACKFILL-007: corporate_events GROUP_A 라우팅·종료 (REQ-BACKFILL-093~099a)")
+    class CorporateEventsRouting {
+
+        @Test
+        @DisplayName("AC-4/AC-5: corporate_events fetch는 고정 플로어(1950)로 호출되고 1회 윈도우 후 COMPLETED")
+        void corporateEvents_fetchUsesFloor_andCompletesInOneWindow() throws InterruptedException {
+            // Arrange — corporate_events status PENDING, 유효 분할 1건 반환
+            BackfillStatus status = seedPending("005930", "corporate_events");
+            LocalDate oldest = LocalDate.of(2018, 5, 2);
+            RevSplitBackfillFetch fetch = new RevSplitBackfillFetch(List.of(), oldest, 1);
+            when(revSplitService.fetchWindowForBackfill(any(), any(), any(), any()))
+                    .thenReturn(fetch);
+            when(revSplitService.persistWindowForBackfill(eq(fetch)))
+                    .thenReturn(new BackfillWindowResult(oldest, 1));
+
+            // Act
+            windowExecutor.executeWindow(status, domesticStock, session);
+
+            // Assert — from-date=고정 플로어(1950-01-01), GROUP_A rowCount<100 → COMPLETED
+            verify(revSplitService)
+                    .fetchWindowForBackfill(
+                            eq(domesticStock), eq(session), eq(LocalDate.of(1950, 1, 1)), any());
+            BackfillStatus updated =
+                    backfillStatusRepository.findById(status.getId()).orElseThrow();
+            assertThat(updated.getStatus()).isEqualTo(BackfillStatusType.COMPLETED);
+            assertThat(updated.getLastCollectedDate()).isEqualTo(oldest);
+        }
+
+        @Test
+        @DisplayName("AC-5a: rawRowCount=2(degenerate+valid 혼합)여도 100건 미만이라 결정적으로 COMPLETED")
+        void corporateEvents_rawRowCountTwo_stillCompletes() throws InterruptedException {
+            // Arrange — 원본 행수 2(1 valid + 1 degenerate skip), 종료 입력 rowCount=2
+            BackfillStatus status = seedPending("005930", "corporate_events");
+            LocalDate oldest = LocalDate.of(2018, 5, 2);
+            RevSplitBackfillFetch fetch = new RevSplitBackfillFetch(List.of(), oldest, 2);
+            when(revSplitService.fetchWindowForBackfill(any(), any(), any(), any()))
+                    .thenReturn(fetch);
+            when(revSplitService.persistWindowForBackfill(eq(fetch)))
+                    .thenReturn(new BackfillWindowResult(oldest, 2));
+
+            // Act
+            windowExecutor.executeWindow(status, domesticStock, session);
+
+            // Assert — rowCount=2 < 100 → COMPLETED (006 적용 여부 무관)
+            BackfillStatus updated =
+                    backfillStatusRepository.findById(status.getId()).orElseThrow();
+            assertThat(updated.getStatus()).isEqualTo(BackfillStatusType.COMPLETED);
+        }
+
+        @Test
+        @DisplayName("EC-3: 액면교체 이력 0건 → rowCount=0 → GROUP_A 0건 종료 COMPLETED")
+        void corporateEvents_emptyHistory_completes() throws InterruptedException {
+            // Arrange
+            BackfillStatus status = seedPending("005930", "corporate_events");
+            RevSplitBackfillFetch fetch = new RevSplitBackfillFetch(List.of(), null, 0);
+            when(revSplitService.fetchWindowForBackfill(any(), any(), any(), any()))
+                    .thenReturn(fetch);
+            when(revSplitService.persistWindowForBackfill(eq(fetch)))
                     .thenReturn(BackfillWindowResult.EMPTY);
 
             // Act
