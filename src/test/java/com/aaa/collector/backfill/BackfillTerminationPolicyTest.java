@@ -109,6 +109,55 @@ class BackfillTerminationPolicyTest {
                                     .completed())
                     .isTrue();
         }
+
+        @Test
+        @DisplayName("AC-14/EC-8: 거래정지 100건 경계 윈도우 체이닝 — A·B 모두 IN_PROGRESS, 소진 윈도우만 COMPLETED")
+        void windowChaining_haltAcrossBoundary_continuesUntilExhaustion() {
+            // 윈도우 A: 원본 100건(끝부분 거래정지 2 → 저장 98 가정) → rawRowCount=100 → IN_PROGRESS
+            BackfillWindowOutcome windowA =
+                    BackfillWindowOutcome.groupA(98, 100, LocalDate.of(2018, 1, 5));
+            // 윈도우 B: 원본 100건(시작부분 거래정지 2 → 저장 98) → rawRowCount=100 → IN_PROGRESS
+            BackfillWindowOutcome windowB =
+                    BackfillWindowOutcome.groupA(98, 100, LocalDate.of(2017, 8, 10));
+            // 데이터 소진 윈도우: 원본 40건 → COMPLETED
+            BackfillWindowOutcome exhaustion =
+                    BackfillWindowOutcome.groupA(40, 40, LocalDate.of(1995, 6, 1));
+
+            assertThat(policy.decide(windowA).completed()).isFalse();
+            assertThat(policy.decide(windowB).completed()).isFalse();
+            assertThat(policy.decide(exhaustion).completed()).isTrue();
+        }
+    }
+
+    @Nested
+    @DisplayName("AC-9 회귀 가드 — 임계값·GROUP_B 불변 (SPEC-COLLECTOR-BACKFILL-006)")
+    class TerminationRegressionGuard {
+
+        @Test
+        @DisplayName(
+                "AC-9: GROUP_B는 rawRowCount=rowCount이므로 100건-미만 종료 규칙 비적용 유지 (61건+전진 IN_PROGRESS)")
+        void groupB_rawRowCountEqualsRowCount_noBelowCapRule() {
+            // groupB factory가 rawRowCount=rowCount로 설정 — decideGroupB는 rowCount 경로이므로 100-cap 무관
+            BackfillWindowOutcome outcome =
+                    BackfillWindowOutcome.groupB(
+                            61, LocalDate.of(2018, 12, 20), LocalDate.of(2019, 1, 4), 61, 0);
+
+            assertThat(policy.decide(outcome).completed()).isFalse();
+            // rawRowCount가 rowCount와 동일함을 명시 고정
+            assertThat(outcome.rawRowCount()).isEqualTo(outcome.rowCount());
+        }
+
+        @Test
+        @DisplayName("AC-9: GROUP_B 0건 종료·clamp 판정은 rowCount 경로로 불변")
+        void groupB_zeroAndClamp_unchanged() {
+            BackfillWindowOutcome zero =
+                    BackfillWindowOutcome.groupB(0, null, LocalDate.of(2019, 1, 4), 30, 0);
+            assertThat(policy.decide(zero).completed()).isTrue();
+
+            LocalDate oldest = LocalDate.of(2019, 1, 4);
+            BackfillWindowOutcome clamp = BackfillWindowOutcome.groupB(30, oldest, oldest, 30, 2);
+            assertThat(policy.decide(clamp).clampSuspected()).isTrue();
+        }
     }
 
     @Nested

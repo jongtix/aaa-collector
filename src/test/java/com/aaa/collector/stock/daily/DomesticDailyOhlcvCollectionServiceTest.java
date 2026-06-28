@@ -474,6 +474,85 @@ class DomesticDailyOhlcvCollectionServiceTest {
         }
 
         @Test
+        @DisplayName("AC-8: 당일(collect) 경로 — 정상행+거래정지(volume=0)행 혼재 시 둘 다 저장 (일관성)")
+        void collectPath_haltAndNormal_bothStored() throws Exception {
+            // Arrange — 공유 parseIfValid이므로 당일 경로도 거래정지일을 저장한다(REQ-BACKFILL-089)
+            Stock stock = stockOf("005930");
+            when(stockRepository.findAllActiveTradable()).thenReturn(List.of(stock));
+            when(healthyKeySelector.selectHealthy()).thenReturn(List.of(ISA));
+            KisDailyOhlcvResponse.DailyOhlcvRow normal =
+                    new KisDailyOhlcvResponse.DailyOhlcvRow(
+                            "20180504",
+                            "75000",
+                            "74000",
+                            "76000",
+                            "73000",
+                            "1000000",
+                            "75000000000",
+                            "N");
+            when(guardedKisExecutor.execute(
+                            any(LeaseSession.class),
+                            any(),
+                            anyString(),
+                            eq(KisDailyOhlcvResponse.class)))
+                    .thenReturn(stubResponse(List.of(normal, haltRow("20180430"))));
+
+            // Act
+            service.collect(LocalDate.of(2026, 6, 5));
+
+            // Assert — 정상 1 + 거래정지 1 = 2건 저장
+            ArgumentCaptor<List<ParsedOhlcvRow>> captor = captureInsert();
+            verify(ohlcvInserter, times(1)).insertBatch(any(), captor.capture());
+            assertThat(captor.getValue()).hasSize(2);
+        }
+
+        @Test
+        @DisplayName("EC-3: volume==0 + OHLC 무효(low=0) → 거부 (volume==0 단독이 아니라 OHLC 유효 동반 조건)")
+        void volumeZero_withInvalidOhlc_isRejected() throws Exception {
+            Stock stock = stockOf("005930");
+            when(stockRepository.findAllActiveTradable()).thenReturn(List.of(stock));
+            when(healthyKeySelector.selectHealthy()).thenReturn(List.of(ISA));
+            KisDailyOhlcvResponse.DailyOhlcvRow row =
+                    new KisDailyOhlcvResponse.DailyOhlcvRow(
+                            "20180430", "75000", "74000", "76000", "0", "0", "0", "N");
+            when(guardedKisExecutor.execute(
+                            any(LeaseSession.class),
+                            any(),
+                            anyString(),
+                            eq(KisDailyOhlcvResponse.class)))
+                    .thenReturn(stubResponse(List.of(row)));
+
+            service.collect(LocalDate.of(2026, 6, 5));
+
+            verify(ohlcvInserter, never()).insertBatch(any(), any());
+        }
+
+        @Test
+        @DisplayName("EC-1: 응답이 거래정지일(volume=0)만 3건 — 전부 저장")
+        void allHaltRows_allStored() throws Exception {
+            Stock stock = stockOf("005930");
+            when(stockRepository.findAllActiveTradable()).thenReturn(List.of(stock));
+            when(healthyKeySelector.selectHealthy()).thenReturn(List.of(ISA));
+            when(guardedKisExecutor.execute(
+                            any(LeaseSession.class),
+                            any(),
+                            anyString(),
+                            eq(KisDailyOhlcvResponse.class)))
+                    .thenReturn(
+                            stubResponse(
+                                    List.of(
+                                            haltRow("20180430"),
+                                            haltRow("20180502"),
+                                            haltRow("20180503"))));
+
+            service.collect(LocalDate.of(2026, 6, 5));
+
+            ArgumentCaptor<List<ParsedOhlcvRow>> captor = captureInsert();
+            verify(ohlcvInserter, times(1)).insertBatch(any(), captor.capture());
+            assertThat(captor.getValue()).hasSize(3);
+        }
+
+        @Test
         @DisplayName("AC-3: volume<0(음수) 행 → 거부, volume>VOLUME_MAX 행 → 거부")
         void negativeOrExtremeVolume_isRejected() throws Exception {
             Stock stock = stockOf("005930");
