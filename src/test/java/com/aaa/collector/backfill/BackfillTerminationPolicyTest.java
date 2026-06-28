@@ -130,6 +130,56 @@ class BackfillTerminationPolicyTest {
     }
 
     @Nested
+    @DisplayName("EC-9 연속 분할 — 다중 거래정지 클러스터 윈도우별 stateless 종료 (SPEC-COLLECTOR-BACKFILL-006)")
+    class ConsecutiveSplitMultipleHaltClusters {
+
+        /**
+         * EC-9: 두 번 이상의 액면분할이 연속으로 발생해 다수의 윈도우 각각에 거래정지 행이 포함되는 경우.
+         *
+         * <p>종료 판정기는 윈도우별 stateless이므로, 이전 윈도우의 거래정지 존재 여부와 무관하게 각 윈도우의 rawRowCount만으로 독립 판정한다.
+         * rawRowCount=100인 윈도우는 몇 개가 연속으로 오더라도 모두 IN_PROGRESS를 반환해야 한다.
+         */
+        @Test
+        @DisplayName("EC-9: 3개 연속 윈도우 각각 거래정지 클러스터 포함, rawRowCount=100 → 모두 IN_PROGRESS (오종료 없음)")
+        void consecutiveSplits_threeWindowsEachWithHaltCluster_allInProgress() {
+            // 분할 1 구간 — 거래정지 3일 저장 포함(97건 저장, 100건 원본)
+            BackfillWindowOutcome split1Window =
+                    BackfillWindowOutcome.groupA(97, 100, LocalDate.of(2021, 3, 31));
+            // 분할 2 구간 — 거래정지 2일 저장 포함(98건 저장, 100건 원본)
+            BackfillWindowOutcome split2Window =
+                    BackfillWindowOutcome.groupA(98, 100, LocalDate.of(2019, 9, 27));
+            // 분할 3 구간 — 거래정지 5일 저장 포함(95건 저장, 100건 원본)
+            BackfillWindowOutcome split3Window =
+                    BackfillWindowOutcome.groupA(95, 100, LocalDate.of(2017, 4, 28));
+
+            // 각 윈도우가 독립적으로 IN_PROGRESS 반환 — 연속 거래정지가 종료를 흔들지 않음
+            assertThat(policy.decide(split1Window).completed()).isFalse();
+            assertThat(policy.decide(split2Window).completed()).isFalse();
+            assertThat(policy.decide(split3Window).completed()).isFalse();
+        }
+
+        @Test
+        @DisplayName("EC-9: 다중 클러스터 체인 후 데이터 소진(rawRowCount=40) 시에만 COMPLETED")
+        void consecutiveSplits_terminatesOnlyAtExhaustion() {
+            // 3개 할트 클러스터 윈도우 — 모두 rawRowCount=100이므로 IN_PROGRESS
+            BackfillWindowOutcome cluster1 =
+                    BackfillWindowOutcome.groupA(97, 100, LocalDate.of(2021, 3, 31));
+            BackfillWindowOutcome cluster2 =
+                    BackfillWindowOutcome.groupA(96, 100, LocalDate.of(2019, 9, 27));
+            BackfillWindowOutcome cluster3 =
+                    BackfillWindowOutcome.groupA(98, 100, LocalDate.of(2017, 4, 28));
+            // 정상 데이터 소진 윈도우 — rawRowCount=40 → COMPLETED
+            BackfillWindowOutcome exhaustion =
+                    BackfillWindowOutcome.groupA(40, 40, LocalDate.of(1996, 1, 15));
+
+            assertThat(policy.decide(cluster1).completed()).isFalse();
+            assertThat(policy.decide(cluster2).completed()).isFalse();
+            assertThat(policy.decide(cluster3).completed()).isFalse();
+            assertThat(policy.decide(exhaustion).completed()).isTrue();
+        }
+    }
+
+    @Nested
     @DisplayName("AC-9 회귀 가드 — 임계값·GROUP_B 불변 (SPEC-COLLECTOR-BACKFILL-006)")
     class TerminationRegressionGuard {
 
