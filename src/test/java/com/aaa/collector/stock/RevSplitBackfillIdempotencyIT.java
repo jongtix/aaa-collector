@@ -17,6 +17,7 @@ import org.springframework.boot.testcontainers.service.connection.ServiceConnect
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import org.springframework.transaction.annotation.Transactional;
 import org.testcontainers.containers.MySQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
@@ -70,6 +71,7 @@ class RevSplitBackfillIdempotencyIT {
     }
 
     @Test
+    @Transactional
     @DisplayName("AC-7: 동일 종목 백필 2회 실행 — 행 수 불변(INSERT IGNORE 멱등), SQL 1142 미발생")
     void backfillTwiceLeavesRowCountUnchanged() {
         // Arrange
@@ -78,8 +80,9 @@ class RevSplitBackfillIdempotencyIT {
         // Act — 1회차 적재
         BackfillWindowResult first = revSplitService.persistWindowForBackfill(splitFetch(stock));
 
-        // Assert — 1행 적재, 종료 입력 rowCount=원본 행수 1
+        // Assert — 1행 적재, 저장 행수 rowCount=1·종료 입력 rawRowCount=원본 행수 1
         assertThat(first.rowCount()).isEqualTo(1);
+        assertThat(first.rawRowCount()).isEqualTo(1);
         assertThat(corporateEventRepository.countByStockId(stock.getId())).isEqualTo(1L);
 
         // Act — 2회차 재실행(동일 유니크 키)

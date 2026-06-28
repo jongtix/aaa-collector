@@ -838,7 +838,9 @@ class RevSplitCollectionServiceTest {
         }
 
         @Test
-        @DisplayName("AC-5: 단일 유효 분할 → rawRowCount=1, oldestRecordDate=2018-05-02, 1행 적재")
+        @SuppressWarnings("PMD.UnitTestContainsTooManyAsserts")
+        @DisplayName(
+                "AC-5: 단일 유효 분할 → rowCount=1·rawRowCount=1, oldestRecordDate=2018-05-02, 1행 적재")
         void backfillFetch_singleValidSplit() throws Exception {
             // Arrange
             Stock stock = watchlistStock("005930");
@@ -854,9 +856,10 @@ class RevSplitCollectionServiceTest {
                     service.fetchWindowForBackfill(stock, session, floor, today);
             BackfillWindowResult result = service.persistWindowForBackfill(fetch);
 
-            // Assert — 종료 판정 입력 rowCount=원본=검증통과=1, oldest=최소 record_date
+            // Assert — 저장 행수 rowCount=검증통과=1·종료 입력 rawRowCount=원본=1, oldest=최소 record_date
             assertThat(fetch.rawRowCount()).isEqualTo(1);
             assertThat(result.rowCount()).isEqualTo(1);
+            assertThat(result.rawRowCount()).isEqualTo(1);
             assertThat(result.oldestTradeDate()).isEqualTo(LocalDate.of(2018, 5, 2));
             verify(corporateEventInserter).insertBatch(inserterCaptor.capture());
             assertThat(inserterCaptor.getValue()).hasSize(1);
@@ -884,9 +887,10 @@ class RevSplitCollectionServiceTest {
                     service.fetchWindowForBackfill(stock, session, floor, today);
             BackfillWindowResult result = service.persistWindowForBackfill(fetch);
 
-            // Assert — REQ-BACKFILL-099a: rowCount=원본 행수(2) 결정적, 적재 행수(1)와 분리
+            // Assert — REQ-BACKFILL-099a: 종료 입력 rawRowCount=원본 행수(2) 결정적, 저장 행수 rowCount=적재(1)와 분리
             assertThat(fetch.rawRowCount()).isEqualTo(2);
-            assertThat(result.rowCount()).isEqualTo(2);
+            assertThat(result.rawRowCount()).isEqualTo(2);
+            assertThat(result.rowCount()).isEqualTo(1);
             assertThat(fetch.validRows()).hasSize(1);
             // 적재는 유효 분할 1행만 (degenerate skip)
             verify(corporateEventInserter).insertBatch(inserterCaptor.capture());
@@ -916,7 +920,8 @@ class RevSplitCollectionServiceTest {
         }
 
         @Test
-        @DisplayName("EC-3/AC-8: 빈 output1(액면교체 이력 없음·1999년 이전) → rawRowCount=0, 적재 0행")
+        @SuppressWarnings("PMD.UnitTestContainsTooManyAsserts")
+        @DisplayName("EC-3/AC-8: 빈 output1(액면교체 이력 없음·1999년 이전) → rowCount=0·rawRowCount=0, 적재 0행")
         void backfillFetch_emptyResponse() throws Exception {
             Stock stock = watchlistStock("005930");
             when(guardedKisExecutor.execute(
@@ -929,6 +934,8 @@ class RevSplitCollectionServiceTest {
 
             assertThat(fetch.rawRowCount()).isZero();
             assertThat(fetch.validRows()).isEmpty();
+            assertThat(result.rowCount()).isZero();
+            assertThat(result.rawRowCount()).isZero();
             assertThat(result.oldestTradeDate()).isNull();
             verify(corporateEventInserter).insertBatch(List.of());
         }

@@ -540,19 +540,20 @@ class BackfillWindowExecutorTransactionTest {
         @Test
         @DisplayName("AC-5a: rawRowCount=2(degenerate+valid 혼합)여도 100건 미만이라 결정적으로 COMPLETED")
         void corporateEvents_rawRowCountTwo_stillCompletes() throws InterruptedException {
-            // Arrange — 원본 행수 2(1 valid + 1 degenerate skip), 종료 입력 rowCount=2
+            // Arrange — 원본 행수 2(1 valid + 1 degenerate skip), 종료 입력 rawRowCount=2·저장 rowCount=1
             BackfillStatus status = seedPending("005930", "corporate_events");
             LocalDate oldest = LocalDate.of(2018, 5, 2);
             RevSplitBackfillFetch fetch = new RevSplitBackfillFetch(List.of(), oldest, 2);
             when(revSplitService.fetchWindowForBackfill(any(), any(), any(), any()))
                     .thenReturn(fetch);
+            // 3-arg: rowCount(저장)=1, rawRowCount(종료 입력)=2 — 발산해도 종료는 rawRowCount로 결정
             when(revSplitService.persistWindowForBackfill(eq(fetch)))
-                    .thenReturn(new BackfillWindowResult(oldest, 2));
+                    .thenReturn(new BackfillWindowResult(oldest, 1, 2));
 
             // Act
             windowExecutor.executeWindow(status, domesticStock, session);
 
-            // Assert — rowCount=2 < 100 → COMPLETED (006 적용 여부 무관)
+            // Assert — rawRowCount=2 < 100 → COMPLETED (저장 1과 발산해도 무관, 006 적용 여부 무관)
             BackfillStatus updated =
                     backfillStatusRepository.findById(status.getId()).orElseThrow();
             assertThat(updated.getStatus()).isEqualTo(BackfillStatusType.COMPLETED);

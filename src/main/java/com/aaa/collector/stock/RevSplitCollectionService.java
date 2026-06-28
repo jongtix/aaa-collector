@@ -19,6 +19,8 @@ import java.util.concurrent.atomic.AtomicInteger;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
+import org.springframework.transaction.annotation.Transactional;
 
 /**
  * 예탁원정보 액면교체일정 수집 서비스 (TR HHKDB669105C0, REQ-BATCH5-010~073).
@@ -214,21 +216,28 @@ public class RevSplitCollectionService {
     /**
      * [SPEC-COLLECTOR-BACKFILL-007 W5] 종목지정 액면교체 백필 persist 단계 — 적재 대상 엔티티를 INSERT IGNORE 적재한다.
      *
-     * <p>@Transactional 없음 — 트랜잭션은 {@code BackfillWindowExecutor}(persistWindow)가 소유하며 이 메서드는 그 경계
-     * 안에서 호출된다. {@link CorporateEventInserter#insertBatch}(Tier-1 INSERT IGNORE, ON DUPLICATE KEY
-     * UPDATE 금지, REQ-BACKFILL-098)로 멱등 적재한다.
+     * <p>{@code MANDATORY} 전파 — 활성 트랜잭션 없이 호출 시 {@code IllegalTransactionStateException}이 발생한다.
+     * 트랜잭션은 {@code BackfillWindowExecutor.routePersist}가 소유하며 이 메서드는 그 경계 안에서 호출된다 ({@link
+     * DomesticDailyOhlcvCollectionService#persistWindow} 동일 패턴). {@link
+     * CorporateEventInserter#insertBatch}(Tier-1 INSERT IGNORE, ON DUPLICATE KEY UPDATE 금지,
+     * REQ-BACKFILL-098)로 멱등 적재한다.
      *
-     * <p>종료 판정 입력 {@link BackfillWindowResult#rowCount()}는 {@code rawRowCount}(원본 행수,
-     * REQ-BACKFILL-099a), {@code oldestTradeDate}는 적재 대상 최소 record_date다(REQ-BACKFILL-099).
+     * <p>종료 판정 입력 {@link BackfillWindowResult#rawRowCount()}는 {@code rawRowCount}(KIS 원본 응답 행수,
+     * degenerate skip 전, REQ-BACKFILL-099a), 저장 행수 {@link BackfillWindowResult#rowCount()}는 적재 대상
+     * {@code validRows.size()}로 분리한다(SPEC-COLLECTOR-BACKFILL-006 3-arg API). {@code
+     * oldestTradeDate}는 적재 대상 최소 record_date다(REQ-BACKFILL-099).
      *
      * @param fetch {@link #fetchWindowForBackfill}가 반환한 DTO
-     * @return 종료 판정 입력 (oldestTradeDate=최소 record_date, rowCount=원본 응답 행수)
+     * @return 종료 판정 입력 (oldestTradeDate=최소 record_date, rowCount=저장 행수, rawRowCount=원본 응답 행수)
      */
     // @MX:NOTE: [AUTO] 종목지정 백필 persist — BackfillWindowExecutor @Transactional 경계에서 호출.
-    // INSERT IGNORE 적재 후 BackfillWindowResult(rawRowCount) 반환.
+    // INSERT IGNORE 적재 후 3-arg BackfillWindowResult(rowCount=validRows.size, rawRowCount=원본) 반환.
+    // MANDATORY 가드 — tx 없이 호출 시 즉시 실패.
+    @Transactional(propagation = Propagation.MANDATORY)
     public BackfillWindowResult persistWindowForBackfill(RevSplitBackfillFetch fetch) {
         corporateEventInserter.insertBatch(fetch.validRows());
-        return new BackfillWindowResult(fetch.oldestRecordDate(), fetch.rawRowCount());
+        return new BackfillWindowResult(
+                fetch.oldestRecordDate(), fetch.validRows().size(), fetch.rawRowCount());
     }
 
     private RowCounts processRows(
