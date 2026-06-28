@@ -323,6 +323,8 @@ public class OverseasDailyOhlcvCollectionService {
      */
     // @MX:NOTE: [AUTO] fetchWindow — 비tx HTTP 단계. DB 미접촉. BackfillWindowExecutor가 @Transactional
     // persistWindow와 교차 빈으로 순차 호출.
+    // @MX:NOTE: [AUTO] rawRowCount = ET 당일 가드 제외 후 원본 행수(거부 전, mod_yn 부재) — GROUP_A 종료 판정 전용.
+    // @MX:REASON: SPEC-COLLECTOR-BACKFILL-006 REQ-BACKFILL-091,-088
     public OverseasDailyOhlcvFetch fetchWindow(LocalDate anchor, Stock stock, LeaseSession session)
             throws InterruptedException {
         String symbol = stock.getSymbol();
@@ -330,22 +332,35 @@ public class OverseasDailyOhlcvCollectionService {
         KisOverseasDailyOhlcvResponse response = fetch(session, excd, symbol, anchor);
 
         if (response.output1() == null || response.output2().isEmpty()) {
-            return new OverseasDailyOhlcvFetch(List.of(), null, 0);
+            return new OverseasDailyOhlcvFetch(List.of(), null, 0, 0);
         }
         if (parseZdiv(response.output1().zdiv()) > ZDIV_MAX) {
-            return new OverseasDailyOhlcvFetch(List.of(), null, 0);
+            return new OverseasDailyOhlcvFetch(List.of(), null, 0, 0);
         }
 
+        int rawRowCount = rawRowCount(response, anchor);
         List<ParsedOhlcvRow> kept = keepValidRows(symbol, response, anchor);
         if (kept.isEmpty()) {
-            return new OverseasDailyOhlcvFetch(List.of(), null, 0);
+            return new OverseasDailyOhlcvFetch(List.of(), null, 0, rawRowCount);
         }
         LocalDate oldest =
                 kept.stream()
                         .map(ParsedOhlcvRow::tradeDate)
                         .min(LocalDate::compareTo)
                         .orElseThrow();
-        return new OverseasDailyOhlcvFetch(kept, oldest, kept.size());
+        return new OverseasDailyOhlcvFetch(kept, oldest, kept.size(), rawRowCount);
+    }
+
+    /**
+     * KIS 원본 응답 행수를 산정한다 — ET 당일 가드({@link #isEtToday}) 제외 후·검증(volume/OHLC) 거부 전 행수(DP-1 해외).
+     *
+     * <p>해외는 {@code mod_yn}(수정주가 플래그)이 명세에 없어(MI-03) 국내의 modYn 제외 단계가 없다. ET 당일 가드 제외는 별개 정당 필터이므로
+     * 종료 판정 입력에서도 제외한다(REQ-OVOH-015 보존). 검증 거부는 카운트에서 제외하지 않는다 — 비분할 거래정지 거부가 종료를 흔들지 않게 하는 것이 본
+     * 산정의 목적이다(SPEC-COLLECTOR-BACKFILL-006 REQ-BACKFILL-091).
+     */
+    private int rawRowCount(KisOverseasDailyOhlcvResponse response, LocalDate today) {
+        return (int)
+                response.output2().stream().filter(row -> !isEtToday(row.xymd(), today)).count();
     }
 
     /**
@@ -370,7 +385,9 @@ public class OverseasDailyOhlcvCollectionService {
             return BackfillWindowResult.EMPTY;
         }
         ohlcvInserter.insertBatch(stock.getId(), fetch.rows());
-        return new BackfillWindowResult(fetch.oldestTradeDate(), fetch.rowCount());
+        // SPEC-COLLECTOR-BACKFILL-006: rawRowCount(원본 행수)를 GROUP_A 종료 입력으로 전달. rowCount(저장 행수) 보존.
+        return new BackfillWindowResult(
+                fetch.oldestTradeDate(), fetch.rowCount(), fetch.rawRowCount());
     }
 
     private int parseZdiv(String zdiv) {
@@ -391,6 +408,16 @@ public class OverseasDailyOhlcvCollectionService {
      * 일봉 행 검증 규칙 (REQ-OVOH-012, MA-01, REQ-INSERT-005).
      *
      * <p>파싱 성공 시 파싱된 값을 담은 {@link ParsedOhlcvRow}를 반환 — 1회 파싱, 재사용 (W-1 불변식).
+     *
+     * <ul>
+     *   <li>가격(close/open/high/low) ≤ 0 또는 {@code > PRICE_MAX_USD} → empty
+     *   <li>거래량 &lt; 0(음수) → empty; 거래정지일(OHLC 유효 + {@code volume == 0})은 허용(저장)
+     *   <li>정상 행({@code volume > 0})의 {@code tvol}/{@code tamt} ≤ 0 → empty(MA-01); 거래정지 행은 {@code
+     *       tamt == 0} 허용(DP-4)
+     * </ul>
+     *
+     * <p>SPEC-COLLECTOR-BACKFILL-006: 미국 분할은 거래정지 {@code volume == 0}이 실측상 없으나(§1.5), 비분할 거래정지
+     * 사유(규제·변동성·정리매매)에 대한 방어로 국내와 동일하게 거래정지일을 보존 저장한다.
      */
     private ParsedOhlcvRow parseIfValid(
             String symbol, KisOverseasDailyOhlcvResponse.OverseasDailyOhlcvRow row) {
@@ -402,14 +429,21 @@ public class OverseasDailyOhlcvCollectionService {
             long volume = Long.parseLong(row.tvol());
             long tradingValue = Long.parseLong(row.tamt());
 
-            boolean invalid =
+            boolean invalidPrice =
                     isInvalidPrice(close)
                             || isInvalidPrice(open)
                             || isInvalidPrice(high)
-                            || isInvalidPrice(low)
-                            // tvol/tamt: 양수만 검증 — 상한 없음(MA-01)
-                            || volume <= 0
-                            || tradingValue <= 0;
+                            || isInvalidPrice(low);
+            // @MX:NOTE: [AUTO] 거래정지일(OHLC 유효 + volume==0) 허용 — 미국 분할은 거래정지 volume=0 미발생(실측),
+            // 비분할 사유(규제·변동성·정리매매) 방어. 거래정지 행은 tamt==0도 허용, 정상 행은 tvol/tamt 양수 검증 유지(MA-01).
+            // @MX:REASON: SPEC-COLLECTOR-BACKFILL-006 REQ-BACKFILL-090,-093 — 국내와 일관 + 종료 오판 사전 방어.
+            boolean tradingHalt = !invalidPrice && volume == 0;
+            boolean invalid =
+                    invalidPrice
+                            || volume < 0
+                            // 거래정지 행(volume==0)은 tamt==0 허용(DP-4); 정상 행(volume>0)은 tvol/tamt 양수
+                            // 검증(MA-01)
+                            || (!tradingHalt && (volume <= 0 || tradingValue <= 0));
 
             if (invalid) {
                 log.warn(

@@ -366,9 +366,10 @@ class OverseasDailyOhlcvCollectionServiceTest {
         }
 
         @Test
-        @DisplayName("tvol ≤ 0 행 — 저장 제외(양수 검증)")
-        void collect_nonPositiveTvol_notInserted() throws Exception {
-            stubSingle("AAPL", response("4", List.of(row(PREV_YMD, "100", "0", "1000"))));
+        @DisplayName("volume<0(음수) 행 — 저장 제외 (SPEC-COLLECTOR-BACKFILL-006 재정의: tvol==0은 거래정지로 저장)")
+        void collect_negativeTvol_notInserted() throws Exception {
+            // tvol==0은 거래정지일로 저장 대상이므로, 진짜 거부 케이스를 volume<0(음수)으로 분리(REQ-BACKFILL-093)
+            stubSingle("AAPL", response("4", List.of(row(PREV_YMD, "100", "-1", "1000"))));
 
             service.collect(TODAY);
 
@@ -376,8 +377,9 @@ class OverseasDailyOhlcvCollectionServiceTest {
         }
 
         @Test
-        @DisplayName("tamt ≤ 0 행 — 저장 제외(양수 검증)")
-        void collect_nonPositiveTamt_notInserted() throws Exception {
+        @DisplayName("정상 행(volume>0) + tamt ≤ 0 — 저장 제외(MA-01 양수 검증 보존, EC-6)")
+        void collect_normalRowNonPositiveTamt_notInserted() throws Exception {
+            // volume>0(거래정지 아님)인데 tamt<=0 → 데이터 오류로 거부(MA-01 유지)
             stubSingle("AAPL", response("4", List.of(row(PREV_YMD, "100", "1000", "-5"))));
 
             service.collect(TODAY);
@@ -414,6 +416,112 @@ class OverseasDailyOhlcvCollectionServiceTest {
             ParsedOhlcvRow saved = captor.getValue().getFirst();
             assertThat(saved.volume()).isEqualTo(42_745_060L);
             assertThat(saved.tradingValue()).isEqualTo(12_697_950_974L);
+        }
+    }
+
+    @Nested
+    @DisplayName("거래정지일 volume=0/tamt=0 저장 (SPEC-COLLECTOR-BACKFILL-006 — AC-10/AC-12/EC-6/EC-7)")
+    class OverseasTradingHaltVolumeZero {
+
+        @SuppressWarnings("unchecked")
+        private ArgumentCaptor<List<ParsedOhlcvRow>> captureInsert() {
+            return ArgumentCaptor.forClass(List.class);
+        }
+
+        @Test
+        @DisplayName(
+                "AC-10: OHLC 유효(close<=PRICE_MAX_USD) + volume==0 + tamt==0 → 저장 (비분할 거래정지 모사)")
+        void haltRow_volumeZeroTamtZero_isStored() throws Exception {
+            // Arrange — volume=0, tamt=0, OHLC 유효(가격 100)
+            stubSingle("AAPL", response("4", List.of(row(PREV_YMD, "100", "0", "0"))));
+
+            // Act
+            service.collect(TODAY);
+
+            // Assert
+            ArgumentCaptor<List<ParsedOhlcvRow>> captor = captureInsert();
+            verify(ohlcvInserter, times(1)).insertBatch(any(), captor.capture());
+            assertThat(captor.getValue()).hasSize(1);
+            assertThat(captor.getValue().getFirst().volume()).isZero();
+            assertThat(captor.getValue().getFirst().tradingValue()).isZero();
+        }
+
+        @Test
+        @DisplayName("AC-10: volume<0(음수) → 거부")
+        void negativeVolume_isRejected() throws Exception {
+            stubSingle("AAPL", response("4", List.of(row(PREV_YMD, "100", "-1", "0"))));
+
+            service.collect(TODAY);
+
+            verifyNoInsert();
+        }
+
+        @Test
+        @DisplayName("AC-10: OHLC 무효(close=0) + volume==0 → 거부")
+        void invalidOhlc_volumeZero_isRejected() throws Exception {
+            stubSingle("AAPL", response("4", List.of(row(PREV_YMD, "0", "0", "0"))));
+
+            service.collect(TODAY);
+
+            verifyNoInsert();
+        }
+
+        @Test
+        @DisplayName("AC-12: OHLC 무효(close>PRICE_MAX_USD) + volume==0 → 거부 (상한 가드 보존)")
+        void priceAboveMax_volumeZero_isRejected() throws Exception {
+            stubSingle("AAPL", response("4", List.of(row(PREV_YMD, "100001", "0", "0"))));
+
+            service.collect(TODAY);
+
+            verifyNoInsert();
+        }
+
+        @Test
+        @DisplayName("AC-12: 정상 행(volume>0, tamt>0)은 비회귀 저장 — 거래정지 완화가 정상 행 검증을 깨지 않음")
+        void normalRow_stillStored() throws Exception {
+            stubSingle("AAPL", response("4", List.of(row(PREV_YMD, "100", "1000", "100000"))));
+
+            service.collect(TODAY);
+
+            ArgumentCaptor<List<ParsedOhlcvRow>> captor = captureInsert();
+            verify(ohlcvInserter, times(1)).insertBatch(any(), captor.capture());
+            assertThat(captor.getValue()).hasSize(1);
+            assertThat(captor.getValue().getFirst().volume()).isEqualTo(1000L);
+        }
+
+        @Test
+        @DisplayName("AC-11(당일 일관성): collect 경로도 거래정지(volume=0) 저장 — 공유 parseIfValid 자연 파급")
+        void collectPath_haltRow_stored() throws Exception {
+            stubSingle("AAPL", response("4", List.of(row(PREV_YMD, "100", "0", "0"))));
+
+            CollectionResult result = service.collect(TODAY);
+
+            verify(ohlcvInserter, times(1)).insertBatch(any(), any());
+            assertThat(result.succeeded()).isEqualTo(1);
+        }
+
+        @Test
+        @DisplayName("EC-7: ET 당일 행 + 거래정지 행 혼재 → ET 당일 제외, 거래정지 저장")
+        void etTodayAndHaltRow_etExcluded_haltStored() throws Exception {
+            // Arrange — 최신 ET 당일 행 + 직전 거래정지(volume=0) 행
+            KisOverseasDailyOhlcvResponse resp =
+                    response(
+                            "4",
+                            List.of(
+                                    row(TODAY_YMD, "100", "1000", "100000"),
+                                    row(PREV_YMD, "100", "0", "0")));
+            stubSingle("AAPL", resp);
+
+            // Act
+            service.collect(TODAY);
+
+            // Assert — ET 당일 제외, 거래정지 행만 저장
+            ArgumentCaptor<List<ParsedOhlcvRow>> captor = captureInsert();
+            verify(ohlcvInserter, times(1)).insertBatch(any(), captor.capture());
+            assertThat(captor.getValue()).hasSize(1);
+            assertThat(captor.getValue().getFirst().tradeDate())
+                    .isEqualTo(LocalDate.of(2026, 6, 17));
+            assertThat(captor.getValue().getFirst().volume()).isZero();
         }
     }
 
@@ -732,6 +840,59 @@ class OverseasDailyOhlcvCollectionServiceTest {
 
             verify(ohlcvInserter, never()).insertBatch(any(), any());
             assertThat(fetch.rowCount()).isEqualTo(1);
+            assertThat(fetch.rawRowCount()).isEqualTo(1);
+            assertThat(fetch.oldestTradeDate()).isEqualTo(LocalDate.of(2026, 1, 30));
+        }
+
+        @Test
+        @DisplayName(
+                "AC-11: fetchWindow — 원본 3건(volume=0 거래정지 1건 포함) → rawRowCount=3, rowCount=3 (전부 저장)")
+        void fetchWindow_rawRowCount_haltRowIncluded() throws Exception {
+            when(guardedKisExecutor.execute(
+                            any(LeaseSession.class),
+                            any(),
+                            anyString(),
+                            eq(KisOverseasDailyOhlcvResponse.class)))
+                    .thenReturn(
+                            response(
+                                    "4",
+                                    List.of(
+                                            row("20260130", "100", "1000", "100000"),
+                                            row("20260129", "100", "0", "0"),
+                                            row("20260128", "100", "1000", "100000"))));
+
+            OverseasDailyOhlcvFetch fetch =
+                    service.fetchWindow(
+                            ANCHOR, stockOf("AAPL", Market.NASDAQ, AssetType.STOCK), openSession());
+
+            assertThat(fetch.rawRowCount()).isEqualTo(3);
+            assertThat(fetch.rowCount()).isEqualTo(3);
+            assertThat(fetch.oldestTradeDate()).isEqualTo(LocalDate.of(2026, 1, 28));
+        }
+
+        @Test
+        @DisplayName("EC-7: fetchWindow — ET 당일 1건 + 거래정지 1건 → ET 제외 후 rawRowCount=1, rowCount=1")
+        void fetchWindow_rawRowCount_excludesEtToday() throws Exception {
+            // anchor=2026-01-31 → ET today guard는 anchor(today) 기준 동일일 제외
+            when(guardedKisExecutor.execute(
+                            any(LeaseSession.class),
+                            any(),
+                            anyString(),
+                            eq(KisOverseasDailyOhlcvResponse.class)))
+                    .thenReturn(
+                            response(
+                                    "4",
+                                    List.of(
+                                            row("20260131", "100", "1000", "100000"),
+                                            row("20260130", "100", "0", "0"))));
+
+            OverseasDailyOhlcvFetch fetch =
+                    service.fetchWindow(
+                            ANCHOR, stockOf("AAPL", Market.NASDAQ, AssetType.STOCK), openSession());
+
+            // ET 당일(20260131) 제외 → rawRowCount=1(거래정지만), rowCount=1
+            assertThat(fetch.rawRowCount()).isEqualTo(1);
+            assertThat(fetch.rowCount()).isEqualTo(1);
             assertThat(fetch.oldestTradeDate()).isEqualTo(LocalDate.of(2026, 1, 30));
         }
 
@@ -770,20 +931,24 @@ class OverseasDailyOhlcvCollectionServiceTest {
                             new BigDecimal("296.9200"),
                             42_745_060L,
                             12_697_950_974L);
+            // rowCount=1(저장), rawRowCount=2(원본 — 거부 1건 가정) — persistWindow가 rawRowCount를 전달함을 검증
             OverseasDailyOhlcvFetch fetch =
-                    new OverseasDailyOhlcvFetch(List.of(parsedRow), LocalDate.of(2026, 1, 30), 1);
+                    new OverseasDailyOhlcvFetch(
+                            List.of(parsedRow), LocalDate.of(2026, 1, 30), 1, 2);
 
             BackfillWindowResult result = service.persistWindow(stock, fetch);
 
             verify(ohlcvInserter, times(1)).insertBatch(any(), any());
             assertThat(result.oldestTradeDate()).isEqualTo(LocalDate.of(2026, 1, 30));
             assertThat(result.rowCount()).isEqualTo(1);
+            // AC-11: rawRowCount(원본 행수)는 rowCount(저장 행수)와 분리되어 그대로 전달된다
+            assertThat(result.rawRowCount()).isEqualTo(2);
         }
 
         @Test
         @DisplayName("persistWindow — 빈 fetch → EMPTY 반환, inserter 미호출")
         void persistWindow_emptyFetch_returnsEmpty() {
-            OverseasDailyOhlcvFetch emptyFetch = new OverseasDailyOhlcvFetch(List.of(), null, 0);
+            OverseasDailyOhlcvFetch emptyFetch = new OverseasDailyOhlcvFetch(List.of(), null, 0, 0);
 
             BackfillWindowResult result =
                     service.persistWindow(
