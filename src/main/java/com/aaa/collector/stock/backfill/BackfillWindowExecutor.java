@@ -27,6 +27,7 @@ import com.aaa.collector.stock.supply.InvestorTrendFetch;
 import com.aaa.collector.stock.supply.ShortSaleCollectionService;
 import com.aaa.collector.stock.supply.ShortSaleFetch;
 import java.time.LocalDate;
+import java.time.ZoneId;
 import java.util.Set;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -57,6 +58,9 @@ import org.springframework.transaction.support.TransactionTemplate;
 public class BackfillWindowExecutor {
 
     private static final int MAX_ERROR_LENGTH = 512;
+
+    /** KST 타임존 — to-date 계산 기준 (CLAUDE.md KST 통일, REQ-BACKFILL-095). */
+    private static final ZoneId KST = ZoneId.of("Asia/Seoul");
 
     /** 미국 시장 집합 — daily_ohlcv 수집 서비스 라우팅에 사용. */
     private static final Set<Market> OVERSEAS_MARKETS =
@@ -111,7 +115,7 @@ public class BackfillWindowExecutor {
             // from-date=고정 플로어(REQ-BACKFILL-094), to-date=today(KST, REQ-BACKFILL-095).
             case "corporate_events" ->
                     revSplitService.fetchWindowForBackfill(
-                            stock, session, windowAdvancer.groupAFromDate(), LocalDate.now());
+                            stock, session, windowAdvancer.groupAFromDate(), LocalDate.now(KST));
             default -> {
                 log.warn(
                         "[backfill] 알 수 없는 data_table — symbol={}, table={}",
