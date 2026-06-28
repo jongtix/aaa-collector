@@ -1,5 +1,6 @@
 package com.aaa.collector.stock;
 
+import com.aaa.collector.backfill.BackfillWindowResult;
 import com.aaa.collector.kis.gate.GuardedKisExecutor;
 import com.aaa.collector.kis.gate.KeyLeaseRegistry;
 import com.aaa.collector.kis.gate.KeyLeaseRegistry.LeaseSession;
@@ -126,15 +127,30 @@ public class RevSplitCollectionService {
     /**
      * 게이트를 경유해 액면교체 단일 페이지 조회를 수행한다(REQ-BATCH5-011).
      *
+     * <p>정기 수집은 {@code SHT_CD=공백}(전체 종목)으로 호출한다 — 기존 BATCH-005 동작 불변.
+     *
      * <p>인터럽트 수신 시 플래그를 복원한 뒤 {@link IllegalStateException}으로 전파한다(패턴 A 종단 = 예외 전파).
      */
     private KisRevSplitResponse fetch(LeaseSession session, String fromDate, String toDate) {
+        return fetch(session, "", fromDate, toDate);
+    }
+
+    /**
+     * 게이트를 경유해 액면교체 단일 페이지 조회를 수행한다(REQ-BATCH5-011, SPEC-COLLECTOR-BACKFILL-007 REQ-BACKFILL-095).
+     *
+     * <p>{@code shtCd}를 파라미터화해 정기 수집(전체 종목, 공백)과 백필(종목지정)이 동일 URI 빌드·게이트 경로를 공유한다. {@code
+     * MARKET_GB=0}(전체)은 두 경로 공통.
+     *
+     * <p>인터럽트 수신 시 플래그를 복원한 뒤 {@link IllegalStateException}으로 전파한다(패턴 A 종단 = 예외 전파).
+     */
+    private KisRevSplitResponse fetch(
+            LeaseSession session, String shtCd, String fromDate, String toDate) {
         try {
             return guardedKisExecutor.execute(
                     session,
                     uri ->
                             uri.path(PATH)
-                                    .queryParam("SHT_CD", "")
+                                    .queryParam("SHT_CD", shtCd)
                                     .queryParam("MARKET_GB", "0")
                                     .queryParam("F_DT", fromDate)
                                     .queryParam("T_DT", toDate)
@@ -146,6 +162,73 @@ public class RevSplitCollectionService {
             Thread.currentThread().interrupt();
             throw new IllegalStateException("rev-split 수집 중 인터럽트", ie);
         }
+    }
+
+    /**
+     * [SPEC-COLLECTOR-BACKFILL-007 W5] 종목지정 액면교체 백필 fetch 단계 — 비트랜잭션, DB 미접촉.
+     *
+     * <p>국내 일봉 백필의 {@code fetchWindow}/{@code persistWindow} 분리 패턴(BackfillWindowExecutor 계약)에 맞춘다.
+     * {@code SHT_CD=<종목코드>}(공백 금지, REQ-BACKFILL-096)·{@code F_DT=<플로어>}·{@code T_DT=<today>}·{@code
+     * MARKET_GB=0}으로 1회 호출(REQ-BACKFILL-095)하고, 정기 수집과 동일한 매핑 규약({@link #mapToEntity})을 재사용해 적재 대상
+     * 엔티티를 구성한다 — 매핑 로직 중복 없음(REQ-BACKFILL-097).
+     *
+     * <p>[HARD] REQ-BACKFILL-099a: 종료 판정 입력 {@code rawRowCount}는 KIS {@code output1} 원본
+     * 행수(degenerate skip 전)로 고정하고, 실제 적재 행수(검증 통과분 {@code validRows.size()})와 결정적으로 분리한다.
+     *
+     * <p>정기 수집({@link #collect})과 달리 관심종목 필터를 적용하지 않는다 — 호출자가 이미 종목을 지정했다.
+     *
+     * @param stock 백필 대상 종목 (시딩된 corporate_events status의 target)
+     * @param session 호출자가 1회 고정한 per-run 헬스 스냅샷 세션
+     * @param from 윈도우 하단 조회 시작일 (F_DT, 고정 플로어)
+     * @param to 윈도우 상단 조회 종료일 (T_DT, today)
+     * @return 적재 대상 엔티티 + 최소 record_date + 원본 응답 행수
+     */
+    // @MX:NOTE: [AUTO] 종목지정 백필 fetch — 비tx HTTP 단계. BackfillWindowExecutor가 @Transactional
+    // persistWindowForBackfill과 교차 빈으로 순차 호출. rawRowCount=원본 행수(REQ-BACKFILL-099a).
+    public RevSplitBackfillFetch fetchWindowForBackfill(
+            Stock stock, LeaseSession session, LocalDate from, LocalDate to) {
+        KisRevSplitResponse response =
+                fetch(session, stock.getSymbol(), from.format(DATE_FMT), to.format(DATE_FMT));
+        List<KisRevSplitResponse.RevSplitRow> rows = response.output1();
+
+        // REQ-BACKFILL-099a: 종료 판정 입력 = KIS output1 원본 행수 (degenerate skip 전, 결정적)
+        int rawRowCount = rows.size();
+
+        // 매핑 재사용(REQ-BACKFILL-097): degenerate skip은 mapToEntity가 null 반환으로 수행
+        List<CorporateEvent> validRows = new ArrayList<>();
+        for (KisRevSplitResponse.RevSplitRow row : rows) {
+            CorporateEvent entity = mapToEntity(row, stock);
+            if (entity != null) {
+                validRows.add(entity);
+            }
+        }
+
+        LocalDate oldest =
+                validRows.stream()
+                        .map(CorporateEvent::getEventDate)
+                        .min(LocalDate::compareTo)
+                        .orElse(null);
+        return new RevSplitBackfillFetch(validRows, oldest, rawRowCount);
+    }
+
+    /**
+     * [SPEC-COLLECTOR-BACKFILL-007 W5] 종목지정 액면교체 백필 persist 단계 — 적재 대상 엔티티를 INSERT IGNORE 적재한다.
+     *
+     * <p>@Transactional 없음 — 트랜잭션은 {@code BackfillWindowExecutor}(persistWindow)가 소유하며 이 메서드는 그 경계
+     * 안에서 호출된다. {@link CorporateEventInserter#insertBatch}(Tier-1 INSERT IGNORE, ON DUPLICATE KEY
+     * UPDATE 금지, REQ-BACKFILL-098)로 멱등 적재한다.
+     *
+     * <p>종료 판정 입력 {@link BackfillWindowResult#rowCount()}는 {@code rawRowCount}(원본 행수,
+     * REQ-BACKFILL-099a), {@code oldestTradeDate}는 적재 대상 최소 record_date다(REQ-BACKFILL-099).
+     *
+     * @param fetch {@link #fetchWindowForBackfill}가 반환한 DTO
+     * @return 종료 판정 입력 (oldestTradeDate=최소 record_date, rowCount=원본 응답 행수)
+     */
+    // @MX:NOTE: [AUTO] 종목지정 백필 persist — BackfillWindowExecutor @Transactional 경계에서 호출.
+    // INSERT IGNORE 적재 후 BackfillWindowResult(rawRowCount) 반환.
+    public BackfillWindowResult persistWindowForBackfill(RevSplitBackfillFetch fetch) {
+        corporateEventInserter.insertBatch(fetch.validRows());
+        return new BackfillWindowResult(fetch.oldestRecordDate(), fetch.rawRowCount());
     }
 
     private RowCounts processRows(

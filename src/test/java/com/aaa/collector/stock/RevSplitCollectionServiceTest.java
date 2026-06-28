@@ -8,6 +8,7 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.aaa.collector.backfill.BackfillWindowResult;
 import com.aaa.collector.kis.gate.GuardedKisExecutor;
 import com.aaa.collector.kis.gate.KeyLeaseRegistry;
 import com.aaa.collector.kis.gate.KeyLeaseRegistry.LeaseSession;
@@ -15,9 +16,11 @@ import com.aaa.collector.stock.enums.AssetType;
 import com.aaa.collector.stock.enums.EventType;
 import com.aaa.collector.stock.enums.Market;
 import java.math.BigDecimal;
+import java.net.URI;
 import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.function.Function;
 import java.util.stream.IntStream;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -29,6 +32,8 @@ import org.mockito.Captor;
 import org.mockito.Mock;
 import org.mockito.Mockito;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.web.util.DefaultUriBuilderFactory;
+import org.springframework.web.util.UriBuilder;
 
 /**
  * SPEC-COLLECTOR-KISGATE-001 M6(T20) — {@link RevSplitCollectionService} 게이트 경유 단위 테스트.
@@ -759,6 +764,172 @@ class RevSplitCollectionServiceTest {
                     service.collect(LocalDate.of(2026, 5, 30), LocalDate.of(2026, 8, 15));
 
             assertThat(result.skippedValidation()).isEqualTo(1);
+        }
+    }
+
+    // ────────────────────────────────────────────────────────────────────
+    // SPEC-COLLECTOR-BACKFILL-007 W5 — 종목지정 백필 fetch/persist
+    // ────────────────────────────────────────────────────────────────────
+
+    @Nested
+    @DisplayName("BACKFILL-007: 종목지정 백필 fetch/persist (REQ-BACKFILL-095~099a)")
+    class BackfillFetchPersist {
+
+        private final LocalDate floor = LocalDate.of(1950, 1, 1);
+        private final LocalDate today = LocalDate.of(2026, 6, 28);
+
+        @SuppressWarnings("unchecked")
+        private URI capturedUri() throws Exception {
+            ArgumentCaptor<Function<UriBuilder, URI>> uriCaptor =
+                    ArgumentCaptor.forClass(Function.class);
+            verify(guardedKisExecutor).execute(eq(session), uriCaptor.capture(), eq(TR_ID), any());
+            UriBuilder builder =
+                    new DefaultUriBuilderFactory().uriString("https://openapi.koreainvestment.com");
+            return uriCaptor.getValue().apply(builder);
+        }
+
+        @Test
+        @DisplayName("AC-4: SHT_CD=종목코드·F_DT=19500101·T_DT=today·MARKET_GB=0 호출 파라미터")
+        void backfillFetch_callsWithTickerSpecifiedParams() throws Exception {
+            // Arrange
+            Stock stock = watchlistStock("005930");
+            when(guardedKisExecutor.execute(
+                            eq(session), any(), eq(TR_ID), eq(KisRevSplitResponse.class)))
+                    .thenReturn(singlePageResponse(List.of()));
+
+            // Act
+            service.fetchWindowForBackfill(stock, session, floor, today);
+
+            // Assert — URI 빌더를 실제 적용해 쿼리 파라미터 확인
+            URI uri = capturedUri();
+            assertThat(uri.getRawQuery())
+                    .contains("SHT_CD=005930")
+                    .contains("F_DT=19500101")
+                    .contains("T_DT=20260628")
+                    .contains("MARKET_GB=0");
+            assertThat(uri.getRawQuery()).doesNotContain("SHT_CD=&");
+        }
+
+        @Test
+        @DisplayName("AC-6: 분할 행(bf=5000,af=100) 매핑 재사용 — SPLIT·분할·rate=50.0000·face=100")
+        void backfillFetch_reusesSplitMapping() throws Exception {
+            // Arrange — 50:1 분할 (bf=5000, af=100)
+            Stock stock = watchlistStock("005930");
+            KisRevSplitResponse.RevSplitRow row =
+                    new KisRevSplitResponse.RevSplitRow(
+                            "20180502", "005930", "삼성전자", "000005000", "000000100", "", "");
+            when(guardedKisExecutor.execute(
+                            eq(session), any(), eq(TR_ID), eq(KisRevSplitResponse.class)))
+                    .thenReturn(singlePageResponse(List.of(row)));
+
+            // Act
+            RevSplitBackfillFetch fetch =
+                    service.fetchWindowForBackfill(stock, session, floor, today);
+
+            // Assert
+            assertThat(fetch.validRows()).hasSize(1);
+            CorporateEvent e = fetch.validRows().get(0);
+            assertThat(e.getEventType()).isEqualTo(EventType.SPLIT);
+            assertThat(e.getEventSubtype()).isEqualTo("분할");
+            assertThat(e.getFaceValue()).isEqualTo(100L);
+            assertThat(e.getStockRate()).isEqualByComparingTo(new BigDecimal("50.0000"));
+            assertThat(e.getEventDate()).isEqualTo(LocalDate.of(2018, 5, 2));
+        }
+
+        @Test
+        @DisplayName("AC-5: 단일 유효 분할 → rawRowCount=1, oldestRecordDate=2018-05-02, 1행 적재")
+        void backfillFetch_singleValidSplit() throws Exception {
+            // Arrange
+            Stock stock = watchlistStock("005930");
+            KisRevSplitResponse.RevSplitRow row =
+                    new KisRevSplitResponse.RevSplitRow(
+                            "20180502", "005930", "삼성전자", "000005000", "000000100", "", "");
+            when(guardedKisExecutor.execute(
+                            eq(session), any(), eq(TR_ID), eq(KisRevSplitResponse.class)))
+                    .thenReturn(singlePageResponse(List.of(row)));
+
+            // Act
+            RevSplitBackfillFetch fetch =
+                    service.fetchWindowForBackfill(stock, session, floor, today);
+            BackfillWindowResult result = service.persistWindowForBackfill(fetch);
+
+            // Assert — 종료 판정 입력 rowCount=원본=검증통과=1, oldest=최소 record_date
+            assertThat(fetch.rawRowCount()).isEqualTo(1);
+            assertThat(result.rowCount()).isEqualTo(1);
+            assertThat(result.oldestTradeDate()).isEqualTo(LocalDate.of(2018, 5, 2));
+            verify(corporateEventInserter).insertBatch(inserterCaptor.capture());
+            assertThat(inserterCaptor.getValue()).hasSize(1);
+        }
+
+        @Test
+        @SuppressWarnings("PMD.UnitTestContainsTooManyAsserts")
+        @DisplayName(
+                "AC-5a: degenerate+valid 혼합(output1=2) → rawRowCount=2(결정적), 적재=1, COMPLETED 무관")
+        void backfillFetch_degeneratePlusValid_deterministicRowCount() throws Exception {
+            // Arrange — 1건 유효 분할(bf=5000,af=100) + 1건 degenerate(bf=0,af=2 → skip)
+            Stock stock = watchlistStock("005930");
+            KisRevSplitResponse.RevSplitRow valid =
+                    new KisRevSplitResponse.RevSplitRow(
+                            "20180502", "005930", "삼성전자", "000005000", "000000100", "", "");
+            KisRevSplitResponse.RevSplitRow degenerate =
+                    new KisRevSplitResponse.RevSplitRow(
+                            "20100101", "005930", "삼성전자", "000000000", "000000002", "", "");
+            when(guardedKisExecutor.execute(
+                            eq(session), any(), eq(TR_ID), eq(KisRevSplitResponse.class)))
+                    .thenReturn(singlePageResponse(List.of(valid, degenerate)));
+
+            // Act
+            RevSplitBackfillFetch fetch =
+                    service.fetchWindowForBackfill(stock, session, floor, today);
+            BackfillWindowResult result = service.persistWindowForBackfill(fetch);
+
+            // Assert — REQ-BACKFILL-099a: rowCount=원본 행수(2) 결정적, 적재 행수(1)와 분리
+            assertThat(fetch.rawRowCount()).isEqualTo(2);
+            assertThat(result.rowCount()).isEqualTo(2);
+            assertThat(fetch.validRows()).hasSize(1);
+            // 적재는 유효 분할 1행만 (degenerate skip)
+            verify(corporateEventInserter).insertBatch(inserterCaptor.capture());
+            assertThat(inserterCaptor.getValue()).hasSize(1);
+            assertThat(inserterCaptor.getValue().get(0).getEventDate())
+                    .isEqualTo(LocalDate.of(2018, 5, 2));
+        }
+
+        @Test
+        @DisplayName("EC-2: 액면병합(bf=500,af=2500) → SPLIT·병합·rate=0.2000")
+        void backfillFetch_mergeMapping() throws Exception {
+            Stock stock = watchlistStock("005930");
+            KisRevSplitResponse.RevSplitRow row =
+                    new KisRevSplitResponse.RevSplitRow(
+                            "20200101", "005930", "삼성전자", "000000500", "000002500", "", "");
+            when(guardedKisExecutor.execute(
+                            eq(session), any(), eq(TR_ID), eq(KisRevSplitResponse.class)))
+                    .thenReturn(singlePageResponse(List.of(row)));
+
+            RevSplitBackfillFetch fetch =
+                    service.fetchWindowForBackfill(stock, session, floor, today);
+
+            CorporateEvent e = fetch.validRows().get(0);
+            assertThat(e.getEventType()).isEqualTo(EventType.SPLIT);
+            assertThat(e.getEventSubtype()).isEqualTo("병합");
+            assertThat(e.getStockRate()).isEqualByComparingTo(new BigDecimal("0.2000"));
+        }
+
+        @Test
+        @DisplayName("EC-3/AC-8: 빈 output1(액면교체 이력 없음·1999년 이전) → rawRowCount=0, 적재 0행")
+        void backfillFetch_emptyResponse() throws Exception {
+            Stock stock = watchlistStock("005930");
+            when(guardedKisExecutor.execute(
+                            eq(session), any(), eq(TR_ID), eq(KisRevSplitResponse.class)))
+                    .thenReturn(singlePageResponse(List.of()));
+
+            RevSplitBackfillFetch fetch =
+                    service.fetchWindowForBackfill(stock, session, floor, today);
+            BackfillWindowResult result = service.persistWindowForBackfill(fetch);
+
+            assertThat(fetch.rawRowCount()).isZero();
+            assertThat(fetch.validRows()).isEmpty();
+            assertThat(result.oldestTradeDate()).isNull();
+            verify(corporateEventInserter).insertBatch(List.of());
         }
     }
 }
