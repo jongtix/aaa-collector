@@ -28,6 +28,7 @@ import com.aaa.collector.stock.enums.Market;
 import java.math.BigDecimal;
 import java.net.URI;
 import java.time.LocalDate;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.function.Function;
 import org.junit.jupiter.api.AfterEach;
@@ -739,7 +740,7 @@ class DomesticDailyOhlcvCollectionServiceTest {
                 "AC-5: fetchWindow — 원본 100건(거래정지 3건 포함) → rawRowCount=100, rowCount=100, oldest=최소거래일")
         void fetchWindow_rawRowCount_haltRowsIncluded() throws Exception {
             // Arrange — 정상 97건 + 거래정지(volume=0) 3건 = 원본 100건, 전부 저장(T1 적용)
-            List<KisDailyOhlcvResponse.DailyOhlcvRow> rows = new java.util.ArrayList<>();
+            List<KisDailyOhlcvResponse.DailyOhlcvRow> rows = new ArrayList<>();
             for (int i = 0; i < 97; i++) {
                 rows.add(validRow(String.format("202601%02d", (i % 28) + 1)));
             }
@@ -768,7 +769,7 @@ class DomesticDailyOhlcvCollectionServiceTest {
                 "AC-6/AC-13: fetchWindow — 원본 100건 중 OHLC무효 1건 거부 → rawRowCount=100, rowCount=99")
         void fetchWindow_rawRowCount_invalidRowKeepsRawCount() throws Exception {
             // Arrange — 정상 99건 + OHLC무효(close=0) 1건 = 원본 100건, 저장 99건
-            List<KisDailyOhlcvResponse.DailyOhlcvRow> rows = new java.util.ArrayList<>();
+            List<KisDailyOhlcvResponse.DailyOhlcvRow> rows = new ArrayList<>();
             for (int i = 0; i < 99; i++) {
                 rows.add(validRow(String.format("202601%02d", (i % 28) + 1)));
             }
