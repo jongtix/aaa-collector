@@ -364,16 +364,17 @@ class DomesticDailyOhlcvCollectionServiceTest {
         }
 
         @Test
-        @DisplayName("거래량 0 이하인 행 — insertBatch 미호출")
-        void collect_zeroVolumeRow_notInserted() throws Exception {
-            // Arrange
+        @DisplayName(
+                "거래량 음수(-1)인 행 — insertBatch 미호출 (SPEC-COLLECTOR-BACKFILL-006 재정의: volume<0만 거부)")
+        void collect_negativeVolumeRow_notInserted() throws Exception {
+            // Arrange — volume==0은 거래정지로 저장 대상이므로, 진짜 거부 케이스를 volume<0으로 분리(REQ-BACKFILL-086)
             Stock stock = stockOf("005930");
             when(stockRepository.findAllActiveTradable()).thenReturn(List.of(stock));
             when(healthyKeySelector.selectHealthy()).thenReturn(List.of(ISA));
 
             KisDailyOhlcvResponse.DailyOhlcvRow invalidRow =
                     new KisDailyOhlcvResponse.DailyOhlcvRow(
-                            "20260605", "75000", "74000", "76000", "73000", "0", "0", "N");
+                            "20260605", "75000", "74000", "76000", "73000", "-1", "0", "N");
             when(guardedKisExecutor.execute(
                             any(LeaseSession.class),
                             any(),
@@ -385,7 +386,123 @@ class DomesticDailyOhlcvCollectionServiceTest {
             service.collect(LocalDate.of(2026, 6, 5));
 
             // Assert
-            verify(ohlcvInserter, never()).insertBatch(any(), any(), any());
+            verify(ohlcvInserter, never()).insertBatch(any(), any());
+        }
+    }
+
+    @Nested
+    @DisplayName("거래정지일 volume=0 저장 (SPEC-COLLECTOR-BACKFILL-006 — AC-1~4)")
+    class TradingHaltVolumeZero {
+
+        private KisDailyOhlcvResponse.DailyOhlcvRow haltRow(String date) {
+            // OHLC 유효 + volume=0 + trading_value=0 — 액면분할 거래정지일 모사
+            return new KisDailyOhlcvResponse.DailyOhlcvRow(
+                    date, "75000", "74000", "76000", "73000", "0", "0", "N");
+        }
+
+        @SuppressWarnings("unchecked")
+        private ArgumentCaptor<List<ParsedOhlcvRow>> captureInsert() {
+            return ArgumentCaptor.forClass(List.class);
+        }
+
+        @Test
+        @DisplayName("AC-1: OHLC 유효 + volume==0 행 → insertBatch에 포함되어 저장")
+        void haltRow_volumeZero_isStored() throws Exception {
+            // Arrange
+            Stock stock = stockOf("005930");
+            when(stockRepository.findAllActiveTradable()).thenReturn(List.of(stock));
+            when(healthyKeySelector.selectHealthy()).thenReturn(List.of(ISA));
+            when(guardedKisExecutor.execute(
+                            any(LeaseSession.class),
+                            any(),
+                            anyString(),
+                            eq(KisDailyOhlcvResponse.class)))
+                    .thenReturn(stubResponse(List.of(haltRow("20180430"))));
+
+            // Act
+            service.collect(LocalDate.of(2026, 6, 5));
+
+            // Assert
+            ArgumentCaptor<List<ParsedOhlcvRow>> captor = captureInsert();
+            verify(ohlcvInserter, times(1)).insertBatch(any(), captor.capture());
+            assertThat(captor.getValue()).hasSize(1);
+            assertThat(captor.getValue().getFirst().volume()).isZero();
+        }
+
+        @Test
+        @DisplayName("AC-4: OHLC 유효 + volume==0 + trading_value==0 → tradingValue 0 보존 저장")
+        void haltRow_tradingValueZero_isPreserved() throws Exception {
+            // Arrange
+            Stock stock = stockOf("005930");
+            when(stockRepository.findAllActiveTradable()).thenReturn(List.of(stock));
+            when(healthyKeySelector.selectHealthy()).thenReturn(List.of(ISA));
+            when(guardedKisExecutor.execute(
+                            any(LeaseSession.class),
+                            any(),
+                            anyString(),
+                            eq(KisDailyOhlcvResponse.class)))
+                    .thenReturn(stubResponse(List.of(haltRow("20180430"))));
+
+            // Act
+            service.collect(LocalDate.of(2026, 6, 5));
+
+            // Assert
+            ArgumentCaptor<List<ParsedOhlcvRow>> captor = captureInsert();
+            verify(ohlcvInserter, times(1)).insertBatch(any(), captor.capture());
+            assertThat(captor.getValue().getFirst().tradingValue()).isZero();
+        }
+
+        @Test
+        @DisplayName("AC-2: OHLC 무효(close=0) + volume==0 → 거부 (insertBatch 미호출)")
+        void invalidOhlc_withVolumeZero_isRejected() throws Exception {
+            Stock stock = stockOf("005930");
+            when(stockRepository.findAllActiveTradable()).thenReturn(List.of(stock));
+            when(healthyKeySelector.selectHealthy()).thenReturn(List.of(ISA));
+            KisDailyOhlcvResponse.DailyOhlcvRow row =
+                    new KisDailyOhlcvResponse.DailyOhlcvRow(
+                            "20180430", "0", "74000", "76000", "73000", "0", "0", "N");
+            when(guardedKisExecutor.execute(
+                            any(LeaseSession.class),
+                            any(),
+                            anyString(),
+                            eq(KisDailyOhlcvResponse.class)))
+                    .thenReturn(stubResponse(List.of(row)));
+
+            service.collect(LocalDate.of(2026, 6, 5));
+
+            verify(ohlcvInserter, never()).insertBatch(any(), any());
+        }
+
+        @Test
+        @DisplayName("AC-3: volume<0(음수) 행 → 거부, volume>VOLUME_MAX 행 → 거부")
+        void negativeOrExtremeVolume_isRejected() throws Exception {
+            Stock stock = stockOf("005930");
+            when(stockRepository.findAllActiveTradable()).thenReturn(List.of(stock));
+            when(healthyKeySelector.selectHealthy()).thenReturn(List.of(ISA));
+            // volume=-1, volume=10_000_000_001(>VOLUME_MAX) 두 행 모두 거부 → 유효행 0 → insertBatch 미호출
+            KisDailyOhlcvResponse.DailyOhlcvRow negative =
+                    new KisDailyOhlcvResponse.DailyOhlcvRow(
+                            "20180430", "75000", "74000", "76000", "73000", "-1", "0", "N");
+            KisDailyOhlcvResponse.DailyOhlcvRow extreme =
+                    new KisDailyOhlcvResponse.DailyOhlcvRow(
+                            "20180429",
+                            "75000",
+                            "74000",
+                            "76000",
+                            "73000",
+                            "10000000001",
+                            "0",
+                            "N");
+            when(guardedKisExecutor.execute(
+                            any(LeaseSession.class),
+                            any(),
+                            anyString(),
+                            eq(KisDailyOhlcvResponse.class)))
+                    .thenReturn(stubResponse(List.of(negative, extreme)));
+
+            service.collect(LocalDate.of(2026, 6, 5));
+
+            verify(ohlcvInserter, never()).insertBatch(any(), any());
         }
 
         @Test
