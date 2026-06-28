@@ -369,6 +369,13 @@ class BackfillTerminationPolicyTest {
             assertThat(BackfillGroup.ofDataTable("credit_balance"))
                     .isEqualTo(BackfillGroup.GROUP_B);
         }
+
+        @Test
+        @DisplayName("AC-1: corporate_events는 그룹 A (100건-미만 즉시 COMPLETED 재사용)")
+        void corporateEvents_isGroupA() {
+            assertThat(BackfillGroup.ofDataTable("corporate_events"))
+                    .isEqualTo(BackfillGroup.GROUP_A);
+        }
     }
 
     @Nested
