@@ -202,6 +202,11 @@ public class OverseasDailyOhlcvCollectionService {
      * @return 적재 대상 행의 최소 거래일 + 행 수 (적재 대상 없으면 {@link BackfillWindowResult#EMPTY})
      * @throws InterruptedException 게이트 호출 인터럽트 시 전파
      */
+    // @MX:WARN: [AUTO] legacy collectWindow — 반환하는 BackfillWindowResult.rawRowCount가 kept.size()(거부
+    // 후 행수)와 동일.
+    // @MX:REASON: 이 메서드를 GROUP_A 종료 판정(decideGroupA)에 연결하면 SPEC-COLLECTOR-BACKFILL-006 조기종료 버그를
+    // 재현한다.
+    // @MX:REASON: 프로덕션 백필은 fetchWindow→persistWindow 경로를 사용하므로 현재 미사용. 삭제 금지(인터페이스 일관성).
     public BackfillWindowResult collectWindow(Stock stock, LeaseSession session, LocalDate anchor)
             throws InterruptedException {
         String symbol = stock.getSymbol();
@@ -443,7 +448,7 @@ public class OverseasDailyOhlcvCollectionService {
                             || volume < 0
                             // 거래정지 행(volume==0)은 tamt==0 허용(DP-4); 정상 행(volume>0)은 tvol/tamt 양수
                             // 검증(MA-01)
-                            || (!tradingHalt && (volume <= 0 || tradingValue <= 0));
+                            || (!tradingHalt && tradingValue <= 0);
 
             if (invalid) {
                 log.warn(
