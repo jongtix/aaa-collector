@@ -35,8 +35,14 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 @DisplayName("BackfillStatusSeeder 통합 테스트 (cron 진입부 lazy 시딩)")
 class BackfillStatusSeederTest {
 
+    // SPEC-COLLECTOR-BACKFILL-007 W2 (REQ-BACKFILL-090): corporate_events 편입 → 국내 5종
     private static final List<String> DOMESTIC_TABLES =
-            List.of("daily_ohlcv", "investor_trend", "short_sale_domestic", "credit_balance");
+            List.of(
+                    "daily_ohlcv",
+                    "investor_trend",
+                    "short_sale_domestic",
+                    "credit_balance",
+                    "corporate_events");
 
     @Container @ServiceConnection
     static final MySQLContainer<?> MYSQL = new MySQLContainer<>("mysql:8.4");
@@ -75,13 +81,13 @@ class BackfillStatusSeederTest {
     }
 
     @Nested
-    @DisplayName("AC-8.1 국내 종목 시딩 — 4개 data_table 행 (PENDING/NULL)")
+    @DisplayName("AC-8.1/AC-2 국내 종목 시딩 — 5개 data_table 행 (PENDING/NULL, corporate_events 포함)")
     class DomesticSeeding {
 
         @Test
         @DisplayName(
-                "행이 없던 국내 종목 → daily_ohlcv·investor_trend·short_sale_domestic·credit_balance 4행 생성")
-        void domesticStock_seedsFourTables() {
+                "행이 없던 국내 종목 → daily_ohlcv·investor_trend·short_sale_domestic·credit_balance·corporate_events 5행 생성")
+        void domesticStock_seedsFiveTables() {
             saveStock("005930", Market.KOSPI);
 
             seeder.seedActiveStocks();
@@ -109,11 +115,11 @@ class BackfillStatusSeederTest {
     }
 
     @Nested
-    @DisplayName("AC-8.2/AC-7.3 미국 종목 시딩 — daily_ohlcv 1행만 (수급 3종 미대상)")
+    @DisplayName("AC-8.2/AC-7.3/AC-3 미국 종목 시딩 — daily_ohlcv 1행만 (수급 3종·corporate_events 미대상)")
     class UsSeeding {
 
         @Test
-        @DisplayName("미국 종목 → daily_ohlcv 1행만 생성, 수급 3종 미생성")
+        @DisplayName("AC-3: 미국 종목 → daily_ohlcv 1행만 생성, 수급 3종·corporate_events 미생성")
         void usStock_seedsOnlyDailyOhlcv() {
             saveStock("AAPL", Market.NASDAQ);
 

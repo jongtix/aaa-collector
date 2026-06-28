@@ -38,9 +38,20 @@ public class BackfillStatusSeeder {
     /** {@code backfill_status.target_type} — 본 SPEC은 종목만 시딩(forward-compat: MACRO/FX). */
     private static final String TARGET_TYPE_STOCK = "STOCK";
 
-    /** 국내 종목 시딩 data_table 집합(REQ-BACKFILL-008). */
+    /**
+     * 국내 종목 시딩 data_table 집합(REQ-BACKFILL-008).
+     *
+     * <p>[SPEC-COLLECTOR-BACKFILL-007 REQ-BACKFILL-090] {@code corporate_events}(SPLIT 과거 백필) 편입 —
+     * 국내 5종. 미국 종목은 {@link #OVERSEAS_DATA_TABLES}로 분기되어 corporate_events를 시딩하지
+     * 않는다(REQ-BACKFILL-092).
+     */
     private static final List<String> DOMESTIC_DATA_TABLES =
-            List.of("daily_ohlcv", "investor_trend", "short_sale_domestic", "credit_balance");
+            List.of(
+                    "daily_ohlcv",
+                    "investor_trend",
+                    "short_sale_domestic",
+                    "credit_balance",
+                    "corporate_events");
 
     /** 미국 종목 시딩 data_table 집합 — daily_ohlcv 1종만(수급 3종 비대상, AC-7.3). */
     private static final List<String> OVERSEAS_DATA_TABLES = List.of("daily_ohlcv");
