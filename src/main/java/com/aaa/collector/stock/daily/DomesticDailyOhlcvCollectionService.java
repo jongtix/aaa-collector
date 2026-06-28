@@ -285,21 +285,35 @@ public class DomesticDailyOhlcvCollectionService {
      */
     // @MX:NOTE: [AUTO] fetchWindow — 비tx HTTP 단계. DB 미접촉. BackfillWindowExecutor가 @Transactional
     // persistWindow와 교차 빈으로 순차 호출.
+    // @MX:NOTE: [AUTO] rawRowCount = KIS 원본 응답 행수(modYn 제외 후·검증 거부 전) — GROUP_A 종료 판정 전용.
+    // 거래정지 거부가 종료를 흔들지 않도록 rowCount(저장 행수)와 분리한다.
+    // @MX:REASON: SPEC-COLLECTOR-BACKFILL-006 REQ-BACKFILL-082,-088
     public DomesticDailyOhlcvFetch fetchWindow(
             LocalDate from, LocalDate anchor, Stock stock, LeaseSession session)
             throws InterruptedException {
         String symbol = stock.getSymbol();
         KisDailyOhlcvResponse response = fetch(session, symbol, from, anchor);
+        int rawRowCount = rawRowCount(response);
         List<ParsedOhlcvRow> validRows = filterAndValidate(stock, symbol, response);
         if (validRows.isEmpty()) {
-            return new DomesticDailyOhlcvFetch(List.of(), null, 0);
+            return new DomesticDailyOhlcvFetch(List.of(), null, 0, rawRowCount);
         }
         LocalDate oldest =
                 validRows.stream()
                         .map(ParsedOhlcvRow::tradeDate)
                         .min(LocalDate::compareTo)
                         .orElseThrow();
-        return new DomesticDailyOhlcvFetch(validRows, oldest, validRows.size());
+        return new DomesticDailyOhlcvFetch(validRows, oldest, validRows.size(), rawRowCount);
+    }
+
+    /**
+     * KIS 원본 응답 행수를 산정한다 — 수정주가행({@code modYn="Y"}) 제외 후·검증(volume/OHLC) 거부 전 행수(DP-1).
+     *
+     * <p>{@code modYn} 제외는 별개 정당 필터이므로 종료 판정 입력에서도 제외한다. 검증 거부는 카운트에서 제외하지 않는다 — 거래정지 거부가 종료를 흔들지
+     * 않게 하는 것이 본 산정의 목적이다(SPEC-COLLECTOR-BACKFILL-006 REQ-BACKFILL-082).
+     */
+    private int rawRowCount(KisDailyOhlcvResponse response) {
+        return (int) response.output2().stream().filter(row -> !"Y".equals(row.modYn())).count();
     }
 
     /**
@@ -326,7 +340,9 @@ public class DomesticDailyOhlcvCollectionService {
         }
         // REQ-INSERT-004: ParsedOhlcvRow를 직접 바인딩 — fmt 파라미터 불필요
         ohlcvInserter.insertBatch(stock.getId(), fetch.rows());
-        return new BackfillWindowResult(fetch.oldestTradeDate(), fetch.rowCount());
+        // SPEC-COLLECTOR-BACKFILL-006: rawRowCount(원본 행수)를 GROUP_A 종료 입력으로 전달. rowCount(저장 행수) 보존.
+        return new BackfillWindowResult(
+                fetch.oldestTradeDate(), fetch.rowCount(), fetch.rawRowCount());
     }
 
     /**

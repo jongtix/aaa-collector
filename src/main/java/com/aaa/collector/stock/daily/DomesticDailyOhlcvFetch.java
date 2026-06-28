@@ -8,9 +8,17 @@ import java.util.List;
  *
  * <p>REQ-INSERT-002: 검증 단계에서 파싱된 {@link ParsedOhlcvRow} 목록을 전달하여 persist 단계가 재파싱 없이 바인딩한다 (W-1
  * 불변식).
+ *
+ * @param rows 검증 통과(저장 대상) 행 목록
+ * @param oldestTradeDate 저장 대상 행들의 최소 거래일 (없으면 {@code null})
+ * @param rowCount 저장 대상 행 수 ({@code rows.size()}) — 메트릭·last_row_count·oldest 산정의 입력(의미 보존)
+ * @param rawRowCount KIS 원본 응답 행수({@code modYn="Y"} 제외 후·검증 거부 전) — GROUP_A 종료 판정 전용 입력
  */
+// @MX:NOTE: [AUTO] rawRowCount = KIS 원본 응답 행수(거부 전). GROUP_A 종료 판정 전용 신호로 rowCount(저장 행수)와 분리.
+// @MX:REASON: SPEC-COLLECTOR-BACKFILL-006 REQ-BACKFILL-081,-082,-088 — 거래정지 거부가 종료 입력을 깎아
+// 분할 구간을 오종료하던 결함 차단. rowCount는 저장·메트릭·last_row_count로 의미 보존.
 public record DomesticDailyOhlcvFetch(
-        List<ParsedOhlcvRow> rows, LocalDate oldestTradeDate, int rowCount) {
+        List<ParsedOhlcvRow> rows, LocalDate oldestTradeDate, int rowCount, int rawRowCount) {
 
     public DomesticDailyOhlcvFetch {
         rows = List.copyOf(rows);

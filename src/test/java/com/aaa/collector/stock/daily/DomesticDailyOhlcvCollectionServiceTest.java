@@ -656,6 +656,117 @@ class DomesticDailyOhlcvCollectionServiceTest {
         }
 
         @Test
+        @DisplayName(
+                "AC-5: fetchWindow — 원본 100건(거래정지 3건 포함) → rawRowCount=100, rowCount=100, oldest=최소거래일")
+        void fetchWindow_rawRowCount_haltRowsIncluded() throws Exception {
+            // Arrange — 정상 97건 + 거래정지(volume=0) 3건 = 원본 100건, 전부 저장(T1 적용)
+            List<KisDailyOhlcvResponse.DailyOhlcvRow> rows = new java.util.ArrayList<>();
+            for (int i = 0; i < 97; i++) {
+                rows.add(validRow(String.format("202601%02d", (i % 28) + 1)));
+            }
+            rows.add(haltRow("20180430"));
+            rows.add(haltRow("20180502"));
+            rows.add(haltRow("20180503"));
+            when(guardedKisExecutor.execute(
+                            any(LeaseSession.class),
+                            any(),
+                            anyString(),
+                            eq(KisDailyOhlcvResponse.class)))
+                    .thenReturn(stubResponse(rows));
+
+            // Act
+            DomesticDailyOhlcvFetch fetch =
+                    service.fetchWindow(FROM, ANCHOR, stockOf("005930"), openSession());
+
+            // Assert
+            assertThat(fetch.rawRowCount()).isEqualTo(100);
+            assertThat(fetch.rowCount()).isEqualTo(100);
+            assertThat(fetch.oldestTradeDate()).isEqualTo(LocalDate.of(2018, 4, 30));
+        }
+
+        @Test
+        @DisplayName(
+                "AC-6/AC-13: fetchWindow — 원본 100건 중 OHLC무효 1건 거부 → rawRowCount=100, rowCount=99")
+        void fetchWindow_rawRowCount_invalidRowKeepsRawCount() throws Exception {
+            // Arrange — 정상 99건 + OHLC무효(close=0) 1건 = 원본 100건, 저장 99건
+            List<KisDailyOhlcvResponse.DailyOhlcvRow> rows = new java.util.ArrayList<>();
+            for (int i = 0; i < 99; i++) {
+                rows.add(validRow(String.format("202601%02d", (i % 28) + 1)));
+            }
+            rows.add(
+                    new KisDailyOhlcvResponse.DailyOhlcvRow(
+                            "20171231", "0", "74000", "76000", "73000", "1000000", "0", "N"));
+            when(guardedKisExecutor.execute(
+                            any(LeaseSession.class),
+                            any(),
+                            anyString(),
+                            eq(KisDailyOhlcvResponse.class)))
+                    .thenReturn(stubResponse(rows));
+
+            // Act
+            DomesticDailyOhlcvFetch fetch =
+                    service.fetchWindow(FROM, ANCHOR, stockOf("005930"), openSession());
+
+            // Assert — 종료 입력(rawRowCount)과 저장 행수(rowCount)가 분리된다 (§5.0 Axis 2)
+            assertThat(fetch.rawRowCount()).isEqualTo(100);
+            assertThat(fetch.rowCount()).isEqualTo(99);
+        }
+
+        @Test
+        @DisplayName("EC-5: fetchWindow — modYn=Y(수정주가행) 제외 후 행수가 rawRowCount")
+        void fetchWindow_rawRowCount_excludesModYn() throws Exception {
+            // Arrange — 정상 2건 + modYn=Y 1건 → rawRowCount=2(modYn 제외), rowCount=2
+            KisDailyOhlcvResponse.DailyOhlcvRow adjRow =
+                    new KisDailyOhlcvResponse.DailyOhlcvRow(
+                            "20180101",
+                            "75000",
+                            "74000",
+                            "76000",
+                            "73000",
+                            "1000000",
+                            "75000000000",
+                            "Y");
+            when(guardedKisExecutor.execute(
+                            any(LeaseSession.class),
+                            any(),
+                            anyString(),
+                            eq(KisDailyOhlcvResponse.class)))
+                    .thenReturn(
+                            stubResponse(
+                                    List.of(validRow("20180103"), validRow("20180102"), adjRow)));
+
+            // Act
+            DomesticDailyOhlcvFetch fetch =
+                    service.fetchWindow(FROM, ANCHOR, stockOf("005930"), openSession());
+
+            // Assert
+            assertThat(fetch.rawRowCount()).isEqualTo(2);
+            assertThat(fetch.rowCount()).isEqualTo(2);
+        }
+
+        @Test
+        @DisplayName("EC-4: fetchWindow — 0건 응답 → rawRowCount=0 (COMPLETED 입력)")
+        void fetchWindow_emptyResponse_rawRowCountZero() throws Exception {
+            when(guardedKisExecutor.execute(
+                            any(LeaseSession.class),
+                            any(),
+                            anyString(),
+                            eq(KisDailyOhlcvResponse.class)))
+                    .thenReturn(stubResponse(List.of()));
+
+            DomesticDailyOhlcvFetch fetch =
+                    service.fetchWindow(FROM, ANCHOR, stockOf("005930"), openSession());
+
+            assertThat(fetch.rawRowCount()).isZero();
+            assertThat(fetch.rowCount()).isZero();
+        }
+
+        private KisDailyOhlcvResponse.DailyOhlcvRow haltRow(String date) {
+            return new KisDailyOhlcvResponse.DailyOhlcvRow(
+                    date, "75000", "74000", "76000", "73000", "0", "0", "N");
+        }
+
+        @Test
         @DisplayName("fetchWindow — 빈 응답 시 rows=빈목록, oldestTradeDate=null, rowCount=0")
         void fetchWindow_emptyResponse_emptyFetch() throws Exception {
             when(guardedKisExecutor.execute(
@@ -710,8 +821,9 @@ class DomesticDailyOhlcvCollectionServiceTest {
                             new BigDecimal("75000"),
                             1_000_000L,
                             75_000_000_000L);
+            // rowCount=1(저장 행수), rawRowCount=2(원본 — 거부 1건 가정) — persistWindow가 rawRowCount를 전달함을 검증
             DomesticDailyOhlcvFetch fetch =
-                    new DomesticDailyOhlcvFetch(List.of(parsedRow), LocalDate.of(2026, 1, 1), 1);
+                    new DomesticDailyOhlcvFetch(List.of(parsedRow), LocalDate.of(2026, 1, 1), 1, 2);
 
             // Act
             BackfillWindowResult result = service.persistWindow(stock, fetch);
@@ -720,12 +832,14 @@ class DomesticDailyOhlcvCollectionServiceTest {
             verify(ohlcvInserter, times(1)).insertBatch(any(), any());
             assertThat(result.oldestTradeDate()).isEqualTo(LocalDate.of(2026, 1, 1));
             assertThat(result.rowCount()).isEqualTo(1);
+            // AC-6: rawRowCount(원본 행수)는 rowCount(저장 행수)와 분리되어 그대로 전달된다
+            assertThat(result.rawRowCount()).isEqualTo(2);
         }
 
         @Test
         @DisplayName("persistWindow — 빈 fetch → EMPTY 반환, inserter 미호출")
         void persistWindow_emptyFetch_returnsEmpty() {
-            DomesticDailyOhlcvFetch emptyFetch = new DomesticDailyOhlcvFetch(List.of(), null, 0);
+            DomesticDailyOhlcvFetch emptyFetch = new DomesticDailyOhlcvFetch(List.of(), null, 0, 0);
 
             BackfillWindowResult result = service.persistWindow(stockOf("005930"), emptyFetch);
 
