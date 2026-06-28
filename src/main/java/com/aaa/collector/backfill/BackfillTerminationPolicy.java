@@ -47,9 +47,15 @@ public final class BackfillTerminationPolicy {
         return decideGroupB(outcome);
     }
 
-    /** 그룹 A: 0건 또는 100건 미만 → 종료. SPAN 보장은 {@link BackfillWindowAdvancer} 책임. */
+    /**
+     * 그룹 A: 0건 또는 100건 미만 → 종료. SPAN 보장은 {@link BackfillWindowAdvancer} 책임.
+     *
+     * <p>종료 입력 = {@code rawRowCount}(KIS 원본 응답 행수, 검증 거부 전, 국내·해외 GROUP_A 공유). 임계값 100·{@code <}
+     * 비교는 불변이며, 입력만 저장 행수({@code rowCount})에서 원본 행수로 전환한다 — 액면분할 거래정지 거부가 종료를 흔들지 않게 한다
+     * (SPEC-COLLECTOR-BACKFILL-006 REQ-BACKFILL-084,-087).
+     */
     private TerminationDecision decideGroupA(BackfillWindowOutcome outcome) {
-        if (outcome.rowCount() < SINGLE_CALL_ROW_CAP) {
+        if (outcome.rawRowCount() < SINGLE_CALL_ROW_CAP) {
             return TerminationDecision.completed(0, false);
         }
         return TerminationDecision.inProgress(0);

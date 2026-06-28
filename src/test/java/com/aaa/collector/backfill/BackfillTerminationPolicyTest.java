@@ -55,6 +55,63 @@ class BackfillTerminationPolicyTest {
     }
 
     @Nested
+    @DisplayName("그룹 A — rawRowCount 종료 판정 (SPEC-COLLECTOR-BACKFILL-006 — AC-5/AC-7/AC-13)")
+    class GroupARawRowCountTermination {
+
+        @Test
+        @DisplayName(
+                "AC-5/AC-13: rawRowCount=100(저장 97/99 무관) → IN_PROGRESS — 거래정지·무효 거부가 종료를 흔들지 않음")
+        void rawRowCount100_inProgress_regardlessOfRowCount() {
+            // 저장 행수 97(거래정지 3 저장) — 구 동작이면 97<100으로 오종료. rawRowCount=100이면 계속.
+            BackfillWindowOutcome haltCase =
+                    BackfillWindowOutcome.groupA(97, 100, LocalDate.of(2018, 4, 30));
+            // 저장 행수 99(진짜 오류 1건 거부) — Axis 2 독립(§5.0)
+            BackfillWindowOutcome invalidCase =
+                    BackfillWindowOutcome.groupA(99, 100, LocalDate.of(2017, 12, 31));
+
+            assertThat(policy.decide(haltCase).completed()).isFalse();
+            assertThat(policy.decide(invalidCase).completed()).isFalse();
+        }
+
+        @Test
+        @DisplayName("AC-7: rawRowCount=99(KIS 데이터 소진 근접) → COMPLETED (자연 종료)")
+        void rawRowCount99_completed() {
+            BackfillWindowOutcome outcome =
+                    BackfillWindowOutcome.groupA(99, 99, LocalDate.of(1995, 3, 2));
+
+            assertThat(policy.decide(outcome).completed()).isTrue();
+        }
+
+        @Test
+        @DisplayName(
+                "AC-7: 종료 입력은 rawRowCount이며 rowCount는 무시 — rowCount=100이어도 rawRowCount=99면 COMPLETED")
+        void terminationUsesRawRowCount_notRowCount() {
+            // rowCount=100(저장)이지만 rawRowCount=99 — 종료 입력은 rawRowCount이므로 COMPLETED
+            BackfillWindowOutcome outcome =
+                    BackfillWindowOutcome.groupA(100, 99, LocalDate.of(1995, 3, 2));
+
+            assertThat(policy.decide(outcome).completed()).isTrue();
+        }
+
+        @Test
+        @DisplayName("회귀: 임계값 100 불변 — rawRowCount=100은 IN_PROGRESS, 99는 COMPLETED 경계")
+        void thresholdBoundary_unchanged() {
+            assertThat(
+                            policy.decide(
+                                            BackfillWindowOutcome.groupA(
+                                                    100, 100, LocalDate.of(2018, 1, 5)))
+                                    .completed())
+                    .isFalse();
+            assertThat(
+                            policy.decide(
+                                            BackfillWindowOutcome.groupA(
+                                                    99, 99, LocalDate.of(2018, 1, 5)))
+                                    .completed())
+                    .isTrue();
+        }
+    }
+
+    @Nested
     @DisplayName("그룹 A SPAN — AC-1.2b 오종료 방지(음성 검증)")
     class GroupASpanGuard {
 

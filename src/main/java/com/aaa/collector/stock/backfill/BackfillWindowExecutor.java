@@ -296,7 +296,11 @@ public class BackfillWindowExecutor {
             BackfillGroup group, BackfillWindowResult result, BackfillStatus status) {
         return switch (group) {
             case GROUP_A ->
-                    BackfillWindowOutcome.groupA(result.rowCount(), result.oldestTradeDate());
+                    // SPEC-COLLECTOR-BACKFILL-006: GROUP_A 종료 입력 = rawRowCount(원본 행수).
+                    // recordWindow·
+                    // last_row_count는 rowCount(저장 행수) 그대로 사용(무변경).
+                    BackfillWindowOutcome.groupA(
+                            result.rowCount(), result.rawRowCount(), result.oldestTradeDate());
             case GROUP_B ->
                     BackfillWindowOutcome.groupB(
                             result.rowCount(),

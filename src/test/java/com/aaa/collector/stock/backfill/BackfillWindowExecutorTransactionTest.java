@@ -214,7 +214,8 @@ class BackfillWindowExecutorTransactionTest {
             // Arrange
             BackfillStatus status = seedPending("005930", "daily_ohlcv");
             LocalDate oldest = LocalDate.of(2025, 1, 1);
-            DomesticDailyOhlcvFetch fetch = new DomesticDailyOhlcvFetch(List.of(), oldest, 100);
+            DomesticDailyOhlcvFetch fetch =
+                    new DomesticDailyOhlcvFetch(List.of(), oldest, 100, 100);
             when(domesticOhlcvService.fetchWindow(any(), any(), any(), any())).thenReturn(fetch);
             // 100건 = GROUP_A IN_PROGRESS 유지
             when(domesticOhlcvService.persistWindow(any(), any()))
@@ -237,7 +238,7 @@ class BackfillWindowExecutorTransactionTest {
             // Arrange
             BackfillStatus status = seedPending("005930", "daily_ohlcv");
             LocalDate oldest = LocalDate.of(2020, 1, 2);
-            DomesticDailyOhlcvFetch fetch = new DomesticDailyOhlcvFetch(List.of(), oldest, 50);
+            DomesticDailyOhlcvFetch fetch = new DomesticDailyOhlcvFetch(List.of(), oldest, 50, 50);
             when(domesticOhlcvService.fetchWindow(any(), any(), any(), any())).thenReturn(fetch);
             // 50 < 100 → COMPLETED
             when(domesticOhlcvService.persistWindow(any(), any()))
@@ -270,7 +271,7 @@ class BackfillWindowExecutorTransactionTest {
             BackfillStatus status = seedPending("005930", "daily_ohlcv");
 
             LocalDate oldest = LocalDate.of(2025, 1, 1);
-            DomesticDailyOhlcvFetch fetch = new DomesticDailyOhlcvFetch(List.of(), oldest, 50);
+            DomesticDailyOhlcvFetch fetch = new DomesticDailyOhlcvFetch(List.of(), oldest, 50, 50);
             when(domesticOhlcvService.fetchWindow(any(), any(), any(), any())).thenReturn(fetch);
             when(domesticOhlcvService.persistWindow(any(), any()))
                     .thenReturn(new BackfillWindowResult(oldest, 50));
