@@ -65,7 +65,7 @@ class DartDisclosureBackfillOrchestratorTest {
             Stock s1 = mockStock(1L, "SYM1");
             Stock s2 = mockStock(2L, "SYM2");
             Stock s3 = mockStock(3L, "SYM3");
-            when(stockRepository.findAllActive()).thenReturn(List.of(s1, s2, s3));
+            when(stockRepository.findAllActiveStock()).thenReturn(List.of(s1, s2, s3));
             BackfillStatus st1 = mockStatus(1L, "SYM1");
             BackfillStatus st2 = mockStatus(2L, "SYM2");
             BackfillStatus st3 = mockStatus(3L, "SYM3");
@@ -90,7 +90,7 @@ class DartDisclosureBackfillOrchestratorTest {
         void queryUsesDisclosuresDataTable() {
             // Arrange
             when(backfillProperties.getPerTableCompletionCap()).thenReturn(10);
-            when(stockRepository.findAllActive()).thenReturn(List.of());
+            when(stockRepository.findAllActiveStock()).thenReturn(List.of());
             when(backfillStatusRepository.findByStatusInAndTargetTypeAndDataTableOrderById(
                             any(), any(), any()))
                     .thenReturn(List.of());
@@ -106,6 +106,31 @@ class DartDisclosureBackfillOrchestratorTest {
     }
 
     @Nested
+    @DisplayName("STOCK 한정 시딩")
+    class StockOnlySeeding {
+
+        @Test
+        @DisplayName("시딩 대상은 findAllActiveStock()으로 조회 — ETF/INDEX/ETN/COMMODITY 제외")
+        void seedsOnlyStockAssetType() {
+            // Arrange
+            when(backfillProperties.getPerTableCompletionCap()).thenReturn(10);
+            Stock stock = mockStock(1L, "005930");
+            when(stockRepository.findAllActiveStock()).thenReturn(List.of(stock));
+            when(backfillStatusRepository.findByStatusInAndTargetTypeAndDataTableOrderById(
+                            any(), any(), any()))
+                    .thenReturn(List.of());
+
+            // Act
+            orchestrator.run();
+
+            // Assert: STOCK 한정 메서드로만 시딩, 전체 자산유형 메서드는 미사용
+            verify(stockRepository).findAllActiveStock();
+            verify(stockRepository, never()).findAllActive();
+            verify(backfillStatusRepository).insertIgnoreSeed("STOCK", "005930", "disclosures");
+        }
+    }
+
+    @Nested
     @DisplayName("처리 대상 없음")
     class NoPendingItems {
 
@@ -113,7 +138,7 @@ class DartDisclosureBackfillOrchestratorTest {
         @DisplayName("빈 목록 반환 → executeWindow 미호출")
         void emptyPendingList_windowServiceNotCalled() {
             when(backfillProperties.getPerTableCompletionCap()).thenReturn(10);
-            when(stockRepository.findAllActive()).thenReturn(List.of());
+            when(stockRepository.findAllActiveStock()).thenReturn(List.of());
             when(backfillStatusRepository.findByStatusInAndTargetTypeAndDataTableOrderById(
                             any(), any(), any()))
                     .thenReturn(List.of());

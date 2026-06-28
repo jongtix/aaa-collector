@@ -38,7 +38,7 @@ public class DartDisclosureBackfillOrchestrator {
      * 백필 1 cron 회차를 실행한다.
      *
      * <ol>
-     *   <li>활성 종목 lazy 시딩 (INSERT IGNORE)
+     *   <li>활성 STOCK 종목 lazy 시딩 (INSERT IGNORE)
      *   <li>PENDING/IN_PROGRESS 항목 조회
      *   <li>per-table-completion-cap 적용 (DART는 단일 data_table, REQ-BACKFILL-064b)
      *   <li>종목별 윈도우 실행
@@ -47,12 +47,15 @@ public class DartDisclosureBackfillOrchestrator {
     public void run() {
         log.info("[dart-backfill] 백필 cron 시작");
 
-        // Step 1: 활성 종목 lazy 시딩
-        List<Stock> activeStocks = stockRepository.findAllActive();
+        // Step 1: 활성 STOCK 종목 lazy 시딩 — asset_type=STOCK 한정.
+        // DART 전자공시는 개별 상장기업만 대상이라 ETF/ETN/INDEX/COMMODITY는 corpCode.xml에 미등록되어
+        // corp_code 매칭이 불가하다. findAllActive()(전체 자산유형)를 쓰면 비대상이 매 회차 빈 조회되고
+        // backfill_status에 PENDING으로 영구 잔류한다. BATCH-004(findAllActiveStock) 선례와 동일 논리.
+        List<Stock> activeStocks = stockRepository.findAllActiveStock();
         for (Stock stock : activeStocks) {
             backfillStatusRepository.insertIgnoreSeed(TARGET_TYPE, stock.getSymbol(), DATA_TABLE);
         }
-        log.info("[dart-backfill] 시딩 완료 — 활성 종목 수={}", activeStocks.size());
+        log.info("[dart-backfill] 시딩 완료 — 활성 STOCK 종목 수={}", activeStocks.size());
 
         // Step 2: 미완료 항목 조회 — data_table='disclosures' 한정 (CR-01: 타 도메인 진행점 오염 방지)
         List<BackfillStatus> pending =
