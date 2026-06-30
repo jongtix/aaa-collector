@@ -275,7 +275,7 @@ public class DomesticDailyOhlcvCollectionService {
     }
 
     /**
-     * [T2] fetch 단계 — HTTP 호출·수정주가 제외·검증·불일치 탐지를 수행하고 INSERT하지 않는다.
+     * [T2] fetch 단계 — HTTP 호출·검증·불일치 탐지를 수행하고 INSERT하지 않는다.
      *
      * <p>{@code anchor}(= FID_INPUT_DATE_2)와 {@code from}(= FID_INPUT_DATE_1)을 호출자가 직접 지정한다. 검증 통과
      * 행과 최소 거래일을 {@link DomesticDailyOhlcvFetch}로 반환한다. DB 접촉 없음.
