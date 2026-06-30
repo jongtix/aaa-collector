@@ -220,10 +220,12 @@ public class OverseasDailyOhlcvCollectionService {
             return BackfillWindowResult.EMPTY;
         }
 
-        List<ParsedOhlcvRow> kept = keepAndInsertRows(stock, symbol, response, anchor);
+        // 레거시 경로 — ET 당일 가드 없이 전 행 검증 (anchor는 과거 날짜)
+        List<ParsedOhlcvRow> kept = keepValidRows(symbol, response.output2());
         if (kept.isEmpty()) {
             return BackfillWindowResult.EMPTY;
         }
+        ohlcvInserter.insertBatch(stock.getId(), kept);
         LocalDate oldest =
                 kept.stream()
                         .map(ParsedOhlcvRow::tradeDate)
@@ -273,46 +275,37 @@ public class OverseasDailyOhlcvCollectionService {
             return false;
         }
 
-        keepAndInsertRows(stock, symbol, response, today);
+        // REQ-OVOH-015: ET 당일 행 제외 후 검증·적재
+        String todayYmd = today.format(DATE_FMT);
+        List<KisOverseasDailyOhlcvResponse.OverseasDailyOhlcvRow> filteredRows =
+                response.output2().stream().filter(row -> !todayYmd.equals(row.xymd())).toList();
+        List<ParsedOhlcvRow> kept = keepValidRows(symbol, filteredRows);
+        if (!kept.isEmpty()) {
+            // REQ-INSERT-005: 단일 커넥션 배치 INSERT IGNORE (W-2 불변식)
+            ohlcvInserter.insertBatch(stock.getId(), kept);
+        }
         return true;
     }
 
     /**
-     * ET 당일 행 제외·검증 통과 행 목록을 반환한다 (REQ-INSERT-005, W-1 불변식).
+     * 검증 통과 행 목록을 반환한다 — ET 당일 가드 없이 {@link #parseIfValid} 검증만 수행한다 (REQ-INSERT-005, W-1 불변식).
      *
-     * <p>파싱을 1회만 수행하여 {@link ParsedOhlcvRow}로 수집한다 — 이미 파싱된 값을 후속 단계가 재사용한다.
+     * <p>ET 당일 가드는 당일 수집 경로({@link #saveValidRows})가 직접 제외한다. 이 메서드는 당일·백필 경로가 공유하는 순수 검증 단계다.
      *
+     * @param rows 검증 대상 행 목록 (ET 가드 제외 적용 여부는 호출자가 결정)
      * @return 검증 통과 ParsedOhlcvRow 목록 (없으면 빈 목록)
      */
+    // @MX:ANCHOR: [AUTO] keepValidRows — 당일·백필 경로 공유 순수 검증 단계 (fan_in=3)
+    // @MX:REASON: REQ-INSERT-005, REQ-OVOH-015 — ET 가드 미포함(호출자가 결정). saveValidRows(ET 가드 후)/
+    // fetchWindow(백필, 미적용)/collectWindow(레거시, 미적용) 세 경로가 수렴하는 검증 경계.
     private List<ParsedOhlcvRow> keepValidRows(
-            String symbol, KisOverseasDailyOhlcvResponse response, LocalDate today) {
+            String symbol, List<KisOverseasDailyOhlcvResponse.OverseasDailyOhlcvRow> rows) {
         List<ParsedOhlcvRow> kept = new ArrayList<>();
-        for (KisOverseasDailyOhlcvResponse.OverseasDailyOhlcvRow row : response.output2()) {
-            if (isEtToday(row.xymd(), today)) {
-                continue;
-            }
+        for (KisOverseasDailyOhlcvResponse.OverseasDailyOhlcvRow row : rows) {
             ParsedOhlcvRow parsed = parseIfValid(symbol, row);
             if (parsed != null) {
                 kept.add(parsed);
             }
-        }
-        return kept;
-    }
-
-    /**
-     * ET 당일 행 제외·검증 통과 행을 파싱 후 단일 커넥션 배치 INSERT IGNORE로 멱등 적재하고 행 목록을 반환한다 (REQ-INSERT-005, W-2
-     * 불변식).
-     *
-     * <p>당일 경로는 반환값을 무시하고, 백필 경로는 최소 거래일·행 수 도출에 사용한다(REQ-BACKFILL-002).
-     *
-     * @return 적재한 ParsedOhlcvRow 목록 (없으면 빈 목록)
-     */
-    private List<ParsedOhlcvRow> keepAndInsertRows(
-            Stock stock, String symbol, KisOverseasDailyOhlcvResponse response, LocalDate today) {
-        List<ParsedOhlcvRow> kept = keepValidRows(symbol, response, today);
-        if (!kept.isEmpty()) {
-            // REQ-INSERT-005: 단일 커넥션 배치 INSERT IGNORE — 커넥션 1회 (W-2 불변식)
-            ohlcvInserter.insertBatch(stock.getId(), kept);
         }
         return kept;
     }
@@ -328,8 +321,9 @@ public class OverseasDailyOhlcvCollectionService {
      */
     // @MX:NOTE: [AUTO] fetchWindow — 비tx HTTP 단계. DB 미접촉. BackfillWindowExecutor가 @Transactional
     // persistWindow와 교차 빈으로 순차 호출.
-    // @MX:NOTE: [AUTO] rawRowCount = ET 당일 가드 제외 후 원본 행수(거부 전, mod_yn 부재) — GROUP_A 종료 판정 전용.
-    // @MX:REASON: SPEC-COLLECTOR-BACKFILL-006 REQ-BACKFILL-091,-088
+    // @MX:NOTE: [AUTO] rawRowCount = 전체 원본 행수(ET 당일 가드 제외 없음)·거부 전. GROUP_A 종료 판정 전용.
+    // @MX:REASON: SPEC-COLLECTOR-BACKFILL-006 REQ-BACKFILL-091,-088 / aaa-infra#51 — anchor 날짜 행
+    // 오제거 수정
     public OverseasDailyOhlcvFetch fetchWindow(LocalDate anchor, Stock stock, LeaseSession session)
             throws InterruptedException {
         String symbol = stock.getSymbol();
@@ -343,8 +337,8 @@ public class OverseasDailyOhlcvCollectionService {
             return new OverseasDailyOhlcvFetch(List.of(), null, 0, 0);
         }
 
-        int rawRowCount = rawRowCount(response, anchor);
-        List<ParsedOhlcvRow> kept = keepValidRows(symbol, response, anchor);
+        int rawRowCount = rawRowCount(response);
+        List<ParsedOhlcvRow> kept = keepValidRows(symbol, response.output2());
         if (kept.isEmpty()) {
             return new OverseasDailyOhlcvFetch(List.of(), null, 0, rawRowCount);
         }
@@ -357,15 +351,16 @@ public class OverseasDailyOhlcvCollectionService {
     }
 
     /**
-     * KIS 원본 응답 행수를 산정한다 — ET 당일 가드({@link #isEtToday}) 제외 후·검증(volume/OHLC) 거부 전 행수(DP-1 해외).
+     * KIS 원본 응답 행수를 산정한다 — 검증(volume/OHLC) 거부 전 전체 행수(DP-1 해외).
      *
-     * <p>해외는 {@code mod_yn}(수정주가 플래그)이 명세에 없어(MI-03) 국내의 modYn 제외 단계가 없다. ET 당일 가드 제외는 별개 정당 필터이므로
-     * 종료 판정 입력에서도 제외한다(REQ-OVOH-015 보존). 검증 거부는 카운트에서 제외하지 않는다 — 비분할 거래정지 거부가 종료를 흔들지 않게 하는 것이 본
-     * 산정의 목적이다(SPEC-COLLECTOR-BACKFILL-006 REQ-BACKFILL-091).
+     * <p>해외는 {@code mod_yn}(수정주가 플래그)이 명세에 없어(MI-03) 국내의 {@code modYn} 제외 단계가 없다. ET 당일 가드는 백필 경로에서
+     * 적용하지 않는다 — {@code anchor}가 과거 날짜이므로 ET today 가드를 적용하면 첫 행(xymd==anchor)을 항상 제거해 {@code
+     * rawRowCount=99 < 100 → COMPLETED} 오종료를 유발한다 (aaa-infra#51). 당일 수집 경로는 {@link #saveValidRows}가
+     * ET today 가드를 인라인으로 유지한다. 국내 {@link
+     * com.aaa.collector.stock.daily.DomesticDailyOhlcvCollectionService#rawRowCount}와 동일 패턴.
      */
-    private int rawRowCount(KisOverseasDailyOhlcvResponse response, LocalDate today) {
-        return (int)
-                response.output2().stream().filter(row -> !isEtToday(row.xymd(), today)).count();
+    private int rawRowCount(KisOverseasDailyOhlcvResponse response) {
+        return response.output2().size();
     }
 
     /**
@@ -402,11 +397,6 @@ public class OverseasDailyOhlcvCollectionService {
             // zdiv 파싱 실패는 정상 미발생(실측 전부 "4") — 보수적으로 상한 초과로 취급해 skip 유도
             return ZDIV_MAX + 1;
         }
-    }
-
-    /** {@code xymd}가 ET 거래일 기준 당일과 같은지 판정한다(REQ-OVOH-015 — ET zone 고정). */
-    private boolean isEtToday(String xymd, LocalDate today) {
-        return today.format(DATE_FMT).equals(xymd);
     }
 
     /**

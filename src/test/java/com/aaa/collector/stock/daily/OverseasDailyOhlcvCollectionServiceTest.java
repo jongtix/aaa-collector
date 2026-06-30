@@ -871,9 +871,11 @@ class OverseasDailyOhlcvCollectionServiceTest {
         }
 
         @Test
-        @DisplayName("EC-7: fetchWindow — ET 당일 1건 + 거래정지 1건 → ET 제외 후 rawRowCount=1, rowCount=1")
-        void fetchWindow_rawRowCount_excludesEtToday() throws Exception {
-            // anchor=2026-01-31 → ET today guard는 anchor(today) 기준 동일일 제외
+        @DisplayName(
+                "aaa-infra#51 회귀 방지: fetchWindow — anchor 날짜 행이 rawRowCount에 포함됨 (ET today 가드 미적용)")
+        void fetchWindow_anchorDateRow_includedInRawRowCount() throws Exception {
+            // anchor=2026-01-31(과거 날짜) — fetchWindow 백필 경로는 ET today 가드 없음
+            // anchor 날짜 행(20260131)이 rawRowCount·kept 모두에 포함되어야 한다
             when(guardedKisExecutor.execute(
                             any(LeaseSession.class),
                             any(),
@@ -890,10 +892,46 @@ class OverseasDailyOhlcvCollectionServiceTest {
                     service.fetchWindow(
                             ANCHOR, stockOf("AAPL", Market.NASDAQ, AssetType.STOCK), openSession());
 
-            // ET 당일(20260131) 제외 → rawRowCount=1(거래정지만), rowCount=1
-            assertThat(fetch.rawRowCount()).isEqualTo(1);
-            assertThat(fetch.rowCount()).isEqualTo(1);
+            // anchor 날짜(20260131) 포함 → rawRowCount=2, rowCount=2 (거래정지 행도 저장)
+            assertThat(fetch.rawRowCount()).isEqualTo(2);
+            assertThat(fetch.rowCount()).isEqualTo(2);
             assertThat(fetch.oldestTradeDate()).isEqualTo(LocalDate.of(2026, 1, 30));
+        }
+
+        @Test
+        @DisplayName(
+                "aaa-infra#51 회귀 방지: fetchWindow — 거래일 anchor 100행 응답 시 rawRowCount=100 (GROUP_A 오종료 방지)")
+        void fetchWindow_tradingDayAnchor_rawRowCount100_preventsEarlyTermination()
+                throws Exception {
+            // Arrange — BYMD=거래일(anchor)이면 첫 행 xymd가 anchor와 같음.
+            // 수정 전: isEtToday(xymd, anchor)=true → rawRowCount=99 → decideGroupA COMPLETED 오종료
+            // 수정 후: ET 가드 미적용 → rawRowCount=100 → IN_PROGRESS 유지
+            List<KisOverseasDailyOhlcvResponse.OverseasDailyOhlcvRow> hundredRows =
+                    new java.util.ArrayList<>();
+            // 첫 행 = anchor 날짜 (xymd == anchor)
+            hundredRows.add(row("20260131", "100", "1000", "100000"));
+            // 나머지 99행 (i>=31부터 날짜가 "20260101"로 중복됨 — 의도적, rawRowCount=100 검증이 목적)
+            for (int i = 1; i <= 99; i++) {
+                hundredRows.add(
+                        row(
+                                String.format("202601%02d", Math.max(1, 31 - i)),
+                                "100",
+                                "1000",
+                                "100000"));
+            }
+            when(guardedKisExecutor.execute(
+                            any(LeaseSession.class),
+                            any(),
+                            anyString(),
+                            eq(KisOverseasDailyOhlcvResponse.class)))
+                    .thenReturn(response("4", hundredRows));
+
+            OverseasDailyOhlcvFetch fetch =
+                    service.fetchWindow(
+                            ANCHOR, stockOf("AAPL", Market.NASDAQ, AssetType.STOCK), openSession());
+
+            // rawRowCount=100 → BackfillTerminationPolicy.decideGroupA: 100 >= 100 → IN_PROGRESS
+            assertThat(fetch.rawRowCount()).isEqualTo(100);
         }
 
         @Test
@@ -959,7 +997,7 @@ class OverseasDailyOhlcvCollectionServiceTest {
         }
 
         @Test
-        @DisplayName("회귀 가드 — 당일 경로(collect) green 유지: keepAndInsertRows가 collect에서 정상 동작")
+        @DisplayName("회귀 가드 — 당일 경로(collect) green 유지: saveValidRows가 collect에서 정상 동작")
         void dailyPathRegression_collectStillWorks() throws Exception {
             Stock stock = stockOf("AAPL", Market.NASDAQ, AssetType.STOCK);
             when(stockRepository.findAllActiveOverseasTradable()).thenReturn(List.of(stock));
