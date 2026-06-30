@@ -668,28 +668,29 @@ class DomesticDailyOhlcvCollectionServiceTest {
         }
 
         @Test
-        @DisplayName("유효 행 없음 시 — mismatchDetector.detectAndLog() 미호출")
+        @DisplayName("유효 행 없음 시(close=0 거부) — mismatchDetector.detectAndLog() 미호출")
         void noValidRows_mismatchDetectorNotCalled() throws Exception {
             Stock stock = stockOf("005930");
             when(stockRepository.findAllActiveTradable()).thenReturn(List.of(stock));
             when(healthyKeySelector.selectHealthy()).thenReturn(List.of(ISA));
 
-            KisDailyOhlcvResponse.DailyOhlcvRow adjRow =
+            // close=0 → parseIfValid 거부 → validRows 비어 있음 (modYn="Y" 필터는 더 이상 사용 안 함)
+            KisDailyOhlcvResponse.DailyOhlcvRow invalidRow =
                     new KisDailyOhlcvResponse.DailyOhlcvRow(
                             "20260605",
-                            "75000",
+                            "0",
                             "74000",
                             "76000",
                             "73000",
                             "1000000",
                             "75000000000",
-                            "Y");
+                            "N");
             when(guardedKisExecutor.execute(
                             any(LeaseSession.class),
                             any(),
                             anyString(),
                             eq(KisDailyOhlcvResponse.class)))
-                    .thenReturn(stubResponse(List.of(adjRow)));
+                    .thenReturn(stubResponse(List.of(invalidRow)));
 
             service.collect(LocalDate.of(2026, 6, 5));
 
@@ -793,9 +794,9 @@ class DomesticDailyOhlcvCollectionServiceTest {
         }
 
         @Test
-        @DisplayName("EC-5: fetchWindow — modYn=Y(수정주가행) 제외 후 행수가 rawRowCount")
-        void fetchWindow_rawRowCount_excludesModYn() throws Exception {
-            // Arrange — 정상 2건 + modYn=Y 1건 → rawRowCount=2(modYn 제외), rowCount=2
+        @DisplayName("EC-5: fetchWindow — modYn=Y 행도 rawRowCount에 포함됨(분할 종목 오종료 방지)")
+        void fetchWindow_rawRowCount_includesModYnRows() throws Exception {
+            // Arrange — 정상 2건 + modYn=Y 1건 → rawRowCount=3(modYn 포함), rowCount=3
             KisDailyOhlcvResponse.DailyOhlcvRow adjRow =
                     new KisDailyOhlcvResponse.DailyOhlcvRow(
                             "20180101",
@@ -819,9 +820,9 @@ class DomesticDailyOhlcvCollectionServiceTest {
             DomesticDailyOhlcvFetch fetch =
                     service.fetchWindow(FROM, ANCHOR, stockOf("005930"), openSession());
 
-            // Assert
-            assertThat(fetch.rawRowCount()).isEqualTo(2);
-            assertThat(fetch.rowCount()).isEqualTo(2);
+            // Assert — modYn="Y" 행이 rawRowCount와 rowCount 모두에 포함된다
+            assertThat(fetch.rawRowCount()).isEqualTo(3);
+            assertThat(fetch.rowCount()).isEqualTo(3);
         }
 
         @Test

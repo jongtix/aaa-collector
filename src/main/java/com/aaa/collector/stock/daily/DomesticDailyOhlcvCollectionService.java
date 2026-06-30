@@ -233,7 +233,7 @@ public class DomesticDailyOhlcvCollectionService {
     }
 
     /**
-     * 수정주가 제외·검증·불일치 탐지만 수행하고 INSERT하지 않는다.
+     * 검증·불일치 탐지만 수행하고 INSERT하지 않는다.
      *
      * <p>REQ-INSERT-002: 각 행을 1회만 파싱하여 {@link ParsedOhlcvRow}로 수집한다.
      *
@@ -243,7 +243,6 @@ public class DomesticDailyOhlcvCollectionService {
             Stock stock, String symbol, KisDailyOhlcvResponse response) {
         List<ParsedOhlcvRow> validRows =
                 response.output2().stream()
-                        .filter(row -> !"Y".equals(row.modYn()))
                         .map(row -> parseIfValid(symbol, row))
                         .filter(parsed -> parsed != null)
                         .toList();
@@ -290,8 +289,8 @@ public class DomesticDailyOhlcvCollectionService {
      */
     // @MX:NOTE: [AUTO] fetchWindow — 비tx HTTP 단계. DB 미접촉. BackfillWindowExecutor가 @Transactional
     // persistWindow와 교차 빈으로 순차 호출.
-    // @MX:NOTE: [AUTO] rawRowCount = KIS 원본 응답 행수(modYn 제외 후·검증 거부 전) — GROUP_A 종료 판정 전용.
-    // 거래정지 거부가 종료를 흔들지 않도록 rowCount(저장 행수)와 분리한다.
+    // @MX:NOTE: [AUTO] rawRowCount = KIS 원본 응답 전체 행수(검증 거부 전) — GROUP_A 종료 판정 전용.
+    // modYn="Y" 포함: 원주가 요청에서도 분할 구간 modYn="Y" 반환으로 조기종료 유발하므로 제외하지 않는다.
     // @MX:REASON: SPEC-COLLECTOR-BACKFILL-006 REQ-BACKFILL-082,-088
     public DomesticDailyOhlcvFetch fetchWindow(
             LocalDate from, LocalDate anchor, Stock stock, LeaseSession session)
@@ -312,13 +311,14 @@ public class DomesticDailyOhlcvCollectionService {
     }
 
     /**
-     * KIS 원본 응답 행수를 산정한다 — 수정주가행({@code modYn="Y"}) 제외 후·검증(volume/OHLC) 거부 전 행수(DP-1).
+     * KIS 원본 응답 행수를 산정한다 — 검증(volume/OHLC) 거부 전 전체 행수.
      *
-     * <p>{@code modYn} 제외는 별개 정당 필터이므로 종료 판정 입력에서도 제외한다. 검증 거부는 카운트에서 제외하지 않는다 — 거래정지 거부가 종료를 흔들지
-     * 않게 하는 것이 본 산정의 목적이다(SPEC-COLLECTOR-BACKFILL-006 REQ-BACKFILL-082).
+     * <p>{@code modYn="Y"}(수정주가 마킹) 행도 포함한다 — 원주가({@code FID_ORG_ADJ_PRC=1}) 요청 시에도 액면분할 근처 구간에서
+     * modYn="Y"가 붙어 반환되어 rawRowCount를 깎아 GROUP_A 조기종료를 유발하기 때문이다(분할 종목 백필 오종료 버그). 원주가 요청의 행 값은
+     * modYn 무관 원주가이므로 저장 가능하다.
      */
     private int rawRowCount(KisDailyOhlcvResponse response) {
-        return (int) response.output2().stream().filter(row -> !"Y".equals(row.modYn())).count();
+        return response.output2().size();
     }
 
     /**
