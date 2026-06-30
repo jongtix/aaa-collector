@@ -54,6 +54,9 @@ public class ShortSaleCollectionService {
 
     static final int LOOKBACK_CALENDAR_DAYS = 14;
 
+    /** 백필 수집 윈도우 캘린더 일수 — API 범위 파라미터 지원, 단일 호출 최대 61행(≈90달력일)을 전부 포착. */
+    static final int BACKFILL_LOOKBACK_CALENDAR_DAYS = 90;
+
     private static final DateTimeFormatter DATE_FMT = DateTimeFormatter.BASIC_ISO_DATE;
     private static final String TR_ID = "FHPST04830000";
     private static final String PATH = "/uapi/domestic-stock/v1/quotations/daily-short-sale";
@@ -227,7 +230,7 @@ public class ShortSaleCollectionService {
     public ShortSaleFetch fetchWindow(BackfillStatus status, Stock stock, LeaseSession session)
             throws InterruptedException {
         LocalDate anchor = status.getLastCollectedDate();
-        LocalDate from = anchor.minusDays(LOOKBACK_CALENDAR_DAYS);
+        LocalDate from = anchor.minusDays(BACKFILL_LOOKBACK_CALENDAR_DAYS);
         String symbol = stock.getSymbol();
         KisShortSaleResponse response = fetch(session, symbol, from, anchor);
         List<ShortSaleDomestic> validEntities =

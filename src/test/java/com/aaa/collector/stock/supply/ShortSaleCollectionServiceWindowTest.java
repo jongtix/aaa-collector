@@ -146,10 +146,10 @@ class ShortSaleCollectionServiceWindowTest {
         }
 
         @Test
-        @DisplayName("fetchWindow — anchor를 FID_INPUT_DATE_2, anchor-14를 FID_INPUT_DATE_1으로 전송")
+        @DisplayName("fetchWindow — anchor를 FID_INPUT_DATE_2, anchor-90을 FID_INPUT_DATE_1으로 전송")
         @SuppressWarnings("unchecked")
         void fetchWindow_sendsAnchorAndLookbackParams() throws Exception {
-            // Arrange — ANCHOR=2026-06-13 → DATE_2=20260613, DATE_1=2026-05-30(anchor-14days)
+            // Arrange — ANCHOR=2026-06-13 → DATE_2=20260613, DATE_1=20260315(anchor-90days)
             ArgumentCaptor<Function<UriBuilder, URI>> uriCaptor =
                     ArgumentCaptor.forClass(Function.class);
             when(guardedKisExecutor.execute(
@@ -163,7 +163,7 @@ class ShortSaleCollectionServiceWindowTest {
 
             URI built = uriCaptor.getValue().apply(UriComponentsBuilder.newInstance());
             assertThat(built.toString()).contains("FID_INPUT_DATE_2=20260613");
-            assertThat(built.toString()).contains("FID_INPUT_DATE_1=20260530");
+            assertThat(built.toString()).contains("FID_INPUT_DATE_1=20260315");
         }
 
         @Test

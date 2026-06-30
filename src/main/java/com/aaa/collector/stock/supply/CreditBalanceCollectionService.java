@@ -55,6 +55,9 @@ public class CreditBalanceCollectionService {
 
     static final int LOOKBACK_CALENDAR_DAYS = 14;
 
+    /** 백필 수집 윈도우 캘린더 일수 — API 단일 호출이 ~30행(≈45달력일)을 반환하므로 전부 포착. */
+    static final int BACKFILL_LOOKBACK_CALENDAR_DAYS = 45;
+
     private static final DateTimeFormatter DATE_FMT = DateTimeFormatter.BASIC_ISO_DATE;
     private static final String TR_ID = "FHPST04760000";
     private static final String PATH = "/uapi/domestic-stock/v1/quotations/daily-credit-balance";
@@ -224,7 +227,7 @@ public class CreditBalanceCollectionService {
     public CreditBalanceFetch fetchWindow(BackfillStatus status, Stock stock, LeaseSession session)
             throws InterruptedException {
         LocalDate anchor = status.getLastCollectedDate();
-        LocalDate windowStart = anchor.minusDays(LOOKBACK_CALENDAR_DAYS);
+        LocalDate windowStart = anchor.minusDays(BACKFILL_LOOKBACK_CALENDAR_DAYS);
         String symbol = stock.getSymbol();
         KisCreditBalanceResponse response = fetch(session, symbol, anchor);
         List<CreditBalance> validEntities =

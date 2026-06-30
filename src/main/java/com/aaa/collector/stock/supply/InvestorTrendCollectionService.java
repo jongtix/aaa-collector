@@ -50,8 +50,11 @@ import org.springframework.web.client.RestClientException;
 // @MX:SPEC: SPEC-COLLECTOR-BATCH-002, SPEC-COLLECTOR-KISGATE-001
 public class InvestorTrendCollectionService {
 
-    /** 수집 윈도우 캘린더 일수 (≈최근 5거래일, 연휴 대비 14일). */
+    /** 당일 배치 수집 윈도우 캘린더 일수 (≈최근 5거래일, 연휴 대비 14일). */
     static final int LOOKBACK_CALENDAR_DAYS = 14;
+
+    /** 백필 수집 윈도우 캘린더 일수 — API 단일 호출이 ~30행(≈45달력일)을 반환하므로 전부 포착. */
+    static final int BACKFILL_LOOKBACK_CALENDAR_DAYS = 45;
 
     /**
      * 백만원 → 원 변환 계수 (×1,000,000).
@@ -375,7 +378,7 @@ public class InvestorTrendCollectionService {
             response = fetch(session, symbol, effectiveAnchor);
         }
 
-        LocalDate windowStart = effectiveAnchor.minusDays(LOOKBACK_CALENDAR_DAYS);
+        LocalDate windowStart = effectiveAnchor.minusDays(BACKFILL_LOOKBACK_CALENDAR_DAYS);
         List<InvestorTrend> validEntities =
                 collectValidEntities(stock, symbol, response, effectiveAnchor, windowStart);
         if (validEntities.isEmpty()) {
