@@ -3,6 +3,7 @@ package com.aaa.collector.stock.daily;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
@@ -361,7 +362,7 @@ class DomesticDailyOhlcvCollectionServiceTest {
             service.collect(LocalDate.of(2026, 6, 5));
 
             // Assert — 유효 행이 없으면 insertBatch가 호출되지 않는다 (REQ-OBSV-023 경고 캡처 경로)
-            verify(ohlcvInserter, never()).insertBatch(any(), any(), any());
+            verify(ohlcvInserter, never()).insertBatch(any(), any());
         }
 
         @Test
@@ -946,6 +947,39 @@ class DomesticDailyOhlcvCollectionServiceTest {
             assertThat(result.succeeded()).isEqualTo(1);
             verify(ohlcvInserter, times(1)).insertBatch(any(), any());
         }
+
+        @Test
+        @DisplayName("collect — modYn=Y 행도 insertBatch에 전달된다(분할 종목 당일 수집 포함)")
+        void collect_modYnY_includedInInsertBatch() throws Exception {
+            // Arrange
+            Stock stock = stockOf("005930");
+            when(stockRepository.findAllActiveTradable()).thenReturn(List.of(stock));
+            when(healthyKeySelector.selectHealthy()).thenReturn(List.of(ISA));
+
+            KisDailyOhlcvResponse.DailyOhlcvRow adjRow =
+                    new KisDailyOhlcvResponse.DailyOhlcvRow(
+                            "20180503",
+                            "2500000",
+                            "2480000",
+                            "2520000",
+                            "2470000",
+                            "5000000",
+                            "12500000000000",
+                            "Y");
+            when(guardedKisExecutor.execute(
+                            any(LeaseSession.class),
+                            any(),
+                            anyString(),
+                            eq(KisDailyOhlcvResponse.class)))
+                    .thenReturn(stubResponse(List.of(adjRow)));
+
+            // Act
+            service.collect(LocalDate.of(2026, 6, 30));
+
+            // Assert — modYn="Y" 행이 parseIfValid를 통과해 insertBatch에 전달된다
+            verify(ohlcvInserter, times(1))
+                    .insertBatch(eq(stock.getId()), argThat(rows -> rows.size() == 1));
+        }
     }
 
     @Nested
@@ -1060,7 +1094,7 @@ class DomesticDailyOhlcvCollectionServiceTest {
 
             assertThat(result.oldestTradeDate()).isNull();
             assertThat(result.rowCount()).isZero();
-            verify(ohlcvInserter, never()).insertBatch(any(), any(), any());
+            verify(ohlcvInserter, never()).insertBatch(any(), any());
         }
     }
 }
