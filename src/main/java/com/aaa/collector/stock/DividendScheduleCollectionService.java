@@ -51,6 +51,10 @@ public class DividendScheduleCollectionService {
     private static final int MAX_DECIMAL_INTEGER_DIGITS = 8;
 
     private static final DateTimeFormatter DATE_FMT = DateTimeFormatter.BASIC_ISO_DATE;
+
+    /** 국내 배당 통화 코드 고정값 (REQ-ODA-042). */
+    private static final String DOMESTIC_CURRENCY_CODE = "KRW";
+
     private static final String TR_ID = "HHKDB669102C0";
     private static final String PATH = "/uapi/domestic-stock/v1/ksdinfo/dividend";
 
@@ -276,6 +280,7 @@ public class DividendScheduleCollectionService {
                 .stockPayDate(stockPayDate)
                 .oddPayDate(oddPayDate)
                 .cashAmount(cashAmount)
+                .currencyCode(DOMESTIC_CURRENCY_CODE)
                 .cashRate(cashRate)
                 .stockRate(stockRate)
                 .faceValue(faceValue)

@@ -143,6 +143,7 @@ class DividendScheduleCollectionServiceTest {
             assertThat(saved.getEventDate()).hasYear(2026).hasMonthValue(6).hasDayOfMonth(13);
             assertThat(saved.getEventSubtype()).isEqualTo("결산배당");
             assertThat(saved.getCashAmount()).isEqualByComparingTo("500");
+            assertThat(saved.getCurrencyCode()).isEqualTo("KRW");
         }
 
         @Test
