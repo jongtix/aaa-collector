@@ -17,7 +17,7 @@ public interface CorporateEventRepository extends JpaRepository<CorporateEvent, 
      * 기업 이벤트 1건을 멱등 삽입한다 (REQ-BATCH3-053).
      *
      * <p>{@code INSERT IGNORE}는 Unique Key {@code uk_corporate_events (stock_id, event_type,
-     * event_date)} 충돌 시 해당 행을 무시하여 행 수가 증가하지 않으며 UPDATE를 발생시키지 않는다.
+     * event_date, event_subtype)}(V33, 4컬럼) 충돌 시 해당 행을 무시하여 행 수가 증가하지 않으며 UPDATE를 발생시키지 않는다.
      *
      * <p>기존 {@code ON DUPLICATE KEY UPDATE id = id}는 no-op이라도 MySQL이 중복 충돌 시 UPDATE 경로를 밟아 UPDATE
      * 권한을 검사하므로, UPDATE 권한이 없는 {@code collector} 사용자에게 SQL 1142({@code UPDATE command denied to
@@ -35,13 +35,13 @@ public interface CorporateEventRepository extends JpaRepository<CorporateEvent, 
                     INSERT IGNORE INTO corporate_events
                         (stock_id, event_type, event_date, ex_dividend_date, event_subtype,
                          pay_date, stock_pay_date, odd_pay_date,
-                         cash_amount, cash_rate, stock_rate,
+                         cash_amount, currency_code, cash_rate, stock_rate,
                          face_value, stock_kind, high_dividend_flag,
                          created_at, updated_at)
                     VALUES
                         (:#{#e.stock.id}, :#{#e.eventType.name()}, :#{#e.eventDate}, :#{#e.exDividendDate}, :#{#e.eventSubtype},
                          :#{#e.payDate}, :#{#e.stockPayDate}, :#{#e.oddPayDate},
-                         :#{#e.cashAmount}, :#{#e.cashRate}, :#{#e.stockRate},
+                         :#{#e.cashAmount}, :#{#e.currencyCode}, :#{#e.cashRate}, :#{#e.stockRate},
                          :#{#e.faceValue}, :#{#e.stockKind}, :#{#e.highDividendFlag},
                          NOW(), NOW())
                     """,

@@ -56,7 +56,8 @@ class CorporateEventRepositoryTest {
                 .payDate(LocalDate.of(2026, 8, 14))
                 .stockPayDate(null)
                 .oddPayDate(null)
-                .cashAmount(cashAmount)
+                .cashAmount(BigDecimal.valueOf(cashAmount))
+                .currencyCode("KRW")
                 .cashRate(new BigDecimal("0.5000"))
                 .stockRate(new BigDecimal("0.0000"))
                 .faceValue(100L)
@@ -101,7 +102,7 @@ class CorporateEventRepositoryTest {
                             .filter(e -> e.getStock().getId().equals(stock.getId()))
                             .findFirst()
                             .orElseThrow();
-            assertThat(saved.getCashAmount()).isEqualTo(originalAmt);
+            assertThat(saved.getCashAmount()).isEqualByComparingTo(BigDecimal.valueOf(originalAmt));
         }
 
         @Test

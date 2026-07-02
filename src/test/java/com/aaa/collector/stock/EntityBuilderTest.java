@@ -159,13 +159,15 @@ class EntityBuilderTest {
                             .stock(sampleStock())
                             .eventType(EventType.DIVIDEND)
                             .eventDate(LocalDate.of(2026, 3, 15))
-                            .cashAmount(500L)
+                            .cashAmount(new BigDecimal("500.00000"))
+                            .currencyCode("KRW")
                             .cashRate(new BigDecimal("1.5000"))
                             .faceValue(1000L)
                             .highDividendFlag("Y")
                             .build();
 
-            assertThat(event.getCashAmount()).isEqualTo(500L);
+            assertThat(event.getCashAmount()).isEqualByComparingTo("500.00000");
+            assertThat(event.getCurrencyCode()).isEqualTo("KRW");
             assertThat(event.getCashRate()).isEqualByComparingTo("1.5000");
             assertThat(event.getFaceValue()).isEqualTo(1000L);
             assertThat(event.getHighDividendFlag()).isEqualTo("Y");

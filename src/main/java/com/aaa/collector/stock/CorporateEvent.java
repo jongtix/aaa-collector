@@ -27,7 +27,7 @@ import lombok.NoArgsConstructor;
         uniqueConstraints =
                 @UniqueConstraint(
                         name = "uk_corporate_events",
-                        columnNames = {"stock_id", "event_type", "event_date"}))
+                        columnNames = {"stock_id", "event_type", "event_date", "event_subtype"}))
 @Getter
 @NoArgsConstructor(access = AccessLevel.PROTECTED, force = true)
 public class CorporateEvent extends BaseEntity {
@@ -55,7 +55,12 @@ public class CorporateEvent extends BaseEntity {
     @Column(name = "ex_dividend_date")
     private final LocalDate exDividendDate;
 
-    @Column(name = "event_subtype", length = 20)
+    /**
+     * 이벤트 세부 유형 (일반배당/특별배당/분할/병합 등) — 4컬럼 unique key 구성원(경로 A, REQ-ODA-045).
+     *
+     * <p>NOT NULL — MySQL unique index의 NULL 중복 허용으로 인한 {@code INSERT IGNORE} 멱등성 붕괴를 방지한다(V33).
+     */
+    @Column(name = "event_subtype", length = 20, nullable = false)
     private final String eventSubtype;
 
     @Column(name = "pay_date")
@@ -67,8 +72,15 @@ public class CorporateEvent extends BaseEntity {
     @Column(name = "odd_pay_date")
     private final LocalDate oddPayDate;
 
-    @Column(name = "cash_amount")
-    private final Long cashAmount;
+    /**
+     * 현금배당금 (통화={@link #currencyCode}). V33: {@code BIGINT} → {@code DECIMAL(15,5)}(REQ-ODA-040).
+     */
+    @Column(name = "cash_amount", precision = 15, scale = 5)
+    private final BigDecimal cashAmount;
+
+    /** 배당 통화 (KRW/USD 등, nullable — REQ-ODA-041). */
+    @Column(name = "currency_code", length = 3)
+    private final String currencyCode;
 
     @Column(name = "cash_rate", precision = 12, scale = 4)
     private final BigDecimal cashRate;
@@ -95,7 +107,8 @@ public class CorporateEvent extends BaseEntity {
             LocalDate payDate,
             LocalDate stockPayDate,
             LocalDate oddPayDate,
-            Long cashAmount,
+            BigDecimal cashAmount,
+            String currencyCode,
             BigDecimal cashRate,
             BigDecimal stockRate,
             Long faceValue,
@@ -111,6 +124,7 @@ public class CorporateEvent extends BaseEntity {
         this.stockPayDate = stockPayDate;
         this.oddPayDate = oddPayDate;
         this.cashAmount = cashAmount;
+        this.currencyCode = currencyCode;
         this.cashRate = cashRate;
         this.stockRate = stockRate;
         this.faceValue = faceValue;

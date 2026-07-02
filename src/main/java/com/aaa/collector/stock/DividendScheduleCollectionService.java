@@ -258,8 +258,8 @@ public class DividendScheduleCollectionService {
         LocalDate stockPayDate = parseDateOrNull(row.stkDivPayDt(), row.shtCd(), "stkDivPayDt");
         LocalDate oddPayDate = parseDateOrNull(row.oddPayDt(), row.shtCd(), "oddPayDt");
 
-        // 금액 파싱 (null 허용)
-        Long cashAmount = parseLongOrNull(row.perStoDiviAmt());
+        // 금액 파싱 (null 허용) — V33: cash_amount는 BigDecimal(15,5)
+        BigDecimal cashAmount = parseCashAmountOrNull(row.perStoDiviAmt());
         Long faceValue = parseLongOrNull(row.faceVal());
 
         // 비율 파싱 — DECIMAL(12,4) 경계 초과 시 skip
@@ -309,6 +309,22 @@ public class DividendScheduleCollectionService {
             BigDecimal bd = new BigDecimal(raw.trim());
             return bd.longValueExact();
         } catch (NumberFormatException | ArithmeticException e) {
+            return null;
+        }
+    }
+
+    /**
+     * 현금배당금 파싱 — {@code cash_amount}는 V33부터 {@code DECIMAL(15,5)}(REQ-ODA-040).
+     *
+     * @return null이면 파싱 실패(값 미존재)
+     */
+    private BigDecimal parseCashAmountOrNull(String raw) {
+        if (raw == null || raw.isBlank()) {
+            return null;
+        }
+        try {
+            return new BigDecimal(raw.trim());
+        } catch (NumberFormatException e) {
             return null;
         }
     }

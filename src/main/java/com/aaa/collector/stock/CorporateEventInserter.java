@@ -36,11 +36,11 @@ public class CorporateEventInserter {
             INSERT IGNORE INTO corporate_events
                 (stock_id, event_type, event_date, ex_dividend_date, event_subtype,
                  pay_date, stock_pay_date, odd_pay_date,
-                 cash_amount, cash_rate, stock_rate,
+                 cash_amount, currency_code, cash_rate, stock_rate,
                  face_value, stock_kind, high_dividend_flag,
                  created_at, updated_at)
             VALUES
-                (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())
+                (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())
             """;
 
     private final JdbcTemplate jdbcTemplate;
@@ -117,20 +117,17 @@ public class CorporateEventInserter {
         } else {
             ps.setObject(8, e.getOddPayDate());
         }
-        if (e.getCashAmount() == null) {
-            ps.setNull(9, Types.BIGINT);
-        } else {
-            ps.setLong(9, e.getCashAmount());
-        }
-        setNullableDecimal(ps, 10, e.getCashRate());
-        setNullableDecimal(ps, 11, e.getStockRate());
+        setNullableDecimal(ps, 9, e.getCashAmount());
+        setNullableString(ps, 10, e.getCurrencyCode());
+        setNullableDecimal(ps, 11, e.getCashRate());
+        setNullableDecimal(ps, 12, e.getStockRate());
         if (e.getFaceValue() == null) {
-            ps.setNull(12, Types.BIGINT);
+            ps.setNull(13, Types.BIGINT);
         } else {
-            ps.setLong(12, e.getFaceValue());
+            ps.setLong(13, e.getFaceValue());
         }
-        setNullableString(ps, 13, e.getStockKind());
-        setNullableString(ps, 14, e.getHighDividendFlag());
+        setNullableString(ps, 14, e.getStockKind());
+        setNullableString(ps, 15, e.getHighDividendFlag());
     }
 
     private void setNullableString(PreparedStatement ps, int index, String value)
