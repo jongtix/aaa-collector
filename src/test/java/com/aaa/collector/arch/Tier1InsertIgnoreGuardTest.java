@@ -44,8 +44,15 @@ import org.junit.jupiter.api.Test;
 class Tier1InsertIgnoreGuardTest {
 
     /**
-     * Tier-2 허용목록 — ADR-026 결정 2의 단일 소스. 이 테이블에 기록하는 리포지토리만 UPDATE 경로 SQL이 허용된다. 목록 변경 시 반드시
-     * ADR-026을 함께 수정한다.
+     * Tier-2 허용목록 — 본 가드 전용 검사 목록(ADR-026 결정 2와 동기화). 이 테이블에 기록하는 리포지토리만 UPDATE 경로 SQL이 허용된다. 목록 변경
+     * 시 반드시 ADR-026을 함께 수정한다.
+     *
+     * <p><b>4개 목록은 표류(drift)가 아니라 의도된 설계다</b>(ADR-026 2026-06-20 개정, REQ-DBGRANT3-008). canonical
+     * Tier-2 GRANT 목록({@code collector-tier2-grants.sql} = {@code DbGrantVerifier.TIER2_TABLES}, 코드
+     * 단일 소스)은 {@code backfill_status}를 포함한 5개지만, 본 가드는 {@code ON DUPLICATE KEY UPDATE} 패턴만 검사하고
+     * {@code backfill_status}는 그 패턴을 쓰지 않으므로(시딩 = {@code INSERT IGNORE}, 진행점 갱신 = 평이한 JPA UPDATE) 위
+     * 개정이 이 허용목록에서 의도적으로 제외했다. 따라서 {@code backfill_status}를 여기에 추가하지 말 것 — "가드 4개 vs GRANT 5개 = 표류"
+     * 진단은 오진이다(SPEC-COLLECTOR-DBGRANT-003 AC-9).
      */
     private static final Set<String> TIER2_TABLE_ALLOWLIST =
             Set.of("stocks", "stock_grades", "short_sale_overseas", "etf_metadata");
