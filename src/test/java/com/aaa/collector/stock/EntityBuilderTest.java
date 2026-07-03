@@ -1,6 +1,7 @@
 package com.aaa.collector.stock;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.aaa.collector.stock.enums.AssetType;
 import com.aaa.collector.stock.enums.EventType;
@@ -144,6 +145,7 @@ class EntityBuilderTest {
                             .stock(stock)
                             .eventType(EventType.DIVIDEND)
                             .eventDate(eventDate)
+                            .eventSubtype("결산배당")
                             .build();
 
             assertThat(event.getStock()).isSameAs(stock);
@@ -159,6 +161,7 @@ class EntityBuilderTest {
                             .stock(sampleStock())
                             .eventType(EventType.DIVIDEND)
                             .eventDate(LocalDate.of(2026, 3, 15))
+                            .eventSubtype("결산배당")
                             .cashAmount(new BigDecimal("500.00000"))
                             .currencyCode("KRW")
                             .cashRate(new BigDecimal("1.5000"))
@@ -181,9 +184,27 @@ class EntityBuilderTest {
                             .stock(sampleStock())
                             .eventType(EventType.SPLIT)
                             .eventDate(LocalDate.of(2026, 1, 1))
+                            .eventSubtype("분할")
                             .build();
 
             assertThat(event.getEventType()).isEqualTo(EventType.SPLIT);
+        }
+
+        @Test
+        @DisplayName(
+                "AC-7c: event_subtype 미지정(null) — CorporateEvent 생성 시점에 NullPointerException으로 즉시 거부"
+                        + "(REQ-ODA-045, fail-fast)")
+        void corporateEvent_nullEventSubtype_rejectedAtConstruction() {
+            assertThatThrownBy(
+                            () ->
+                                    CorporateEvent.builder()
+                                            .stock(sampleStock())
+                                            .eventType(EventType.DIVIDEND)
+                                            .eventDate(LocalDate.of(2026, 6, 12))
+                                            .eventSubtype(null)
+                                            .build())
+                    .isInstanceOf(NullPointerException.class)
+                    .hasMessageContaining("eventSubtype");
         }
     }
 

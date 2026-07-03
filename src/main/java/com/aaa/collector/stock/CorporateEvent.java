@@ -15,12 +15,19 @@ import jakarta.persistence.Table;
 import jakarta.persistence.UniqueConstraint;
 import java.math.BigDecimal;
 import java.time.LocalDate;
+import java.util.Objects;
 import lombok.AccessLevel;
 import lombok.Builder;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 
-/** 기업 이벤트 (배당/증자/분할/어닝). Phase 1 수집 대상: DIVIDEND. */
+/**
+ * 기업 이벤트 (배당/증자/분할/어닝). Phase 1 수집 대상: DIVIDEND.
+ *
+ * <p>{@code final}: 생성자가 {@code eventSubtype} null 검증으로 예외를 던질 수 있어(AC-7c, REQ-ODA-045) SpotBugs
+ * {@code CT_CONSTRUCTOR_THROW}(Finalizer 공격 가능성, CERT OBJ11-J)를 유발한다. CERT 권고 해법인 클래스 {@code final}
+ * 선언으로 서브클래싱을 원천 차단해 해소한다(exclude.xml 미변경).
+ */
 @Entity
 @Table(
         name = "corporate_events",
@@ -30,7 +37,7 @@ import lombok.NoArgsConstructor;
                         columnNames = {"stock_id", "event_type", "event_date", "event_subtype"}))
 @Getter
 @NoArgsConstructor(access = AccessLevel.PROTECTED, force = true)
-public class CorporateEvent extends BaseEntity {
+public final class CorporateEvent extends BaseEntity {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
@@ -119,7 +126,12 @@ public class CorporateEvent extends BaseEntity {
         this.eventType = eventType;
         this.eventDate = eventDate;
         this.exDividendDate = exDividendDate;
-        this.eventSubtype = eventSubtype;
+        // REQ-ODA-045, AC-7c: event_subtype은 4컬럼 unique key 구성원이자 V33 NOT NULL 컬럼이다.
+        // INSERT IGNORE 하에서는 MySQL이 NOT NULL 위반을 경고로 격하시켜 빈 문자열을 암묵 저장하므로
+        // (SQL 예외로 명시 거부되지 않음, 실측 확인), 애플리케이션 계층에서 fail-fast로 강제한다.
+        this.eventSubtype =
+                Objects.requireNonNull(
+                        eventSubtype, "eventSubtype must not be null (uk_corporate_events)");
         this.payDate = payDate;
         this.stockPayDate = stockPayDate;
         this.oddPayDate = oddPayDate;

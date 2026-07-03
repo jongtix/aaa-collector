@@ -31,6 +31,7 @@ class CorporateEventInserterTest {
                 .stock(Stock.builder().symbol("005930").build())
                 .eventType(EventType.DIVIDEND)
                 .eventDate(LocalDate.of(2026, 6, 5))
+                .eventSubtype("결산배당")
                 .build();
     }
 
