@@ -54,12 +54,37 @@ val coverageExclusions = listOf(
     "com/aaa/collector/kis/holiday/KisHolidayResponse\$HolidayRow.class"
 )
 
+// --- 테스트 계층 분리 (SPEC-COLLECTOR-TESTLAYER-001) ---
+// 기본 test = 단위 테스트 전용 (컨테이너 없음, pre-push가 호출). 통합 태그 제외.
+tasks.test {
+    useJUnitPlatform {
+        excludeTags("integration")
+    }
+}
+
+// integrationTest = Testcontainers 기반 통합 테스트 전용 (37 MySQL + 3 Redis). CI check에서만 실행.
+tasks.register<Test>("integrationTest") {
+    description = "Runs integration tests tagged @Tag(\"integration\") (Testcontainers)."
+    group = "verification"
+    testClassesDirs = sourceSets.test.get().output.classesDirs
+    classpath = sourceSets.test.get().runtimeClasspath
+    useJUnitPlatform {
+        includeTags("integration")
+    }
+    // tasks.withType<Test> {}(파일 하단)이 useJUnitPlatform 기본 설정 + KST jvmArgs를 자동 적용한다.
+}
+
 // --- JaCoCo 커버리지 게이트 (BUNDLE LINE ≥ 85% 즉시 강제 — REQ-JACOCO-010/011/012) ---
 // minimum은 Gradle property로 오버라이드 가능 (예: -PjacocoMinimum=0.99, 기본값 영구 0.85)
 val jacocoMinimum = (findProperty("jacocoMinimum") as String?)?.toBigDecimal() ?: "0.85".toBigDecimal()
 
 tasks.jacocoTestCoverageVerification {
     dependsOn(tasks.jacocoTestReport)
+    // jacocoTestReport와 동일하게 단위+통합 실행 데이터를 명시 합산한다.
+    // 미지정 시 Jacoco 플러그인 기본 컨벤션이 verification의 executionData를 `test` 태스크에만 바인딩하여
+    // 통합 테스트로만 커버되는 라인이 게이트 계산에서 누락되고 85% 라인 게이트가 거짓 실패한다
+    // (SPEC-COLLECTOR-TESTLAYER-001 REQ-TESTLAYER-011/012 — 실측: 미지정 시 0.84로 거짓 실패, 지정 시 정상 통과).
+    executionData(tasks.test.get(), tasks.named<Test>("integrationTest").get())
     violationRules {
         rule {
             element = "BUNDLE"
@@ -83,9 +108,10 @@ tasks.check {
     dependsOn(tasks.jacocoTestCoverageVerification)
 }
 
-// --- JaCoCo 리포트 ---
+// --- JaCoCo 리포트 (단위 + 통합 실행 데이터 합산 — SPEC-COLLECTOR-TESTLAYER-001 §6 D3 안 A) ---
 tasks.jacocoTestReport {
-    dependsOn(tasks.test)
+    dependsOn(tasks.test, tasks.named("integrationTest"))
+    executionData(tasks.test.get(), tasks.named<Test>("integrationTest").get())
     reports {
         xml.required.set(true)
         html.required.set(true)
@@ -97,9 +123,14 @@ tasks.jacocoTestReport {
     )
 }
 
-tasks.test {
-    finalizedBy(tasks.jacocoTestReport)
-}
+// [HARD] tasks.test { finalizedBy(jacocoTestReport) }는 의도적으로 두지 않는다.
+// finalizer를 남긴 채 jacocoTestReport.dependsOn(test, integrationTest)를 추가하면
+// Gradle의 finalizer 의존성 스케줄링 규칙에 따라 `./gradlew test`(pre-push가 호출) 실행 시
+// jacocoTestReport가 스케줄되고 그 dependsOn 체인이 integrationTest를 태스크 그래프로
+// 끌어들여 pre-push가 통합 테스트를 실행하게 된다(8분+ 병목 재발, REQ-TESTLAYER-007/013 무력화).
+// jacocoTestReport(및 그것이 끌어들이는 integrationTest)는 check 체인으로만 도달 가능해야 하므로
+// finalizer를 제거한다 — 85% 게이트는 jacocoTestCoverageVerification(check 경유)에 있으므로
+// 게이트 동작에는 영향이 없다(spec.md §6 D3).
 
 repositories {
     mavenCentral()
