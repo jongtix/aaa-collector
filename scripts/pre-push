@@ -1,6 +1,9 @@
 #!/bin/sh
 # Pre-push hook: PMD + Tests
 # Formatting → pre-commit, SpotBugs → CI
+# `test` = unit tests only (Testcontainers-tagged integration tests excluded via
+# build.gradle.kts tag filter); integration tests run in CI (`./gradlew check`).
+# See SPEC-COLLECTOR-TESTLAYER-001 / aaa-collector/CLAUDE.md test tagging convention.
 
 echo "[pre-push] Running PMD and tests..."
 
