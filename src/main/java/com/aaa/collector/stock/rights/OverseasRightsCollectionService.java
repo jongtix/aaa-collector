@@ -10,12 +10,9 @@ import com.aaa.collector.stock.CorporateEvent;
 import com.aaa.collector.stock.CorporateEventInserter;
 import com.aaa.collector.stock.Stock;
 import com.aaa.collector.stock.StockRepository;
-import com.aaa.collector.stock.enums.EventType;
 import java.net.URI;
 import java.time.LocalDate;
 import java.time.ZoneId;
-import java.time.format.DateTimeFormatter;
-import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
@@ -43,7 +40,7 @@ import org.springframework.web.util.UriBuilder;
  * (symbol, acpl_bass_dt) → List<금액항목>} 맵을 구성한다(REQ-ODA-010~017). 종목별 루프에서 현금배당 행을 만들 때 이 맵을 조회해
  * 리스트의 항목마다 1행(event_subtype=03→"일반배당"/75→"특별배당")을 생성한다(경로 A, 동일일자 03+75 병존 시 SUM 금지·별도 2행 보존,
  * REQ-ODA-021). 맵에 확정(dfnt_yn=Y) 매칭이 없으면 행 생성 자체를 이번 배치에서 defer한다(REQ-ODA-022/030 — Tier-1
- * INSERT-only라 나중에 채울 수 없어 확정까지 미룬다).
+ * INSERT-only라 나중에 채울 수 없어 확정까지 미룬다). 검증·매핑·카운팅은 {@link OverseasRightsRowAccumulator}에 위임한다.
  *
  * <p>키 선택: {@link GuardedKisExecutor} 단일 게이트를 경유한다(REQ-OVE-010). 배치 시작 시 {@link
  * KeyLeaseRegistry#openSession()}으로 per-batch 헬스 스냅샷을 1회 고정(REQ-OVE-011)하고, 종목별 게이트 호출이 그 세션에서
@@ -74,16 +71,8 @@ public class OverseasRightsCollectionService {
 
     private static final String PATH = "/uapi/overseas-price/v1/quotations/rights-by-ice";
 
-    private static final String EVENT_SUBTYPE_GENERAL = "일반배당";
-    private static final String EVENT_SUBTYPE_SPECIAL = "특별배당";
-
     /** 국가코드 — 미국 한정(REQ-OVE-021). */
     private static final String NATION_CODE = "US";
-
-    /** 권리유형 현금배당 판정 값(REQ-OVE-023, RD-2). */
-    private static final String CASH_DIVIDEND_TITLE = "현금배당";
-
-    private static final DateTimeFormatter DATE_FMT = DateTimeFormatter.BASIC_ISO_DATE;
 
     private static final ZoneId NEW_YORK = ZoneId.of("America/New_York");
 
@@ -136,49 +125,17 @@ public class OverseasRightsCollectionService {
         DividendAmountPrefetch prefetch =
                 dividendAmountPrefetcher.prefetch(session, trackedSymbols);
 
-        AtomicInteger succeededRows = new AtomicInteger();
-        AtomicInteger skippedStocks = new AtomicInteger();
-        AtomicInteger skippedNonCashRows = new AtomicInteger();
-        AtomicInteger skippedValidationRows = new AtomicInteger();
-        // W1: DB 독성 행(DataAccessException 흡수)을 검증 skip과 분리 집계 — 42,460-failure 사건군 관측성 보존
-        AtomicInteger skippedToxicRows = new AtomicInteger();
-        // REQ-ODA-022: 금액 맵 미확정 매칭으로 defer된 행 수(D5 — 프리페치 유형 폐기 defer는 이중 계상 안 함)
-        AtomicInteger skippedUnconfirmed = new AtomicInteger();
-        // aaa-infra#64, REQ-ODA-072: 74(스크립배당) 확정 매칭으로 defer된 행 수(skippedUnconfirmed와 분리 — 영구
-        // defer)
-        AtomicInteger skippedScripDividend = new AtomicInteger();
+        // 종목별 병렬 collectStock이 공유하는 검증·매핑·카운팅 협력자(1회 collect()당 신규 인스턴스)
+        OverseasRightsRowAccumulator accumulator = new OverseasRightsRowAccumulator();
 
         // REQ-OVE-028: Virtual Thread executor — 종목별 블로킹을 commonPool 점유 없이 처리. parallelStream 금지.
         try (ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor()) {
             for (Stock stock : activeStocks) {
-                executor.submit(
-                        () ->
-                                collectStock(
-                                        stock,
-                                        session,
-                                        prefetch,
-                                        succeededRows,
-                                        skippedStocks,
-                                        skippedNonCashRows,
-                                        skippedValidationRows,
-                                        skippedToxicRows,
-                                        skippedUnconfirmed,
-                                        skippedScripDividend));
+                executor.submit(() -> collectStock(stock, session, prefetch, accumulator));
             }
         } // close() blocks until all submitted tasks complete
 
-        OverseasRightsCollectionResult result =
-                new OverseasRightsCollectionResult(
-                        total,
-                        succeededRows.get(),
-                        skippedStocks.get(),
-                        skippedNonCashRows.get(),
-                        skippedValidationRows.get(),
-                        skippedToxicRows.get(),
-                        skippedUnconfirmed.get(),
-                        skippedScripDividend.get(),
-                        prefetch.prefetchTruncated(),
-                        prefetch.prefetchFailed());
+        OverseasRightsCollectionResult result = accumulator.toResult(total, prefetch);
         log.info(
                 "[overseas-rights] 수집 완료 — attemptedStocks={}, succeededRows={}, skippedStocks={}, "
                         + "skippedNonCashRows={}, skippedValidationRows={}, skippedToxicRows={}, "
@@ -205,13 +162,7 @@ public class OverseasRightsCollectionService {
             Stock stock,
             KeyLeaseRegistry.LeaseSession session,
             DividendAmountPrefetch prefetch,
-            AtomicInteger succeededRows,
-            AtomicInteger skippedStocks,
-            AtomicInteger skippedNonCashRows,
-            AtomicInteger skippedValidationRows,
-            AtomicInteger skippedToxicRows,
-            AtomicInteger skippedUnconfirmed,
-            AtomicInteger skippedScripDividend) {
+            OverseasRightsRowAccumulator accumulator) {
 
         String symbol = stock.getSymbol();
         try {
@@ -219,22 +170,14 @@ public class OverseasRightsCollectionService {
 
             // REQ-OVE-027: rt_cd=0이어도 output1 비면 종목 skip
             if (response.output1().isEmpty()) {
-                skippedStocks.incrementAndGet();
+                accumulator.recordStockSkip();
                 return;
             }
 
             // REQ-INSERT-011: 유효 행 누적 후 격리 삽입
             List<CorporateEvent> batch = new ArrayList<>();
             for (KisOverseasRightsResponse.RightsRow row : response.output1()) {
-                buildRow(
-                        row,
-                        stock,
-                        prefetch,
-                        batch,
-                        skippedNonCashRows,
-                        skippedValidationRows,
-                        skippedUnconfirmed,
-                        skippedScripDividend);
+                accumulator.buildRow(row, stock, prefetch, batch);
             }
 
             if (!batch.isEmpty()) {
@@ -246,10 +189,10 @@ public class OverseasRightsCollectionService {
                                     "[overseas-rights] 독성 행 저장 실패 — skip (symbol={}, error={})",
                                     symbol,
                                     ex.getMessage());
-                            skippedToxicRows.incrementAndGet();
+                            accumulator.recordToxicRow();
                             dbFailures.incrementAndGet();
                         });
-                succeededRows.addAndGet(batch.size() - dbFailures.get());
+                accumulator.recordSucceededRows(batch.size() - dbFailures.get());
             }
         } catch (KisRateLimitException | RestClientException e) {
             // REQ-OVE-013: retryable 재시도 소진 → graceful skip
@@ -257,115 +200,23 @@ public class OverseasRightsCollectionService {
                     "[overseas-rights] skip (재시도 소진) — symbol={}, reason={}",
                     symbol,
                     e.getMessage());
-            skippedStocks.incrementAndGet();
+            accumulator.recordStockSkip();
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             log.warn("[overseas-rights] 인터럽트 — symbol={} skip", symbol);
-            skippedStocks.incrementAndGet();
+            accumulator.recordStockSkip();
         } catch (NoHealthyKeyException e) {
             // 방어적: collect()에서 단락되므로 정상 운용에서는 도달하지 않음
             log.warn("[overseas-rights] 건강 키 0개로 skip — symbol={}", symbol);
-            skippedStocks.incrementAndGet();
+            accumulator.recordStockSkip();
         } catch (KisTokenIssueException e) {
             // REQ-OVE-013: token 발급 실패 → graceful skip
             log.warn(
                     "[overseas-rights] 토큰 발급 실패로 skip — symbol={}, error={}",
                     symbol,
                     e.getMessage());
-            skippedStocks.incrementAndGet();
+            accumulator.recordStockSkip();
         }
-    }
-
-    /**
-     * 권리 1건을 검증·매핑하여 배치에 추가한다 (REQ-INSERT-011, REQ-ODA-020~022, 070~072).
-     *
-     * <p>비현금배당 skip(REQ-OVE-023a). 현금배당 행은 금액 맵을 {@code (symbol, record_dt)}로 조회해 리스트의 항목마다 1행을
-     * 생성한다(경로 A, REQ-ODA-021 — 동일일자 03+75 병존 시 SUM 금지·별도 2행). 맵에 확정 매칭이 없으면, 스크립배당(74)으로 확정 관측된 키인지
-     * 먼저 확인해 {@code skippedScripDividend}로 별도 집계하고(aaa-infra#64 — 영구 defer, 다음 배치에도 03/75로 확정될 수
-     * 없음), 그렇지 않으면 기존 {@code skippedUnconfirmed}로 집계한다(REQ-ODA-022).
-     */
-    @SuppressWarnings("PMD.GuardLogStatement") // debug 파라미터 구성 비용은 무시 가능
-    private void buildRow(
-            KisOverseasRightsResponse.RightsRow row,
-            Stock stock,
-            DividendAmountPrefetch prefetch,
-            List<CorporateEvent> batch,
-            AtomicInteger skippedNonCashRows,
-            AtomicInteger skippedValidationRows,
-            AtomicInteger skippedUnconfirmed,
-            AtomicInteger skippedScripDividend) {
-        // REQ-OVE-023a: 비현금배당(증자·상폐 등) 행은 저장하지 않고 skip
-        if (!CASH_DIVIDEND_TITLE.equals(row.caTitle())) {
-            skippedNonCashRows.incrementAndGet();
-            return;
-        }
-
-        // REQ-OVE-025/070: 필수 기준일(record_dt) null/공백/파싱 실패 → skip
-        LocalDate eventDate = parseDateOrNull(row.recordDt());
-        if (eventDate == null) {
-            log.debug(
-                    "[overseas-rights] 검증 실패 (record_dt={}) — symbol={}",
-                    row.recordDt(),
-                    stock.getSymbol());
-            skippedValidationRows.incrementAndGet();
-            return;
-        }
-
-        // REQ-ODA-020: 맵 키 날짜는 acpl_bass_dt이며 record_dt와 등가(§1.4-1, AC-9) — 직접 매칭
-        DividendAmountKey key = new DividendAmountKey(stock.getSymbol(), eventDate);
-        List<DividendAmountItem> items = prefetch.amountsByKey().getOrDefault(key, List.of());
-
-        if (items.isEmpty()) {
-            // aaa-infra#64, REQ-ODA-072: 74(스크립배당)로 확정 매칭된 키는 영원히 03/75로 확정될 수 없으므로
-            // skippedUnconfirmed("곧 확정될 것") 카운터를 오염시키지 않도록 별도 집계한다.
-            if (prefetch.scripDividendDates().contains(key)) {
-                skippedScripDividend.incrementAndGet();
-                return;
-            }
-            // REQ-ODA-022: 확정 매칭 없음(예정 또는 CTRGT011R 미반환) → 행 생성 자체를 defer.
-            // D5: 프리페치 유형 폐기(prefetchTruncated/prefetchFailed)로 맵이 불완전한 배치에서는 어떤 미스가
-            // 유형 폐기 때문인지 개별 판별 불가하므로, 그 배치 전체에서 행별 skippedUnconfirmed 이중 집계를
-            // 억제한다(유형 카운터로만 관측). degraded=false(양 유형 모두 완주)일 때만 순수 미확정으로 집계한다.
-            if (!prefetch.degraded()) {
-                skippedUnconfirmed.incrementAndGet();
-            }
-            return;
-        }
-
-        LocalDate exDividendDate = parseDateOrNull(row.divLockDt());
-        LocalDate payDate = parseDateOrNull(row.payDt());
-
-        for (DividendAmountItem item : items) {
-            batch.add(mapToEntity(stock, eventDate, exDividendDate, payDate, item));
-        }
-    }
-
-    /** 확정 금액항목 1건 → CorporateEvent 매핑(REQ-ODA-021, 043, 046). */
-    private CorporateEvent mapToEntity(
-            Stock stock,
-            LocalDate eventDate,
-            LocalDate exDividendDate,
-            LocalDate payDate,
-            DividendAmountItem item) {
-        return CorporateEvent.builder()
-                .stock(stock)
-                .eventType(EventType.DIVIDEND)
-                .eventDate(eventDate)
-                .exDividendDate(exDividendDate)
-                .eventSubtype(eventSubtypeOf(item.rghtTypeCd()))
-                .payDate(payDate)
-                .cashAmount(item.cashAmount())
-                .currencyCode(item.currencyCode())
-                .cashRate(item.cashRate())
-                .stockRate(item.stockRate())
-                .build();
-    }
-
-    /** REQ-ODA-046: rght_type_cd → event_subtype 라벨. */
-    private String eventSubtypeOf(String rghtTypeCd) {
-        return DividendAmountPrefetcher.RIGHT_TYPE_SPECIAL.equals(rghtTypeCd)
-                ? EVENT_SUBTYPE_SPECIAL
-                : EVENT_SUBTYPE_GENERAL;
     }
 
     /** 게이트를 경유해 종목별 권리종합을 조회한다(REQ-OVE-021 — NCOD=US, ST/ED 공백=오늘±3개월). */
@@ -381,17 +232,5 @@ public class OverseasRightsCollectionService {
                                 .build();
         return guardedKisExecutor.execute(
                 session, uriCustomizer, TR_ID, KisOverseasRightsResponse.class);
-    }
-
-    /** yyyyMMdd 날짜 파싱 — null/공백/형식 오류 시 null 반환. */
-    private LocalDate parseDateOrNull(String raw) {
-        if (raw == null || raw.isBlank()) {
-            return null;
-        }
-        try {
-            return LocalDate.parse(raw.trim(), DATE_FMT);
-        } catch (DateTimeParseException e) {
-            return null;
-        }
     }
 }
