@@ -24,6 +24,8 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
  *   <li>{@code facilityCodes}: {@code [FNSQ, FNYX, FNQC, FORF, FNRA]} — 시설 시대(2009~2018-07-31, FNQC
  *       부재·FNRA 존재)와 CNMS 오버랩일(2018-08-01+, FNQC 존재) 전 시대의 합집합. 그날 HTTP 200인 파일만 합산한다(plan.md OQ5).
  *   <li>{@code cdnBaseUrl}: {@code https://cdn.finra.org} — 무인증 정적 파일 CDN.
+ *   <li>{@code maxFileSizeBytes}: 20,000,000(20MB) — 최대 규모 통합 CNMS 파일도 평문·수천 종목 규모라 여유 있게 잡은
+ *       상한(코드리뷰 Fix 2).
  * </ul>
  */
 // @MX:NOTE: [AUTO] 전용 캡 — KIS max-windows-per-target(160) 미상속, 무인증 CDN이라 캡을 크게 잡음(1000일/크론);
@@ -49,6 +51,13 @@ public class FinraCdnShortSaleBackfillProperties {
 
     /** FINRA CDN 베이스 URL(무인증). */
     private String cdnBaseUrl = "https://cdn.finra.org";
+
+    /**
+     * CDN 파일 1건당 허용 최대 응답 크기(bytes, 기본 20MB). 가장 큰 시대의 통합 CNMS 파일도 평문·수천 종목 규모라 여유 있게 잡은 상한이며, 이를
+     * 초과하면 비정상 응답으로 간주해 {@link FinraCdnFetchResult.AbsenceReason#TRANSIENT_ERROR}로 흡수한다(코드리뷰 Fix
+     * 2).
+     */
+    private int maxFileSizeBytes = 20_000_000;
 
     public String getCron() {
         return cron;
@@ -96,5 +105,13 @@ public class FinraCdnShortSaleBackfillProperties {
 
     public void setCdnBaseUrl(String cdnBaseUrl) {
         this.cdnBaseUrl = cdnBaseUrl;
+    }
+
+    public int getMaxFileSizeBytes() {
+        return maxFileSizeBytes;
+    }
+
+    public void setMaxFileSizeBytes(int maxFileSizeBytes) {
+        this.maxFileSizeBytes = maxFileSizeBytes;
     }
 }

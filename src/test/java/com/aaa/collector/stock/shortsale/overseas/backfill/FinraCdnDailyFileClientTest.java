@@ -229,4 +229,44 @@ class FinraCdnDailyFileClientTest {
             mockServer.verify();
         }
     }
+
+    @Nested
+    @DisplayName("응답 크기 상한 (코드리뷰 Fix 2)")
+    class ResponseSizeGuard {
+
+        @Test
+        @DisplayName("응답 본문이 maxFileSizeBytes를 초과하면 Absent(TRANSIENT_ERROR)로 흡수하고 본문을 반환하지 않는다")
+        void oversizedResponse_rejectedAsTransientError() {
+            properties.setMaxFileSizeBytes(10);
+            String oversizedBody = "0123456789ABCDEF";
+
+            mockServer
+                    .expect(requestTo(cnmsUrl("20180801")))
+                    .andRespond(withSuccess(oversizedBody, MediaType.TEXT_PLAIN));
+
+            FinraCdnFetchResult result = client.fetch(LocalDate.of(2018, 8, 1));
+
+            mockServer.verify();
+            assertThat(result).isInstanceOf(FinraCdnFetchResult.Absent.class);
+            assertThat(((FinraCdnFetchResult.Absent) result).reason())
+                    .isEqualTo(FinraCdnFetchResult.AbsenceReason.TRANSIENT_ERROR);
+        }
+
+        @Test
+        @DisplayName("응답 본문이 maxFileSizeBytes 이내면 정상적으로 Found를 반환한다")
+        void withinLimitResponse_returnsFound() {
+            properties.setMaxFileSizeBytes(10);
+            String body = "SMALL";
+
+            mockServer
+                    .expect(requestTo(cnmsUrl("20180801")))
+                    .andRespond(withSuccess(body, MediaType.TEXT_PLAIN));
+
+            FinraCdnFetchResult result = client.fetch(LocalDate.of(2018, 8, 1));
+
+            mockServer.verify();
+            assertThat(result).isInstanceOf(FinraCdnFetchResult.Found.class);
+            assertThat(((FinraCdnFetchResult.Found) result).fileBodies()).containsExactly(body);
+        }
+    }
 }

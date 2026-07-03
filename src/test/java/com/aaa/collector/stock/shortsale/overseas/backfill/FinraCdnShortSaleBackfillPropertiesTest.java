@@ -61,6 +61,12 @@ class FinraCdnShortSaleBackfillPropertiesTest {
         void cdnBaseUrl_defaultIsFinraCdn() {
             assertThat(properties.getCdnBaseUrl()).isEqualTo("https://cdn.finra.org");
         }
+
+        @Test
+        @DisplayName("maxFileSizeBytes 기본값 = 20,000,000(20MB) (코드리뷰 Fix 2)")
+        void maxFileSizeBytes_defaultIs20Megabytes() {
+            assertThat(properties.getMaxFileSizeBytes()).isEqualTo(20_000_000);
+        }
     }
 
     @Nested
@@ -107,6 +113,13 @@ class FinraCdnShortSaleBackfillPropertiesTest {
         void setZone_appliesValue() {
             properties.setZone("UTC");
             assertThat(properties.getZone()).isEqualTo("UTC");
+        }
+
+        @Test
+        @DisplayName("maxFileSizeBytes setter 적용 (코드리뷰 Fix 2)")
+        void setMaxFileSizeBytes_appliesValue() {
+            properties.setMaxFileSizeBytes(1_000);
+            assertThat(properties.getMaxFileSizeBytes()).isEqualTo(1_000);
         }
     }
 }

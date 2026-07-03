@@ -87,13 +87,23 @@ public class FinraCdnDailyFileClient {
     /**
      * 단일 URL을 GET하고 HTTP 상태·본문을 반환한다. 403/404는 예외로 승격하지 않고 상태 코드로 흡수한다(REQ-BACKFILL-115).
      * 5xx·타임아웃·연결 실패는 일시적 오류로 흡수해 {@link FetchAttempt#transientError()}로 반환한다(코드리뷰 Fix 1) — 사이클 전체가
-     * 아니라 그날 하루만 실패로 처리되도록 {@link #fetch(LocalDate)}가 즉시 중단한다.
+     * 아니라 그날 하루만 실패로 처리되도록 {@link #fetch(LocalDate)}가 즉시 중단한다. 응답 본문이 {@code
+     * properties.maxFileSizeBytes}를 초과하면 동일하게 일시적 오류로 흡수한다(코드리뷰 Fix 2).
      */
     private FetchAttempt attempt(String url) {
         try {
             ResponseEntity<String> response =
                     finraCdnRestClient.get().uri(url).retrieve().toEntity(String.class);
-            return new FetchAttempt(response.getStatusCode(), response.getBody(), false);
+            String body = response.getBody();
+            if (body != null && body.length() > properties.getMaxFileSizeBytes()) {
+                log.warn(
+                        "[finra-cdn-backfill] 응답 크기 상한 초과 — url={}, size={}, limit={}",
+                        url,
+                        body.length(),
+                        properties.getMaxFileSizeBytes());
+                return new FetchAttempt(null, null, true);
+            }
+            return new FetchAttempt(response.getStatusCode(), body, false);
         } catch (HttpClientErrorException.Forbidden | HttpClientErrorException.NotFound e) {
             return new FetchAttempt(e.getStatusCode(), null, false);
         } catch (HttpServerErrorException e) {
