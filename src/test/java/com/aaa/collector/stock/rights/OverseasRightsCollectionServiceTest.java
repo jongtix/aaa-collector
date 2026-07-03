@@ -126,7 +126,7 @@ class OverseasRightsCollectionServiceTest {
     }
 
     private DividendAmountPrefetch emptyPrefetch() {
-        return new DividendAmountPrefetch(Map.of(), 0, 0);
+        return new DividendAmountPrefetch(Map.of(), Set.of(), 0, 0);
     }
 
     /** 단일 (symbol, acplBassDt) 키에 항목 리스트를 매핑한 정상(비degraded) 프리페치. */
@@ -134,7 +134,13 @@ class OverseasRightsCollectionServiceTest {
             String symbol, LocalDate acplBassDt, List<DividendAmountItem> items) {
         Map<DividendAmountKey, List<DividendAmountItem>> map =
                 Map.of(new DividendAmountKey(symbol, acplBassDt), List.copyOf(items));
-        return new DividendAmountPrefetch(map, 0, 0);
+        return new DividendAmountPrefetch(map, Set.of(), 0, 0);
+    }
+
+    /** 단일 (symbol, acplBassDt) 키가 74(스크립배당)로 확정 관측된 프리페치(amountsByKey는 비어 있음). */
+    private DividendAmountPrefetch scripPrefetch(String symbol, LocalDate acplBassDt) {
+        return new DividendAmountPrefetch(
+                Map.of(), Set.of(new DividendAmountKey(symbol, acplBassDt)), 0, 0);
     }
 
     @Nested
@@ -456,7 +462,7 @@ class OverseasRightsCollectionServiceTest {
                             response(List.of(cashDividendRow("20260511", "20260511", "20260514"))));
             // 유형 폐기(절단)로 맵이 비어있는 degraded 프리페치
             when(dividendAmountPrefetcher.prefetch(any(LeaseSession.class), any()))
-                    .thenReturn(new DividendAmountPrefetch(Map.of(), 1, 0));
+                    .thenReturn(new DividendAmountPrefetch(Map.of(), Set.of(), 1, 0));
 
             OverseasRightsCollectionResult result = service.collect();
 
@@ -481,7 +487,7 @@ class OverseasRightsCollectionServiceTest {
                     .thenReturn(
                             response(List.of(cashDividendRow("20260511", "20260511", "20260514"))));
             when(dividendAmountPrefetcher.prefetch(any(LeaseSession.class), any()))
-                    .thenReturn(new DividendAmountPrefetch(Map.of(), 0, 2));
+                    .thenReturn(new DividendAmountPrefetch(Map.of(), Set.of(), 0, 2));
 
             OverseasRightsCollectionResult result = service.collect();
 
@@ -693,7 +699,7 @@ class OverseasRightsCollectionServiceTest {
                             new DividendAmountKey("SPY", eventDate),
                             List.of(item(RIGHT_TYPE_GENERAL, "1.50000", "USD")));
             when(dividendAmountPrefetcher.prefetch(any(LeaseSession.class), any()))
-                    .thenReturn(new DividendAmountPrefetch(map, 0, 0));
+                    .thenReturn(new DividendAmountPrefetch(map, Set.of(), 0, 0));
 
             // Act
             OverseasRightsCollectionResult result = service.collect();

@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.when;
 
 import com.aaa.collector.kis.gate.GuardedKisExecutor;
@@ -44,6 +45,7 @@ class DividendAmountPrefetcherTest {
     private static final String PERIOD_RIGHTS_TR_ID = "CTRGT011R";
     private static final String RIGHT_TYPE_GENERAL = DividendAmountPrefetcher.RIGHT_TYPE_GENERAL;
     private static final String RIGHT_TYPE_SPECIAL = DividendAmountPrefetcher.RIGHT_TYPE_SPECIAL;
+    private static final String RIGHT_TYPE_SCRIP = DividendAmountPrefetcher.RIGHT_TYPE_SCRIP;
 
     @Mock private GuardedKisExecutor guardedKisExecutor;
     @Mock private HealthyKeySelector healthyKeySelector;
@@ -52,11 +54,20 @@ class DividendAmountPrefetcherTest {
     private LeaseSession session;
 
     @BeforeEach
-    void setUp() {
+    void setUp() throws Exception {
         prefetcher = new DividendAmountPrefetcher(guardedKisExecutor);
         KeyLeaseRegistry keyLeaseRegistry = new KeyLeaseRegistry(healthyKeySelector);
         when(healthyKeySelector.selectHealthy()).thenReturn(List.of(ISA));
         session = keyLeaseRegistry.openSession();
+        // 기본값: 74(스크립배당)는 빈 응답 — 74 관측을 명시적으로 검증하는 테스트만 재정의한다
+        lenient()
+                .when(
+                        guardedKisExecutor.execute(
+                                any(LeaseSession.class),
+                                argThat(rightTypeIs(RIGHT_TYPE_SCRIP)),
+                                eq(PERIOD_RIGHTS_TR_ID),
+                                eq(KisPeriodRightsResponse.class)))
+                .thenReturn(emptyPeriodRightsResponse());
     }
 
     private KisPeriodRightsResponse.PeriodRightsRow periodRightsRow(
@@ -277,8 +288,8 @@ class DividendAmountPrefetcherTest {
         }
 
         @Test
-        @DisplayName("03·75 둘 다 페이징 개시 전 실패 — 빈 맵, prefetchFailed=2(REQ-ODA-060)")
-        void bothTypesFailBeforePagingStarts_emptyMap() throws Exception {
+        @DisplayName("03·75·74 셋 다 페이징 개시 전 실패 — 빈 맵, prefetchFailed=3(REQ-ODA-060)")
+        void allTypesFailBeforePagingStarts_emptyMap() throws Exception {
             when(guardedKisExecutor.execute(
                             any(LeaseSession.class),
                             any(),
@@ -288,8 +299,9 @@ class DividendAmountPrefetcherTest {
 
             DividendAmountPrefetch result = prefetcher.prefetch(session, Set.of("AAPL"));
 
-            assertThat(result.prefetchFailed()).isEqualTo(2);
+            assertThat(result.prefetchFailed()).isEqualTo(3);
             assertThat(result.amountsByKey()).isEmpty();
+            assertThat(result.scripDividendDates()).isEmpty();
         }
     }
 
@@ -614,6 +626,138 @@ class DividendAmountPrefetcherTest {
             // confirmedRow 헬퍼는 cash_alct_rt="0" 고정 — scale 4로 정규화되는지만 확인
             assertThat(item.cashRate()).isEqualByComparingTo("0.0000");
             assertThat(item.cashRate().scale()).isEqualTo(4);
+        }
+    }
+
+    @Nested
+    @DisplayName("스크립배당(74) 별도 관측 — 금액 맵 오염 방지 (aaa-infra#64, REQ-ODA-070~072)")
+    class ScripDividendObservation {
+
+        @Test
+        @DisplayName("74 확정 매칭 — scripDividendDates에만 반영, amountsByKey에는 절대 섞이지 않는다")
+        void confirmedScripRow_addedToScripSetOnly_neverMergedIntoAmountsMap() throws Exception {
+            stubType(RIGHT_TYPE_GENERAL, emptyPeriodRightsResponse());
+            stubType(RIGHT_TYPE_SPECIAL, emptyPeriodRightsResponse());
+            stubType(
+                    RIGHT_TYPE_SCRIP,
+                    periodRightsResponse(
+                            List.of(
+                                    periodRightsRow(
+                                            "FCT",
+                                            RIGHT_TYPE_SCRIP,
+                                            "20260324",
+                                            "0.00000",
+                                            "0",
+                                            "0.993",
+                                            "USD",
+                                            "Y")),
+                            null,
+                            null));
+
+            DividendAmountPrefetch result = prefetcher.prefetch(session, Set.of("FCT"));
+
+            DividendAmountKey key =
+                    new DividendAmountKey("FCT", java.time.LocalDate.of(2026, 3, 24));
+            assertThat(result.scripDividendDates()).containsExactly(key);
+            assertThat(result.amountsByKey()).isEmpty();
+        }
+
+        @Test
+        @DisplayName("74 확정 매칭과 03 확정 매칭이 동일 (symbol, acpl_bass_dt)에 병존 — 서로 분리된 컬렉션에 각각 반영")
+        void scripAndGeneralSameKey_keptInSeparateCollections() throws Exception {
+            stubType(
+                    RIGHT_TYPE_GENERAL,
+                    periodRightsResponse(
+                            List.of(
+                                    confirmedRow(
+                                            "AAPL",
+                                            RIGHT_TYPE_GENERAL,
+                                            "20260511",
+                                            "0.26000",
+                                            "USD")),
+                            null,
+                            null));
+            stubType(RIGHT_TYPE_SPECIAL, emptyPeriodRightsResponse());
+            stubType(
+                    RIGHT_TYPE_SCRIP,
+                    periodRightsResponse(
+                            List.of(
+                                    confirmedRow(
+                                            "AAPL",
+                                            RIGHT_TYPE_SCRIP,
+                                            "20260511",
+                                            "0.00000",
+                                            "USD")),
+                            null,
+                            null));
+
+            DividendAmountPrefetch result = prefetcher.prefetch(session, Set.of("AAPL"));
+
+            DividendAmountKey key =
+                    new DividendAmountKey("AAPL", java.time.LocalDate.of(2026, 5, 11));
+            assertThat(result.scripDividendDates()).containsExactly(key);
+            assertThat(result.amountsByKey()).containsOnlyKeys(key);
+            assertThat(result.amountsByKey().get(key)).hasSize(1);
+            assertThat(result.amountsByKey().get(key).getFirst().rghtTypeCd())
+                    .isEqualTo(RIGHT_TYPE_GENERAL);
+        }
+
+        @Test
+        @DisplayName("74 dfnt_yn=N(예정) 행 — scripDividendDates에서도 제외")
+        void pendingScripRow_excludedFromScripSet() throws Exception {
+            stubType(RIGHT_TYPE_GENERAL, emptyPeriodRightsResponse());
+            stubType(RIGHT_TYPE_SPECIAL, emptyPeriodRightsResponse());
+            stubType(
+                    RIGHT_TYPE_SCRIP,
+                    periodRightsResponse(
+                            List.of(
+                                    periodRightsRow(
+                                            "FCT",
+                                            RIGHT_TYPE_SCRIP,
+                                            "20260324",
+                                            "0.00000",
+                                            "0",
+                                            "0.993",
+                                            "USD",
+                                            "N")),
+                            null,
+                            null));
+
+            DividendAmountPrefetch result = prefetcher.prefetch(session, Set.of("FCT"));
+
+            assertThat(result.scripDividendDates()).isEmpty();
+        }
+
+        @Test
+        @DisplayName("74 페이징 도중 실패 — 74만 폐기(FAILED), scripDividendDates 빈 채로, 03/75는 독립적으로 완주")
+        void scripTypeFailsMidway_othersStillSucceed() throws Exception {
+            stubType(
+                    RIGHT_TYPE_GENERAL,
+                    periodRightsResponse(
+                            List.of(
+                                    confirmedRow(
+                                            "AAPL",
+                                            RIGHT_TYPE_GENERAL,
+                                            "20260511",
+                                            "0.26000",
+                                            "USD")),
+                            null,
+                            null));
+            stubType(RIGHT_TYPE_SPECIAL, emptyPeriodRightsResponse());
+            when(guardedKisExecutor.execute(
+                            any(LeaseSession.class),
+                            argThat(rightTypeIs(RIGHT_TYPE_SCRIP)),
+                            eq(PERIOD_RIGHTS_TR_ID),
+                            eq(KisPeriodRightsResponse.class)))
+                    .thenThrow(new RestClientException("boom"));
+
+            DividendAmountPrefetch result = prefetcher.prefetch(session, Set.of("AAPL"));
+
+            assertThat(result.prefetchFailed()).isEqualTo(1);
+            assertThat(result.scripDividendDates()).isEmpty();
+            assertThat(result.amountsByKey())
+                    .containsKey(
+                            new DividendAmountKey("AAPL", java.time.LocalDate.of(2026, 5, 11)));
         }
     }
 

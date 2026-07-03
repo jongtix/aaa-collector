@@ -14,6 +14,7 @@ import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -55,6 +56,13 @@ class DividendAmountPrefetcher {
     /** 권리유형코드 — 특별배당(REQ-ODA-010, RD-11). 배당옵션(74)은 제외(Exclusion #8). */
     static final String RIGHT_TYPE_SPECIAL = "75";
 
+    /**
+     * 권리유형코드 — 스크립/주식배당(배당옵션, Exclusion #8). 금액 병합 맵({@link
+     * DividendAmountPrefetch#amountsByKey()})에는 절대 섞지 않고, 확정 매칭 날짜만 별도 관측한다(aaa-infra#64,
+     * REQ-ODA-070~072).
+     */
+    static final String RIGHT_TYPE_SCRIP = "74";
+
     private static final String DFNT_YN_CONFIRMED = "Y";
 
     /** 조회 윈도우 폭 — rights-by-ice 오늘±3개월 재사용(RD-4). */
@@ -87,16 +95,21 @@ class DividendAmountPrefetcher {
     private final GuardedKisExecutor guardedKisExecutor;
 
     /**
-     * CTRGT011R을 03·75 각각 독립 전체조회+페이징하여 금액 맵을 구축한다(REQ-ODA-010, 017).
+     * CTRGT011R을 03·75·74 각각 독립 전체조회+페이징하여 금액 맵(03/75)과 스크립배당 관측 날짜 집합(74)을 구축한다(REQ-ODA-010, 017,
+     * aaa-infra#64).
      *
-     * <p>한 유형의 페이징 실패/절단이 다른 유형에 영향을 주지 않는다. 두 유형 모두 페이징 개시 전에 실패하면(세션/토큰 등, REQ-ODA-060) 빈 맵으로
-     * 진행한다 — 결과적으로 이번 배치는 해외 배당 행을 하나도 생성하지 않는다(REQ-ODA-022 경유, 호출자 책임).
+     * <p>한 유형의 페이징 실패/절단이 다른 유형에 영향을 주지 않는다. 세 유형 모두 페이징 개시 전에 실패하면(세션/토큰 등, REQ-ODA-060) 빈 맵/빈
+     * 집합으로 진행한다 — 결과적으로 이번 배치는 해외 배당 행을 하나도 생성하지 않는다(REQ-ODA-022 경유, 호출자 책임).
+     *
+     * <p>74(스크립/주식배당)는 {@code cash_alct_rt}/{@code alct_frcr_unpr}가 0으로 오기 때문에 금액 병합 맵에는 절대 반영하지
+     * 않는다 — 날짜만 별도 {@link DividendAmountPrefetch#scripDividendDates()}로 분리 보존한다(REQ-ODA-071).
      *
      * @param session per-batch lease 세션(호출자가 연 세션을 그대로 상속)
      * @param trackedSymbols 활성 미국 추적 종목 심볼 집합(REQ-ODA-013)
-     * @return 병합된 금액 맵과 프리페치 관측 카운터
+     * @return 병합된 금액 맵·스크립배당 관측 집합·프리페치 관측 카운터
      */
-    @SuppressWarnings("PMD.UseConcurrentHashMap") // 단일 스레드 빌드 후 Map.copyOf로 동결, 이후 읽기 전용 공유
+    @SuppressWarnings(
+            "PMD.UseConcurrentHashMap") // 단일 스레드 빌드 후 Map.copyOf/Set.copyOf로 동결, 이후 읽기 전용 공유
     DividendAmountPrefetch prefetch(LeaseSession session, Set<String> trackedSymbols) {
         LocalDate nyToday = LocalDate.now(NEW_YORK);
         // D6: KST/ET 윈도우 기준시각 비대칭을 경계 ±1일 패딩으로 흡수(RD-4)
@@ -109,16 +122,23 @@ class DividendAmountPrefetcher {
                 prefetchType(session, RIGHT_TYPE_GENERAL, trackedSymbols, startDate, endDate);
         TypePrefetchOutcome special =
                 prefetchType(session, RIGHT_TYPE_SPECIAL, trackedSymbols, startDate, endDate);
+        TypePrefetchOutcome scrip =
+                prefetchType(session, RIGHT_TYPE_SCRIP, trackedSymbols, startDate, endDate);
 
         Map<DividendAmountKey, List<DividendAmountItem>> merged = new HashMap<>();
+        Set<DividendAmountKey> scripDividendDates = new HashSet<>();
         AtomicInteger prefetchTruncated = new AtomicInteger();
         AtomicInteger prefetchFailed = new AtomicInteger();
 
         applyOutcome(merged, general, RIGHT_TYPE_GENERAL, prefetchTruncated, prefetchFailed);
         applyOutcome(merged, special, RIGHT_TYPE_SPECIAL, prefetchTruncated, prefetchFailed);
+        applyScripOutcome(scripDividendDates, scrip, prefetchTruncated, prefetchFailed);
 
         return new DividendAmountPrefetch(
-                Map.copyOf(merged), prefetchTruncated.get(), prefetchFailed.get());
+                Map.copyOf(merged),
+                Set.copyOf(scripDividendDates),
+                prefetchTruncated.get(),
+                prefetchFailed.get());
     }
 
     /**
@@ -155,6 +175,41 @@ class DividendAmountPrefetcher {
                 log.error(
                         "[overseas-rights] CTRGT011R 프리페치 페이징 실패 — rghtTypeCd={} 폐기(fail-closed)",
                         rghtTypeCd);
+            }
+        }
+    }
+
+    /**
+     * 74(스크립/주식배당) 프리페치 결과를 관측 집합에 반영하거나(SUCCESS), 폐기하며 관측 카운터를 증가시킨다(TRUNCATED/FAILED). {@link
+     * #applyOutcome}과 달리 금액 병합 맵이 아니라 날짜 키 집합에만 반영한다(REQ-ODA-071 — 74는 cash 필드가 0으로 오므로 병합 맵 오염
+     * 방지).
+     */
+    @SuppressWarnings("PMD.GuardLogStatement") // debug 파라미터 구성 비용은 무시 가능
+    private void applyScripOutcome(
+            Set<DividendAmountKey> scripDividendDates,
+            TypePrefetchOutcome outcome,
+            AtomicInteger prefetchTruncated,
+            AtomicInteger prefetchFailed) {
+        switch (outcome.status()) {
+            case SUCCESS -> {
+                scripDividendDates.addAll(outcome.amountsByKey().keySet());
+                log.debug(
+                        "[overseas-rights] CTRGT011R 프리페치 성공 — rghtTypeCd={}, entries={}",
+                        RIGHT_TYPE_SCRIP,
+                        outcome.amountsByKey().size());
+            }
+            case TRUNCATED -> {
+                prefetchTruncated.incrementAndGet();
+                log.error(
+                        "[overseas-rights] CTRGT011R 프리페치 MAX_PAGES({}) 절단 — rghtTypeCd={} 폐기(fail-closed)",
+                        MAX_PREFETCH_PAGES_PER_TYPE,
+                        RIGHT_TYPE_SCRIP);
+            }
+            case FAILED -> {
+                prefetchFailed.incrementAndGet();
+                log.error(
+                        "[overseas-rights] CTRGT011R 프리페치 페이징 실패 — rghtTypeCd={} 폐기(fail-closed)",
+                        RIGHT_TYPE_SCRIP);
             }
         }
     }
