@@ -5,10 +5,13 @@ import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatusCode;
 import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.HttpClientErrorException;
+import org.springframework.web.client.HttpServerErrorException;
+import org.springframework.web.client.ResourceAccessException;
 import org.springframework.web.client.RestClient;
 
 /**
@@ -22,6 +25,7 @@ import org.springframework.web.client.RestClient;
 // @MX:NOTE: [AUTO] CNMS 우선 규칙 = 2018-08-01 CNMS·시설 파일 이중 존재 이중계상 방지; 403/404 구분은 관측성 목적이며
 // 종료 신호로 해석하지 않음(REQ-BACKFILL-115a)
 // @MX:SPEC: SPEC-COLLECTOR-BACKFILL-008
+@Slf4j
 @Component
 @RequiredArgsConstructor
 public class FinraCdnDailyFileClient {
@@ -43,6 +47,10 @@ public class FinraCdnDailyFileClient {
         String dateSegment = tradeDate.format(DATE_FORMAT);
 
         FetchAttempt cnmsAttempt = attempt(fileUrl(CNMS_FACILITY, dateSegment));
+        if (cnmsAttempt.transientError()) {
+            return new FinraCdnFetchResult.Absent(
+                    FinraCdnFetchResult.AbsenceReason.TRANSIENT_ERROR);
+        }
         if (cnmsAttempt.status().is2xxSuccessful()) {
             return new FinraCdnFetchResult.Found(List.of(cnmsAttempt.body()));
         }
@@ -50,6 +58,10 @@ public class FinraCdnDailyFileClient {
         List<String> fileBodies = new ArrayList<>();
         for (String facilityCode : properties.getFacilityCodes()) {
             FetchAttempt attempt = attempt(fileUrl(facilityCode, dateSegment));
+            if (attempt.transientError()) {
+                return new FinraCdnFetchResult.Absent(
+                        FinraCdnFetchResult.AbsenceReason.TRANSIENT_ERROR);
+            }
             if (attempt.status().is2xxSuccessful()) {
                 fileBodies.add(attempt.body());
             }
@@ -72,16 +84,32 @@ public class FinraCdnDailyFileClient {
         return "/equity/regsho/daily/" + facilityCode + "shvol" + dateSegment + ".txt";
     }
 
-    /** 단일 URL을 GET하고 HTTP 상태·본문을 반환한다. 403/404는 예외로 승격하지 않고 상태 코드로 흡수한다(REQ-BACKFILL-115). */
+    /**
+     * 단일 URL을 GET하고 HTTP 상태·본문을 반환한다. 403/404는 예외로 승격하지 않고 상태 코드로 흡수한다(REQ-BACKFILL-115).
+     * 5xx·타임아웃·연결 실패는 일시적 오류로 흡수해 {@link FetchAttempt#transientError()}로 반환한다(코드리뷰 Fix 1) — 사이클 전체가
+     * 아니라 그날 하루만 실패로 처리되도록 {@link #fetch(LocalDate)}가 즉시 중단한다.
+     */
     private FetchAttempt attempt(String url) {
         try {
             ResponseEntity<String> response =
                     finraCdnRestClient.get().uri(url).retrieve().toEntity(String.class);
-            return new FetchAttempt(response.getStatusCode(), response.getBody());
+            return new FetchAttempt(response.getStatusCode(), response.getBody(), false);
         } catch (HttpClientErrorException.Forbidden | HttpClientErrorException.NotFound e) {
-            return new FetchAttempt(e.getStatusCode(), null);
+            return new FetchAttempt(e.getStatusCode(), null, false);
+        } catch (HttpServerErrorException e) {
+            log.warn(
+                    "[finra-cdn-backfill] FINRA CDN 5xx 응답 — url={}, message={}",
+                    url,
+                    e.getMessage());
+            return new FetchAttempt(null, null, true);
+        } catch (ResourceAccessException e) {
+            log.warn(
+                    "[finra-cdn-backfill] FINRA CDN 연결/타임아웃 오류 — url={}, message={}",
+                    url,
+                    e.getMessage());
+            return new FetchAttempt(null, null, true);
         }
     }
 
-    private record FetchAttempt(HttpStatusCode status, String body) {}
+    private record FetchAttempt(HttpStatusCode status, String body, boolean transientError) {}
 }

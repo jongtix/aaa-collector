@@ -7,6 +7,7 @@ import static org.springframework.test.web.client.match.MockRestRequestMatchers.
 import static org.springframework.test.web.client.response.MockRestResponseCreators.withStatus;
 import static org.springframework.test.web.client.response.MockRestResponseCreators.withSuccess;
 
+import java.io.IOException;
 import java.time.LocalDate;
 import java.util.List;
 import org.junit.jupiter.api.BeforeEach;
@@ -176,6 +177,56 @@ class FinraCdnDailyFileClientTest {
             assertThat(result).isInstanceOf(FinraCdnFetchResult.Absent.class);
             assertThat(((FinraCdnFetchResult.Absent) result).reason())
                     .isEqualTo(FinraCdnFetchResult.AbsenceReason.NOT_GENERATED_404);
+        }
+    }
+
+    @Nested
+    @DisplayName("일시적 오류 — 5xx·타임아웃 (코드리뷰 Fix 1)")
+    class TransientErrors {
+
+        @Test
+        @DisplayName("CNMS 503 → Absent(TRANSIENT_ERROR)를 반환하고 예외를 전파하지 않는다")
+        void cnms503_returnsTransientErrorWithoutThrowing() {
+            mockServer
+                    .expect(requestTo(cnmsUrl("20180801")))
+                    .andRespond(withStatus(HttpStatus.SERVICE_UNAVAILABLE));
+
+            FinraCdnFetchResult result = client.fetch(LocalDate.of(2018, 8, 1));
+
+            mockServer.verify();
+            assertThat(result).isInstanceOf(FinraCdnFetchResult.Absent.class);
+            assertThat(((FinraCdnFetchResult.Absent) result).reason())
+                    .isEqualTo(FinraCdnFetchResult.AbsenceReason.TRANSIENT_ERROR);
+        }
+
+        @Test
+        @DisplayName("CNMS 타임아웃/연결 실패 → Absent(TRANSIENT_ERROR)를 반환하고 예외를 전파하지 않는다")
+        void cnmsTimeout_returnsTransientErrorWithoutThrowing() {
+            mockServer
+                    .expect(requestTo(cnmsUrl("20180801")))
+                    .andRespond(
+                            request -> {
+                                throw new IOException("connect timed out");
+                            });
+
+            FinraCdnFetchResult result = client.fetch(LocalDate.of(2018, 8, 1));
+
+            mockServer.verify();
+            assertThat(result).isInstanceOf(FinraCdnFetchResult.Absent.class);
+            assertThat(((FinraCdnFetchResult.Absent) result).reason())
+                    .isEqualTo(FinraCdnFetchResult.AbsenceReason.TRANSIENT_ERROR);
+        }
+
+        @Test
+        @DisplayName("CNMS 일시적 오류 시 시설 폴백을 시도하지 않고 즉시 중단한다")
+        void cnmsTransientError_doesNotAttemptFacilityFallback() {
+            mockServer
+                    .expect(requestTo(cnmsUrl("20180801")))
+                    .andRespond(withStatus(HttpStatus.SERVICE_UNAVAILABLE));
+
+            client.fetch(LocalDate.of(2018, 8, 1));
+
+            mockServer.verify();
         }
     }
 }

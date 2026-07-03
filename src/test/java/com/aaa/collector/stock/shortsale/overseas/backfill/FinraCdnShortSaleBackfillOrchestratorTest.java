@@ -351,6 +351,67 @@ class FinraCdnShortSaleBackfillOrchestratorTest {
     }
 
     // ────────────────────────────────────────────────────────────────────
+    // 일시적 오류(TRANSIENT_ERROR) 시 안전 종료 (코드리뷰 Fix 1)
+    // ────────────────────────────────────────────────────────────────────
+
+    @Nested
+    @DisplayName("일시적 오류 시 사이클 안전 종료 (코드리뷰 Fix 1)")
+    class TransientErrorTermination {
+
+        @Test
+        @DisplayName("일시적 오류를 만난 날짜 이전까지만 처리하고, 예외 없이 그 이전 날짜로만 앵커를 전진시킨다(실패일 재시도 보장)")
+        void transientError_stopsCycleWithoutAdvancingPastFailedDate() {
+            properties.setFloorDate(LocalDate.of(2000, 1, 1));
+            properties.setPerCronDateCap(3);
+            LocalDate anchorDate = LocalDate.of(2013, 1, 5);
+            LocalDate day1 = LocalDate.of(2013, 1, 4);
+            LocalDate day2 = LocalDate.of(2013, 1, 3);
+            LocalDate day3 = LocalDate.of(2013, 1, 2);
+            BackfillStatus status = anchor(1L, BackfillStatusType.IN_PROGRESS, anchorDate, null);
+            stubAnchorLookup(status);
+            when(stockRepository.findAllActiveOverseasTradable())
+                    .thenReturn(List.of(stock(1L, "AAPL")));
+            when(client.fetch(day1))
+                    .thenReturn(
+                            new FinraCdnFetchResult.Absent(
+                                    FinraCdnFetchResult.AbsenceReason.NOT_GENERATED_404));
+            when(client.fetch(day2))
+                    .thenReturn(
+                            new FinraCdnFetchResult.Absent(
+                                    FinraCdnFetchResult.AbsenceReason.TRANSIENT_ERROR));
+
+            orchestrator.run();
+
+            verify(client, times(1)).fetch(day1);
+            verify(client, times(1)).fetch(day2);
+            verify(client, never()).fetch(day3);
+            verify(status).advance(BackfillStatusType.IN_PROGRESS, day1, 0, 1);
+        }
+
+        @Test
+        @DisplayName("사이클 첫 날짜부터 일시적 오류면 진행분이 없어 앵커를 전진시키지 않는다")
+        void transientErrorOnFirstDate_noProgress_doesNotAdvanceAnchor() {
+            properties.setFloorDate(LocalDate.of(2000, 1, 1));
+            properties.setPerCronDateCap(3);
+            LocalDate anchorDate = LocalDate.of(2013, 1, 5);
+            LocalDate day1 = LocalDate.of(2013, 1, 4);
+            BackfillStatus status = anchor(1L, BackfillStatusType.IN_PROGRESS, anchorDate, null);
+            stubAnchorLookup(status);
+            when(stockRepository.findAllActiveOverseasTradable())
+                    .thenReturn(List.of(stock(1L, "AAPL")));
+            when(client.fetch(day1))
+                    .thenReturn(
+                            new FinraCdnFetchResult.Absent(
+                                    FinraCdnFetchResult.AbsenceReason.TRANSIENT_ERROR));
+
+            orchestrator.run();
+
+            verify(client, times(1)).fetch(any());
+            verify(status, never()).advance(any(), any(), any(Integer.class), any());
+        }
+    }
+
+    // ────────────────────────────────────────────────────────────────────
     // 신규 종목 리셋 트리거 (AC-BF-18)
     // ────────────────────────────────────────────────────────────────────
 

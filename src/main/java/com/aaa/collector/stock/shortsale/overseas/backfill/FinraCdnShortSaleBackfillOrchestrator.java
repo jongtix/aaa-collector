@@ -131,6 +131,13 @@ public class FinraCdnShortSaleBackfillOrchestrator {
                 acc.parseSkips += outcome.skipped();
                 acc.matchFailures += outcome.unmatched();
             } else if (fetchResult instanceof FinraCdnFetchResult.Absent absent) {
+                if (absent.reason() == FinraCdnFetchResult.AbsenceReason.TRANSIENT_ERROR) {
+                    log.warn(
+                            "[finra-cdn-backfill] 일시적 오류로 이번 사이클 중단 — date={}, 앵커는 전진하지 않고 다음 크론에서"
+                                    + " 동일 지점부터 재시도",
+                            date);
+                    break;
+                }
                 acc.absentDays++;
                 if (log.isDebugEnabled()) {
                     log.debug(

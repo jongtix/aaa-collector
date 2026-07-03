@@ -28,6 +28,11 @@ public sealed interface FinraCdnFetchResult {
         /** CNMS 403 — floor(2009-08-03) 이전 결측으로 추정. */
         FLOOR_BEFORE_403,
         /** CNMS 404 — 주말·휴장·미생성으로 추정. */
-        NOT_GENERATED_404
+        NOT_GENERATED_404,
+        /**
+         * 5xx·타임아웃·연결 실패 등 일시적 오류, 또는 응답 크기 상한 초과. 하루치 취득 실패로 흡수하며 오케스트레이터는 이 사유를 만나면 앵커를 전진시키지 않고
+         * 사이클을 안전 종료한다(다음 크론에서 동일 지점 재시도).
+         */
+        TRANSIENT_ERROR
     }
 }
