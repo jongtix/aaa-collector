@@ -10,6 +10,7 @@ import java.time.LocalDate;
 import java.util.List;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -25,6 +26,7 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 @ActiveProfiles({"test", "db-integration"})
 @Testcontainers
 @DisplayName("FinancialRepository 통합 테스트 (멱등 upsert, REQ-BATCH4-023)")
+@Tag("integration")
 class FinancialRepositoryTest {
 
     @Container @ServiceConnection

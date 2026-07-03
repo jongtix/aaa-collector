@@ -8,6 +8,7 @@ import java.time.LocalDate;
 import java.util.Optional;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -23,6 +24,7 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 @ActiveProfiles({"test", "db-integration"})
 @Testcontainers
 @DisplayName("MarketIndicatorRepository 통합 테스트 (INSERT IGNORE 멱등, REQ-030/-031/-032)")
+@Tag("integration")
 class MarketIndicatorRepositoryTest {
 
     @Container @ServiceConnection

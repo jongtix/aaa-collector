@@ -24,6 +24,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import javax.sql.DataSource;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -49,6 +50,7 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 @ActiveProfiles({"test", "db-integration"})
 @Testcontainers
 @DisplayName("HikariPool 풀 적정화 + 큐잉 흡수 검증 (SPEC-COLLECTOR-DBPOOL-001)")
+@Tag("integration")
 class HikariPoolQueueingTest {
 
     @Container @ServiceConnection

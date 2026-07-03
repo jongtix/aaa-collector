@@ -34,6 +34,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -52,6 +53,7 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 @ActiveProfiles({"test", "db-integration"})
 @Testcontainers
 @DisplayName("BackfillWindowExecutor 트랜잭션 통합 테스트 (AC-1/AC-2/AC-4.1/4.2)")
+@Tag("integration")
 class BackfillWindowExecutorTransactionTest {
 
     @Container @ServiceConnection

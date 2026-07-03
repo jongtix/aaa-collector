@@ -11,6 +11,7 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -28,6 +29,7 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 @Testcontainers
 @Transactional
 @DisplayName("ExtendedHoursRepository 통합 테스트 (멱등 INSERT IGNORE)")
+@Tag("integration")
 class ExtendedHoursRepositoryTest {
 
     @Container @ServiceConnection

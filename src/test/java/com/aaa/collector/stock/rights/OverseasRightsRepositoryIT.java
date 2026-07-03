@@ -13,6 +13,7 @@ import java.time.LocalDate;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -42,6 +43,7 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 @ActiveProfiles({"test", "db-integration"})
 @Testcontainers
 @DisplayName("OverseasRightsRepository IT — 해외 현금배당 형태 멱등·4컬럼 unique key 공존/충돌(경로 A)")
+@Tag("integration")
 class OverseasRightsRepositoryIT {
 
     @Container @ServiceConnection

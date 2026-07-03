@@ -15,6 +15,7 @@ import java.util.List;
 import java.util.Optional;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -33,6 +34,7 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 @Testcontainers
 @Transactional
 @DisplayName("StockGradeRepository 통합 테스트")
+@Tag("integration")
 class StockGradeRepositoryTest {
 
     private static final ZoneId KST = ZoneId.of("Asia/Seoul");

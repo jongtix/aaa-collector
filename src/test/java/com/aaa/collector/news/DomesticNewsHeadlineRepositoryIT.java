@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import java.time.LocalDateTime;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -31,6 +32,7 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 @Testcontainers
 @Transactional
 @DisplayName("DomesticNewsHeadlineRepository 회귀 IT — RENAME 후 native INSERT IGNORE 적재")
+@Tag("integration")
 class DomesticNewsHeadlineRepositoryIT {
 
     @Container @ServiceConnection

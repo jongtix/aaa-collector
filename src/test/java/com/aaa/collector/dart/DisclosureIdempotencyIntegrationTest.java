@@ -9,6 +9,7 @@ import java.time.LocalDate;
 import java.util.List;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -29,6 +30,7 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 @ActiveProfiles({"test", "db-integration"})
 @Testcontainers
 @DisplayName("DisclosureIdempotencyIntegrationTest — INSERT IGNORE 멱등성 통합 검증")
+@Tag("integration")
 class DisclosureIdempotencyIntegrationTest {
 
     @Container @ServiceConnection

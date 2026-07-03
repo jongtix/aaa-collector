@@ -15,6 +15,7 @@ import java.time.LocalDate;
 import java.util.List;
 import javax.sql.DataSource;
 import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -32,6 +33,7 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 @ActiveProfiles({"test", "db-integration"})
 @Testcontainers
 @DisplayName("ShortSaleInserter 통합 테스트 (실 MySQL 경고 캡처, REQ-OBSV-023/AC-5)")
+@Tag("integration")
 class ShortSaleInserterIntegrationTest {
 
     @Container @ServiceConnection

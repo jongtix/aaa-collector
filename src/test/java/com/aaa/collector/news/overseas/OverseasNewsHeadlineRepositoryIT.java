@@ -7,6 +7,7 @@ import com.aaa.collector.news.DomesticNewsHeadlineRepository;
 import java.time.LocalDateTime;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -36,6 +37,7 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 @Testcontainers
 @Transactional
 @DisplayName("OverseasNewsHeadlineRepository 스키마 IT — V25~V27 마이그레이션 후 컬럼 라운드트립·RENAME 공존")
+@Tag("integration")
 class OverseasNewsHeadlineRepositoryIT {
 
     @Container @ServiceConnection

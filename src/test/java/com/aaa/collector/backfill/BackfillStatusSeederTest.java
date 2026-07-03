@@ -12,6 +12,7 @@ import java.util.Set;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -33,6 +34,7 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 @ActiveProfiles({"test", "db-integration"})
 @Testcontainers
 @DisplayName("BackfillStatusSeeder 통합 테스트 (cron 진입부 lazy 시딩)")
+@Tag("integration")
 class BackfillStatusSeederTest {
 
     // SPEC-COLLECTOR-BACKFILL-007 W2 (REQ-BACKFILL-090): corporate_events 편입 → 국내 5종
