@@ -91,4 +91,20 @@
         <Class name="com.aaa.collector.kis.websocket.KisWebSocketMessageHandlerTest"/>
         <Bug pattern="CIPHER_INTEGRITY,PADDING_ORACLE,STATIC_IV"/>
     </Match>
+
+    <!--
+        DMI_CONSTANT_DB_PASSWORD / HARD_CODE_PASSWORD: SharedMySqlContainer는
+        SPEC-COLLECTOR-DBGRANT-003 M1-T1 테스트 인프라 전용 지원 클래스다. 여기서 연결에 쓰이는
+        비밀번호는 이 클래스가 소유한 테스트 전용 고정 상수(FLYWAY_PASSWORD/COLLECTOR_PASSWORD)로,
+        같은 테스트 실행 동안만 존재하는 일회성 Testcontainers MySQL 인스턴스의 계정이며 실제
+        시크릿이 아니다. SpotBugs는 "하드코딩된 리터럴이 DB 연결에 쓰였다"는 패턴만 보고 이
+        컨텍스트(컨테이너가 테스트 종료와 함께 폐기됨)를 구분하지 못하므로 이 클래스에 한해
+        제외한다(showFlywayGrants/showGrantsFor — 자격증명이 클래스 밖으로 노출되지 않도록
+        무인자 공개 메서드 + private 내부 메서드로 설계했으나, 상수 인라이닝으로 인해 SpotBugs가
+        여전히 리터럴을 탐지한다). user-approved 2026-07-04, SPEC-COLLECTOR-DBGRANT-003.
+    -->
+    <Match>
+        <Class name="com.aaa.collector.support.SharedMySqlContainer"/>
+        <Bug pattern="DMI_CONSTANT_DB_PASSWORD,HARD_CODE_PASSWORD"/>
+    </Match>
 </FindBugsFilter>

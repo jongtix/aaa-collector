@@ -15,12 +15,16 @@ aaa:
   catchup:
     enabled: false
 
-# 프로덕션은 환경변수 필수, 테스트는 빈 값으로 오버라이드
+# 프로덕션은 환경변수 필수, 테스트는 아래 값으로 오버라이드
 spring:
   flyway:
-    # 빈 값 → Flyway가 datasource 계정으로 fallback (Testcontainers @ServiceConnection 활용)
-    user: ""
-    password: ""
+    # SPEC-COLLECTOR-DBGRANT-003 M1-T1: 프로덕션 계정 분리(ADR-026)를 재현하기 위해
+    # datasource(@ServiceConnection 기본 계정) fallback을 제거하고, 제한된 flyway 계정
+    # (UPDATE 권한 없음)으로 마이그레이션을 실행한다. 값은 com.aaa.collector.support.
+    # SharedMySqlContainer의 FLYWAY_USERNAME/FLYWAY_PASSWORD 및
+    # src/test/resources/testcontainers/01-init-accounts-mirror.sql과 반드시 일치해야 한다.
+    user: flyway
+    password: flyway-test-password
   data:
     redis:
       password: ""
