@@ -454,7 +454,9 @@ public class OverseasDailyOhlcvCollectionService {
                 return null;
             }
             LocalDate tradeDate = LocalDate.parse(row.xymd(), DATE_FMT);
-            return new ParsedOhlcvRow(tradeDate, open, high, low, close, volume, tradingValue);
+            BigDecimal[] clamped = clampOhlc(symbol, row.xymd(), open, high, low, close);
+            return new ParsedOhlcvRow(
+                    tradeDate, open, clamped[0], clamped[1], close, volume, tradingValue);
         } catch (NumberFormatException e) {
             log.warn(
                     "[overseas-daily] 숫자 파싱 실패 (데이터 유실) — symbol={}, date={}, clos={}, open={}, high={}, low={}, tvol={}, tamt={}",
@@ -473,5 +475,61 @@ public class OverseasDailyOhlcvCollectionService {
     /** 가격 검증: ≤ 0 또는 > USD 100,000이면 invalid(상·하한 양방, REQ-OVOH-012). */
     private boolean isInvalidPrice(BigDecimal price) {
         return price.compareTo(BigDecimal.ZERO) <= 0 || price.compareTo(PRICE_MAX_USD) > 0;
+    }
+
+    /**
+     * OHLC 내적 정합성 클램프 (aaa-infra#60).
+     *
+     * <p><b>배경</b>: 미국 종목 daily_ohlcv에서 {@code high < max(open, close, low)} 또는 {@code low >
+     * min(open, close, high)}인 논리 위반 54건이 발견됐다. KIS {@code HHDFS76240000}을 즉시 재호출해 54건 전체를 대조한 결과
+     * 100% 동일값이 재현됐다 — 즉 컬렉터 파싱/저장 로직 버그가 아니라 KIS가 실제로 그렇게 반환하는 <b>원본 데이터 결함</b>이다. 40건은 공통 시그니처(당일
+     * 세션 실제 고점이 시가와 일치하는 날인데 KIS {@code high}가 시가보다 낮게 산정됨)를 보였고, 이는 장 시작 틱이 KIS 벤더 측 고가 집계에서 누락되는
+     * 계산 버그로 추정된다.
+     *
+     * <p><b>독립 검증(2026-07-03)</b>: Yahoo Finance(비공식 {@code v8/finance/chart})로 54건 전체를 재대조했다.
+     * 분할·배당으로 조정된 응답(예: 이후 액면분할된 종목의 과거 시세가 축소되어 반환됨)은 종가 비율로 정규화 후 비교했다. 52/54건(96%)에서 Yahoo 값이
+     * KIS와 달랐고, 그 방향은 전부 "위반을 해소하는 쪽"(더 높은 high 또는 더 낮은 low)이었다 — 동일 결함을 재현한 건은 0건. 이는 KIS 벤더 버그
+     * 가설을 반증하지 않고 오히려 corroborate한다.
+     *
+     * <p><b>왜 행을 skip하지 않고 클램프하는가</b>: 처음 검토했던 방식은 "검증 실패로 행 자체를 skip"이었으나, 이 경우 해당 거래일이 통째로 결측되어
+     * 이동평균·거래일 연속성 가정·백필 윈도우 종료 판정(카운트 기반) 등에 원래 오류(필드 1개의 미세한 값 오차)보다 더 넓은 부작용을 준다는 것이 확인되어 기각했다.
+     * 반면 클램프는 결측 없이 자체 필드(open/close/low 또는 open/close/high)만으로 내적 정합성을 회복한다.
+     *
+     * <p><b>한계</b>: 클램프는 위반을 없앨 뿐, Yahoo가 알려준 실제값(예: 정확한 고점 233.85)까지 복원하지는 않는다. Yahoo를 정정 소스로 직접
+     * 채택하는 방안은 별도로 검토했으나 기각했다 — {@code daily_ohlcv}에 벤더 출처 컬럼이 없어 추적 불가능하고, Yahoo 기본 응답 자체가 분할·배당
+     * 조정값이라 ADR-025(원주가 저장 정책)와 충돌하며, 발생빈도(54/699,504 ≈ 0.008%) 대비 상시 폴백 아키텍처 구축 비용이 과하다.
+     *
+     * <p>반환값은 {@code [clampedHigh, clampedLow]} 순서다. 클램프가 실제로 적용된 경우에만 WARN 로그를 남겨 추적 가능하게 한다.
+     */
+    private BigDecimal[] clampOhlc(
+            String symbol,
+            String xymd,
+            BigDecimal open,
+            BigDecimal high,
+            BigDecimal low,
+            BigDecimal close) {
+        BigDecimal correctHigh = open.max(close).max(low);
+        BigDecimal correctLow = open.min(close).min(high);
+        boolean highViolation = high.compareTo(correctHigh) < 0;
+        boolean lowViolation = low.compareTo(correctLow) > 0;
+
+        if (!highViolation && !lowViolation) {
+            return new BigDecimal[] {high, low};
+        }
+
+        BigDecimal clampedHigh = highViolation ? correctHigh : high;
+        BigDecimal clampedLow = lowViolation ? correctLow : low;
+        log.warn(
+                "[overseas-daily] OHLC 정합성 클램프 적용 (aaa-infra#60, KIS 원본 데이터 결함) — symbol={},"
+                        + " date={}, open={}, close={}, high={}→{}, low={}→{}",
+                symbol,
+                xymd,
+                open,
+                close,
+                high,
+                clampedHigh,
+                low,
+                clampedLow);
+        return new BigDecimal[] {clampedHigh, clampedLow};
     }
 }

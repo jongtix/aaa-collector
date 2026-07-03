@@ -106,6 +106,19 @@ class OverseasDailyOhlcvCollectionServiceTest {
                 xymd, price, price, price, price, tvol, tamt);
     }
 
+    /** OHLC를 개별 지정하는 행 생성 — 클램프(aaa-infra#60) 스큐 시나리오 검증용. */
+    private KisOverseasDailyOhlcvResponse.OverseasDailyOhlcvRow rowOhlc(
+            String xymd,
+            String open,
+            String high,
+            String low,
+            String close,
+            String tvol,
+            String tamt) {
+        return new KisOverseasDailyOhlcvResponse.OverseasDailyOhlcvRow(
+                xymd, close, open, high, low, tvol, tamt);
+    }
+
     private KisOverseasDailyOhlcvResponse response(
             String zdiv, List<KisOverseasDailyOhlcvResponse.OverseasDailyOhlcvRow> rows) {
         return new KisOverseasDailyOhlcvResponse(
@@ -416,6 +429,87 @@ class OverseasDailyOhlcvCollectionServiceTest {
             ParsedOhlcvRow saved = captor.getValue().getFirst();
             assertThat(saved.volume()).isEqualTo(42_745_060L);
             assertThat(saved.tradingValue()).isEqualTo(12_697_950_974L);
+        }
+    }
+
+    @Nested
+    @DisplayName("collect — OHLC 정합성 클램프 (aaa-infra#60)")
+    class OhlcClamp {
+
+        @Test
+        @DisplayName("high < max(open,close,low) — high를 max(open,close,low)로 상향, skip하지 않고 저장")
+        void collect_highBelowMax_clampedUpAndInserted() throws Exception {
+            // Arrange — V 2021-05-05 실측 케이스: open=233.85 > high=231.09(KIS 원본 결함)
+            stubSingle(
+                    "V",
+                    response(
+                            "4",
+                            List.of(
+                                    rowOhlc(
+                                            PREV_YMD, "233.85", "231.09", "228.66", "229.21",
+                                            "1000", "100000"))));
+
+            // Act
+            service.collect(TODAY);
+
+            // Assert — skip되지 않고 high만 233.85(=open)로 클램프되어 저장
+            @SuppressWarnings("unchecked")
+            ArgumentCaptor<List<ParsedOhlcvRow>> captor = ArgumentCaptor.forClass(List.class);
+            verify(ohlcvInserter, times(1)).insertBatch(any(), captor.capture());
+            ParsedOhlcvRow saved = captor.getValue().getFirst();
+            assertThat(saved.high()).isEqualByComparingTo("233.85");
+            assertThat(saved.low()).isEqualByComparingTo("228.66");
+        }
+
+        @Test
+        @DisplayName("low > min(open,close,high) — low를 min(open,close,high)로 하향, skip하지 않고 저장")
+        void collect_lowAboveMin_clampedDownAndInserted() throws Exception {
+            // Arrange — GS 2021-05-05 실측 케이스: low=354.01 >
+            // min(open=352.00,close=357.62,high=359.14)
+            stubSingle(
+                    "GS",
+                    response(
+                            "4",
+                            List.of(
+                                    rowOhlc(
+                                            PREV_YMD, "352.00", "359.14", "354.01", "357.62",
+                                            "1000", "100000"))));
+
+            // Act
+            service.collect(TODAY);
+
+            // Assert — skip되지 않고 low만 352.00(=open)으로 클램프되어 저장
+            @SuppressWarnings("unchecked")
+            ArgumentCaptor<List<ParsedOhlcvRow>> captor = ArgumentCaptor.forClass(List.class);
+            verify(ohlcvInserter, times(1)).insertBatch(any(), captor.capture());
+            ParsedOhlcvRow saved = captor.getValue().getFirst();
+            assertThat(saved.low()).isEqualByComparingTo("352.00");
+            assertThat(saved.high()).isEqualByComparingTo("359.14");
+        }
+
+        @Test
+        @DisplayName("OHLC 정합성 정상 행 — 클램프 미적용, 원값 그대로 저장")
+        void collect_consistentOhlc_notClamped() throws Exception {
+            // Arrange — 정상 케이스: high가 이미 max, low가 이미 min
+            stubSingle(
+                    "AAPL",
+                    response(
+                            "4",
+                            List.of(
+                                    rowOhlc(
+                                            PREV_YMD, "100.00", "105.00", "98.00", "102.00", "1000",
+                                            "100000"))));
+
+            // Act
+            service.collect(TODAY);
+
+            // Assert — 원값 그대로 저장(클램프 미개입)
+            @SuppressWarnings("unchecked")
+            ArgumentCaptor<List<ParsedOhlcvRow>> captor = ArgumentCaptor.forClass(List.class);
+            verify(ohlcvInserter, times(1)).insertBatch(any(), captor.capture());
+            ParsedOhlcvRow saved = captor.getValue().getFirst();
+            assertThat(saved.high()).isEqualByComparingTo("105.00");
+            assertThat(saved.low()).isEqualByComparingTo("98.00");
         }
     }
 
