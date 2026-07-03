@@ -499,6 +499,58 @@ class OverseasRightsCollectionServiceTest {
     }
 
     @Nested
+    @DisplayName("collect — 스크립배당(74) defer 분리 집계 (aaa-infra#64, REQ-ODA-070~072)")
+    class ScripDividendDefer {
+
+        @Test
+        @DisplayName("74 확정 매칭 — 행 생성 없이 skippedScripDividend만 증가, skippedUnconfirmed는 0")
+        void collect_scripDividendConfirmedMatch_defersToScripCounterOnly() throws Exception {
+            Stock stock = stockOf("FCT", Market.NASDAQ, AssetType.STOCK);
+            when(stockRepository.findAllActiveOverseasTradable()).thenReturn(List.of(stock));
+            when(healthyKeySelector.selectHealthy()).thenReturn(List.of(ISA));
+            when(guardedKisExecutor.execute(
+                            any(LeaseSession.class),
+                            any(),
+                            anyString(),
+                            eq(KisOverseasRightsResponse.class)))
+                    .thenReturn(
+                            response(List.of(cashDividendRow("20260324", "20260324", "20260329"))));
+            when(dividendAmountPrefetcher.prefetch(any(LeaseSession.class), any()))
+                    .thenReturn(scripPrefetch("FCT", LocalDate.of(2026, 3, 24)));
+
+            OverseasRightsCollectionResult result = service.collect();
+
+            verify(corporateEventInserter, never()).insertBatchIsolated(any(), any());
+            assertThat(result.succeededRows()).isZero();
+            assertThat(result.skippedScripDividend()).isEqualTo(1);
+            assertThat(result.skippedUnconfirmed()).isZero();
+        }
+
+        @Test
+        @DisplayName(
+                "(회귀) 74 확정 관측이 없는 기존 미확정 defer는 여전히 skippedUnconfirmed로 집계되고 skippedScripDividend는 0")
+        void collect_regularUnconfirmedDefer_stillCountsAsSkippedUnconfirmed() throws Exception {
+            Stock stock = stockOf("AAPL", Market.NASDAQ, AssetType.STOCK);
+            when(stockRepository.findAllActiveOverseasTradable()).thenReturn(List.of(stock));
+            when(healthyKeySelector.selectHealthy()).thenReturn(List.of(ISA));
+            when(guardedKisExecutor.execute(
+                            any(LeaseSession.class),
+                            any(),
+                            anyString(),
+                            eq(KisOverseasRightsResponse.class)))
+                    .thenReturn(
+                            response(List.of(cashDividendRow("20260511", "20260511", "20260514"))));
+            // dividendAmountPrefetcher는 setUp() 기본값(빈 프리페치, scripDividendDates도 빈 집합) 유지
+
+            OverseasRightsCollectionResult result = service.collect();
+
+            verify(corporateEventInserter, never()).insertBatchIsolated(any(), any());
+            assertThat(result.skippedUnconfirmed()).isEqualTo(1);
+            assertThat(result.skippedScripDividend()).isZero();
+        }
+    }
+
+    @Nested
     @DisplayName("collect — 비현금배당 skip (REQ-OVE-023a)")
     class NonCashSkip {
 

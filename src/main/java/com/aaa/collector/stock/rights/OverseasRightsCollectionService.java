@@ -125,7 +125,7 @@ public class OverseasRightsCollectionService {
                     "[overseas-rights] 모든 키 죽음 — per-stock 수집 0회, 전체 skip. attempted={}, skipped={}",
                     total,
                     total);
-            return new OverseasRightsCollectionResult(total, 0, total, 0, 0, 0, 0, 0, 0);
+            return new OverseasRightsCollectionResult(total, 0, total, 0, 0, 0, 0, 0, 0, 0);
         }
 
         // REQ-ODA-010~017: CTRGT011R 금액 프리페치 — VT 루프 전 단일 스레드로 완료(REQ-ODA-060 전면 실패 시 빈 맵)
@@ -144,6 +144,9 @@ public class OverseasRightsCollectionService {
         AtomicInteger skippedToxicRows = new AtomicInteger();
         // REQ-ODA-022: 금액 맵 미확정 매칭으로 defer된 행 수(D5 — 프리페치 유형 폐기 defer는 이중 계상 안 함)
         AtomicInteger skippedUnconfirmed = new AtomicInteger();
+        // aaa-infra#64, REQ-ODA-072: 74(스크립배당) 확정 매칭으로 defer된 행 수(skippedUnconfirmed와 분리 — 영구
+        // defer)
+        AtomicInteger skippedScripDividend = new AtomicInteger();
 
         // REQ-OVE-028: Virtual Thread executor — 종목별 블로킹을 commonPool 점유 없이 처리. parallelStream 금지.
         try (ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor()) {
@@ -159,7 +162,8 @@ public class OverseasRightsCollectionService {
                                         skippedNonCashRows,
                                         skippedValidationRows,
                                         skippedToxicRows,
-                                        skippedUnconfirmed));
+                                        skippedUnconfirmed,
+                                        skippedScripDividend));
             }
         } // close() blocks until all submitted tasks complete
 
@@ -172,12 +176,14 @@ public class OverseasRightsCollectionService {
                         skippedValidationRows.get(),
                         skippedToxicRows.get(),
                         skippedUnconfirmed.get(),
+                        skippedScripDividend.get(),
                         prefetch.prefetchTruncated(),
                         prefetch.prefetchFailed());
         log.info(
                 "[overseas-rights] 수집 완료 — attemptedStocks={}, succeededRows={}, skippedStocks={}, "
                         + "skippedNonCashRows={}, skippedValidationRows={}, skippedToxicRows={}, "
-                        + "skippedUnconfirmed={}, prefetchTruncated={}, prefetchFailed={}",
+                        + "skippedUnconfirmed={}, skippedScripDividend={}, prefetchTruncated={}, "
+                        + "prefetchFailed={}",
                 result.attemptedStocks(),
                 result.succeededRows(),
                 result.skippedStocks(),
@@ -185,13 +191,14 @@ public class OverseasRightsCollectionService {
                 result.skippedValidationRows(),
                 result.skippedToxicRows(),
                 result.skippedUnconfirmed(),
+                result.skippedScripDividend(),
                 result.prefetchTruncated(),
                 result.prefetchFailed());
         return result;
     }
 
     private OverseasRightsCollectionResult emptyResult(int total) {
-        return new OverseasRightsCollectionResult(total, 0, 0, 0, 0, 0, 0, 0, 0);
+        return new OverseasRightsCollectionResult(total, 0, 0, 0, 0, 0, 0, 0, 0, 0);
     }
 
     private void collectStock(
@@ -203,7 +210,8 @@ public class OverseasRightsCollectionService {
             AtomicInteger skippedNonCashRows,
             AtomicInteger skippedValidationRows,
             AtomicInteger skippedToxicRows,
-            AtomicInteger skippedUnconfirmed) {
+            AtomicInteger skippedUnconfirmed,
+            AtomicInteger skippedScripDividend) {
 
         String symbol = stock.getSymbol();
         try {
@@ -225,7 +233,8 @@ public class OverseasRightsCollectionService {
                         batch,
                         skippedNonCashRows,
                         skippedValidationRows,
-                        skippedUnconfirmed);
+                        skippedUnconfirmed,
+                        skippedScripDividend);
             }
 
             if (!batch.isEmpty()) {
@@ -268,11 +277,12 @@ public class OverseasRightsCollectionService {
     }
 
     /**
-     * 권리 1건을 검증·매핑하여 배치에 추가한다 (REQ-INSERT-011, REQ-ODA-020~022).
+     * 권리 1건을 검증·매핑하여 배치에 추가한다 (REQ-INSERT-011, REQ-ODA-020~022, 070~072).
      *
      * <p>비현금배당 skip(REQ-OVE-023a). 현금배당 행은 금액 맵을 {@code (symbol, record_dt)}로 조회해 리스트의 항목마다 1행을
-     * 생성한다(경로 A, REQ-ODA-021 — 동일일자 03+75 병존 시 SUM 금지·별도 2행). 맵에 확정 매칭이 없으면 행 생성을
-     * defer한다(REQ-ODA-022).
+     * 생성한다(경로 A, REQ-ODA-021 — 동일일자 03+75 병존 시 SUM 금지·별도 2행). 맵에 확정 매칭이 없으면, 스크립배당(74)으로 확정 관측된 키인지
+     * 먼저 확인해 {@code skippedScripDividend}로 별도 집계하고(aaa-infra#64 — 영구 defer, 다음 배치에도 03/75로 확정될 수
+     * 없음), 그렇지 않으면 기존 {@code skippedUnconfirmed}로 집계한다(REQ-ODA-022).
      */
     @SuppressWarnings("PMD.GuardLogStatement") // debug 파라미터 구성 비용은 무시 가능
     private void buildRow(
@@ -282,7 +292,8 @@ public class OverseasRightsCollectionService {
             List<CorporateEvent> batch,
             AtomicInteger skippedNonCashRows,
             AtomicInteger skippedValidationRows,
-            AtomicInteger skippedUnconfirmed) {
+            AtomicInteger skippedUnconfirmed,
+            AtomicInteger skippedScripDividend) {
         // REQ-OVE-023a: 비현금배당(증자·상폐 등) 행은 저장하지 않고 skip
         if (!CASH_DIVIDEND_TITLE.equals(row.caTitle())) {
             skippedNonCashRows.incrementAndGet();
@@ -305,6 +316,12 @@ public class OverseasRightsCollectionService {
         List<DividendAmountItem> items = prefetch.amountsByKey().getOrDefault(key, List.of());
 
         if (items.isEmpty()) {
+            // aaa-infra#64, REQ-ODA-072: 74(스크립배당)로 확정 매칭된 키는 영원히 03/75로 확정될 수 없으므로
+            // skippedUnconfirmed("곧 확정될 것") 카운터를 오염시키지 않도록 별도 집계한다.
+            if (prefetch.scripDividendDates().contains(key)) {
+                skippedScripDividend.incrementAndGet();
+                return;
+            }
             // REQ-ODA-022: 확정 매칭 없음(예정 또는 CTRGT011R 미반환) → 행 생성 자체를 defer.
             // D5: 프리페치 유형 폐기(prefetchTruncated/prefetchFailed)로 맵이 불완전한 배치에서는 어떤 미스가
             // 유형 폐기 때문인지 개별 판별 불가하므로, 그 배치 전체에서 행별 skippedUnconfirmed 이중 집계를
