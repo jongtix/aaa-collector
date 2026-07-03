@@ -9,6 +9,7 @@ import com.aaa.collector.stock.StockRepository;
 import com.aaa.collector.stock.shortsale.overseas.FinraSymbolNormalizer;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
@@ -194,10 +195,11 @@ public class FinraCdnShortSaleBackfillOrchestrator {
     }
 
     /** 하루치 파일 본문(다중 시설 가능)을 종목별로 합산·매칭·UPSERT한다(REQ-BACKFILL-104/-117/-118/-119). */
+    @SuppressWarnings("PMD.UseConcurrentHashMap") // 단일 스레드 빌드 전용, 이후 읽기만 함
     private DailyLoadOutcome loadDate(
             LocalDate date, List<String> fileBodies, Map<String, Stock> symbolMap) {
-        Map<String, Long> shortSums = new ConcurrentHashMap<>();
-        Map<String, Long> totalSums = new ConcurrentHashMap<>();
+        Map<String, Long> shortSums = new HashMap<>();
+        Map<String, Long> totalSums = new HashMap<>();
         int skipped = 0;
         for (String body : fileBodies) {
             ParsedFileResult parsed = parser.parse(body);

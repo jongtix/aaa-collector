@@ -2,9 +2,9 @@ package com.aaa.collector.stock.shortsale.overseas.backfill;
 
 import java.math.BigDecimal;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
 import org.springframework.stereotype.Component;
 
 /**
@@ -82,9 +82,11 @@ public class FinraCdnFileParser {
         return new ParsedRow(symbol, shortVolume, totalVolume);
     }
 
+    /** 파일 1건 파싱 호출 동안만 사용되는 단일 스레드 로컬 맵. */
+    @SuppressWarnings("PMD.UseConcurrentHashMap") // 단일 스레드 빌드 전용, 이후 읽기만 함
     private static Map<String, Integer> headerIndex(String headerLine) {
         String[] headers = headerLine.split(DELIMITER, -1);
-        Map<String, Integer> index = new ConcurrentHashMap<>();
+        Map<String, Integer> index = new HashMap<>();
         for (int i = 0; i < headers.length; i++) {
             index.put(headers[i].trim(), i);
         }
