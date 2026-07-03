@@ -16,6 +16,8 @@ import org.springframework.web.client.RestClient;
  * FinraClientConfig}(REST Query API 전용, {@code https://api.finra.org})와는 독립된 별도 빈이다 — 베이스 URL이
  * 다르고(CDN vs REST API) 라이브 경로를 변경하지 않는다.
  */
+// @MX:NOTE: [AUTO] 무인증 CDN 전용 빈 설정 — KIS 게이트 우회, baseUrl/timeout을 라이브 FinraClientConfig와 분리
+// @MX:SPEC: SPEC-COLLECTOR-BACKFILL-008
 @Configuration
 @RequiredArgsConstructor
 public class FinraCdnBackfillConfig {
