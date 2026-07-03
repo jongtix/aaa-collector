@@ -408,6 +408,46 @@ class DividendAmountPrefetcherTest {
 
             assertThat(result.amountsByKey()).isEmpty();
         }
+
+        @Test
+        @DisplayName("AC-5(D7): crcy_cd2~4가 비공백이어도 crcy_cd만 사용, 다중통화 부가 필드는 무시")
+        void multiCurrencyAuxFields_ignored_onlyCrcyCdUsed() throws Exception {
+            // crcy_cd=USD, crcy_cd2~4=EUR/JPY/GBP(비공백) — currencyCode는 crcy_cd(USD)만 반영되어야 한다.
+            KisPeriodRightsResponse.PeriodRightsRow rowWithAuxCurrencies =
+                    new KisPeriodRightsResponse.PeriodRightsRow(
+                            "20260511",
+                            RIGHT_TYPE_GENERAL,
+                            "AAPL",
+                            "APPLE INC",
+                            "512",
+                            "US0378331005",
+                            "20260511",
+                            "",
+                            "",
+                            "0",
+                            "0",
+                            "USD",
+                            "EUR",
+                            "JPY",
+                            "GBP",
+                            "0.26000",
+                            "0.00000",
+                            "0.00000",
+                            "0.00000",
+                            "Y");
+            stubType(
+                    RIGHT_TYPE_GENERAL,
+                    periodRightsResponse(List.of(rowWithAuxCurrencies), null, null));
+            stubType(RIGHT_TYPE_SPECIAL, emptyPeriodRightsResponse());
+
+            DividendAmountPrefetch result = prefetcher.prefetch(session, Set.of("AAPL"));
+
+            DividendAmountItem item =
+                    result.amountsByKey()
+                            .get(new DividendAmountKey("AAPL", java.time.LocalDate.of(2026, 5, 11)))
+                            .getFirst();
+            assertThat(item.currencyCode()).isEqualTo("USD");
+        }
     }
 
     @Nested
