@@ -82,6 +82,16 @@ ERROR 1142 (42000): UPDATE command denied to user 'collector'@'%' for table '<ta
 - **SPEC-COLLECTOR-DBGRANT-002** — news/macro 및 Tier-1 전체 INSERT IGNORE 전환 + 회귀 가드
 - **룰 문서** — `aaa/.claude/rules/moai/development/collector-db-grant-tiers.md`
 
+## Test Tagging Convention (SPEC-COLLECTOR-TESTLAYER-001)
+
+`@Container`(Testcontainers) 사용 = 통합 테스트. 클래스 레벨 `@Tag("integration")` 필수.
+
+- **[HARD]** `@Container` 애노테이트 필드를 가진 테스트 클래스는 반드시 클래스 레벨 `@Tag("integration")`를 부여한다.
+- `pre-push`는 단위 테스트만 실행한다(`./gradlew test` — 통합 태그 제외 필터, 컨테이너 기동 없음). 통합 테스트(`integrationTest` 태스크)는 CI(`./gradlew check`)에서만 실행된다.
+- 태그 누락은 `arch/IntegrationTagGuardTest`(순수 클래스파일 스캔, 컨테이너 불필요)가 빌드 타임에 자동 탐지해 `./gradlew check`(및 태그 누락 클래스가 이미 존재하는 `./gradlew test`)를 실패시킨다.
+- `check`가 `test`+`integrationTest`+`jacocoTestReport`+`jacocoTestCoverageVerification`을 전부 실행하므로 85% 커버리지 게이트는 단위+통합 합산 기준으로 CI에서 계속 강제된다.
+- 참조: `.moai/specs/SPEC-COLLECTOR-TESTLAYER-001/spec.md`
+
 ## Project Documents
 
 - 프로젝트 전체 문서: `aaa-infra/docs/` — 상위 `aaa/CLAUDE.md` 참고
