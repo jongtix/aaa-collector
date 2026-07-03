@@ -1,0 +1,21 @@
+-- =============================================================================
+-- [테스트 전용 위반 마이그레이션 — 기본 location(db/migration)으로 이동 절대 금지]
+-- =============================================================================
+-- SPEC-COLLECTOR-DBGRANT-003 M1-T2 (REQ-DBGRANT3-010, AC-2, spec §3 D7)
+--
+-- aaa-infra 이슈 #68 사고의 로컬 재현 fixture: 원 V33이 포함했다가 NAS 프로덕션
+-- 배포에서 SQL 1142(UPDATE command denied to user 'flyway')로 실패했던 Tier-1
+-- (INSERT 전용, ADR-026) corporate_events UPDATE 문 유형을 그대로 담는다.
+--
+-- - 이 파일은 기본 Flyway location(classpath:db/migration) 밖에 있으므로 정상
+--   테스트 스위트·프로덕션 마이그레이션에는 절대 포함되지 않는다.
+-- - Tier1ViolationMigrationIntegrationTest만 이 location을 명시적으로 추가 로드해,
+--   UPDATE 권한이 없는 flyway 계정의 migrate가 Error 1142로 실패함을 단언한다.
+-- - 미러 init 스크립트가 훼손되어 flyway 계정에 UPDATE가 생기면(거짓 안전) 이
+--   마이그레이션이 성공해 해당 테스트가 RED가 된다 — "위반을 잡는 능력" 자체를
+--   영구 회귀 테스트로 고정한다.
+--
+-- 스키마 유효성: corporate_events.event_subtype은 V12에서 생성되고 V33에서
+-- NOT NULL로 전환된 실존 컬럼이다. 아래 문은 문법·스키마상 유효하며, 오직 flyway
+-- 계정의 UPDATE 권한 부재 때문에만 실패한다(MySQL 권한 검사가 행 매칭보다 선행).
+UPDATE corporate_events SET event_subtype = 'UNKNOWN' WHERE event_subtype IS NULL;

@@ -7,6 +7,8 @@ import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.ArrayList;
 import java.util.List;
+import javax.sql.DataSource;
+import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import org.testcontainers.containers.MySQLContainer;
 import org.testcontainers.utility.MountableFile;
 
@@ -49,6 +51,23 @@ public final class SharedMySqlContainer {
                             "/docker-entrypoint-initdb.d/01-init-accounts-mirror.sql");
 
     private SharedMySqlContainer() {}
+
+    /**
+     * flyway 계정으로 연결하는 {@link DataSource}를 반환한다(M1-T2 — 위반 마이그레이션 Flyway 인스턴스 구성과 {@code
+     * flyway_schema_history} 정리에 사용).
+     *
+     * <p>{@link #FLYWAY_USERNAME}/{@link #FLYWAY_PASSWORD}는 컴파일타임 String 상수라 호출자 클래스 바이트코드에 인라인되므로,
+     * 호출자가 직접 {@code DriverManager.getConnection(url, user, password)} 형태로 쓰면 SpotBugs
+     * DMI_CONSTANT_DB_PASSWORD/HARD_CODE_PASSWORD가 호출자 쪽에서 재발한다. 자격증명 사용을 (사용자 승인 exclude가 적용된) 이
+     * 클래스 내부로 한정하기 위해 DataSource 팩토리 형태로만 노출한다.
+     *
+     * <p>컨테이너 기동 이후에만 호출해야 한다({@link MySQLContainer#getJdbcUrl()}이 매핑 포트를 요구).
+     *
+     * @return flyway 계정 자격증명이 설정된 비풀링 DataSource
+     */
+    public static DataSource flywayDataSource() {
+        return new DriverManagerDataSource(MYSQL.getJdbcUrl(), FLYWAY_USERNAME, FLYWAY_PASSWORD);
+    }
 
     /**
      * flyway 계정으로 직접 연결하여 {@code SHOW GRANTS}(FOR 절 없음 — 접속 계정 자신의 권한) 결과를 반환한다. 자기 자신의 GRANT 조회는
