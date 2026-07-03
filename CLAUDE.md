@@ -73,6 +73,15 @@ ERROR 1142 (42000): UPDATE command denied to user 'collector'@'%' for table '<ta
 - Tier-1/Tier-2 분류 기준: "행이 삽입 후 in-place로 갱신되어야 하는가?" Yes → Tier-2 (ADR-026·이 허용목록 수정 필요), No → Tier-1 (INSERT IGNORE).
 - 빌드 게이트 `./gradlew check`는 회귀 가드 테스트(`Tier1InsertIgnoreGuardTest`)로 Tier-1 리포지토리의 `ON DUPLICATE KEY UPDATE` 사용을 자동 탐지하여 빌드를 실패시킨다.
 
+### 테스트 미러 동기화 체크리스트 (SPEC-COLLECTOR-DBGRANT-003)
+
+aaa-infra grant 스크립트(`01-init-collector.sh`, `collector-tier2-grants.sql`) 변경 시 아래 둘을 대조·갱신한다. **canonical(aaa-infra)이 항상 우선** — 미러/상수를 canonical에 맞게 갱신하며, 역방향 수정은 금지:
+
+1. **미러 init SQL**: `src/test/resources/testcontainers/01-init-accounts-mirror.sql` (Testcontainers 계정 미러 — 상단 동기화 헤더의 기준일도 함께 갱신)
+2. **`DbGrantVerifier.TIER2_TABLES`** (main 소스): Tier-2 테이블 목록의 코드 단일 소스(5개, `backfill_status` 포함). 테스트 유지보수 시 aaa-infra grant SQL보다 이 상수를 대조 기준으로 우선 사용한다(`DbGrantVerifierTest`가 정확히 5개를 고정).
+
+**대조 비대상**: `Tier1InsertIgnoreGuardTest.TIER2_TABLE_ALLOWLIST`(4개)는 이 체크리스트와 무관한 별개 검사 목록이다. ADR-026 2026-06-20 개정이 `backfill_status`를 의도적으로 제외했다 — 가드는 `ON DUPLICATE KEY UPDATE` 패턴만 검사하는데 `backfill_status`는 그 패턴을 쓰지 않는다(시딩=`INSERT IGNORE`, 진행점 갱신=평이한 JPA UPDATE). "가드 4개 vs GRANT 5개 = 표류" 진단은 오진이므로 허용목록을 "수정"하지 말 것. 상세 절차는 룰 문서(`aaa/.claude/rules/moai/development/collector-db-grant-tiers.md`)의 Sync Checklist 참조.
+
 ### 참조
 
 - **ADR-026** (`aaa-infra/docs/ADR/ADR-026-collector-grant-two-tier-model.md`) — 2-tier 모델, Tier-2 허용목록
