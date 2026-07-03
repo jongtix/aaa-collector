@@ -56,6 +56,10 @@ import com.aaa.collector.stock.shortsale.overseas.FinraShortSaleClient;
 import com.aaa.collector.stock.shortsale.overseas.ShortSaleOverseasDailyCollectionService;
 import com.aaa.collector.stock.shortsale.overseas.ShortSaleOverseasInterestCollectionService;
 import com.aaa.collector.stock.shortsale.overseas.ShortSaleOverseasScheduler;
+import com.aaa.collector.stock.shortsale.overseas.backfill.FinraCdnDailyFileClient;
+import com.aaa.collector.stock.shortsale.overseas.backfill.FinraCdnFileParser;
+import com.aaa.collector.stock.shortsale.overseas.backfill.FinraCdnShortSaleBackfillOrchestrator;
+import com.aaa.collector.stock.shortsale.overseas.backfill.FinraCdnShortSaleBackfillScheduler;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
@@ -135,7 +139,12 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
             // SPEC-COLLECTOR-USMKT-001: 미국 시장 게이트 신규 빈 모킹 (smoke 회귀 방지)
             UsMarketSessionGate.class,
             // SPEC-COLLECTOR-MARKETIND-002: 시장지표 메트릭 신규 빈 모킹 (smoke 회귀 방지)
-            MarketIndicatorMetrics.class
+            MarketIndicatorMetrics.class,
+            // SPEC-COLLECTOR-BACKFILL-008: 미국 공매도 Daily 과거 백필(FINRA CDN) 신규 빈 모킹 (smoke 회귀 방지)
+            FinraCdnDailyFileClient.class,
+            FinraCdnFileParser.class,
+            FinraCdnShortSaleBackfillOrchestrator.class,
+            FinraCdnShortSaleBackfillScheduler.class
         })
 class SmokeMockitoBase {
 
