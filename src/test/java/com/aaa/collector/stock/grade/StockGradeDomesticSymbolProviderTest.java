@@ -2,8 +2,10 @@ package com.aaa.collector.stock.grade;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.anyList;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.aaa.collector.stock.enums.Market;
 import java.util.ArrayList;
 import java.util.List;
 import org.junit.jupiter.api.DisplayName;
@@ -37,7 +39,8 @@ class StockGradeDomesticSymbolProviderTest {
             for (int i = 0; i < 50; i++) {
                 symbols.add("B" + String.format("%03d", i));
             }
-            when(stockGradeRepository.findSymbolsByGradeIn(anyList())).thenReturn(symbols);
+            when(stockGradeRepository.findSymbolsByGradeIn(anyList(), anyList()))
+                    .thenReturn(symbols);
 
             // Act
             List<String> result = provider.getDomesticSymbols();
@@ -55,7 +58,8 @@ class StockGradeDomesticSymbolProviderTest {
             for (int i = 0; i < 100; i++) {
                 symbols.add("SYM" + String.format("%03d", i));
             }
-            when(stockGradeRepository.findSymbolsByGradeIn(anyList())).thenReturn(symbols);
+            when(stockGradeRepository.findSymbolsByGradeIn(anyList(), anyList()))
+                    .thenReturn(symbols);
 
             // Act
             List<String> result = provider.getDomesticSymbols();
@@ -68,10 +72,26 @@ class StockGradeDomesticSymbolProviderTest {
         @DisplayName("빈 결과 → 빈 리스트 반환")
         void shouldReturnEmptyListWhenNoGrades() {
             // Arrange
-            when(stockGradeRepository.findSymbolsByGradeIn(anyList())).thenReturn(List.of());
+            when(stockGradeRepository.findSymbolsByGradeIn(anyList(), anyList()))
+                    .thenReturn(List.of());
 
             // Act & Assert
             assertThat(provider.getDomesticSymbols()).isEmpty();
+        }
+
+        @Test
+        @DisplayName("aaa-infra#69 회귀 방지: KOSPI/KOSDAQ만 조회 조건으로 전달 — 해외 시장 혼입 차단")
+        void shouldQueryOnlyKrxMarkets() {
+            // Arrange
+            when(stockGradeRepository.findSymbolsByGradeIn(anyList(), anyList()))
+                    .thenReturn(List.of());
+
+            // Act
+            provider.getDomesticSymbols();
+
+            // Assert
+            verify(stockGradeRepository)
+                    .findSymbolsByGradeIn(List.of(Market.KOSPI, Market.KOSDAQ), List.of("A", "B"));
         }
     }
 }

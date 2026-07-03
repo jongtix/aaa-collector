@@ -117,7 +117,9 @@ class StockGradeRepositoryTest {
                             .build());
 
             // Act
-            List<String> result = stockGradeRepository.findSymbolsByGradeIn(List.of("A", "B"));
+            List<String> result =
+                    stockGradeRepository.findSymbolsByGradeIn(
+                            List.of(Market.KOSPI, Market.KOSDAQ), List.of("A", "B"));
 
             // Assert — A 등급이 먼저, B 등급이 나중
             assertThat(result).containsExactly("005930", "000660");
@@ -128,7 +130,9 @@ class StockGradeRepositoryTest {
         void findSymbolsByGradeIn_noMatchingGrades_returnsEmpty() {
             savedStock("005930"); // 등급 미부여
 
-            List<String> result = stockGradeRepository.findSymbolsByGradeIn(List.of("A", "B"));
+            List<String> result =
+                    stockGradeRepository.findSymbolsByGradeIn(
+                            List.of(Market.KOSPI, Market.KOSDAQ), List.of("A", "B"));
 
             assertThat(result).isEmpty();
         }
@@ -153,9 +157,47 @@ class StockGradeRepositoryTest {
                             .build());
 
             // Act
-            List<String> result = stockGradeRepository.findSymbolsByGradeIn(List.of("A", "B"));
+            List<String> result =
+                    stockGradeRepository.findSymbolsByGradeIn(
+                            List.of(Market.KOSPI, Market.KOSDAQ), List.of("A", "B"));
 
             // Assert — C 등급 제외
+            assertThat(result).containsExactly("005930");
+        }
+
+        @Test
+        @DisplayName("aaa-infra#69 회귀 방지: 해외(NYSE) A등급 종목은 국내 조회에서 제외")
+        void findSymbolsByGradeIn_excludesOverseasMarket() {
+            // Arrange
+            Stock kospiStock = savedStock("005930");
+            Stock nyseStock =
+                    stockRepository.save(
+                            Stock.builder()
+                                    .symbol("XOM")
+                                    .nameKo("테스트종목_XOM")
+                                    .market(Market.NYSE)
+                                    .assetType(AssetType.STOCK)
+                                    .listedDate(LocalDate.of(2015, 1, 1))
+                                    .build());
+            stockGradeRepository.save(
+                    StockGrade.builder()
+                            .stock(kospiStock)
+                            .grade("B")
+                            .gradedAt(ZonedDateTime.now(KST))
+                            .build());
+            stockGradeRepository.save(
+                    StockGrade.builder()
+                            .stock(nyseStock)
+                            .grade("A")
+                            .gradedAt(ZonedDateTime.now(KST))
+                            .build());
+
+            // Act — 국내 시장(KOSPI/KOSDAQ)만 지정
+            List<String> result =
+                    stockGradeRepository.findSymbolsByGradeIn(
+                            List.of(Market.KOSPI, Market.KOSDAQ), List.of("A", "B"));
+
+            // Assert — NYSE A등급(XOM)이 국내 결과에 혼입되지 않음
             assertThat(result).containsExactly("005930");
         }
     }

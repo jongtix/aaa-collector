@@ -24,16 +24,22 @@ public interface StockGradeRepository extends JpaRepository<StockGrade, Long> {
     Optional<StockGrade> findByStock(Stock stock);
 
     /**
-     * 지정 등급 종목의 symbol을 grade 오름차순으로 반환한다.
+     * 지정 시장·등급 종목의 symbol을 grade 오름차순으로 반환한다.
      *
-     * <p>Stock 엔티티 로드 없이 symbol만 projection하여 LazyInitializationException을 방지한다.
+     * <p>Stock 엔티티 로드 없이 symbol만 projection하여 LazyInitializationException을 방지한다. {@code
+     * stock_grades}는 국내·해외 종목 등급을 한 테이블에 함께 저장하므로, market 필터가 없으면 해외 A·B등급 종목이 국내 구독 대상에
+     * 혼입된다(aaa-infra#69).
      *
+     * @param markets 조회할 시장 목록 (예: {@code List.of(Market.KOSPI, Market.KOSDAQ)})
      * @param grades 조회할 등급 목록 (예: {@code List.of("A", "B")})
      * @return symbol 목록 (grade 오름차순)
      */
     @Query(
-            "SELECT sg.stock.symbol FROM StockGrade sg WHERE sg.grade IN :grades ORDER BY sg.grade ASC")
-    List<String> findSymbolsByGradeIn(@Param("grades") List<String> grades);
+            "SELECT sg.stock.symbol FROM StockGrade sg "
+                    + "WHERE sg.stock.market IN :markets AND sg.grade IN :grades "
+                    + "ORDER BY sg.grade ASC")
+    List<String> findSymbolsByGradeIn(
+            @Param("markets") List<Market> markets, @Param("grades") List<String> grades);
 
     /**
      * 미국 한정 종목의 symbol과 market을 grade 오름차순으로 반환한다.
