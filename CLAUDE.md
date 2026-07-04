@@ -82,6 +82,28 @@ aaa-infra grant 스크립트(`01-init-collector.sh`, `collector-tier2-grants.sql
 
 **대조 비대상**: `Tier1InsertIgnoreGuardTest.TIER2_TABLE_ALLOWLIST`(4개)는 이 체크리스트와 무관한 별개 검사 목록이다. ADR-026 2026-06-20 개정이 `backfill_status`를 의도적으로 제외했다 — 가드는 `ON DUPLICATE KEY UPDATE` 패턴만 검사하는데 `backfill_status`는 그 패턴을 쓰지 않는다(시딩=`INSERT IGNORE`, 진행점 갱신=평이한 JPA UPDATE). "가드 4개 vs GRANT 5개 = 표류" 진단은 오진이므로 허용목록을 "수정"하지 말 것. 상세 절차는 룰 문서(`aaa/.claude/rules/moai/development/collector-db-grant-tiers.md`)의 Sync Checklist 참조.
 
+### GRANT 문맥(5개) vs 가드 허용목록 문맥(4개) — 서로 다른 목적의 별개 목록
+
+아래 두 상수는 이름이 비슷해 보이지만 **검사 대상과 목적이 다른 별개 목록**이다. 실제 리스트(`DbGrantVerifier.java`, `Tier1InsertIgnoreGuardTest.java`, `SharedContainerGuardTest.java`를 직접 대조한 결과):
+
+| 목록 | 위치 | 개수 | 대상 | 목적 |
+|------|------|------|------|------|
+| `DbGrantVerifier.TIER2_TABLES` | `src/main/java/.../common/startup/DbGrantVerifier.java` (main 소스) | 5개: `stocks`, `stock_grades`, `short_sale_overseas`, `etf_metadata`, `backfill_status` | 프로덕션 부팅 self-check가 검사하는 **실제 UPDATE GRANT 대상 테이블** | "이 테이블들에 UPDATE 권한이 실제로 부여됐는가"를 기동 시점에 검증(ADR-026 CR-01) |
+| `Tier1InsertIgnoreGuardTest.TIER2_TABLE_ALLOWLIST` | `src/test/java/.../arch/Tier1InsertIgnoreGuardTest.java` (테스트 소스) | 4개: `stocks`, `stock_grades`, `short_sale_overseas`, `etf_metadata` (`backfill_status` **제외**) | 정적 스캔이 `ON DUPLICATE KEY UPDATE` 리터럴 사용을 허용할 테이블 화이트리스트 | "이 SQL 패턴이 어느 테이블에 나타나면 허용/금지인가"를 빌드 타임에 정적 검사(ADR-026 결정 2) |
+
+**차이가 나는 정확한 이유**: `backfill_status`는 GRANT 목록(5개)에는 있지만 가드 허용목록(4개)에는 없다. `backfill_status`의 UPDATE 경로는 시딩(`INSERT IGNORE`)과 진행점 갱신(JPA dirty-check를 통한 평이한 `UPDATE ... SET ... WHERE id = ?`)으로 나뉘는데, 가드가 스캔하는 패턴은 오직 `ON DUPLICATE KEY UPDATE`뿐이다 — `backfill_status`는 이 패턴을 **애초에 쓰지 않으므로** 가드 허용목록에 없어도 오탐(false negative)이 발생하지 않는다(ADR-026 2026-06-20 개정 근거). 반대로 GRANT 목록은 "UPDATE 권한을 실제로 갖는가"만 따지므로 SQL 형태와 무관하게 `backfill_status`가 포함된다. 즉 4개 vs 5개는 표류(drift)가 아니라 **두 검사의 스코프가 다르기 때문에 발생하는 의도된 차이**다.
+
+### 테스트 패리티 규칙 (SPEC-COLLECTOR-DBGRANT-003 M1+M2 요약)
+
+이 SPEC은 프로덕션 계정 분리 권한 모델(ADR-016/ADR-026)을 Testcontainers 통합 테스트 환경에서 재현해, 권한 위반이 NAS 프로덕션 배포가 아니라 로컬 `./gradlew check`에서 먼저 실패하게 만든다. 4개 메커니즘이 함께 동작한다:
+
+1. **계정 미러 + 공유 컨테이너**(M1-T1, M2-T1): `SharedMySqlContainer`가 `flyway`/`collector` 계정을 미러링하는 init 스크립트를 주입한 싱글턴 MySQL 컨테이너를 제공한다. 이 컨테이너를 참조하는 테스트 클래스는 클래스 레벨 `@Transactional` 또는 `arch/SharedContainerGuardTest` 허용목록 등재가 필요하다(위 "Shared MySQL Container Convention" 참조).
+2. **grant 순서 훅**(M2-T2): `Tier2GrantMigrationStrategy`(`common/startup` 테스트 소스, `@Component`로 자동 감지)가 Flyway migrate 직후 root 커넥션으로 `DbGrantVerifier.TIER2_TABLES`(5개)에 UPDATE GRANT를 적용한다. 계정 미러가 없는 전용(비공유) 컨테이너에서는 `collector` 계정 자체가 없으므로 조용히 스킵한다.
+3. **fixture root 커넥션 분리**(M2-T3): DELETE/TRUNCATE가 필요한 fixture 정리는 앱 datasource가 아니라 `RootFixtureCleaner`(테이블 전체 정리) 또는 `RootFixtureCleaner.rootJdbcTemplate(...)`(스코프 한정 정리)로 수행한다 — `collector` 계정에는 DELETE 권한이 전혀 없다.
+4. **앱 datasource collector 계정 전환**(M2-T4): `CollectorAccountDataSourceSwitcher`(`support` 패키지, `@Component`인 `BeanPostProcessor`)가 앱 `HikariDataSource` 빈 초기화 직후 collector 계정 접속 가능 여부를 실제로 확인하고, 가능하면(계정 미러가 주입된 컨테이너) 같은 빈의 자격증명을 collector로 교체한다(풀 타입·설정은 보존). 계정 미러가 없는 전용 컨테이너에서는 접속 시도가 실패하므로 원본 빈을 그대로 둔다 — 개별 테스트 클래스를 수정하지 않고도 공유 컨테이너 소비자 전체에 자동 적용된다. 런타임 RED 회귀 테스트(`CollectorAccountRuntimeIntegrationTest`)가 Tier-1 UPDATE의 1142 실패와 Tier-2 UPDATE의 성공을 함께 고정한다.
+
+**핵심 불변식(HARD)**: fixture 정리(2·3)에 필요한 DELETE/UPDATE를 이유로 `collector` 계정에 새 GRANT를 추가하지 않는다 — root 커넥션으로 우회한다(ADR-026 불변성).
+
 ### 참조
 
 - **ADR-026** (`aaa-infra/docs/ADR/ADR-026-collector-grant-two-tier-model.md`) — 2-tier 모델, Tier-2 허용목록
