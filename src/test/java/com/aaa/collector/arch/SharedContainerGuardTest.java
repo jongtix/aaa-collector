@@ -82,7 +82,10 @@ class SharedContainerGuardTest {
                     "com.aaa.collector.stock.RevSplitBackfillIdempotencyIT",
                     // AC-2 위반 마이그레이션 재현 테스트 — @AfterEach에서 flyway_schema_history의
                     // V9999 행만 삭제하고 비즈니스 데이터는 생성하지 않는다(읽기 전용에 가까운 게이트).
-                    "com.aaa.collector.Tier1ViolationMigrationIntegrationTest");
+                    "com.aaa.collector.Tier1ViolationMigrationIntegrationTest",
+                    // SPEC-COLLECTOR-DBGRANT-003 M2-T2 — collector 계정의 SHOW GRANTS만 조회하고
+                    // 비즈니스 데이터 행을 생성하지 않는다(읽기 전용 게이트, DatabaseMigrationIntegrationTest와 동일 사유).
+                    "com.aaa.collector.common.startup.Tier2GrantMigrationStrategyIT");
 
     @Test
     @DisplayName("규칙 A — 공유 컨테이너 참조 필드에 @Container를 붙이면 안 된다")

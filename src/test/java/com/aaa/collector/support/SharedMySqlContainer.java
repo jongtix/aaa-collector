@@ -41,6 +41,16 @@ public final class SharedMySqlContainer {
     public static final String COLLECTOR_PASSWORD = "collector-test-password";
 
     /**
+     * root 계정 접속 정보(M2-T2 — grant 순서 훅이 Tier-2 UPDATE GRANT를 적용할 때 사용). 이 프로젝트의 모든 Testcontainers
+     * MySQL 컨테이너는 {@code withUsername}/{@code withPassword} 오버라이드 없이 기본값을 쓴다(실측 확인, grep 0건).
+     * Testcontainers {@link MySQLContainer}는 root 이외 사용자를 쓸 때 {@code MYSQL_ROOT_PASSWORD} 환경변수를 해당
+     * 사용자의 비밀번호와 동일하게 설정하므로, 기본 비밀번호("test")가 root 비밀번호와 같다. 프로덕션 시크릿이 아닌 테스트 전용 일회성 컨테이너 상수다.
+     */
+    private static final String ROOT_USERNAME = "root";
+
+    private static final String ROOT_PASSWORD = "test";
+
+    /**
      * 계정 미러 init 스크립트가 주입된 공유 MySQL 컨테이너. 이 컨테이너를 사용하려는 테스트 클래스는 자신의 {@code @ServiceConnection} 정적
      * 필드({@code @Container}는 절대 붙이지 않는다)를 이 상수로 초기화해 재선언한다.
      */
@@ -101,6 +111,21 @@ public final class SharedMySqlContainer {
     }
 
     /**
+     * 지정된 JDBC URL(공유 컨테이너·전용 컨테이너 어느 쪽이든 호출자가 실제로 연결된 컨테이너를 그대로 전달)에 root 계정으로 연결하는 {@link
+     * DataSource}를 반환한다(M2-T2 — grant 순서 훅이 Tier-2 UPDATE GRANT를 적용할 때 사용).
+     *
+     * <p>{@link #flywayDataSource()}와 동일한 이유로 자격증명 사용을 이 클래스 내부로 한정하기 위해 DataSource 팩토리 형태로만
+     * 노출한다(호출자가 {@code DriverManager.getConnection(url, "root", ...)}를 직접 쓰면 SpotBugs
+     * DMI_CONSTANT_DB_PASSWORD가 호출자 쪽에서 재발한다).
+     *
+     * @param jdbcUrl root로 연결할 대상 컨테이너의 JDBC URL
+     * @return root 계정 자격증명이 설정된 비풀링 DataSource
+     */
+    public static DataSource rootDataSourceFor(String jdbcUrl) {
+        return new DriverManagerDataSource(jdbcUrl, ROOT_USERNAME, ROOT_PASSWORD);
+    }
+
+    /**
      * flyway 계정으로 직접 연결하여 {@code SHOW GRANTS}(FOR 절 없음 — 접속 계정 자신의 권한) 결과를 반환한다. 자기 자신의 GRANT 조회는
      * 별도 권한 없이 MySQL이 허용한다(다른 계정 조회는 {@code mysql.*} 스키마 SELECT 권한이 필요).
      *
@@ -112,6 +137,17 @@ public final class SharedMySqlContainer {
      */
     public static List<String> showFlywayGrants() throws SQLException {
         return showGrantsFor(FLYWAY_USERNAME, FLYWAY_PASSWORD);
+    }
+
+    /**
+     * collector 계정으로 직접 연결하여 {@code SHOW GRANTS}(FOR 절 없음 — 접속 계정 자신의 권한) 결과를 반환한다(M2-T2 — grant 순서
+     * 훅이 적용한 Tier-2 테이블 UPDATE GRANT 검증에 사용).
+     *
+     * @return {@code SHOW GRANTS} 결과 행 목록
+     * @throws SQLException 연결 또는 조회 실패 시
+     */
+    public static List<String> showCollectorGrants() throws SQLException {
+        return showGrantsFor(COLLECTOR_USERNAME, COLLECTOR_PASSWORD);
     }
 
     /**

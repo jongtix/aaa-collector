@@ -107,4 +107,23 @@
         <Class name="com.aaa.collector.support.SharedMySqlContainer"/>
         <Bug pattern="DMI_CONSTANT_DB_PASSWORD,HARD_CODE_PASSWORD"/>
     </Match>
+
+    <!--
+        SQL_INJECTION_JDBC: Tier2GrantMigrationStrategy.applyTier2Grants(DataSource)는
+        SPEC-COLLECTOR-DBGRANT-003 M2-T2 grant 순서 훅으로, Flyway migrate 직후 root
+        커넥션으로 Tier-2 테이블에 UPDATE GRANT를 적용한다. GRANT 문의 테이블/스키마 식별자는
+        JDBC 바인드 변수로 파라미터화할 수 없다(값이 아닌 식별자이므로 PreparedStatement 불가).
+        여기 흐르는 동적 값은 두 가지뿐이다: (1) DbGrantVerifier.TIER2_TABLES — 외부 입력 경로가
+        전혀 없는 5개 고정 상수 집합(DbGrantVerifierTest가 정확히 5개로 고정), (2) JDBC 커넥션
+        자신의 catalog(schema)명 — Testcontainers가 결정하는 환경값이며 공격자가 제어할 수 없다.
+        SharedMySqlContainer 항목(위)과 달리 이 항목은 의도적으로 클래스 전체가 아니라
+        applyTier2Grants 메서드 하나로만 범위를 좁힌다 — 이 클래스에 향후 다른 SQL이 추가되면
+        여전히 정상적으로 검사받도록 하기 위함이다. user-approved 2026-07-04,
+        SPEC-COLLECTOR-DBGRANT-003.
+    -->
+    <Match>
+        <Class name="com.aaa.collector.common.startup.Tier2GrantMigrationStrategy"/>
+        <Method name="applyTier2Grants"/>
+        <Bug pattern="SQL_INJECTION_JDBC"/>
+    </Match>
 </FindBugsFilter>
