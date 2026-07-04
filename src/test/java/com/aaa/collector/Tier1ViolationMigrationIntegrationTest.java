@@ -11,9 +11,9 @@ import org.flywaydb.core.Flyway;
 import org.flywaydb.core.api.FlywayException;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.testcontainers.containers.MySQLContainer;
-import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
 // SPEC-COLLECTOR-DBGRANT-003 M1-T2 (REQ-DBGRANT3-010, AC-2, spec §3 D7):
@@ -28,10 +28,13 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 //
 // Spring 컨텍스트 불요(앱 Flyway 자동 구성 경로와 완전 분리) — 순수 JUnit + Testcontainers.
 @Testcontainers
+@Tag("integration")
 @DisplayName("AC-2 — Tier-1 UPDATE 위반 마이그레이션 1142 RED 회귀 테스트 (#68 로컬 재현)")
 class Tier1ViolationMigrationIntegrationTest {
 
-    @Container static final MySQLContainer<?> MYSQL = SharedMySqlContainer.MYSQL;
+    // @Container 미부착 — 싱글턴 컨테이너 패턴(SharedMySqlContainer 참조). 생명주기는 SharedMySqlContainer의 static 블록이
+    // 소유하며, 각 클래스가 @Container로 재선언하면 클래스 종료 시 공유 컨테이너가 죽는다.
+    static final MySQLContainer<?> MYSQL = SharedMySqlContainer.MYSQL;
 
     /** 기본 마이그레이션 location — 앱 Flyway 자동 구성(application.yml)과 동일 값. */
     private static final String DEFAULT_MIGRATION_LOCATION = "classpath:db/migration";

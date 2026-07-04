@@ -31,6 +31,18 @@ import org.testcontainers.junit.jupiter.Testcontainers;
  * <p>T4 오케스트레이터가 도입한 {@code upsertDaily(..., null, null)} 백필 적재 계약을 실 MySQL(Testcontainers {@code
  * mysql:8.4})로 검증한다. 재사용 자산({@link ShortSaleOverseasRepository#upsertDaily})의 백필 사용 형태에 대한 특성/계약
  * 검증이며, 본 IT는 신규 프로덕션 코드를 도입하지 않는다(H2 미재현 — COALESCE·SET 절 소스별 갱신은 Testcontainers 필수).
+ *
+ * <p><b>M2-T1 격리 분류 — 싱글턴 공유 제외(전용 컨테이너)</b>: 이 클래스는 {@link
+ * com.aaa.collector.support.SharedMySqlContainer} 공유 대상에서 의도적으로 제외하고 전용 컨테이너를 쓴다. {@link
+ * ShortSaleOverseasRepository#upsertDaily}/{@link ShortSaleOverseasRepository#upsertInterest}는
+ * {@code clearAutomatically}가 없는 {@code @Modifying} 네이티브 쿼리라, {@code @Transactional}로 하나의 트랜잭션(=하나의
+ * 영속성 컨텍스트)에 묶이면 이전 조회로 캐시된 엔티티가 이후 네이티브 UPDATE를 반영하지 못해 스테일 리드를 일으킨다(SPEC-COLLECTOR-DBGRANT-003
+ * M2-T1 실측). {@link #SYMBOL_SEQ}로 테스트마다 고유 심볼을 발급해 다른 클래스와의 충돌은 없으나, 트랜잭션 롤백 격리 자체가 불가능하므로 공유 싱글턴
+ * 대신 전용 컨테이너로 매 클래스 신선한 스키마를 보장한다.
+ *
+ * @see <a
+ *     href="https://testcontainers.com/guides/testcontainers-container-lifecycle/">Testcontainers —
+ *     테스트가 전역 상태를 변경하면 공유하지 말 것</a>
  */
 @SpringBootTest
 @ActiveProfiles({"test", "db-integration"})

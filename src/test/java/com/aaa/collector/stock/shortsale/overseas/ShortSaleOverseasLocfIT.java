@@ -9,6 +9,7 @@ import com.aaa.collector.stock.Stock;
 import com.aaa.collector.stock.StockRepository;
 import com.aaa.collector.stock.enums.AssetType;
 import com.aaa.collector.stock.enums.Market;
+import com.aaa.collector.support.SharedMySqlContainer;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -23,13 +24,14 @@ import org.springframework.boot.testcontainers.service.connection.ServiceConnect
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import org.springframework.transaction.annotation.Transactional;
 import org.testcontainers.containers.MySQLContainer;
-import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
 @SpringBootTest
 @ActiveProfiles({"test", "db-integration"})
 @Testcontainers
+@Transactional
 @DisplayName("Daily 경로 LOCF forward 병합 통합 테스트")
 @Tag("integration")
 class ShortSaleOverseasLocfIT {
@@ -37,8 +39,10 @@ class ShortSaleOverseasLocfIT {
     private static final AtomicInteger SYMBOL_SEQ = new AtomicInteger();
     private static final LocalDate TRADE_DATE = LocalDate.of(2026, 1, 6);
 
-    @Container @ServiceConnection
-    static final MySQLContainer<?> MYSQL = new MySQLContainer<>("mysql:8.4");
+    @ServiceConnection // @Container 미부착 — 싱글턴 컨테이너 패턴(SharedMySqlContainer 참조). 생명주기는
+    // SharedMySqlContainer의 static 블록이 소유하며, 각 클래스가 @Container로 재선언하면 클래스 종료 시
+    // 공유 컨테이너가 죽는다.
+    static final MySQLContainer<?> MYSQL = SharedMySqlContainer.MYSQL;
 
     @MockitoBean
     @SuppressWarnings("unused")

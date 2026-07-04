@@ -7,6 +7,7 @@ import com.aaa.collector.stock.Stock;
 import com.aaa.collector.stock.StockRepository;
 import com.aaa.collector.stock.enums.AssetType;
 import com.aaa.collector.stock.enums.Market;
+import com.aaa.collector.support.SharedMySqlContainer;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.time.Clock;
 import java.time.LocalDate;
@@ -23,21 +24,24 @@ import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import org.springframework.transaction.annotation.Transactional;
 import org.testcontainers.containers.MySQLContainer;
-import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
 @SpringBootTest
 @ActiveProfiles({"test", "db-integration"})
 @Testcontainers
+@Transactional
 @DisplayName("WarningCountingOhlcvInserter 통합 테스트 (실 MySQL 경고 캡처, REQ-OBSV-023/AC-5)")
 @Tag("integration")
 class WarningCountingOhlcvInserterIntegrationTest {
 
     private static final DateTimeFormatter DATE_FMT = DateTimeFormatter.BASIC_ISO_DATE;
 
-    @Container @ServiceConnection
-    static final MySQLContainer<?> MYSQL = new MySQLContainer<>("mysql:8.4");
+    @ServiceConnection // @Container 미부착 — 싱글턴 컨테이너 패턴(SharedMySqlContainer 참조). 생명주기는
+    // SharedMySqlContainer의 static 블록이 소유하며, 각 클래스가 @Container로 재선언하면 클래스 종료 시
+    // 공유 컨테이너가 죽는다.
+    static final MySQLContainer<?> MYSQL = SharedMySqlContainer.MYSQL;
 
     @MockitoBean
     @SuppressWarnings("unused")

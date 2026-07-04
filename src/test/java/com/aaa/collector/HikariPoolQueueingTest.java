@@ -3,6 +3,7 @@ package com.aaa.collector;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import com.aaa.collector.support.SharedMySqlContainer;
 import com.zaxxer.hikari.HikariConfig;
 import com.zaxxer.hikari.HikariDataSource;
 import java.sql.Connection;
@@ -34,7 +35,6 @@ import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.testcontainers.containers.MySQLContainer;
-import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
 /**
@@ -45,6 +45,10 @@ import org.testcontainers.junit.jupiter.Testcontainers;
  * 증거(AC-1, AC-4). (2) {@code QueuingBehavior}: 풀 크기를 초과하는 동시 DB 작업을 Virtual Threads로 던졌을 때 초과분이
  * 타임아웃 없이 큐잉 후 전부 성공하는지(AC-2, AC-3). 큐잉 경로를 결정적으로 강제하기 위해 프로덕션 값이 아닌 테스트 전용 작은 풀을 같은 Testcontainers
  * MySQL에 별도로 연결한다 (plan.md "결정적 테스트 재현"). H2는 네이티브 풀 동작을 재현하지 못하므로 mysql:8.4 사용(REQ-DBPOOL-020).
+ *
+ * <p>SPEC-COLLECTOR-DBGRANT-003 M2-T1 격리 분류: {@code QueuingBehavior}가 전용 {@code
+ * pool_queueing_probe} 테이블을 매 테스트 {@code DROP}+{@code CREATE}로 자체 격리하므로(공유 컨테이너 전환과 무관하게 이미 자기 완결적
+ * 정리), 클래스 레벨 {@code @Transactional} 부착 대상에서 제외한다. 이 클래스는 stocks 등 공유 비즈니스 테이블을 건드리지 않는다.
  */
 @SpringBootTest
 @ActiveProfiles({"test", "db-integration"})
@@ -53,8 +57,10 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 @Tag("integration")
 class HikariPoolQueueingTest {
 
-    @Container @ServiceConnection
-    static final MySQLContainer<?> MYSQL = new MySQLContainer<>("mysql:8.4");
+    @ServiceConnection // @Container 미부착 — 싱글턴 컨테이너 패턴(SharedMySqlContainer 참조). 생명주기는
+    // SharedMySqlContainer의 static 블록이 소유하며, 각 클래스가 @Container로 재선언하면 클래스 종료 시
+    // 공유 컨테이너가 죽는다.
+    static final MySQLContainer<?> MYSQL = SharedMySqlContainer.MYSQL;
 
     @MockitoBean
     @SuppressWarnings("unused")

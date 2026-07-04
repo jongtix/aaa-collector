@@ -101,6 +101,10 @@ aaa-infra grant 스크립트(`01-init-collector.sh`, `collector-tier2-grants.sql
 - `check`가 `test`+`integrationTest`+`jacocoTestReport`+`jacocoTestCoverageVerification`을 전부 실행하므로 85% 커버리지 게이트는 단위+통합 합산 기준으로 CI에서 계속 강제된다.
 - 참조: `.moai/specs/SPEC-COLLECTOR-TESTLAYER-001/spec.md`
 
+## Shared MySQL Container Convention (SPEC-COLLECTOR-DBGRANT-003 M2-T1)
+
+`SharedMySqlContainer.MYSQL` 참조 클래스는 `@Container` 금지(싱글턴 컨테이너 패턴, `@ServiceConnection`만 사용) / 클래스 레벨 `@Transactional` 기본, 롤백 격리가 불가능하면(별도 스레드 실제 커밋, `@Modifying` 네이티브 쿼리 캐시 충돌 등) 전용 컨테이너로 분리하거나 `arch/SharedContainerGuardTest`의 허용목록에 사유와 함께 등재 / 근거는 `SharedMySqlContainer` Javadoc과 SPEC-COLLECTOR-DBGRANT-003 참조.
+
 ## Project Documents
 
 - 프로젝트 전체 문서: `aaa-infra/docs/` — 상위 `aaa/CLAUDE.md` 참고

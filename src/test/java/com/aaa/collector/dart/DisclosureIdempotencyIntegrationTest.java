@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import com.aaa.collector.dart.disclosure.Disclosure;
 import com.aaa.collector.dart.disclosure.DisclosureRepository;
 import com.aaa.collector.dart.disclosure.DisclosureRow;
+import com.aaa.collector.support.SharedMySqlContainer;
 import java.time.LocalDate;
 import java.util.List;
 import org.junit.jupiter.api.DisplayName;
@@ -17,8 +18,8 @@ import org.springframework.boot.testcontainers.service.connection.ServiceConnect
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import org.springframework.transaction.annotation.Transactional;
 import org.testcontainers.containers.MySQLContainer;
-import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
 /**
@@ -29,12 +30,15 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 @SpringBootTest
 @ActiveProfiles({"test", "db-integration"})
 @Testcontainers
+@Transactional
 @DisplayName("DisclosureIdempotencyIntegrationTest — INSERT IGNORE 멱등성 통합 검증")
 @Tag("integration")
 class DisclosureIdempotencyIntegrationTest {
 
-    @Container @ServiceConnection
-    static final MySQLContainer<?> MYSQL = new MySQLContainer<>("mysql:8.4");
+    @ServiceConnection // @Container 미부착 — 싱글턴 컨테이너 패턴(SharedMySqlContainer 참조). 생명주기는
+    // SharedMySqlContainer의 static 블록이 소유하며, 각 클래스가 @Container로 재선언하면 클래스 종료 시
+    // 공유 컨테이너가 죽는다.
+    static final MySQLContainer<?> MYSQL = SharedMySqlContainer.MYSQL;
 
     @MockitoBean
     @SuppressWarnings("unused")

@@ -17,7 +17,6 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.testcontainers.containers.MySQLContainer;
-import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
 // 참고: deploy.yml의 마이그레이션 버전 파싱 스크립트(V*.sql → 최대 버전 번호 추출)는
@@ -28,6 +27,10 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 // 인스턴스를 합성(상속 아님)으로 재사용하여, 프로덕션 계정 분리(ADR-026)를 재현하는 계정 미러가
 // 주입된 컨테이너를 사용한다. Flyway는 application-test.yml에 지정된 제한된 flyway 계정
 // (UPDATE 없음)으로 실행된다.
+//
+// M2-T1 격리 분류: 이 클래스는 스키마/권한을 조회만 할 뿐(flyway.info(), information_schema,
+// SHOW GRANTS) 비즈니스 데이터 행을 생성하지 않으므로 격리 전략(@Transactional/root fixture)이
+// 불필요하다(읽기 전용 게이트).
 @SpringBootTest
 @ActiveProfiles({"test", "db-integration"})
 @Testcontainers
@@ -35,7 +38,10 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 @Tag("integration")
 class DatabaseMigrationIntegrationTest {
 
-    @Container @ServiceConnection static final MySQLContainer<?> MYSQL = SharedMySqlContainer.MYSQL;
+    @ServiceConnection // @Container 미부착 — 싱글턴 컨테이너 패턴(SharedMySqlContainer 참조). 생명주기는
+    // SharedMySqlContainer의 static 블록이 소유하며, 각 클래스가 @Container로 재선언하면 클래스 종료 시
+    // 공유 컨테이너가 죽는다.
+    static final MySQLContainer<?> MYSQL = SharedMySqlContainer.MYSQL;
 
     @MockitoBean
     @SuppressWarnings("unused")

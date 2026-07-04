@@ -4,11 +4,14 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import com.aaa.collector.stock.enums.AssetType;
 import com.aaa.collector.stock.enums.Market;
+import com.aaa.collector.support.SharedMySqlContainer;
 import java.time.LocalDate;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Tag;
@@ -17,12 +20,16 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
 import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.testcontainers.containers.MySQLContainer;
-import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
+// SPEC-COLLECTOR-DBGRANT-003 M2-T1: 동시성 나머지 테스트(Concurrency)가 별도 Virtual Thread
+// 커넥션으로 실제 COMMIT하므로 클래스 레벨 @Transactional 롤백으로는 격리되지 않는다(D6 롤백
+// 비호환 분류). 공유 컨테이너 전환 후 잔여 행이 다른 테스트 클래스와 충돌하지 않도록 매 테스트
+// 종료 시 root fixture 정리(JdbcTemplate 직접 DELETE)로 처리한다.
 @SpringBootTest
 @ActiveProfiles({"test", "db-integration"})
 @Testcontainers
@@ -30,8 +37,10 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 @Tag("integration")
 class InvestorTrendRepositoryTest {
 
-    @Container @ServiceConnection
-    static final MySQLContainer<?> MYSQL = new MySQLContainer<>("mysql:8.4");
+    @ServiceConnection // @Container 미부착 — 싱글턴 컨테이너 패턴(SharedMySqlContainer 참조). 생명주기는
+    // SharedMySqlContainer의 static 블록이 소유하며, 각 클래스가 @Container로 재선언하면 클래스 종료 시
+    // 공유 컨테이너가 죽는다.
+    static final MySQLContainer<?> MYSQL = SharedMySqlContainer.MYSQL;
 
     @MockitoBean
     @SuppressWarnings("unused")
@@ -39,16 +48,31 @@ class InvestorTrendRepositoryTest {
 
     @Autowired private InvestorTrendRepository investorTrendRepository;
     @Autowired private StockRepository stockRepository;
+    @Autowired private JdbcTemplate jdbcTemplate;
+
+    private final List<Long> createdStockIds = new ArrayList<>();
+
+    @AfterEach
+    void cleanUpResidualRows() {
+        for (Long stockId : createdStockIds) {
+            jdbcTemplate.update("DELETE FROM investor_trend WHERE stock_id = ?", stockId);
+            jdbcTemplate.update("DELETE FROM stocks WHERE id = ?", stockId);
+        }
+        createdStockIds.clear();
+    }
 
     private Stock savedStock(String symbol) {
-        return stockRepository.save(
-                Stock.builder()
-                        .symbol(symbol)
-                        .nameKo("테스트종목_" + symbol)
-                        .market(Market.KOSPI)
-                        .assetType(AssetType.STOCK)
-                        .listedDate(LocalDate.of(2015, 1, 1))
-                        .build());
+        Stock stock =
+                stockRepository.save(
+                        Stock.builder()
+                                .symbol(symbol)
+                                .nameKo("테스트종목_" + symbol)
+                                .market(Market.KOSPI)
+                                .assetType(AssetType.STOCK)
+                                .listedDate(LocalDate.of(2015, 1, 1))
+                                .build());
+        createdStockIds.add(stock.getId());
+        return stock;
     }
 
     private void insert(Stock stock, LocalDate date, long totalTradingValue) {

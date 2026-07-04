@@ -45,6 +45,17 @@ import org.testcontainers.junit.jupiter.Testcontainers;
  * 누적된다. 따라서 모든 단언은 반드시 {@code stock.getId()} 스코프 ({@code countByStockId}/{@code
  * findByStockIdAndTradeDateIn})로 한정해야 한다 — 글로벌 단언 ({@code repository.count()} 등)을 추가하면 교차 테스트 쓰기로
  * 조용히 깨진다.
+ *
+ * <p><b>M2-T1 격리 분류 — 싱글턴 공유 제외(전용 컨테이너)</b>: 이 클래스는 {@link
+ * com.aaa.collector.support.SharedMySqlContainer} 공유 대상에서 의도적으로 제외하고 전용 컨테이너를 쓴다. {@code
+ * collect()}가 {@code Executors.newVirtualThreadPerTaskExecutor()}로 종목별 DB 기록을 별도 스레드/커넥션에 실제 커밋하는
+ * 동작 자체를 검증하는 테스트라 {@code @Transactional} 롤백 격리가 불가능하고(가시성 문제), 위 stub이 쓰는 고정 심볼(AAPL/MSFT/SPY 등)의
+ * 실제 커밋이 공유 컨테이너를 오염시켜 고정 심볼을 쓰는 다른 테스트 클래스와 UNIQUE 제약 충돌을 일으킨다(SPEC-COLLECTOR-DBGRANT-003 M2-T1
+ * 실측). 전용 컨테이너로 매 클래스 신선한 스키마를 보장해 이 문제를 원천 차단한다.
+ *
+ * @see <a
+ *     href="https://testcontainers.com/guides/testcontainers-container-lifecycle/">Testcontainers —
+ *     테스트가 전역 상태를 변경하면 공유하지 말 것</a>
  */
 @SpringBootTest
 @ActiveProfiles({"test", "db-integration"})
