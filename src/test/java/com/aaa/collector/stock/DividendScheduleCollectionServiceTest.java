@@ -36,11 +36,12 @@ import org.springframework.web.util.UriBuilder;
 import org.springframework.web.util.UriComponentsBuilder;
 
 /**
- * DividendScheduleCollectionService 단위 테스트 (SPEC-COLLECTOR-DIVIDEND-FIX-001 T2).
+ * DividendScheduleCollectionService 단위 테스트 (SPEC-COLLECTOR-DIVIDEND-FIX-001 T2/T3).
  *
  * <p>종목별 루프 전환(REQ-DIVFIX-010~012)·Virtual Thread 병렬(REQ-DIVFIX-013)·전 키 사망 단락(REQ-DIVFIX-040)· 종목별
- * 예외 격리(REQ-DIVFIX-041)를 검증한다. CTS 페이징은 제거되었으므로 관련 테스트는 존재하지 않는다. 미확정(0/0) 배당 defer는 T3 범위이므로 본
- * 테스트는 다루지 않는다 — 현행 매핑(mapToEntity)이 그대로 유지됨을 검증한다.
+ * 예외 격리(REQ-DIVFIX-041)를 검증한다. CTS 페이징은 제거되었으므로 관련 테스트는 존재하지 않는다. 검증·미확정(0/0) defer 판정 세부 로직(단위
+ * 수준)은 {@link DividendRowAccumulatorTest}가 커버하므로, 본 테스트는 서비스가 그 협력자를 올바르게 배선했는지(종목별 batch 흐름·최종 집계)
+ * end-to-end로 검증한다.
  */
 @ExtendWith(MockitoExtension.class)
 @DisplayName("DividendScheduleCollectionService — 종목별 루프 단위 테스트")
@@ -303,6 +304,115 @@ class DividendScheduleCollectionServiceTest {
             // Assert
             assertThat(result.succeeded()).isZero();
             verify(corporateEventInserter, never()).insertBatchIsolated(any(), any());
+        }
+    }
+
+    // ────────────────────────────────────────────────────────────────────
+    // 미확정(0/0) 배당 행 defer — end-to-end 배선 (REQ-DIVFIX-020~022, RD-6/RD-7)
+    // ────────────────────────────────────────────────────────────────────
+
+    @Nested
+    @DisplayName("collect — 미확정(0/0) 배당 defer 배선 (T3, REQ-DIVFIX-020~022)")
+    class UnconfirmedDividendDefer {
+
+        private KisDividendScheduleResponse.DividendRow zeroRow(String shtCd, String recordDate) {
+            return new KisDividendScheduleResponse.DividendRow(
+                    shtCd,
+                    recordDate,
+                    "결산배당",
+                    "0", // per_sto_divi_amt
+                    "0.00", // divi_rate
+                    "0.00",
+                    "",
+                    "",
+                    "",
+                    "5000",
+                    "보통주",
+                    "0");
+        }
+
+        @Test
+        @DisplayName("0/0 행 — 저장되지 않는다(succeeded=0), 독성/검증 카운터로 오분류되지 않음")
+        void zeroRow_notPersisted() throws Exception {
+            // Arrange
+            Stock stock = watchlistStock("005930");
+            when(stockRepository.findAllActiveDomesticTradable()).thenReturn(List.of(stock));
+            when(guardedKisExecutor.execute(
+                            eq(session), any(), eq(TR_ID), eq(KisDividendScheduleResponse.class)))
+                    .thenReturn(response(List.of(zeroRow("005930", "20260613"))));
+
+            // Act
+            DividendCollectionResult result = service.collect("20260601", "20260630");
+
+            // Assert — defer는 attempted에는 잡히나(전체 output1 행) 저장되지 않고 skippedValidation에도 잡히지 않는다
+            assertThat(result.attempted()).isEqualTo(1);
+            assertThat(result.succeeded()).isZero();
+            assertThat(result.skippedValidation()).isZero();
+            verify(corporateEventInserter, never()).insertBatchIsolated(any(), any());
+        }
+
+        @Test
+        @DisplayName("확정 행 + 0/0 행 혼재 — 확정 행만 저장, 0/0 행은 defer")
+        void mixedConfirmedAndZeroRows_onlyConfirmedPersisted() throws Exception {
+            // Arrange
+            Stock stock = watchlistStock("005930");
+            when(stockRepository.findAllActiveDomesticTradable()).thenReturn(List.of(stock));
+            when(guardedKisExecutor.execute(
+                            eq(session), any(), eq(TR_ID), eq(KisDividendScheduleResponse.class)))
+                    .thenReturn(
+                            response(
+                                    List.of(
+                                            sampleRow("005930"), // 확정 행(amt=500, rate=2.50)
+                                            zeroRow("005930", "20260613")))); // 0/0 defer 행
+
+            // Act
+            DividendCollectionResult result = service.collect("20260601", "20260630");
+
+            // Assert
+            assertThat(result.attempted()).isEqualTo(2);
+            assertThat(result.succeeded()).isEqualTo(1);
+            verify(corporateEventInserter).insertBatchIsolated(inserterCaptor.capture(), any());
+            assertThat(inserterCaptor.getAllValues().stream().flatMap(List::stream).toList())
+                    .hasSize(1);
+        }
+
+        @Test
+        @DisplayName("rate-only 행(amt=0, rate!=0) — defer 아님, 원본 그대로 저장(역산 없음)")
+        void rateOnlyRow_storedAsIs() throws Exception {
+            // Arrange
+            Stock stock = watchlistStock("005930");
+            when(stockRepository.findAllActiveDomesticTradable()).thenReturn(List.of(stock));
+            KisDividendScheduleResponse.DividendRow rateOnlyRow =
+                    new KisDividendScheduleResponse.DividendRow(
+                            "005930",
+                            "20260613",
+                            "결산배당",
+                            "0", // per_sto_divi_amt=0
+                            "2.50", // divi_rate!=0 → rate-only, defer 대상 아님(RD-7)
+                            "0.00",
+                            "",
+                            "",
+                            "",
+                            "5000",
+                            "보통주",
+                            "0");
+            when(guardedKisExecutor.execute(
+                            eq(session), any(), eq(TR_ID), eq(KisDividendScheduleResponse.class)))
+                    .thenReturn(response(List.of(rateOnlyRow)));
+
+            // Act
+            DividendCollectionResult result = service.collect("20260601", "20260630");
+
+            // Assert — 저장됨, cash_amount는 파싱값 0 그대로(역산 없음)
+            assertThat(result.succeeded()).isEqualTo(1);
+            verify(corporateEventInserter).insertBatchIsolated(inserterCaptor.capture(), any());
+            CorporateEvent saved =
+                    inserterCaptor.getAllValues().stream()
+                            .flatMap(List::stream)
+                            .findFirst()
+                            .orElseThrow();
+            assertThat(saved.getCashAmount()).isEqualByComparingTo("0");
+            assertThat(saved.getCashRate()).isEqualByComparingTo("2.5000");
         }
     }
 
