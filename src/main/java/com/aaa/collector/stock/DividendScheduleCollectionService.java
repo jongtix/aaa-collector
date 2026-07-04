@@ -110,11 +110,14 @@ public class DividendScheduleCollectionService {
             }
         } // close() blocks until all submitted tasks complete
 
-        // T3 범위: skippedUnconfirmed는 아직 DividendCollectionResult에 반영하지 않는다(T4에서 결과 레코드에 배선).
+        // REQ-DIVFIX-050: skippedUnconfirmed는 accumulator가 집계한 실제 defer 행 수를 그대로 결과 레코드에 반영한다.
         int skippedValidation = accumulator.skippedValidation() + toxicFailures.get();
         DividendCollectionResult result =
                 new DividendCollectionResult(
-                        attempted.get(), succeeded.get(), 0, skippedValidation);
+                        attempted.get(),
+                        succeeded.get(),
+                        accumulator.skippedUnconfirmed(),
+                        skippedValidation);
         log.info(
                 "[dividend] 수집 완료 — attemptedStocks={}, attempted={}, succeeded={}, "
                         + "skippedValidation={}, skippedUnconfirmed={}",
@@ -122,7 +125,7 @@ public class DividendScheduleCollectionService {
                 result.attempted(),
                 result.succeeded(),
                 result.skippedValidation(),
-                accumulator.skippedUnconfirmed());
+                result.skippedUnconfirmed());
         return result;
     }
 
