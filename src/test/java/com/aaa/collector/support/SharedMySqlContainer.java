@@ -1,5 +1,6 @@
 package com.aaa.collector.support;
 
+import com.zaxxer.hikari.HikariDataSource;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.ResultSet;
@@ -123,6 +124,37 @@ public final class SharedMySqlContainer {
      */
     public static DataSource rootDataSourceFor(String jdbcUrl) {
         return new DriverManagerDataSource(jdbcUrl, ROOT_USERNAME, ROOT_PASSWORD);
+    }
+
+    /**
+     * 지정된 JDBC URL에 collector 계정으로 연결하는 {@link DataSource}를 반환한다(M2-T4 — 앱 datasource를 collector
+     * 계정으로 전환하는 {@code CollectorAccountDataSourceSwitcher}가 사용).
+     *
+     * <p>{@link #flywayDataSource()}/{@link #rootDataSourceFor(String)}와 동일한 이유로 자격증명 사용을 이 클래스 내부로
+     * 한정하기 위해 DataSource 팩토리 형태로만 노출한다.
+     *
+     * @param jdbcUrl collector 계정으로 연결할 대상 컨테이너의 JDBC URL
+     * @return collector 계정 자격증명이 설정된 비풀링 DataSource
+     */
+    public static DataSource collectorDataSourceFor(String jdbcUrl) {
+        return new DriverManagerDataSource(jdbcUrl, COLLECTOR_USERNAME, COLLECTOR_PASSWORD);
+    }
+
+    /**
+     * 이미 생성된 {@link HikariDataSource} 빈의 자격증명을 collector 계정으로 교체한다(M2-T4 — {@code
+     * CollectorAccountDataSourceSwitcher}가 사용). 풀 인스턴스 자체(타입·최대풀크기 등 구성값)는 그대로 유지하고
+     * username/password만 바꾼다 — {@code HikariPoolQueueingTest}처럼 앱 datasource를 {@code
+     * HikariDataSource}로 캐스팅해 풀 설정값을 검증하는 기존 테스트가 깨지지 않도록, 완전히 새로운 {@link DataSource}로 치환하지 않는다.
+     *
+     * <p>HikariCP는 풀이 처음 사용되기 전(첫 {@code getConnection()} 호출 전)까지는 {@code setUsername}/{@code
+     * setPassword}를 허용한다(그 이후에는 {@code IllegalStateException}로 봉인). 호출자는 이 메서드 호출 전에 해당 {@code
+     * HikariDataSource}로 커넥션을 열지 않아야 한다.
+     *
+     * @param dataSource 자격증명을 교체할 대상 {@link HikariDataSource} 빈
+     */
+    public static void applyCollectorCredentials(HikariDataSource dataSource) {
+        dataSource.setUsername(COLLECTOR_USERNAME);
+        dataSource.setPassword(COLLECTOR_PASSWORD);
     }
 
     /**

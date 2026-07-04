@@ -3,6 +3,7 @@ package com.aaa.collector.support;
 import java.sql.Connection;
 import java.sql.SQLException;
 import java.sql.Statement;
+import org.springframework.jdbc.core.JdbcTemplate;
 
 /**
  * fixture 정리 전용 root 커넥션 유틸 (SPEC-COLLECTOR-DBGRANT-003 M2-T3).
@@ -46,5 +47,19 @@ public final class RootFixtureCleaner {
                 Statement statement = root.createStatement()) {
             statement.execute("DELETE FROM daily_ohlcv");
         }
+    }
+
+    /**
+     * 스코프 한정(파라미터 바인딩) DELETE/UPDATE가 필요한 root fixture 정리에 사용할 {@link JdbcTemplate}을 반환한다(M2-T4 —
+     * 공유 컨테이너에서 자신이 만든 행만 정리하는 파일들이 앱 datasource collector 계정 전환 이후에도 정리를 계속할 수 있도록 함). 테이블 전체를 비우는
+     * {@link #deleteAllBackfillStatus(String)} 등과 달리, 호출자가 직접 파라미터화 SQL(예: {@code "DELETE FROM
+     * investor_trend WHERE stock_id = ?"})을 작성해 사용한다 — 바인드 변수를 쓰므로 SpotBugs SQL_INJECTION_JDBC 우려가
+     * 없다(식별자가 아닌 값만 파라미터화).
+     *
+     * @param jdbcUrl root로 연결할 대상 컨테이너의 JDBC URL
+     * @return root 계정 자격증명이 설정된 {@link JdbcTemplate}
+     */
+    public static JdbcTemplate rootJdbcTemplate(String jdbcUrl) {
+        return new JdbcTemplate(SharedMySqlContainer.rootDataSourceFor(jdbcUrl));
     }
 }

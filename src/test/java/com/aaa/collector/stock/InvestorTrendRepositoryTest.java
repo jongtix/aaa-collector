@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import com.aaa.collector.stock.enums.AssetType;
 import com.aaa.collector.stock.enums.Market;
+import com.aaa.collector.support.RootFixtureCleaner;
 import com.aaa.collector.support.SharedMySqlContainer;
 import java.time.LocalDate;
 import java.util.ArrayList;
@@ -29,7 +30,13 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 // SPEC-COLLECTOR-DBGRANT-003 M2-T1: 동시성 나머지 테스트(Concurrency)가 별도 Virtual Thread
 // 커넥션으로 실제 COMMIT하므로 클래스 레벨 @Transactional 롤백으로는 격리되지 않는다(D6 롤백
 // 비호환 분류). 공유 컨테이너 전환 후 잔여 행이 다른 테스트 클래스와 충돌하지 않도록 매 테스트
-// 종료 시 root fixture 정리(JdbcTemplate 직접 DELETE)로 처리한다.
+// 종료 시 root fixture 정리로 처리한다.
+//
+// M2-T4(REQ-DBGRANT3-013 동일 패턴): 정리가 앱 datasource(jdbcTemplate)를 그대로 썼던 것을
+// RootFixtureCleaner.rootJdbcTemplate() 기반 root 커넥션으로 교체했다 — 앱 datasource가
+// collector 계정(DELETE 권한 없음)으로 전환된 뒤에도 정리가 계속 동작해야 하기 때문이다(M2-T2
+// grant 훅 도입 직후 실측: 기존 app-datasource DELETE가 1142에 상응하는 오류로 실패하며 잔여
+// 행이 다른 테스트 클래스와 충돌).
 @SpringBootTest
 @ActiveProfiles({"test", "db-integration"})
 @Testcontainers
@@ -48,15 +55,15 @@ class InvestorTrendRepositoryTest {
 
     @Autowired private InvestorTrendRepository investorTrendRepository;
     @Autowired private StockRepository stockRepository;
-    @Autowired private JdbcTemplate jdbcTemplate;
 
     private final List<Long> createdStockIds = new ArrayList<>();
 
     @AfterEach
     void cleanUpResidualRows() {
+        JdbcTemplate rootJdbcTemplate = RootFixtureCleaner.rootJdbcTemplate(MYSQL.getJdbcUrl());
         for (Long stockId : createdStockIds) {
-            jdbcTemplate.update("DELETE FROM investor_trend WHERE stock_id = ?", stockId);
-            jdbcTemplate.update("DELETE FROM stocks WHERE id = ?", stockId);
+            rootJdbcTemplate.update("DELETE FROM investor_trend WHERE stock_id = ?", stockId);
+            rootJdbcTemplate.update("DELETE FROM stocks WHERE id = ?", stockId);
         }
         createdStockIds.clear();
     }
