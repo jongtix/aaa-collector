@@ -99,7 +99,7 @@ public class MarketBatchScheduler {
         succeeded += fundsResult[1];
         skip += fundsResult[2];
 
-        // T6: 배당 일정 — skip = skippedNonWatchlist + skippedValidation
+        // T6: 배당 일정 — skip = skippedUnconfirmed + skippedValidation
         long[] dividendResult = collectDividendSchedule(today);
         attempted += dividendResult[0];
         succeeded += dividendResult[1];
@@ -178,7 +178,7 @@ public class MarketBatchScheduler {
         }
     }
 
-    /** 배당 일정 수집. [attempted, succeeded, skip(nonWatchlist+validation)] 반환. 예외 시 [1, 0, 0]. */
+    /** 배당 일정 수집. [attempted, succeeded, skip(unconfirmed+validation)] 반환. 예외 시 [1, 0, 0]. */
     @SuppressWarnings("PMD.AvoidCatchingGenericException") // 스케줄러 스레드 종료 방지
     private long[] collectDividendSchedule(LocalDate today) {
         try {
@@ -186,12 +186,13 @@ public class MarketBatchScheduler {
             String toDate = today.plusDays(DIVIDEND_RANGE_DAYS).format(DATE_FMT);
             DividendCollectionResult result =
                     dividendScheduleCollectionService.collect(fromDate, toDate);
-            long totalSkip = (long) result.skippedNonWatchlist() + result.skippedValidation();
+            long totalSkip = (long) result.skippedUnconfirmed() + result.skippedValidation();
             log.info(
-                    "[dividend-schedule] 수집 완료 — attempted={}, succeeded={}, skippedNonWatchlist={}, skippedValidation={}",
+                    "[dividend-schedule] 수집 완료 — attempted={}, succeeded={}, "
+                            + "skippedUnconfirmed={}, skippedValidation={}",
                     result.attempted(),
                     result.succeeded(),
-                    result.skippedNonWatchlist(),
+                    result.skippedUnconfirmed(),
                     result.skippedValidation());
             return new long[] {result.attempted(), result.succeeded(), totalSkip};
         } catch (Exception e) {
