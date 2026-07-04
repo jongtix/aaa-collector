@@ -112,7 +112,7 @@ class KisDividendScheduleResponseTest {
         @DisplayName("output1 이 null 이면 빈 리스트로 대체된다")
         void nullOutput1_becomesEmptyList() {
             KisDividendScheduleResponse response =
-                    new KisDividendScheduleResponse("0", "MCA00000", "정상", null, null);
+                    new KisDividendScheduleResponse("0", "MCA00000", "정상", null);
 
             assertThat(response.output1()).isEmpty();
         }
@@ -136,7 +136,7 @@ class KisDividendScheduleResponseTest {
                             "N");
             KisDividendScheduleResponse response =
                     new KisDividendScheduleResponse(
-                            "0", "MCA00000", "정상", new ArrayList<>(List.of(row)), null);
+                            "0", "MCA00000", "정상", new ArrayList<>(List.of(row)));
 
             assertThatThrownBy(() -> response.output1().add(row))
                     .isInstanceOf(UnsupportedOperationException.class);

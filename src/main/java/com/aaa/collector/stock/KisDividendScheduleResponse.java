@@ -11,31 +11,18 @@ import java.util.List;
  * 수집한다(RIGHTS_ISSUE 제외 — REQ-BATCH3-054). {@link
  * com.aaa.collector.stock.daily.KisDailyOhlcvResponse} 패턴 답습.
  *
- * <p>CTS 페이징: {@code output2}(Object, single)에 다음 페이지 CTS 토큰이 담긴다. {@code output2}가 null 이거나 {@code
- * cts}가 공백이면 마지막 페이지다.
+ * <p>종목별 조회(±60일 윈도우)는 단일 응답으로 완결되므로 CTS 페이징이 불필요하다(REQ-DIVFIX-012). 실측상 응답 본문에 {@code output2} 키
+ * 자체가 존재하지 않았다 — {@link JsonIgnoreProperties}로 미매핑 필드는 무해하게 무시된다.
  */
 @JsonIgnoreProperties(ignoreUnknown = true)
 public record KisDividendScheduleResponse(
-        String rtCd, String msgCd, String msg1, List<DividendRow> output1, CtsPaging output2)
+        String rtCd, String msgCd, String msg1, List<DividendRow> output1)
         implements KisApiResponse {
 
     /** 방어적 복사 — output1 필드를 불변 리스트로 변환. */
     public KisDividendScheduleResponse {
         output1 = output1 != null ? List.copyOf(output1) : List.of();
     }
-
-    /**
-     * 다음 페이지 CTS 토큰.
-     *
-     * @return 공백/null 이면 마지막 페이지
-     */
-    public String cts() {
-        return output2 != null ? output2.cts() : null;
-    }
-
-    /** CTS 페이징 오브젝트 (output2). */
-    @JsonIgnoreProperties(ignoreUnknown = true)
-    public record CtsPaging(String cts) {}
 
     /**
      * 배당 일정 행 (output1 배열 1건).
