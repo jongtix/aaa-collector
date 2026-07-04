@@ -27,6 +27,8 @@ import com.aaa.collector.stock.supply.CreditBalanceCollectionService;
 import com.aaa.collector.stock.supply.InvestorTrendCollectionService;
 import com.aaa.collector.stock.supply.InvestorTrendFetch;
 import com.aaa.collector.stock.supply.ShortSaleCollectionService;
+import com.aaa.collector.support.RootFixtureCleaner;
+import java.sql.SQLException;
 import java.time.LocalDate;
 import java.util.List;
 import java.util.Optional;
@@ -50,10 +52,9 @@ import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
 /**
- * M2-T1 격리 분류 — 싱글턴 공유 제외(전용 컨테이너): {@code @BeforeEach}가 {@code
- * backfillStatusRepository.deleteAllInBatch()}로 {@code backfill_status} 테이블 전체를 비운다. 전용 컨테이너 시절에는
- * 안전했으나 공유 컨테이너에서는 다른 테스트 클래스가 커밋한 행까지 함께 삭제해 순서 의존 실패를 유발한다(SPEC-COLLECTOR-DBGRANT-003 M2-T1 실측).
- * 격리 전략 재설계(전체 삭제 대신 스코프 한정 정리)는 M2-T3에서 처리 예정 — 그때까지 전용 컨테이너로 격리한다.
+ * M2-T1 격리 분류 — 싱글턴 공유 제외(전용 컨테이너). M2-T3(REQ-DBGRANT3-013)에서 {@code @BeforeEach} 정리를 {@link
+ * RootFixtureCleaner#deleteAllBackfillStatus(String)} root 커넥션으로 재배선했다 — 테스트 대상 코드 경로(리포지토리 호출,
+ * {@code advance()}/{@code fail()} dirty-check 포함)는 앱 datasource를 그대로 사용.
  */
 @SpringBootTest
 @ActiveProfiles({"test", "db-integration"})
@@ -85,7 +86,7 @@ class BackfillWindowExecutorTransactionTest {
     private Stock domesticStock;
 
     @BeforeEach
-    void setUp() {
+    void setUp() throws SQLException {
         session = Mockito.mock(LeaseSession.class);
         domesticStock =
                 Stock.builder()
@@ -95,7 +96,8 @@ class BackfillWindowExecutorTransactionTest {
                         .active(true)
                         .build();
 
-        backfillStatusRepository.deleteAllInBatch();
+        // root 커넥션으로 정리(M2-T3)
+        RootFixtureCleaner.deleteAllBackfillStatus(MYSQL.getJdbcUrl());
     }
 
     private BackfillStatus seedPending(String symbol, String dataTable) {

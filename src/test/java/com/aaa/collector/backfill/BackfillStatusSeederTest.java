@@ -6,6 +6,8 @@ import com.aaa.collector.stock.Stock;
 import com.aaa.collector.stock.StockRepository;
 import com.aaa.collector.stock.enums.AssetType;
 import com.aaa.collector.stock.enums.Market;
+import com.aaa.collector.support.RootFixtureCleaner;
+import java.sql.SQLException;
 import java.time.LocalDate;
 import java.util.List;
 import java.util.Set;
@@ -30,11 +32,8 @@ import org.testcontainers.junit.jupiter.Testcontainers;
  * <p>Testcontainers {@code mysql:8.4}로 native INSERT IGNORE 의미(중복 무해·기존 행 보존)와 시장별 data_table 분기를
  * 검증한다(H2는 INSERT IGNORE 미재현).
  *
- * <p><b>M2-T1 격리 분류 — 싱글턴 공유 제외(전용 컨테이너)</b>: {@code @BeforeEach}가 {@code
- * backfillStatusRepository.deleteAllInBatch()}/{@code stockRepository.deleteAllInBatch()}로 {@code
- * backfill_status}·{@code stocks} 테이블 전체를 비운다. 전용 컨테이너 시절에는 안전했으나 공유 컨테이너에서는 다른 테스트 클래스가 커밋한 행까지 함께
- * 삭제해 순서 의존 실패를 유발한다(SPEC-COLLECTOR-DBGRANT-003 M2-T1 실측). 격리 전략 재설계(전체 삭제 대신 스코프 한정 정리)는 M2-T3에서
- * 처리 예정 — 그때까지 전용 컨테이너로 격리한다.
+ * <p><b>M2-T1 격리 분류 — 싱글턴 공유 제외(전용 컨테이너)</b>. M2-T3(REQ-DBGRANT3-013)에서 {@code @BeforeEach} 정리를
+ * {@link RootFixtureCleaner}의 root 커넥션으로 재배선했다 — 테스트 대상 코드 경로(시더·리포지토리 호출)는 앱 datasource를 그대로 사용.
  */
 @SpringBootTest
 @ActiveProfiles({"test", "db-integration"})
@@ -64,10 +63,10 @@ class BackfillStatusSeederTest {
     @Autowired private StockRepository stockRepository;
 
     @BeforeEach
-    void cleanUp() {
-        // 공유 Testcontainers MySQL — 테스트 간 격리.
-        backfillStatusRepository.deleteAllInBatch();
-        stockRepository.deleteAllInBatch();
+    void cleanUp() throws SQLException {
+        // root 커넥션으로 정리(M2-T3) — 테스트 간 격리.
+        RootFixtureCleaner.deleteAllBackfillStatus(MYSQL.getJdbcUrl());
+        RootFixtureCleaner.deleteAllStocks(MYSQL.getJdbcUrl());
     }
 
     private Stock saveStock(String symbol, Market market) {

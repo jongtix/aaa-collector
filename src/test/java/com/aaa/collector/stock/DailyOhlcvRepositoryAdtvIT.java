@@ -4,7 +4,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import com.aaa.collector.stock.enums.AssetType;
 import com.aaa.collector.stock.enums.Market;
+import com.aaa.collector.support.RootFixtureCleaner;
 import java.math.BigDecimal;
+import java.sql.SQLException;
 import java.time.LocalDate;
 import java.util.List;
 import java.util.Map;
@@ -30,11 +32,9 @@ import org.testcontainers.junit.jupiter.Testcontainers;
  *
  * <p>MySQL 8.4 window 함수(ROW_NUMBER OVER PARTITION) 사용 — H2 미지원. Testcontainers MySQL 8.4 필수.
  *
- * <p><b>M2-T1 격리 분류 — 싱글턴 공유 제외(전용 컨테이너)</b>: 이 클래스의 {@code @BeforeEach}가 {@code
- * dailyOhlcvRepository.deleteAll()}/{@code stockRepository.deleteAll()}로 두 테이블을 통째로 비운다. 전용 컨테이너
- * 시절에는 안전했으나(자신만의 컨테이너), 공유 컨테이너에서는 다른 테스트 클래스가 커밋한 데이터까지 함께 삭제해 순서 의존 실패를 유발한다(실측: 전체 스위트 실행 시 랜덤
- * 클래스 순서에 따라 매번 다른 조합의 UNIQUE 제약 충돌 발생, SPEC-COLLECTOR-DBGRANT-003 M2-T1). 격리 전략 재설계(전체 삭제 대신 스코프
- * 한정 정리)는 M2-T3에서 처리 예정 — 그때까지 전용 컨테이너로 격리한다.
+ * <p><b>M2-T1 격리 분류 — 싱글턴 공유 제외(전용 컨테이너)</b>. M2-T3(REQ-DBGRANT3-013)에서 {@code @BeforeEach} 정리를
+ * {@link RootFixtureCleaner}의 root 커넥션으로 재배선했다(FK 제약상 자식 {@code daily_ohlcv}를 부모 {@code stocks}보다
+ * 먼저 삭제하는 기존 순서를 그대로 유지) — 테스트 대상 코드 경로(리포지토리 호출)는 앱 datasource를 그대로 사용.
  */
 @SpringBootTest
 @ActiveProfiles({"test", "db-integration"})
@@ -57,9 +57,9 @@ class DailyOhlcvRepositoryAdtvIT {
     private Stock stock2;
 
     @BeforeEach
-    void setUp() {
-        dailyOhlcvRepository.deleteAll();
-        stockRepository.deleteAll();
+    void setUp() throws SQLException {
+        RootFixtureCleaner.deleteAllDailyOhlcv(MYSQL.getJdbcUrl());
+        RootFixtureCleaner.deleteAllStocks(MYSQL.getJdbcUrl());
 
         stock1 =
                 stockRepository.save(
