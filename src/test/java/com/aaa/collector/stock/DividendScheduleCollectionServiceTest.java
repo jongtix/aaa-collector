@@ -2,9 +2,11 @@ package com.aaa.collector.stock;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -17,8 +19,10 @@ import com.aaa.collector.observability.RowFailureHandler;
 import com.aaa.collector.stock.enums.AssetType;
 import com.aaa.collector.stock.enums.EventType;
 import com.aaa.collector.stock.enums.Market;
+import java.net.URI;
 import java.sql.SQLException;
 import java.util.List;
+import java.util.function.Function;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -27,17 +31,19 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Captor;
 import org.mockito.Mock;
-import org.mockito.Mockito;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.web.util.UriBuilder;
+import org.springframework.web.util.UriComponentsBuilder;
 
 /**
- * SPEC-COLLECTOR-KISGATE-001 M6(T19) — {@link DividendScheduleCollectionService} 게이트 경유 단위 테스트.
+ * DividendScheduleCollectionService 단위 테스트 (SPEC-COLLECTOR-DIVIDEND-FIX-001 T2).
  *
- * <p>패턴 A는 Behavior:Changed이므로 신규 게이트 라우팅(throttle-on 4-arg 경유·CTS 페이징 전체 = 1 batch이므로 세션 1회 open)과
- * 기존 수집 의미(비관심종목 skip·검증 skip·CTS 페이징·멱등·독성 행 흡수)를 함께 검증한다.
+ * <p>종목별 루프 전환(REQ-DIVFIX-010~012)·Virtual Thread 병렬(REQ-DIVFIX-013)·전 키 사망 단락(REQ-DIVFIX-040)· 종목별
+ * 예외 격리(REQ-DIVFIX-041)를 검증한다. CTS 페이징은 제거되었으므로 관련 테스트는 존재하지 않는다. 미확정(0/0) 배당 defer는 T3 범위이므로 본
+ * 테스트는 다루지 않는다 — 현행 매핑(mapToEntity)이 그대로 유지됨을 검증한다.
  */
 @ExtendWith(MockitoExtension.class)
-@DisplayName("DividendScheduleCollectionService — 게이트 경유 단위 테스트")
+@DisplayName("DividendScheduleCollectionService — 종목별 루프 단위 테스트")
 class DividendScheduleCollectionServiceTest {
 
     private static final String TR_ID = "HHKDB669102C0";
@@ -62,7 +68,7 @@ class DividendScheduleCollectionServiceTest {
                         stockRepository,
                         corporateEventRepository,
                         corporateEventInserter);
-        Mockito.lenient().when(keyLeaseRegistry.openSession()).thenReturn(session);
+        lenient().when(keyLeaseRegistry.openSession()).thenReturn(session);
     }
 
     private Stock watchlistStock(String symbol) {
@@ -91,16 +97,126 @@ class DividendScheduleCollectionServiceTest {
                 "0"); // high_divi_gb
     }
 
-    private KisDividendScheduleResponse singlePageResponse(
+    private KisDividendScheduleResponse response(
             List<KisDividendScheduleResponse.DividendRow> rows) {
-        // CTS = null → 마지막 페이지
-        return new KisDividendScheduleResponse("0", "MCA00000", "정상처리", rows, null);
+        return new KisDividendScheduleResponse("0", "MCA00000", "정상처리", rows);
     }
 
-    private KisDividendScheduleResponse pageWithCts(
-            List<KisDividendScheduleResponse.DividendRow> rows, String nextCts) {
-        return new KisDividendScheduleResponse(
-                "0", "MCA00000", "정상처리", rows, new KisDividendScheduleResponse.CtsPaging(nextCts));
+    // ────────────────────────────────────────────────────────────────────
+    // 대상 조회 / 세션 (REQ-DIVFIX-010, REQ-DIVFIX-040)
+    // ────────────────────────────────────────────────────────────────────
+
+    @Nested
+    @DisplayName("collect — 대상 조회 / 세션")
+    class Target {
+
+        @Test
+        @DisplayName("findAllActiveDomesticTradable() 진입점 호출 — 전체조회(SHT_CD=\"\") 사용 안 함")
+        void collect_callsDomesticTradableQuery() {
+            when(stockRepository.findAllActiveDomesticTradable()).thenReturn(List.of());
+
+            service.collect("20260601", "20260630");
+
+            verify(stockRepository).findAllActiveDomesticTradable();
+        }
+
+        @Test
+        @DisplayName("빈 대상 — 게이트·세션 미호출, 0건")
+        void collect_emptyTarget_noGateCall() {
+            when(stockRepository.findAllActiveDomesticTradable()).thenReturn(List.of());
+
+            DividendCollectionResult result = service.collect("20260601", "20260630");
+
+            assertThat(result.attempted()).isZero();
+            assertThat(result.succeeded()).isZero();
+            verify(keyLeaseRegistry, never()).openSession();
+        }
+
+        @Test
+        @DisplayName("전 키 사망(빈 스냅샷) — per-stock 수집 0회, 전체 skip")
+        void collect_allKeysDead_skipAll() throws Exception {
+            Stock stock = watchlistStock("005930");
+            when(stockRepository.findAllActiveDomesticTradable()).thenReturn(List.of(stock));
+            when(session.isEmpty()).thenReturn(true);
+
+            DividendCollectionResult result = service.collect("20260601", "20260630");
+
+            assertThat(result.attempted()).isZero();
+            assertThat(result.succeeded()).isZero();
+            verify(guardedKisExecutor, never())
+                    .execute(any(LeaseSession.class), any(), anyString(), any());
+        }
+    }
+
+    // ────────────────────────────────────────────────────────────────────
+    // 요청 파라미터 (REQ-DIVFIX-011)
+    // ────────────────────────────────────────────────────────────────────
+
+    @Nested
+    @DisplayName("collect — 요청 파라미터 (REQ-DIVFIX-011)")
+    class RequestParams {
+
+        @Test
+        @SuppressWarnings("unchecked")
+        @DisplayName("SHT_CD=종목코드·GB1=0·F_DT/T_DT·CTS=공백·HIGH_GB=공백으로 게이트 호출")
+        void collect_buildsPerStockRequest() throws Exception {
+            // Arrange
+            Stock stock = watchlistStock("005930");
+            when(stockRepository.findAllActiveDomesticTradable()).thenReturn(List.of(stock));
+
+            ArgumentCaptor<Function<UriBuilder, URI>> uriCaptor =
+                    ArgumentCaptor.forClass(Function.class);
+            when(guardedKisExecutor.execute(
+                            eq(session),
+                            uriCaptor.capture(),
+                            eq(TR_ID),
+                            eq(KisDividendScheduleResponse.class)))
+                    .thenReturn(response(List.of()));
+
+            // Act
+            service.collect("20260601", "20260630");
+
+            // Assert
+            URI uri = uriCaptor.getValue().apply(UriComponentsBuilder.newInstance());
+            assertThat(uri.toString())
+                    .contains("/uapi/domestic-stock/v1/ksdinfo/dividend")
+                    .contains("SHT_CD=005930")
+                    .contains("GB1=0")
+                    .contains("F_DT=20260601")
+                    .contains("T_DT=20260630")
+                    .contains("CTS=")
+                    .contains("HIGH_GB=");
+        }
+
+        @Test
+        @DisplayName("TR ID = HHKDB669102C0")
+        void collect_usesCorrectTrId() throws Exception {
+            Stock stock = watchlistStock("005930");
+            when(stockRepository.findAllActiveDomesticTradable()).thenReturn(List.of(stock));
+            when(guardedKisExecutor.execute(
+                            eq(session), any(), eq(TR_ID), eq(KisDividendScheduleResponse.class)))
+                    .thenReturn(response(List.of()));
+
+            service.collect("20260601", "20260630");
+
+            verify(guardedKisExecutor)
+                    .execute(eq(session), any(), eq(TR_ID), eq(KisDividendScheduleResponse.class));
+        }
+
+        @Test
+        @DisplayName("종목당 KIS 호출 1회 — CTS 재호출 없음")
+        void collect_callsGatewayOncePerStock() throws Exception {
+            Stock stock = watchlistStock("005930");
+            when(stockRepository.findAllActiveDomesticTradable()).thenReturn(List.of(stock));
+            when(guardedKisExecutor.execute(
+                            eq(session), any(), eq(TR_ID), eq(KisDividendScheduleResponse.class)))
+                    .thenReturn(response(List.of(sampleRow("005930"))));
+
+            service.collect("20260601", "20260630");
+
+            verify(guardedKisExecutor, times(1))
+                    .execute(eq(session), any(), eq(TR_ID), eq(KisDividendScheduleResponse.class));
+        }
     }
 
     // ────────────────────────────────────────────────────────────────────
@@ -108,19 +224,19 @@ class DividendScheduleCollectionServiceTest {
     // ────────────────────────────────────────────────────────────────────
 
     @Nested
-    @DisplayName("정상 수집 — 관심종목 → DIVIDEND 저장")
+    @DisplayName("정상 수집 — 종목별 조회 → DIVIDEND 저장")
     class HappyPath {
 
         @Test
         @SuppressWarnings("PMD.UnitTestContainsTooManyAsserts") // 매핑 필드 전체 검증을 한 테스트에서 수행
-        @DisplayName("관심종목 행 → CorporateEvent(DIVIDEND) 저장, 매핑 정확")
-        void watchlistRow_storedAsDividend() throws Exception {
+        @DisplayName("종목 배당 행 → CorporateEvent(DIVIDEND) 저장, 매핑 정확")
+        void stockRow_storedAsDividend() throws Exception {
             // Arrange
             Stock stock = watchlistStock("005930");
-            when(stockRepository.findAllActive()).thenReturn(List.of(stock));
+            when(stockRepository.findAllActiveDomesticTradable()).thenReturn(List.of(stock));
             when(guardedKisExecutor.execute(
                             eq(session), any(), eq(TR_ID), eq(KisDividendScheduleResponse.class)))
-                    .thenReturn(singlePageResponse(List.of(sampleRow("005930"))));
+                    .thenReturn(response(List.of(sampleRow("005930"))));
 
             // Act
             DividendCollectionResult result = service.collect("20260601", "20260630");
@@ -128,7 +244,6 @@ class DividendScheduleCollectionServiceTest {
             // Assert
             assertThat(result.attempted()).isEqualTo(1);
             assertThat(result.succeeded()).isEqualTo(1);
-            assertThat(result.skippedNonWatchlist()).isZero();
             assertThat(result.skippedValidation()).isZero();
 
             verify(corporateEventInserter).insertBatchIsolated(inserterCaptor.capture(), any());
@@ -151,10 +266,10 @@ class DividendScheduleCollectionServiceTest {
         void dateAndAmountFieldsCorrect() throws Exception {
             // Arrange
             Stock stock = watchlistStock("000660");
-            when(stockRepository.findAllActive()).thenReturn(List.of(stock));
+            when(stockRepository.findAllActiveDomesticTradable()).thenReturn(List.of(stock));
             when(guardedKisExecutor.execute(
                             eq(session), any(), eq(TR_ID), eq(KisDividendScheduleResponse.class)))
-                    .thenReturn(singlePageResponse(List.of(sampleRow("000660"))));
+                    .thenReturn(response(List.of(sampleRow("000660"))));
 
             // Act
             service.collect("20260601", "20260630");
@@ -171,106 +286,16 @@ class DividendScheduleCollectionServiceTest {
             assertThat(saved.getFaceValue()).isEqualTo(5000L);
             assertThat(saved.getHighDividendFlag()).isEqualTo("0");
         }
-    }
-
-    // ────────────────────────────────────────────────────────────────────
-    // 비관심종목 skip (REQ-BATCH3-052)
-    // ────────────────────────────────────────────────────────────────────
-
-    @Nested
-    @DisplayName("비관심종목 skip (REQ-BATCH3-052)")
-    class NonWatchlistSkip {
 
         @Test
-        @DisplayName("비관심종목 행은 skip, 관심종목만 저장")
-        void nonWatchlistRows_skipped() throws Exception {
-            // Arrange — 관심종목: 005930, 비관심종목: 000001 (2건)
-            Stock watchlistStock = watchlistStock("005930");
-            when(stockRepository.findAllActive()).thenReturn(List.of(watchlistStock));
-            when(guardedKisExecutor.execute(
-                            eq(session), any(), eq(TR_ID), eq(KisDividendScheduleResponse.class)))
-                    .thenReturn(
-                            singlePageResponse(
-                                    List.of(
-                                            sampleRow("005930"), // 관심종목
-                                            sampleRow("000001"), // 비관심종목
-                                            sampleRow("000002")))); // 비관심종목
-
-            // Act
-            DividendCollectionResult result = service.collect("20260601", "20260630");
-
-            // Assert
-            assertThat(result.succeeded()).isEqualTo(1);
-            assertThat(result.skippedNonWatchlist()).isEqualTo(2);
-            verify(corporateEventInserter, times(1)).insertBatchIsolated(any(), any());
-        }
-
-        @Test
-        @DisplayName("관심종목이 없으면 전부 skip — 저장 없음")
-        void noWatchlistMatches_nothingStored() throws Exception {
+        @DisplayName("빈 output1 — 해당 종목 저장 없음")
+        void emptyOutput1_nothingStored() throws Exception {
             // Arrange
-            when(stockRepository.findAllActive()).thenReturn(List.of());
+            Stock stock = watchlistStock("005930");
+            when(stockRepository.findAllActiveDomesticTradable()).thenReturn(List.of(stock));
             when(guardedKisExecutor.execute(
                             eq(session), any(), eq(TR_ID), eq(KisDividendScheduleResponse.class)))
-                    .thenReturn(
-                            singlePageResponse(List.of(sampleRow("005930"), sampleRow("000660"))));
-
-            // Act
-            DividendCollectionResult result = service.collect("20260601", "20260630");
-
-            // Assert
-            assertThat(result.skippedNonWatchlist()).isEqualTo(2);
-            verify(corporateEventInserter, never()).insertBatchIsolated(any(), any());
-        }
-    }
-
-    // ────────────────────────────────────────────────────────────────────
-    // CTS 페이징
-    // ────────────────────────────────────────────────────────────────────
-
-    @Nested
-    @DisplayName("CTS 페이징 — 전체 순회 후 종료")
-    class CtsPaging {
-
-        @Test
-        @DisplayName("CTS 2페이지 순회 → 양쪽 관심종목 저장")
-        void multiPage_traversesAll() throws Exception {
-            // Arrange
-            Stock stock1 = watchlistStock("005930");
-            Stock stock2 = watchlistStock("000660");
-            when(stockRepository.findAllActive()).thenReturn(List.of(stock1, stock2));
-
-            // Page 1: CTS 있음 → 다음 페이지
-            KisDividendScheduleResponse page1 =
-                    pageWithCts(List.of(sampleRow("005930")), "NEXT_PAGE_TOKEN");
-            // Page 2: CTS null → 마지막
-            KisDividendScheduleResponse page2 = singlePageResponse(List.of(sampleRow("000660")));
-
-            when(guardedKisExecutor.execute(
-                            eq(session), any(), eq(TR_ID), eq(KisDividendScheduleResponse.class)))
-                    .thenReturn(page1)
-                    .thenReturn(page2);
-
-            // Act
-            DividendCollectionResult result = service.collect("20260601", "20260630");
-
-            // Assert — 2건 저장
-            assertThat(result.succeeded()).isEqualTo(2);
-            verify(corporateEventInserter, times(2)).insertBatchIsolated(any(), any());
-            // 게이트 2회 경유 확인(2페이지), 동일 세션 공유 + per-batch 스냅샷 1회
-            verify(guardedKisExecutor, times(2))
-                    .execute(eq(session), any(), eq(TR_ID), eq(KisDividendScheduleResponse.class));
-            verify(keyLeaseRegistry, times(1)).openSession();
-        }
-
-        @Test
-        @DisplayName("첫 페이지 빈 output1 → 즉시 종료, 저장 없음")
-        void emptyFirstPage_zeroSuccess() throws Exception {
-            // Arrange
-            when(stockRepository.findAllActive()).thenReturn(List.of());
-            when(guardedKisExecutor.execute(
-                            eq(session), any(), eq(TR_ID), eq(KisDividendScheduleResponse.class)))
-                    .thenReturn(singlePageResponse(List.of()));
+                    .thenReturn(response(List.of()));
 
             // Act
             DividendCollectionResult result = service.collect("20260601", "20260630");
@@ -278,6 +303,81 @@ class DividendScheduleCollectionServiceTest {
             // Assert
             assertThat(result.succeeded()).isZero();
             verify(corporateEventInserter, never()).insertBatchIsolated(any(), any());
+        }
+    }
+
+    // ────────────────────────────────────────────────────────────────────
+    // Virtual Thread 병렬 (REQ-DIVFIX-013)
+    // ────────────────────────────────────────────────────────────────────
+
+    @Nested
+    @DisplayName("collect — Virtual Thread 병렬 (REQ-DIVFIX-013)")
+    class ParallelCollection {
+
+        @Test
+        @DisplayName("다종목 — 모든 종목이 동일 세션으로 게이트 호출, 각각 저장")
+        void collect_multipleStocks_allProcessed() throws Exception {
+            // Arrange
+            Stock stock1 = watchlistStock("005930");
+            Stock stock2 = watchlistStock("000660");
+            Stock stock3 = watchlistStock("035420");
+            List<Stock> stocks = List.of(stock1, stock2, stock3);
+            when(stockRepository.findAllActiveDomesticTradable()).thenReturn(stocks);
+            lenient()
+                    .when(
+                            guardedKisExecutor.execute(
+                                    eq(session),
+                                    any(),
+                                    eq(TR_ID),
+                                    eq(KisDividendScheduleResponse.class)))
+                    .thenReturn(response(List.of(sampleRow("005930"))));
+
+            // Act
+            DividendCollectionResult result = service.collect("20260601", "20260630");
+
+            // Assert
+            assertThat(result.attempted()).isEqualTo(3);
+            assertThat(result.succeeded()).isEqualTo(3);
+            verify(guardedKisExecutor, times(3))
+                    .execute(eq(session), any(), eq(TR_ID), eq(KisDividendScheduleResponse.class));
+        }
+    }
+
+    // ────────────────────────────────────────────────────────────────────
+    // 종목별 예외 격리 (REQ-DIVFIX-041)
+    // ────────────────────────────────────────────────────────────────────
+
+    @Nested
+    @DisplayName("collect — 종목별 예외 격리 (REQ-DIVFIX-041)")
+    class PerStockExceptionIsolation {
+
+        @Test
+        @DisplayName("한 종목 인터럽트 — 나머지 종목은 계속 수집")
+        void oneStockInterrupted_othersContinue() throws Exception {
+            // Arrange
+            Stock failing = watchlistStock("005930");
+            Stock ok = watchlistStock("000660");
+            when(stockRepository.findAllActiveDomesticTradable()).thenReturn(List.of(failing, ok));
+
+            when(guardedKisExecutor.execute(
+                            eq(session), any(), eq(TR_ID), eq(KisDividendScheduleResponse.class)))
+                    .thenAnswer(
+                            invocation -> {
+                                Function<UriBuilder, URI> uriCustomizer = invocation.getArgument(1);
+                                URI uri = uriCustomizer.apply(UriComponentsBuilder.newInstance());
+                                if (uri.toString().contains("SHT_CD=005930")) {
+                                    throw new InterruptedException("boom");
+                                }
+                                return response(List.of(sampleRow("000660")));
+                            });
+
+            // Act
+            DividendCollectionResult result = service.collect("20260601", "20260630");
+
+            // Assert — 005930은 skip, 000660만 저장
+            assertThat(result.succeeded()).isEqualTo(1);
+            verify(corporateEventInserter, times(1)).insertBatchIsolated(any(), any());
+            // 인터럽트 플래그 복원(스레드 풀 회수 전 상태 확인 불가하므로 결과만 검증)
         }
     }
 
@@ -294,7 +394,7 @@ class DividendScheduleCollectionServiceTest {
         void nullRecordDate_skip() throws Exception {
             // Arrange
             Stock stock = watchlistStock("005930");
-            when(stockRepository.findAllActive()).thenReturn(List.of(stock));
+            when(stockRepository.findAllActiveDomesticTradable()).thenReturn(List.of(stock));
             KisDividendScheduleResponse.DividendRow nullDateRow =
                     new KisDividendScheduleResponse.DividendRow(
                             "005930",
@@ -311,38 +411,7 @@ class DividendScheduleCollectionServiceTest {
                             "0");
             when(guardedKisExecutor.execute(
                             eq(session), any(), eq(TR_ID), eq(KisDividendScheduleResponse.class)))
-                    .thenReturn(singlePageResponse(List.of(nullDateRow)));
-
-            // Act
-            DividendCollectionResult result = service.collect("20260601", "20260630");
-
-            // Assert
-            assertThat(result.skippedValidation()).isEqualTo(1);
-            verify(corporateEventInserter, never()).insertBatchIsolated(any(), any());
-        }
-
-        @Test
-        @DisplayName("shtCd null 행은 skip")
-        void nullShtCd_skip() throws Exception {
-            // Arrange
-            when(stockRepository.findAllActive()).thenReturn(List.of());
-            KisDividendScheduleResponse.DividendRow nullShtCd =
-                    new KisDividendScheduleResponse.DividendRow(
-                            null,
-                            "20260613",
-                            "결산배당",
-                            "500",
-                            "2.50",
-                            "0.00",
-                            "20260630",
-                            "",
-                            "",
-                            "5000",
-                            "보통주",
-                            "0");
-            when(guardedKisExecutor.execute(
-                            eq(session), any(), eq(TR_ID), eq(KisDividendScheduleResponse.class)))
-                    .thenReturn(singlePageResponse(List.of(nullShtCd)));
+                    .thenReturn(response(List.of(nullDateRow)));
 
             // Act
             DividendCollectionResult result = service.collect("20260601", "20260630");
@@ -366,10 +435,10 @@ class DividendScheduleCollectionServiceTest {
         void idempotentRerun() throws Exception {
             // Arrange
             Stock stock = watchlistStock("005930");
-            when(stockRepository.findAllActive()).thenReturn(List.of(stock));
+            when(stockRepository.findAllActiveDomesticTradable()).thenReturn(List.of(stock));
             when(guardedKisExecutor.execute(
                             eq(session), any(), eq(TR_ID), eq(KisDividendScheduleResponse.class)))
-                    .thenReturn(singlePageResponse(List.of(sampleRow("005930"))));
+                    .thenReturn(response(List.of(sampleRow("005930"))));
 
             // Act — 2회 실행
             service.collect("20260601", "20260630");
@@ -393,7 +462,7 @@ class DividendScheduleCollectionServiceTest {
         void invalidDate_parseFailure_nullPayDate() throws Exception {
             // Arrange — diviPayDt에 월=99인 유효하지 않은 날짜 전달
             Stock stock = watchlistStock("005930");
-            when(stockRepository.findAllActive()).thenReturn(List.of(stock));
+            when(stockRepository.findAllActiveDomesticTradable()).thenReturn(List.of(stock));
             KisDividendScheduleResponse.DividendRow rowWithBadDate =
                     new KisDividendScheduleResponse.DividendRow(
                             "005930",
@@ -410,7 +479,7 @@ class DividendScheduleCollectionServiceTest {
                             "0");
             when(guardedKisExecutor.execute(
                             eq(session), any(), eq(TR_ID), eq(KisDividendScheduleResponse.class)))
-                    .thenReturn(singlePageResponse(List.of(rowWithBadDate)));
+                    .thenReturn(response(List.of(rowWithBadDate)));
 
             // Act
             DividendCollectionResult result = service.collect("20260601", "20260630");
@@ -440,7 +509,7 @@ class DividendScheduleCollectionServiceTest {
         void rateExceedsDecimalBound_cashRateNull() throws Exception {
             // Arrange — 정수부 9자리(100000000.0) → DECIMAL(12,4) 정수부 8자리(99999999) 초과
             Stock stock = watchlistStock("005930");
-            when(stockRepository.findAllActive()).thenReturn(List.of(stock));
+            when(stockRepository.findAllActiveDomesticTradable()).thenReturn(List.of(stock));
             KisDividendScheduleResponse.DividendRow rowWithBigRate =
                     new KisDividendScheduleResponse.DividendRow(
                             "005930",
@@ -457,7 +526,7 @@ class DividendScheduleCollectionServiceTest {
                             "0");
             when(guardedKisExecutor.execute(
                             eq(session), any(), eq(TR_ID), eq(KisDividendScheduleResponse.class)))
-                    .thenReturn(singlePageResponse(List.of(rowWithBigRate)));
+                    .thenReturn(response(List.of(rowWithBigRate)));
 
             // Act
             DividendCollectionResult result = service.collect("20260601", "20260630");
@@ -483,21 +552,28 @@ class DividendScheduleCollectionServiceTest {
     class PoisonRowSkip {
 
         @Test
-        @DisplayName("1건 삽입 예외 → 나머지 행 저장, 루프 종료")
-        void oneRowThrows_otherRowsInserted_processingContinues() throws Exception {
-            // Arrange — 3건: 005930(독성), 000660(정상), 035420(정상)
+        @DisplayName("1개 종목 삽입 예외 → 나머지 종목은 저장, 전체 처리 계속")
+        void oneStockToxic_othersInserted_processingContinues() throws Exception {
+            // Arrange — 3개 종목: 005930(독성), 000660(정상), 035420(정상)
             Stock stock1 = watchlistStock("005930");
             Stock stock2 = watchlistStock("000660");
             Stock stock3 = watchlistStock("035420");
-            when(stockRepository.findAllActive()).thenReturn(List.of(stock1, stock2, stock3));
+            when(stockRepository.findAllActiveDomesticTradable())
+                    .thenReturn(List.of(stock1, stock2, stock3));
             when(guardedKisExecutor.execute(
                             eq(session), any(), eq(TR_ID), eq(KisDividendScheduleResponse.class)))
-                    .thenReturn(
-                            singlePageResponse(
-                                    List.of(
-                                            sampleRow("005930"), // 독성 행
-                                            sampleRow("000660"), // 정상
-                                            sampleRow("035420")))); // 정상
+                    .thenAnswer(
+                            invocation -> {
+                                Function<UriBuilder, URI> uriCustomizer = invocation.getArgument(1);
+                                URI uri = uriCustomizer.apply(UriComponentsBuilder.newInstance());
+                                String symbol =
+                                        uri.toString().contains("SHT_CD=005930")
+                                                ? "005930"
+                                                : uri.toString().contains("SHT_CD=000660")
+                                                        ? "000660"
+                                                        : "035420";
+                                return response(List.of(sampleRow(symbol)));
+                            });
 
             // REQ-INSERT-011: insertBatchIsolated — 005930 독성 행에 대해 콜백 호출 시뮬레이션
             doAnswer(
@@ -506,7 +582,6 @@ class DividendScheduleCollectionServiceTest {
                                 @SuppressWarnings("unchecked")
                                 RowFailureHandler<CorporateEvent> handler =
                                         invocation.getArgument(1);
-                                // 005930(독성 행)에 대해서만 콜백 호출
                                 final String toxicSymbol = "005930";
                                 final SQLException toxicEx =
                                         new SQLException("Data too long", "22001", 1406);
@@ -524,14 +599,11 @@ class DividendScheduleCollectionServiceTest {
             DividendCollectionResult result = service.collect("20260601", "20260630");
 
             // Assert
-            // (a) insertBatchIsolated 1회 (3건 배치), 정상 행 2건 성공
-            verify(corporateEventInserter, times(1)).insertBatchIsolated(any(), any());
+            // (a) insertBatchIsolated 3회(종목별 배치), 정상 종목 2건 성공
+            verify(corporateEventInserter, times(3)).insertBatchIsolated(any(), any());
             assertThat(result.succeeded()).isEqualTo(2);
             // (b) 독성 행은 skippedValidation 집계
             assertThat(result.skippedValidation()).isEqualTo(1);
-            // (c) 게이트: 1페이지만 경유 (루프 종료)
-            verify(guardedKisExecutor, times(1))
-                    .execute(eq(session), any(), eq(TR_ID), eq(KisDividendScheduleResponse.class));
         }
     }
 
@@ -548,11 +620,10 @@ class DividendScheduleCollectionServiceTest {
         void allStoredEventsAreDividend() throws Exception {
             // Arrange
             Stock stock = watchlistStock("005930");
-            when(stockRepository.findAllActive()).thenReturn(List.of(stock));
+            when(stockRepository.findAllActiveDomesticTradable()).thenReturn(List.of(stock));
             when(guardedKisExecutor.execute(
                             eq(session), any(), eq(TR_ID), eq(KisDividendScheduleResponse.class)))
-                    .thenReturn(
-                            singlePageResponse(List.of(sampleRow("005930"), sampleRow("005930"))));
+                    .thenReturn(response(List.of(sampleRow("005930"), sampleRow("005930"))));
 
             // Act
             service.collect("20260601", "20260630");
