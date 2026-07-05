@@ -29,6 +29,15 @@ public interface DailyOhlcvRepository extends JpaRepository<DailyOhlcv, Long> {
     Optional<LocalDateTime> findMaxCreatedAtByMarketsIn(
             @Param("markets") Collection<Market> markets);
 
+    /**
+     * 시장 필터로 최대 거래일을 조회한다 (SPEC-OBSV-WATERMARK-001 REQ-WM-003 warm-start용).
+     *
+     * @param markets 조회 대상 Market enum 컬렉션
+     * @return MAX(tradeDate) — 한 건도 없으면 {@link Optional#empty()}
+     */
+    @Query("SELECT MAX(o.tradeDate) FROM DailyOhlcv o WHERE o.stock.market IN :markets")
+    Optional<LocalDate> findMaxTradeDateByMarketsIn(@Param("markets") Collection<Market> markets);
+
     // @MX:WARN: [AUTO] 권한 민감 네이티브 SQL — 반드시 INSERT IGNORE 유지 (ON DUPLICATE KEY UPDATE 금지)
     // @MX:REASON: [AUTO] collector는 daily_ohlcv에 UPDATE 권한이 없어 ON DUPLICATE KEY UPDATE 사용 시 중복 충돌에서
     // SQL 1142 발생 (ADR-025, SPEC-COLLECTOR-OHLCV-001)

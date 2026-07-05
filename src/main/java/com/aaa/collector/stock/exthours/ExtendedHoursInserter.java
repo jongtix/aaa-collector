@@ -3,9 +3,13 @@ package com.aaa.collector.stock.exthours;
 import com.aaa.collector.observability.BatchMetrics;
 import com.aaa.collector.observability.RowFailureHandler;
 import com.aaa.collector.observability.SilentDropWarningCounter;
+import com.aaa.collector.observability.WatermarkMetrics;
+import com.aaa.collector.observability.WatermarkSeries;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.SQLException;
+import java.time.LocalDate;
+import java.util.Comparator;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -38,11 +42,14 @@ public class ExtendedHoursInserter {
 
     private final JdbcTemplate jdbcTemplate;
     private final BatchMetrics batchMetrics;
+    private final WatermarkMetrics watermarkMetrics;
 
     /**
      * 시간외 가격 스냅샷 행들을 단일 커넥션 배치로 멱등 삽입하고 침묵 드롭 경고를 기록한다.
      *
-     * <p>빈 목록이면 JDBC를 사용하지 않는다.
+     * <p>빈 목록이면 JDBC를 사용하지 않는다. 세션({@link Session#PRE}/{@link Session#AFTER})별 최대 거래일로 {@code
+     * extended-hours-pre}/{@code extended-hours-after} 워터마크를 forward-only
+     * 갱신한다(SPEC-OBSV-WATERMARK-001 REQ-WM-001).
      *
      * @param rows 삽입할 엔티티(빈 목록이면 무동작)
      */
@@ -59,12 +66,14 @@ public class ExtendedHoursInserter {
                             }
                         });
         batchMetrics.recordSilentDrops(drops == null ? 0L : drops);
+        advanceWatermarks(rows);
     }
 
     /**
      * 시간외 가격 행들을 격리 삽입한다 (REQ-INSERT-008).
      *
-     * <p>독성 행은 {@code onFailure}로 통지하고 skip한 뒤 잔여 행을 계속 처리한다.
+     * <p>독성 행은 {@code onFailure}로 통지하고 skip한 뒤 잔여 행을 계속 처리한다. 세션별 최대 거래일로 워터마크를 forward-only
+     * 갱신한다(REQ-WM-001).
      *
      * @param rows 삽입할 엔티티(빈 목록이면 무동작)
      * @param onFailure 행별 실패 통지 콜백
@@ -83,6 +92,22 @@ public class ExtendedHoursInserter {
                             }
                         });
         batchMetrics.recordSilentDrops(drops == null ? 0L : drops);
+        advanceWatermarks(rows);
+    }
+
+    private void advanceWatermarks(List<ExtendedHours> rows) {
+        watermarkMetrics.advance(
+                WatermarkSeries.EXTENDED_HOURS_PRE, maxTradeDate(rows, Session.PRE));
+        watermarkMetrics.advance(
+                WatermarkSeries.EXTENDED_HOURS_AFTER, maxTradeDate(rows, Session.AFTER));
+    }
+
+    private static LocalDate maxTradeDate(List<ExtendedHours> rows, Session session) {
+        return rows.stream()
+                .filter(e -> session == e.getSession())
+                .map(ExtendedHours::getTradeDate)
+                .max(Comparator.naturalOrder())
+                .orElse(null);
     }
 
     private void bindRow(PreparedStatement ps, ExtendedHours e) throws SQLException {

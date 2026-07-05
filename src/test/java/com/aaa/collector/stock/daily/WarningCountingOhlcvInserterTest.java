@@ -6,6 +6,7 @@ import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import com.aaa.collector.observability.BatchMetrics;
+import com.aaa.collector.observability.WatermarkMetrics;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
@@ -27,6 +28,7 @@ class WarningCountingOhlcvInserterTest {
 
     @Mock private JdbcTemplate jdbcTemplate;
     @Mock private BatchMetrics batchMetrics;
+    @Mock private WatermarkMetrics watermarkMetrics;
 
     private KisDailyOhlcvResponse.DailyOhlcvRow row() {
         return new KisDailyOhlcvResponse.DailyOhlcvRow(
@@ -52,7 +54,7 @@ class WarningCountingOhlcvInserterTest {
         @DisplayName("빈 목록 — JDBC·메트릭 미사용")
         void emptyRows_noJdbcNoMetric() {
             WarningCountingOhlcvInserter inserter =
-                    new WarningCountingOhlcvInserter(jdbcTemplate, batchMetrics);
+                    new WarningCountingOhlcvInserter(jdbcTemplate, batchMetrics, watermarkMetrics);
 
             inserter.insertBatch(1L, List.of(), DATE_FMT);
 
@@ -69,7 +71,7 @@ class WarningCountingOhlcvInserterTest {
         @DisplayName("execute가 드롭 수를 반환하면 BatchMetrics에 그대로 기록")
         void drops_recorded() {
             WarningCountingOhlcvInserter inserter =
-                    new WarningCountingOhlcvInserter(jdbcTemplate, batchMetrics);
+                    new WarningCountingOhlcvInserter(jdbcTemplate, batchMetrics, watermarkMetrics);
             when(jdbcTemplate.execute(any(ConnectionCallback.class))).thenReturn(4L);
 
             inserter.insertBatch(1L, List.of(row()), DATE_FMT);
@@ -81,7 +83,7 @@ class WarningCountingOhlcvInserterTest {
         @DisplayName("execute가 null 반환 시 0으로 대체하여 기록")
         void nullFromExecute_recordsZero() {
             WarningCountingOhlcvInserter inserter =
-                    new WarningCountingOhlcvInserter(jdbcTemplate, batchMetrics);
+                    new WarningCountingOhlcvInserter(jdbcTemplate, batchMetrics, watermarkMetrics);
             when(jdbcTemplate.execute(any(ConnectionCallback.class))).thenReturn(null);
 
             inserter.insertBatch(1L, List.of(row()), DATE_FMT);
@@ -98,7 +100,7 @@ class WarningCountingOhlcvInserterTest {
         @DisplayName("빈 목록 — JDBC·메트릭 미사용")
         void emptyParsedRows_noJdbcNoMetric() {
             WarningCountingOhlcvInserter inserter =
-                    new WarningCountingOhlcvInserter(jdbcTemplate, batchMetrics);
+                    new WarningCountingOhlcvInserter(jdbcTemplate, batchMetrics, watermarkMetrics);
 
             inserter.insertBatch(1L, List.<ParsedOhlcvRow>of());
 
@@ -110,7 +112,7 @@ class WarningCountingOhlcvInserterTest {
         @DisplayName("execute가 드롭 수를 반환하면 BatchMetrics에 그대로 기록")
         void parsedRow_drops_recorded() {
             WarningCountingOhlcvInserter inserter =
-                    new WarningCountingOhlcvInserter(jdbcTemplate, batchMetrics);
+                    new WarningCountingOhlcvInserter(jdbcTemplate, batchMetrics, watermarkMetrics);
             when(jdbcTemplate.execute(any(ConnectionCallback.class))).thenReturn(2L);
 
             inserter.insertBatch(1L, List.of(parsedRow()));
@@ -122,7 +124,7 @@ class WarningCountingOhlcvInserterTest {
         @DisplayName("execute가 null 반환 시 0으로 대체하여 기록")
         void parsedRow_nullFromExecute_recordsZero() {
             WarningCountingOhlcvInserter inserter =
-                    new WarningCountingOhlcvInserter(jdbcTemplate, batchMetrics);
+                    new WarningCountingOhlcvInserter(jdbcTemplate, batchMetrics, watermarkMetrics);
             when(jdbcTemplate.execute(any(ConnectionCallback.class))).thenReturn(null);
 
             inserter.insertBatch(1L, List.of(parsedRow()));

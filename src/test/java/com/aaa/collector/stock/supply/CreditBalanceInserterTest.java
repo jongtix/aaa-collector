@@ -6,6 +6,7 @@ import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import com.aaa.collector.observability.BatchMetrics;
+import com.aaa.collector.observability.WatermarkMetrics;
 import com.aaa.collector.stock.CreditBalance;
 import com.aaa.collector.stock.Stock;
 import java.math.BigDecimal;
@@ -26,6 +27,7 @@ class CreditBalanceInserterTest {
 
     @Mock private JdbcTemplate jdbcTemplate;
     @Mock private BatchMetrics batchMetrics;
+    @Mock private WatermarkMetrics watermarkMetrics;
 
     private CreditBalance entity() {
         return CreditBalance.builder()
@@ -57,7 +59,8 @@ class CreditBalanceInserterTest {
         @Test
         @DisplayName("빈 목록 — JDBC·메트릭 미사용")
         void emptyRows_noJdbcNoMetric() {
-            CreditBalanceInserter inserter = new CreditBalanceInserter(jdbcTemplate, batchMetrics);
+            CreditBalanceInserter inserter =
+                    new CreditBalanceInserter(jdbcTemplate, batchMetrics, watermarkMetrics);
 
             inserter.insertBatch(List.of());
 
@@ -73,7 +76,8 @@ class CreditBalanceInserterTest {
         @Test
         @DisplayName("execute가 드롭 수를 반환하면 BatchMetrics에 그대로 기록")
         void drops_recorded() {
-            CreditBalanceInserter inserter = new CreditBalanceInserter(jdbcTemplate, batchMetrics);
+            CreditBalanceInserter inserter =
+                    new CreditBalanceInserter(jdbcTemplate, batchMetrics, watermarkMetrics);
             when(jdbcTemplate.execute(any(ConnectionCallback.class))).thenReturn(1L);
 
             inserter.insertBatch(List.of(entity()));
@@ -84,7 +88,8 @@ class CreditBalanceInserterTest {
         @Test
         @DisplayName("execute가 null 반환 시 0으로 대체하여 기록")
         void nullFromExecute_recordsZero() {
-            CreditBalanceInserter inserter = new CreditBalanceInserter(jdbcTemplate, batchMetrics);
+            CreditBalanceInserter inserter =
+                    new CreditBalanceInserter(jdbcTemplate, batchMetrics, watermarkMetrics);
             when(jdbcTemplate.execute(any(ConnectionCallback.class))).thenReturn(null);
 
             inserter.insertBatch(List.of(entity()));

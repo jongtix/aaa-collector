@@ -242,6 +242,24 @@ public interface ShortSaleOverseasRepository extends JpaRepository<ShortSaleOver
     @Query("SELECT MAX(s.interestCollectedAt) FROM ShortSaleOverseas s")
     Optional<LocalDateTime> findMaxInterestCollectedAt();
 
+    /**
+     * short-sale-overseas-daily warm-start용: Daily 컬럼이 적재된 최대 거래일을 조회한다 (SPEC-OBSV-WATERMARK-001
+     * REQ-WM-003).
+     *
+     * @return MAX(tradeDate) WHERE dailyCollectedAt IS NOT NULL — 한 건도 없으면 {@link Optional#empty()}
+     */
+    @Query("SELECT MAX(s.tradeDate) FROM ShortSaleOverseas s WHERE s.dailyCollectedAt IS NOT NULL")
+    Optional<LocalDate> findMaxDailyTradeDate();
+
+    /**
+     * short-sale-overseas-interest warm-start용: 최대 {@code short_interest_date}를 조회한다
+     * (SPEC-OBSV-WATERMARK-001 REQ-WM-003).
+     *
+     * @return MAX(shortInterestDate) — 한 건도 없으면 {@link Optional#empty()}
+     */
+    @Query("SELECT MAX(s.shortInterestDate) FROM ShortSaleOverseas s")
+    Optional<LocalDate> findMaxShortInterestDate();
+
     /** {@link #findLatestShortInterestRows} native 투영 인터페이스. */
     interface LatestShortInterestRow {
         Long getStockId();

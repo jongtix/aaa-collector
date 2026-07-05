@@ -1,5 +1,6 @@
 package com.aaa.collector.stock;
 
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.Optional;
 import org.springframework.data.jpa.repository.JpaRepository;
@@ -53,4 +54,8 @@ public interface ShortSaleDomesticRepository extends JpaRepository<ShortSaleDome
     /** 최신 적재 시각 조회 (SPEC-OBSV-WARMSTART-001 warm-start용). */
     @Query("SELECT MAX(s.createdAt) FROM ShortSaleDomestic s")
     Optional<LocalDateTime> findMaxCreatedAt();
+
+    /** 최대 거래일 조회 (SPEC-OBSV-WATERMARK-001 REQ-WM-003 warm-start용). */
+    @Query("SELECT MAX(s.tradeDate) FROM ShortSaleDomestic s")
+    Optional<LocalDate> findMaxTradeDate();
 }

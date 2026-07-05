@@ -1,5 +1,7 @@
 package com.aaa.collector.news;
 
+import java.time.LocalDateTime;
+import java.util.Optional;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
@@ -58,4 +60,8 @@ public interface DomesticNewsHeadlineRepository extends JpaRepository<DomesticNe
     /** serial_no로 최대값 조회 (증분 커서용). */
     @Query("SELECT MAX(n.serialNo) FROM DomesticNewsHeadline n")
     String findMaxSerialNo();
+
+    /** 최대 게시 시각 조회 (SPEC-OBSV-WATERMARK-001 REQ-WM-003 warm-start용 — {@code news-domestic}). */
+    @Query("SELECT MAX(n.publishedAt) FROM DomesticNewsHeadline n")
+    Optional<LocalDateTime> findMaxPublishedAt();
 }

@@ -7,6 +7,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.aaa.collector.observability.BatchMetrics;
+import com.aaa.collector.observability.WatermarkMetrics;
 import com.aaa.collector.stock.ShortSaleOverseasRepository;
 import com.aaa.collector.stock.Stock;
 import com.aaa.collector.stock.StockRepository;
@@ -35,6 +36,7 @@ class ShortSaleOverseasInterestMetricsTest {
     @Mock private StockRepository stockRepository;
     @Mock private ShortSaleOverseasRepository shortSaleOverseasRepository;
     @Mock private BatchMetrics batchMetrics;
+    @Mock private WatermarkMetrics watermarkMetrics;
 
     private ShortSaleOverseasInterestCollectionService service;
 
@@ -42,7 +44,11 @@ class ShortSaleOverseasInterestMetricsTest {
     void setUp() {
         service =
                 new ShortSaleOverseasInterestCollectionService(
-                        finraClient, stockRepository, shortSaleOverseasRepository, batchMetrics);
+                        finraClient,
+                        stockRepository,
+                        shortSaleOverseasRepository,
+                        batchMetrics,
+                        watermarkMetrics);
     }
 
     private static Stock stock(long id, String symbol) {

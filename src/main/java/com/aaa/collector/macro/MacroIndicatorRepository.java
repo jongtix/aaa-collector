@@ -1,5 +1,6 @@
 package com.aaa.collector.macro;
 
+import com.aaa.collector.macro.enums.MacroSource;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.Optional;
@@ -55,4 +56,11 @@ public interface MacroIndicatorRepository extends JpaRepository<MacroIndicator, 
     /** 최신 적재 시각 조회 (SPEC-OBSV-WARMSTART-001 warm-start용). */
     @Query("SELECT MAX(m.createdAt) FROM MacroIndicator m")
     Optional<LocalDateTime> findMaxCreatedAt();
+
+    /**
+     * 소스별 최대 거래일 조회 (SPEC-OBSV-WATERMARK-001 REQ-WM-003 warm-start용 — {@code macro-ecos}/{@code
+     * macro-fred}).
+     */
+    @Query("SELECT MAX(m.tradeDate) FROM MacroIndicator m WHERE m.source = :source")
+    Optional<LocalDate> findMaxTradeDateBySource(@Param("source") MacroSource source);
 }

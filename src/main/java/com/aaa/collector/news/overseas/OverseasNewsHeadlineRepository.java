@@ -1,5 +1,7 @@
 package com.aaa.collector.news.overseas;
 
+import java.time.LocalDateTime;
+import java.util.Optional;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
@@ -47,4 +49,8 @@ public interface OverseasNewsHeadlineRepository extends JpaRepository<OverseasNe
     /** 전체 저장 행 수 (멱등성 검증용). */
     @Query("SELECT COUNT(n) FROM OverseasNewsHeadline n")
     long countAll();
+
+    /** 최대 게시 시각 조회 (SPEC-OBSV-WATERMARK-001 REQ-WM-003 warm-start용 — {@code news-overseas}). */
+    @Query("SELECT MAX(n.publishedAt) FROM OverseasNewsHeadline n")
+    Optional<LocalDateTime> findMaxPublishedAt();
 }

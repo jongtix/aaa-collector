@@ -7,6 +7,7 @@ import static org.mockito.Mockito.when;
 
 import com.aaa.collector.market.enums.IndicatorCode;
 import com.aaa.collector.observability.BatchMetrics;
+import com.aaa.collector.observability.WatermarkMetrics;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.List;
@@ -25,6 +26,7 @@ class MarketIndicatorInserterTest {
 
     @Mock private JdbcTemplate jdbcTemplate;
     @Mock private BatchMetrics batchMetrics;
+    @Mock private WatermarkMetrics watermarkMetrics;
 
     private MarketIndicator entity() {
         return MarketIndicator.builder()
@@ -46,7 +48,7 @@ class MarketIndicatorInserterTest {
         @DisplayName("빈 목록 — JDBC·메트릭 미사용")
         void emptyRows_noJdbcNoMetric() {
             MarketIndicatorInserter inserter =
-                    new MarketIndicatorInserter(jdbcTemplate, batchMetrics);
+                    new MarketIndicatorInserter(jdbcTemplate, batchMetrics, watermarkMetrics);
 
             inserter.insertBatch(List.of());
 
@@ -63,7 +65,7 @@ class MarketIndicatorInserterTest {
         @DisplayName("execute가 드롭 수를 반환하면 BatchMetrics에 그대로 기록")
         void drops_recorded() {
             MarketIndicatorInserter inserter =
-                    new MarketIndicatorInserter(jdbcTemplate, batchMetrics);
+                    new MarketIndicatorInserter(jdbcTemplate, batchMetrics, watermarkMetrics);
             when(jdbcTemplate.execute(any(ConnectionCallback.class))).thenReturn(1L);
 
             inserter.insertBatch(List.of(entity()));
@@ -75,7 +77,7 @@ class MarketIndicatorInserterTest {
         @DisplayName("execute가 null 반환 시 0으로 대체하여 기록")
         void nullFromExecute_recordsZero() {
             MarketIndicatorInserter inserter =
-                    new MarketIndicatorInserter(jdbcTemplate, batchMetrics);
+                    new MarketIndicatorInserter(jdbcTemplate, batchMetrics, watermarkMetrics);
             when(jdbcTemplate.execute(any(ConnectionCallback.class))).thenReturn(null);
 
             inserter.insertBatch(List.of(entity()));

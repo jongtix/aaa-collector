@@ -2,6 +2,8 @@ package com.aaa.collector.stock.shortsale.overseas;
 
 import com.aaa.collector.common.gate.UsMarketOpenGate;
 import com.aaa.collector.observability.BatchMetrics;
+import com.aaa.collector.observability.WatermarkMetrics;
+import com.aaa.collector.observability.WatermarkSeries;
 import com.aaa.collector.stock.ShortSaleOverseasRepository;
 import com.aaa.collector.stock.ShortSaleOverseasRepository.ShortInterestSnapshot;
 import com.aaa.collector.stock.Stock;
@@ -45,6 +47,7 @@ public class ShortSaleOverseasDailyCollectionService {
     private final ShortSaleOverseasRepository shortSaleOverseasRepository;
     private final BatchMetrics batchMetrics;
     private final UsMarketOpenGate usMarketOpenGate;
+    private final WatermarkMetrics watermarkMetrics;
 
     /**
      * FINRA Daily 공매도 거래량을 수집한다. reportingFacility 다중 행을 종목·거래일당 합산(REQ-SSO-011)하고, 미국 활성 STOCK+ETF
@@ -115,6 +118,10 @@ public class ShortSaleOverseasDailyCollectionService {
                 succeeded,
                 Math.max(0L, (long) attempted - succeeded - skipped),
                 skipped);
+        // SPEC-OBSV-WATERMARK-001 REQ-WM-001: 1건 이상 적재 성공 시에만 워터마크 forward-only 갱신
+        if (succeeded > 0) {
+            watermarkMetrics.advance(WatermarkSeries.SHORT_SALE_OVERSEAS_DAILY, tradeReportDate);
+        }
         log.info(
                 "[overseas-shortsale-daily] 수집 완료 — attempted={}, succeeded={}, skipped={}, tradeDate={}",
                 attempted,

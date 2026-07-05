@@ -7,6 +7,7 @@ import static org.mockito.Mockito.when;
 
 import com.aaa.collector.common.gate.UsMarketOpenGate;
 import com.aaa.collector.observability.BatchMetrics;
+import com.aaa.collector.observability.WatermarkMetrics;
 import com.aaa.collector.stock.ShortSaleOverseasRepository;
 import com.aaa.collector.stock.Stock;
 import com.aaa.collector.stock.StockRepository;
@@ -37,6 +38,7 @@ class ShortSaleOverseasDailyMetricsTest {
     @Mock private ShortSaleOverseasRepository shortSaleOverseasRepository;
     @Mock private BatchMetrics batchMetrics;
     @Mock private UsMarketOpenGate usMarketOpenGate;
+    @Mock private WatermarkMetrics watermarkMetrics;
 
     private ShortSaleOverseasDailyCollectionService service;
 
@@ -49,7 +51,8 @@ class ShortSaleOverseasDailyMetricsTest {
                         stockRepository,
                         shortSaleOverseasRepository,
                         batchMetrics,
-                        usMarketOpenGate);
+                        usMarketOpenGate,
+                        watermarkMetrics);
         Mockito.lenient()
                 .when(
                         shortSaleOverseasRepository.findLatestShortInterestByStockIds(

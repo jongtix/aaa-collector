@@ -2,12 +2,15 @@ package com.aaa.collector.stock.daily;
 
 import com.aaa.collector.observability.BatchMetrics;
 import com.aaa.collector.observability.SilentDropWarningCounter;
+import com.aaa.collector.observability.WatermarkMetrics;
+import com.aaa.collector.observability.WatermarkSeries;
 import java.math.BigDecimal;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.SQLException;
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
+import java.util.Comparator;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -52,6 +55,7 @@ public class WarningCountingOhlcvInserter {
 
     private final JdbcTemplate jdbcTemplate;
     private final BatchMetrics batchMetrics;
+    private final WatermarkMetrics watermarkMetrics;
 
     /**
      * 한 종목의 검증된 일봉 행들을 단일 커넥션에서 행별로 멱등 삽입하고 침묵 드롭 경고를 기록한다.
@@ -89,6 +93,18 @@ public class WarningCountingOhlcvInserter {
      * @param rows 검증 단계에서 파싱된 행 목록(빈 목록이면 무동작)
      */
     public void insertBatch(Long stockId, List<ParsedOhlcvRow> rows) {
+        insertBatch(stockId, rows, null);
+    }
+
+    /**
+     * 검증 단계에서 파싱된 {@link ParsedOhlcvRow} 행들을 단일 커넥션에서 행별로 멱등 삽입하고 침묵 드롭 경고를 기록한다. 삽입 시도 행들의 최대 거래일로
+     * {@code series} 워터마크를 forward-only 갱신한다(SPEC-OBSV-WATERMARK-001 REQ-WM-001).
+     *
+     * @param stockId stocks.id
+     * @param rows 검증 단계에서 파싱된 행 목록(빈 목록이면 무동작)
+     * @param series 갱신할 워터마크 시리즈({@code null}이면 워터마크 갱신 스킵 — 지수 등 비대상 종목)
+     */
+    public void insertBatch(Long stockId, List<ParsedOhlcvRow> rows, WatermarkSeries series) {
         if (rows.isEmpty()) {
             return;
         }
@@ -101,6 +117,16 @@ public class WarningCountingOhlcvInserter {
                             }
                         });
         batchMetrics.recordSilentDrops(drops == null ? 0L : drops);
+        if (series != null) {
+            watermarkMetrics.advance(series, maxTradeDate(rows));
+        }
+    }
+
+    private static LocalDate maxTradeDate(List<ParsedOhlcvRow> rows) {
+        return rows.stream()
+                .map(ParsedOhlcvRow::tradeDate)
+                .max(Comparator.naturalOrder())
+                .orElse(null);
     }
 
     /** 단일 행을 PreparedStatement에 바인딩한다(파싱·BigDecimal 생성을 루프 밖 메서드로 분리). */

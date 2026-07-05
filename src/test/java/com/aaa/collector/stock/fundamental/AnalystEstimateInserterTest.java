@@ -6,6 +6,7 @@ import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import com.aaa.collector.observability.BatchMetrics;
+import com.aaa.collector.observability.WatermarkMetrics;
 import com.aaa.collector.stock.AnalystEstimate;
 import com.aaa.collector.stock.Stock;
 import java.time.LocalDate;
@@ -25,6 +26,7 @@ class AnalystEstimateInserterTest {
 
     @Mock private JdbcTemplate jdbcTemplate;
     @Mock private BatchMetrics batchMetrics;
+    @Mock private WatermarkMetrics watermarkMetrics;
 
     private AnalystEstimate entity() {
         return AnalystEstimate.builder()
@@ -42,7 +44,7 @@ class AnalystEstimateInserterTest {
         @DisplayName("빈 목록 — JDBC·메트릭 미사용")
         void emptyRows_noJdbcNoMetric() {
             AnalystEstimateInserter inserter =
-                    new AnalystEstimateInserter(jdbcTemplate, batchMetrics);
+                    new AnalystEstimateInserter(jdbcTemplate, batchMetrics, watermarkMetrics);
 
             inserter.insertBatch(List.of());
 
@@ -59,7 +61,7 @@ class AnalystEstimateInserterTest {
         @DisplayName("execute가 드롭 수를 반환하면 BatchMetrics에 그대로 기록")
         void drops_recorded() {
             AnalystEstimateInserter inserter =
-                    new AnalystEstimateInserter(jdbcTemplate, batchMetrics);
+                    new AnalystEstimateInserter(jdbcTemplate, batchMetrics, watermarkMetrics);
             when(jdbcTemplate.execute(any(ConnectionCallback.class))).thenReturn(2L);
 
             inserter.insertBatch(List.of(entity()));
@@ -71,7 +73,7 @@ class AnalystEstimateInserterTest {
         @DisplayName("execute가 null 반환 시 0으로 대체하여 기록")
         void nullFromExecute_recordsZero() {
             AnalystEstimateInserter inserter =
-                    new AnalystEstimateInserter(jdbcTemplate, batchMetrics);
+                    new AnalystEstimateInserter(jdbcTemplate, batchMetrics, watermarkMetrics);
             when(jdbcTemplate.execute(any(ConnectionCallback.class))).thenReturn(null);
 
             inserter.insertBatch(List.of(entity()));

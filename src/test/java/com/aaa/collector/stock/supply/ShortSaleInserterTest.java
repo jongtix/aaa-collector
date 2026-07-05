@@ -6,6 +6,7 @@ import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import com.aaa.collector.observability.BatchMetrics;
+import com.aaa.collector.observability.WatermarkMetrics;
 import com.aaa.collector.stock.ShortSaleDomestic;
 import com.aaa.collector.stock.Stock;
 import java.math.BigDecimal;
@@ -26,6 +27,7 @@ class ShortSaleInserterTest {
 
     @Mock private JdbcTemplate jdbcTemplate;
     @Mock private BatchMetrics batchMetrics;
+    @Mock private WatermarkMetrics watermarkMetrics;
 
     private ShortSaleDomestic entity() {
         return ShortSaleDomestic.builder()
@@ -49,7 +51,8 @@ class ShortSaleInserterTest {
         @Test
         @DisplayName("빈 목록 — JDBC·메트릭 미사용")
         void emptyRows_noJdbcNoMetric() {
-            ShortSaleInserter inserter = new ShortSaleInserter(jdbcTemplate, batchMetrics);
+            ShortSaleInserter inserter =
+                    new ShortSaleInserter(jdbcTemplate, batchMetrics, watermarkMetrics);
 
             inserter.insertBatch(List.of());
 
@@ -65,7 +68,8 @@ class ShortSaleInserterTest {
         @Test
         @DisplayName("execute가 드롭 수를 반환하면 BatchMetrics에 그대로 기록")
         void drops_recorded() {
-            ShortSaleInserter inserter = new ShortSaleInserter(jdbcTemplate, batchMetrics);
+            ShortSaleInserter inserter =
+                    new ShortSaleInserter(jdbcTemplate, batchMetrics, watermarkMetrics);
             when(jdbcTemplate.execute(any(ConnectionCallback.class))).thenReturn(3L);
 
             inserter.insertBatch(List.of(entity()));
@@ -76,7 +80,8 @@ class ShortSaleInserterTest {
         @Test
         @DisplayName("execute가 null 반환 시 0으로 대체하여 기록")
         void nullFromExecute_recordsZero() {
-            ShortSaleInserter inserter = new ShortSaleInserter(jdbcTemplate, batchMetrics);
+            ShortSaleInserter inserter =
+                    new ShortSaleInserter(jdbcTemplate, batchMetrics, watermarkMetrics);
             when(jdbcTemplate.execute(any(ConnectionCallback.class))).thenReturn(null);
 
             inserter.insertBatch(List.of(entity()));

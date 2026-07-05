@@ -3,6 +3,7 @@ package com.aaa.collector.stock.supply;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.aaa.collector.observability.BatchMetrics;
+import com.aaa.collector.observability.WatermarkMetrics;
 import com.aaa.collector.stock.ShortSaleDomestic;
 import com.aaa.collector.stock.Stock;
 import com.aaa.collector.stock.StockRepository;
@@ -78,7 +79,8 @@ class ShortSaleInserterIntegrationTest {
 
     private ShortSaleInserter buildInserter(SimpleMeterRegistry registry) {
         BatchMetrics metrics = new BatchMetrics(registry, Clock.systemDefaultZone());
-        return new ShortSaleInserter(new JdbcTemplate(dataSource), metrics);
+        WatermarkMetrics watermarkMetrics = new WatermarkMetrics(registry);
+        return new ShortSaleInserter(new JdbcTemplate(dataSource), metrics, watermarkMetrics);
     }
 
     @Test

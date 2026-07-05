@@ -3,11 +3,17 @@ package com.aaa.collector.news;
 import com.aaa.collector.observability.BatchMetrics;
 import com.aaa.collector.observability.RowFailureHandler;
 import com.aaa.collector.observability.SilentDropWarningCounter;
+import com.aaa.collector.observability.WatermarkMetrics;
+import com.aaa.collector.observability.WatermarkSeries;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.SQLException;
 import java.sql.Types;
+import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.util.Comparator;
 import java.util.List;
+import java.util.Objects;
 import lombok.RequiredArgsConstructor;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
@@ -42,11 +48,13 @@ public class DomesticNewsHeadlineInserter {
 
     private final JdbcTemplate jdbcTemplate;
     private final BatchMetrics batchMetrics;
+    private final WatermarkMetrics watermarkMetrics;
 
     /**
      * 국내 뉴스 제목 행들을 단일 커넥션 배치로 멱등 삽입하고 침묵 드롭 경고를 기록한다.
      *
-     * <p>빈 목록이면 JDBC를 사용하지 않는다.
+     * <p>빈 목록이면 JDBC를 사용하지 않는다. 삽입 시도 행들의 최대 게시일로 {@code news-domestic} 워터마크를 forward-only
+     * 갱신한다(SPEC-OBSV-WATERMARK-001 REQ-WM-001/002 — 일-grain 인코딩).
      *
      * @param rows 삽입할 엔티티(빈 목록이면 무동작)
      */
@@ -63,6 +71,7 @@ public class DomesticNewsHeadlineInserter {
                             }
                         });
         batchMetrics.recordSilentDrops(drops == null ? 0L : drops);
+        watermarkMetrics.advance(WatermarkSeries.NEWS_DOMESTIC, maxPublishedDate(rows));
     }
 
     /**
@@ -88,6 +97,16 @@ public class DomesticNewsHeadlineInserter {
                             }
                         });
         batchMetrics.recordSilentDrops(drops == null ? 0L : drops);
+        watermarkMetrics.advance(WatermarkSeries.NEWS_DOMESTIC, maxPublishedDate(rows));
+    }
+
+    private static LocalDate maxPublishedDate(List<DomesticNewsHeadline> rows) {
+        return rows.stream()
+                .map(DomesticNewsHeadline::getPublishedAt)
+                .filter(Objects::nonNull)
+                .max(Comparator.naturalOrder())
+                .map(LocalDateTime::toLocalDate)
+                .orElse(null);
     }
 
     private void bindRow(PreparedStatement ps, DomesticNewsHeadline e) throws SQLException {

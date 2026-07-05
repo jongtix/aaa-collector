@@ -2,11 +2,15 @@ package com.aaa.collector.stock.fundamental;
 
 import com.aaa.collector.observability.BatchMetrics;
 import com.aaa.collector.observability.SilentDropWarningCounter;
+import com.aaa.collector.observability.WatermarkMetrics;
+import com.aaa.collector.observability.WatermarkSeries;
 import com.aaa.collector.stock.AnalystEstimate;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.SQLException;
 import java.sql.Types;
+import java.time.LocalDate;
+import java.util.Comparator;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -42,11 +46,13 @@ public class AnalystEstimateInserter {
 
     private final JdbcTemplate jdbcTemplate;
     private final BatchMetrics batchMetrics;
+    private final WatermarkMetrics watermarkMetrics;
 
     /**
      * 투자의견 행들을 단일 커넥션 배치로 멱등 삽입하고 침묵 드롭 경고를 기록한다.
      *
-     * <p>빈 목록이면 JDBC를 사용하지 않는다.
+     * <p>빈 목록이면 JDBC를 사용하지 않는다. 삽입 시도 행들의 최대 거래일로 {@code analyst-estimates} 워터마크를 forward-only
+     * 갱신한다(SPEC-OBSV-WATERMARK-001 REQ-WM-001).
      *
      * @param rows 삽입할 엔티티(빈 목록이면 무동작)
      */
@@ -63,6 +69,14 @@ public class AnalystEstimateInserter {
                             }
                         });
         batchMetrics.recordSilentDrops(drops == null ? 0L : drops);
+        watermarkMetrics.advance(WatermarkSeries.ANALYST_ESTIMATES, maxTradeDate(rows));
+    }
+
+    private static LocalDate maxTradeDate(List<AnalystEstimate> rows) {
+        return rows.stream()
+                .map(AnalystEstimate::getTradeDate)
+                .max(Comparator.naturalOrder())
+                .orElse(null);
     }
 
     private void bindRow(PreparedStatement ps, AnalystEstimate e) throws SQLException {

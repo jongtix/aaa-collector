@@ -1,6 +1,8 @@
 package com.aaa.collector.stock.shortsale.overseas;
 
 import com.aaa.collector.observability.BatchMetrics;
+import com.aaa.collector.observability.WatermarkMetrics;
+import com.aaa.collector.observability.WatermarkSeries;
 import com.aaa.collector.stock.ShortSaleOverseasRepository;
 import com.aaa.collector.stock.Stock;
 import com.aaa.collector.stock.StockRepository;
@@ -54,6 +56,7 @@ public class ShortSaleOverseasInterestCollectionService {
     private final StockRepository stockRepository;
     private final ShortSaleOverseasRepository shortSaleOverseasRepository;
     private final BatchMetrics batchMetrics;
+    private final WatermarkMetrics watermarkMetrics;
 
     /**
      * FINRA Short Interest 잔고를 {@code dateRangeFilters}(settlementDate, 오늘−40일~오늘) 범위로 수집한다(D16).
@@ -85,25 +88,16 @@ public class ShortSaleOverseasInterestCollectionService {
                 shortSaleOverseasRepository.findExistingInterestPairsByStockIds(
                         stockIds, from, today);
 
-        int attempted = 0;
-        int succeeded = 0;
-        int skipped = 0;
+        InterestBatchAccumulator acc = new InterestBatchAccumulator();
         for (int start = 0; start < rows.size(); start += INTEREST_PROCESS_BATCH_SIZE) {
             int end = Math.min(start + INTEREST_PROCESS_BATCH_SIZE, rows.size());
             for (FinraConsolidatedShortInterestResponse row : rows.subList(start, end)) {
-                Stock stock = stockBySymbol.get(FinraSymbolNormalizer.normalize(row.symbolCode()));
-                if (stock == null) {
-                    // 미매칭(국내·미존재) — 적재 대상 아님(대량 미매칭은 정상)
-                    continue;
-                }
-                attempted++;
-                if (upsertInterestRow(stock, row, existingPairs)) {
-                    succeeded++;
-                } else {
-                    skipped++;
-                }
+                processInterestRow(row, stockBySymbol, existingPairs, acc);
             }
         }
+        int attempted = acc.attempted;
+        int succeeded = acc.succeeded;
+        int skipped = acc.skipped;
 
         // REQ-SSO-040: 시도/성공/실패/skip 집계 계측. fail은 attempted-success-skip로 유도
         batchMetrics.recordCompletion(
@@ -112,6 +106,9 @@ public class ShortSaleOverseasInterestCollectionService {
                 succeeded,
                 Math.max(0L, (long) attempted - succeeded - skipped),
                 skipped);
+        // SPEC-OBSV-WATERMARK-001 REQ-WM-001: 성공 upsert된 행들의 최대 settlementDate로 forward-only 갱신
+        watermarkMetrics.advance(
+                WatermarkSeries.SHORT_SALE_OVERSEAS_INTEREST, acc.maxSettlementDate);
         log.info(
                 "[overseas-shortsale-interest] 수집 완료 — attempted={}, succeeded={}, skipped={}, range={}~{}",
                 attempted,
@@ -120,6 +117,41 @@ public class ShortSaleOverseasInterestCollectionService {
                 from,
                 today);
         return new InterestResult(attempted, succeeded, skipped);
+    }
+
+    /**
+     * 한 행을 처리해 매칭·UPSERT 결과를 누산기에 반영한다. 미매칭 심볼은 카운트하지 않는다(대량 미매칭은 정상). 성공 upsert된 행의 {@code
+     * settlementDate}로 {@link InterestBatchAccumulator#maxSettlementDate}를
+     * 전진시킨다(SPEC-OBSV-WATERMARK-001 REQ-WM-001).
+     */
+    private void processInterestRow(
+            FinraConsolidatedShortInterestResponse row,
+            Map<String, Stock> stockBySymbol,
+            Map<Long, Set<LocalDate>> existingPairs,
+            InterestBatchAccumulator acc) {
+        Stock stock = stockBySymbol.get(FinraSymbolNormalizer.normalize(row.symbolCode()));
+        if (stock == null) {
+            // 미매칭(국내·미존재) — 적재 대상 아님(대량 미매칭은 정상)
+            return;
+        }
+        acc.attempted++;
+        if (upsertInterestRow(stock, row, existingPairs)) {
+            acc.succeeded++;
+            LocalDate settlementDate = row.settlementDate();
+            if (acc.maxSettlementDate == null || settlementDate.isAfter(acc.maxSettlementDate)) {
+                acc.maxSettlementDate = settlementDate;
+            }
+        } else {
+            acc.skipped++;
+        }
+    }
+
+    /** {@link #collectShortInterest(LocalDate)} 청크 순회 결과 누산기. */
+    private static final class InterestBatchAccumulator {
+        int attempted;
+        int succeeded;
+        int skipped;
+        LocalDate maxSettlementDate;
     }
 
     /**

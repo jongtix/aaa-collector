@@ -23,6 +23,7 @@ import com.aaa.collector.kis.gate.KeyLeaseRegistry.LeaseSession;
 import com.aaa.collector.kis.token.HealthyKeySelector;
 import com.aaa.collector.kis.token.KisAccountCredential;
 import com.aaa.collector.kis.token.KisTokenIssueException;
+import com.aaa.collector.observability.WatermarkSeries;
 import com.aaa.collector.stock.Stock;
 import com.aaa.collector.stock.StockRepository;
 import com.aaa.collector.stock.enums.AssetType;
@@ -424,7 +425,8 @@ class OverseasDailyOhlcvCollectionServiceTest {
             // Assert — reject되지 않고 정상 저장 (ParsedOhlcvRow 캡처로 tvol/tamt 검증)
             @SuppressWarnings("unchecked")
             ArgumentCaptor<List<ParsedOhlcvRow>> captor = ArgumentCaptor.forClass(List.class);
-            verify(ohlcvInserter, times(1)).insertBatch(any(), captor.capture());
+            verify(ohlcvInserter, times(1))
+                    .insertBatch(any(), captor.capture(), any(WatermarkSeries.class));
             assertThat(captor.getValue()).hasSize(1);
             ParsedOhlcvRow saved = captor.getValue().getFirst();
             assertThat(saved.volume()).isEqualTo(42_745_060L);
@@ -455,7 +457,8 @@ class OverseasDailyOhlcvCollectionServiceTest {
             // Assert — skip되지 않고 high만 233.85(=open)로 클램프되어 저장
             @SuppressWarnings("unchecked")
             ArgumentCaptor<List<ParsedOhlcvRow>> captor = ArgumentCaptor.forClass(List.class);
-            verify(ohlcvInserter, times(1)).insertBatch(any(), captor.capture());
+            verify(ohlcvInserter, times(1))
+                    .insertBatch(any(), captor.capture(), any(WatermarkSeries.class));
             ParsedOhlcvRow saved = captor.getValue().getFirst();
             assertThat(saved.high()).isEqualByComparingTo("233.85");
             assertThat(saved.low()).isEqualByComparingTo("228.66");
@@ -481,7 +484,8 @@ class OverseasDailyOhlcvCollectionServiceTest {
             // Assert — skip되지 않고 low만 352.00(=open)으로 클램프되어 저장
             @SuppressWarnings("unchecked")
             ArgumentCaptor<List<ParsedOhlcvRow>> captor = ArgumentCaptor.forClass(List.class);
-            verify(ohlcvInserter, times(1)).insertBatch(any(), captor.capture());
+            verify(ohlcvInserter, times(1))
+                    .insertBatch(any(), captor.capture(), any(WatermarkSeries.class));
             ParsedOhlcvRow saved = captor.getValue().getFirst();
             assertThat(saved.low()).isEqualByComparingTo("352.00");
             assertThat(saved.high()).isEqualByComparingTo("359.14");
@@ -506,7 +510,8 @@ class OverseasDailyOhlcvCollectionServiceTest {
             // Assert — 원값 그대로 저장(클램프 미개입)
             @SuppressWarnings("unchecked")
             ArgumentCaptor<List<ParsedOhlcvRow>> captor = ArgumentCaptor.forClass(List.class);
-            verify(ohlcvInserter, times(1)).insertBatch(any(), captor.capture());
+            verify(ohlcvInserter, times(1))
+                    .insertBatch(any(), captor.capture(), any(WatermarkSeries.class));
             ParsedOhlcvRow saved = captor.getValue().getFirst();
             assertThat(saved.high()).isEqualByComparingTo("105.00");
             assertThat(saved.low()).isEqualByComparingTo("98.00");
@@ -534,7 +539,8 @@ class OverseasDailyOhlcvCollectionServiceTest {
 
             // Assert
             ArgumentCaptor<List<ParsedOhlcvRow>> captor = captureInsert();
-            verify(ohlcvInserter, times(1)).insertBatch(any(), captor.capture());
+            verify(ohlcvInserter, times(1))
+                    .insertBatch(any(), captor.capture(), any(WatermarkSeries.class));
             assertThat(captor.getValue()).hasSize(1);
             assertThat(captor.getValue().getFirst().volume()).isZero();
             assertThat(captor.getValue().getFirst().tradingValue()).isZero();
@@ -578,7 +584,8 @@ class OverseasDailyOhlcvCollectionServiceTest {
             service.collect(TODAY);
 
             ArgumentCaptor<List<ParsedOhlcvRow>> captor = captureInsert();
-            verify(ohlcvInserter, times(1)).insertBatch(any(), captor.capture());
+            verify(ohlcvInserter, times(1))
+                    .insertBatch(any(), captor.capture(), any(WatermarkSeries.class));
             assertThat(captor.getValue()).hasSize(1);
             assertThat(captor.getValue().getFirst().volume()).isEqualTo(1000L);
         }
@@ -590,7 +597,7 @@ class OverseasDailyOhlcvCollectionServiceTest {
 
             CollectionResult result = service.collect(TODAY);
 
-            verify(ohlcvInserter, times(1)).insertBatch(any(), any());
+            verify(ohlcvInserter, times(1)).insertBatch(any(), any(), any(WatermarkSeries.class));
             assertThat(result.succeeded()).isEqualTo(1);
         }
 
@@ -611,7 +618,8 @@ class OverseasDailyOhlcvCollectionServiceTest {
 
             // Assert — ET 당일 제외, 거래정지 행만 저장
             ArgumentCaptor<List<ParsedOhlcvRow>> captor = captureInsert();
-            verify(ohlcvInserter, times(1)).insertBatch(any(), captor.capture());
+            verify(ohlcvInserter, times(1))
+                    .insertBatch(any(), captor.capture(), any(WatermarkSeries.class));
             assertThat(captor.getValue()).hasSize(1);
             assertThat(captor.getValue().getFirst().tradeDate())
                     .isEqualTo(LocalDate.of(2026, 6, 17));
@@ -642,7 +650,7 @@ class OverseasDailyOhlcvCollectionServiceTest {
 
             CollectionResult result = service.collect(TODAY);
 
-            verify(ohlcvInserter, times(1)).insertBatch(any(), any());
+            verify(ohlcvInserter, times(1)).insertBatch(any(), any(), any(WatermarkSeries.class));
             assertThat(result.succeeded()).isEqualTo(1);
         }
 
@@ -706,7 +714,8 @@ class OverseasDailyOhlcvCollectionServiceTest {
             // insertBatch는 1회 호출되고, 배치에는 PREV_YMD 행만 포함 (ET today 가드로 TODAY_YMD 제외)
             @SuppressWarnings("unchecked")
             ArgumentCaptor<List<ParsedOhlcvRow>> captor = ArgumentCaptor.forClass(List.class);
-            verify(ohlcvInserter, times(1)).insertBatch(any(), captor.capture());
+            verify(ohlcvInserter, times(1))
+                    .insertBatch(any(), captor.capture(), any(WatermarkSeries.class));
             List<ParsedOhlcvRow> saved = captor.getValue();
             assertThat(saved).hasSize(1);
             assertThat(saved.getFirst().tradeDate()).isEqualTo(LocalDate.of(2026, 6, 17));
@@ -847,7 +856,8 @@ class OverseasDailyOhlcvCollectionServiceTest {
 
             @SuppressWarnings("unchecked")
             ArgumentCaptor<List<ParsedOhlcvRow>> captor = ArgumentCaptor.forClass(List.class);
-            verify(ohlcvInserter, times(1)).insertBatch(any(), captor.capture());
+            verify(ohlcvInserter, times(1))
+                    .insertBatch(any(), captor.capture(), any(WatermarkSeries.class));
             assertThat(captor.getValue()).hasSize(1);
             assertThat(captor.getValue().getFirst().tradeDate())
                     .isEqualTo(LocalDate.of(2026, 1, 30));
@@ -932,7 +942,7 @@ class OverseasDailyOhlcvCollectionServiceTest {
                     service.fetchWindow(
                             ANCHOR, stockOf("AAPL", Market.NASDAQ, AssetType.STOCK), openSession());
 
-            verify(ohlcvInserter, never()).insertBatch(any(), any());
+            verify(ohlcvInserter, never()).insertBatch(any(), any(), any(WatermarkSeries.class));
             assertThat(fetch.rowCount()).isEqualTo(1);
             assertThat(fetch.rawRowCount()).isEqualTo(1);
             assertThat(fetch.oldestTradeDate()).isEqualTo(LocalDate.of(2026, 1, 30));
@@ -1070,7 +1080,7 @@ class OverseasDailyOhlcvCollectionServiceTest {
 
             BackfillWindowResult result = service.persistWindow(stock, fetch);
 
-            verify(ohlcvInserter, times(1)).insertBatch(any(), any());
+            verify(ohlcvInserter, times(1)).insertBatch(any(), any(), any(WatermarkSeries.class));
             assertThat(result.oldestTradeDate()).isEqualTo(LocalDate.of(2026, 1, 30));
             assertThat(result.rowCount()).isEqualTo(1);
             // AC-11: rawRowCount(원본 행수)는 rowCount(저장 행수)와 분리되어 그대로 전달된다
@@ -1087,7 +1097,7 @@ class OverseasDailyOhlcvCollectionServiceTest {
                             stockOf("AAPL", Market.NASDAQ, AssetType.STOCK), emptyFetch);
 
             assertThat(result).isEqualTo(BackfillWindowResult.EMPTY);
-            verify(ohlcvInserter, never()).insertBatch(any(), any());
+            verify(ohlcvInserter, never()).insertBatch(any(), any(), any(WatermarkSeries.class));
         }
 
         @Test
@@ -1106,7 +1116,7 @@ class OverseasDailyOhlcvCollectionServiceTest {
             CollectionResult result = service.collect(TODAY);
 
             assertThat(result.succeeded()).isEqualTo(1);
-            verify(ohlcvInserter, times(1)).insertBatch(any(), any());
+            verify(ohlcvInserter, times(1)).insertBatch(any(), any(), any(WatermarkSeries.class));
         }
     }
 
@@ -1128,6 +1138,6 @@ class OverseasDailyOhlcvCollectionServiceTest {
     }
 
     private void verifyNoInsert() {
-        verify(ohlcvInserter, never()).insertBatch(any(), any());
+        verify(ohlcvInserter, never()).insertBatch(any(), any(), any(WatermarkSeries.class));
     }
 }

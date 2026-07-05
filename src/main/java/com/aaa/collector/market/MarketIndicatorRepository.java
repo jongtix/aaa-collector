@@ -57,4 +57,12 @@ public interface MarketIndicatorRepository extends JpaRepository<MarketIndicator
     /** 최신 적재 시각 조회 (SPEC-OBSV-WARMSTART-001 warm-start용). */
     @Query("SELECT MAX(m.createdAt) FROM MarketIndicator m")
     Optional<LocalDateTime> findMaxCreatedAt();
+
+    /**
+     * 지표 코드별 최대 거래일 조회 (SPEC-OBSV-WATERMARK-001 REQ-WM-003 warm-start용 — {@code
+     * market-usdkrw}/{@code market-vix}).
+     */
+    @Query("SELECT MAX(m.tradeDate) FROM MarketIndicator m WHERE m.indicatorCode = :indicatorCode")
+    Optional<LocalDate> findMaxTradeDateByIndicatorCode(
+            @Param("indicatorCode") IndicatorCode indicatorCode);
 }

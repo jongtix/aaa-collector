@@ -22,6 +22,7 @@ import com.aaa.collector.kis.gate.KeyLeaseRegistry.LeaseSession;
 import com.aaa.collector.kis.token.HealthyKeySelector;
 import com.aaa.collector.kis.token.KisAccountCredential;
 import com.aaa.collector.kis.token.KisTokenIssueException;
+import com.aaa.collector.observability.WatermarkSeries;
 import com.aaa.collector.stock.Stock;
 import com.aaa.collector.stock.StockRepository;
 import com.aaa.collector.stock.enums.AssetType;
@@ -362,7 +363,7 @@ class DomesticDailyOhlcvCollectionServiceTest {
             service.collect(LocalDate.of(2026, 6, 5));
 
             // Assert — 유효 행이 없으면 insertBatch가 호출되지 않는다 (REQ-OBSV-023 경고 캡처 경로)
-            verify(ohlcvInserter, never()).insertBatch(any(), any());
+            verify(ohlcvInserter, never()).insertBatch(any(), any(), any(WatermarkSeries.class));
         }
 
         @Test
@@ -388,7 +389,7 @@ class DomesticDailyOhlcvCollectionServiceTest {
             service.collect(LocalDate.of(2026, 6, 5));
 
             // Assert
-            verify(ohlcvInserter, never()).insertBatch(any(), any());
+            verify(ohlcvInserter, never()).insertBatch(any(), any(), any(WatermarkSeries.class));
         }
     }
 
@@ -426,7 +427,8 @@ class DomesticDailyOhlcvCollectionServiceTest {
 
             // Assert
             ArgumentCaptor<List<ParsedOhlcvRow>> captor = captureInsert();
-            verify(ohlcvInserter, times(1)).insertBatch(any(), captor.capture());
+            verify(ohlcvInserter, times(1))
+                    .insertBatch(any(), captor.capture(), any(WatermarkSeries.class));
             assertThat(captor.getValue()).hasSize(1);
             assertThat(captor.getValue().getFirst().volume()).isZero();
         }
@@ -450,7 +452,8 @@ class DomesticDailyOhlcvCollectionServiceTest {
 
             // Assert
             ArgumentCaptor<List<ParsedOhlcvRow>> captor = captureInsert();
-            verify(ohlcvInserter, times(1)).insertBatch(any(), captor.capture());
+            verify(ohlcvInserter, times(1))
+                    .insertBatch(any(), captor.capture(), any(WatermarkSeries.class));
             assertThat(captor.getValue().getFirst().tradingValue()).isZero();
         }
 
@@ -472,7 +475,7 @@ class DomesticDailyOhlcvCollectionServiceTest {
 
             service.collect(LocalDate.of(2026, 6, 5));
 
-            verify(ohlcvInserter, never()).insertBatch(any(), any());
+            verify(ohlcvInserter, never()).insertBatch(any(), any(), any(WatermarkSeries.class));
         }
 
         @Test
@@ -504,7 +507,8 @@ class DomesticDailyOhlcvCollectionServiceTest {
 
             // Assert — 정상 1 + 거래정지 1 = 2건 저장
             ArgumentCaptor<List<ParsedOhlcvRow>> captor = captureInsert();
-            verify(ohlcvInserter, times(1)).insertBatch(any(), captor.capture());
+            verify(ohlcvInserter, times(1))
+                    .insertBatch(any(), captor.capture(), any(WatermarkSeries.class));
             assertThat(captor.getValue()).hasSize(2);
         }
 
@@ -526,7 +530,7 @@ class DomesticDailyOhlcvCollectionServiceTest {
 
             service.collect(LocalDate.of(2026, 6, 5));
 
-            verify(ohlcvInserter, never()).insertBatch(any(), any());
+            verify(ohlcvInserter, never()).insertBatch(any(), any(), any(WatermarkSeries.class));
         }
 
         @Test
@@ -550,7 +554,8 @@ class DomesticDailyOhlcvCollectionServiceTest {
             service.collect(LocalDate.of(2026, 6, 5));
 
             ArgumentCaptor<List<ParsedOhlcvRow>> captor = captureInsert();
-            verify(ohlcvInserter, times(1)).insertBatch(any(), captor.capture());
+            verify(ohlcvInserter, times(1))
+                    .insertBatch(any(), captor.capture(), any(WatermarkSeries.class));
             assertThat(captor.getValue()).hasSize(3);
         }
 
@@ -583,7 +588,7 @@ class DomesticDailyOhlcvCollectionServiceTest {
 
             service.collect(LocalDate.of(2026, 6, 5));
 
-            verify(ohlcvInserter, never()).insertBatch(any(), any());
+            verify(ohlcvInserter, never()).insertBatch(any(), any(), any(WatermarkSeries.class));
         }
 
         @Test
@@ -605,7 +610,8 @@ class DomesticDailyOhlcvCollectionServiceTest {
             // Assert — 유효 행 1개를 담은 배치로 1회 적재 (ParsedOhlcvRow 2-param 오버로드)
             @SuppressWarnings("unchecked")
             ArgumentCaptor<List<ParsedOhlcvRow>> captor = ArgumentCaptor.forClass(List.class);
-            verify(ohlcvInserter, times(1)).insertBatch(any(), captor.capture());
+            verify(ohlcvInserter, times(1))
+                    .insertBatch(any(), captor.capture(), any(WatermarkSeries.class));
             assertThat(captor.getValue()).hasSize(1);
         }
     }
@@ -663,7 +669,7 @@ class DomesticDailyOhlcvCollectionServiceTest {
             verify(mismatchDetector, times(1)).detectAndLog(any(), eq("005930"), any());
 
             // No UPDATE/DELETE — INSERT IGNORE 배치가 유일한 쓰기 경로 (AC-4); 경고 캡처 inserter 1회 호출
-            verify(ohlcvInserter, times(1)).insertBatch(any(), any());
+            verify(ohlcvInserter, times(1)).insertBatch(any(), any(), any(WatermarkSeries.class));
 
             assertThat(result.succeeded()).isEqualTo(1);
         }
@@ -732,7 +738,7 @@ class DomesticDailyOhlcvCollectionServiceTest {
                     service.fetchWindow(FROM, ANCHOR, stockOf("005930"), openSession());
 
             // Assert — fetch 단계에서 DB INSERT 없음
-            verify(ohlcvInserter, never()).insertBatch(any(), any());
+            verify(ohlcvInserter, never()).insertBatch(any(), any(), any(WatermarkSeries.class));
             assertThat(fetch.rowCount()).isEqualTo(1);
             assertThat(fetch.oldestTradeDate()).isEqualTo(LocalDate.of(2026, 1, 1));
         }
@@ -864,7 +870,7 @@ class DomesticDailyOhlcvCollectionServiceTest {
             assertThat(fetch.rows()).isEmpty();
             assertThat(fetch.oldestTradeDate()).isNull();
             assertThat(fetch.rowCount()).isZero();
-            verify(ohlcvInserter, never()).insertBatch(any(), any());
+            verify(ohlcvInserter, never()).insertBatch(any(), any(), any(WatermarkSeries.class));
         }
 
         @Test
@@ -911,7 +917,7 @@ class DomesticDailyOhlcvCollectionServiceTest {
             BackfillWindowResult result = service.persistWindow(stock, fetch);
 
             // Assert — persist 단계에서 정확히 1회 INSERT (ParsedOhlcvRow 2-param 오버로드)
-            verify(ohlcvInserter, times(1)).insertBatch(any(), any());
+            verify(ohlcvInserter, times(1)).insertBatch(any(), any(), any(WatermarkSeries.class));
             assertThat(result.oldestTradeDate()).isEqualTo(LocalDate.of(2026, 1, 1));
             assertThat(result.rowCount()).isEqualTo(1);
             // AC-6: rawRowCount(원본 행수)는 rowCount(저장 행수)와 분리되어 그대로 전달된다
@@ -926,7 +932,7 @@ class DomesticDailyOhlcvCollectionServiceTest {
             BackfillWindowResult result = service.persistWindow(stockOf("005930"), emptyFetch);
 
             assertThat(result).isEqualTo(BackfillWindowResult.EMPTY);
-            verify(ohlcvInserter, never()).insertBatch(any(), any());
+            verify(ohlcvInserter, never()).insertBatch(any(), any(), any(WatermarkSeries.class));
         }
 
         @Test
@@ -945,7 +951,7 @@ class DomesticDailyOhlcvCollectionServiceTest {
             CollectionResult result = service.collect(LocalDate.of(2026, 6, 5));
 
             assertThat(result.succeeded()).isEqualTo(1);
-            verify(ohlcvInserter, times(1)).insertBatch(any(), any());
+            verify(ohlcvInserter, times(1)).insertBatch(any(), any(), any(WatermarkSeries.class));
         }
 
         @Test
@@ -978,7 +984,10 @@ class DomesticDailyOhlcvCollectionServiceTest {
 
             // Assert — modYn="Y" 행이 parseIfValid를 통과해 insertBatch에 전달된다
             verify(ohlcvInserter, times(1))
-                    .insertBatch(eq(stock.getId()), argThat(rows -> rows.size() == 1));
+                    .insertBatch(
+                            eq(stock.getId()),
+                            argThat(rows -> rows.size() == 1),
+                            any(WatermarkSeries.class));
         }
     }
 
@@ -1046,7 +1055,7 @@ class DomesticDailyOhlcvCollectionServiceTest {
                     LocalDate.of(2026, 1, 1),
                     LocalDate.of(2026, 5, 30));
 
-            verify(ohlcvInserter, times(1)).insertBatch(any(), any());
+            verify(ohlcvInserter, times(1)).insertBatch(any(), any(), any(WatermarkSeries.class));
         }
 
         @Test
@@ -1094,7 +1103,7 @@ class DomesticDailyOhlcvCollectionServiceTest {
 
             assertThat(result.oldestTradeDate()).isNull();
             assertThat(result.rowCount()).isZero();
-            verify(ohlcvInserter, never()).insertBatch(any(), any());
+            verify(ohlcvInserter, never()).insertBatch(any(), any(), any(WatermarkSeries.class));
         }
     }
 }

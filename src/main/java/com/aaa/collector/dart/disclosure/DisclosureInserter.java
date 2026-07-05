@@ -3,10 +3,14 @@ package com.aaa.collector.dart.disclosure;
 import com.aaa.collector.observability.BatchMetrics;
 import com.aaa.collector.observability.RowFailureHandler;
 import com.aaa.collector.observability.SilentDropWarningCounter;
+import com.aaa.collector.observability.WatermarkMetrics;
+import com.aaa.collector.observability.WatermarkSeries;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.SQLException;
 import java.sql.Types;
+import java.time.LocalDate;
+import java.util.Comparator;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -41,11 +45,13 @@ public class DisclosureInserter {
 
     private final JdbcTemplate jdbcTemplate;
     private final BatchMetrics batchMetrics;
+    private final WatermarkMetrics watermarkMetrics;
 
     /**
      * DART 공시 행들을 단일 커넥션 배치로 멱등 삽입하고 침묵 드롭 경고를 기록한다.
      *
-     * <p>빈 목록이면 JDBC를 사용하지 않는다.
+     * <p>빈 목록이면 JDBC를 사용하지 않는다. 삽입 시도 행들의 최대 접수일자로 {@code disclosures} 워터마크를 forward-only
+     * 갱신한다(SPEC-OBSV-WATERMARK-001 REQ-WM-001).
      *
      * @param rows 삽입할 파라미터 객체(빈 목록이면 무동작)
      */
@@ -62,12 +68,14 @@ public class DisclosureInserter {
                             }
                         });
         batchMetrics.recordSilentDrops(drops == null ? 0L : drops);
+        watermarkMetrics.advance(WatermarkSeries.DISCLOSURES, maxRceptDt(rows));
     }
 
     /**
      * DART 공시 행들을 격리 삽입한다 (REQ-INSERT-008).
      *
-     * <p>독성 행은 {@code onFailure}로 통지하고 skip한 뒤 잔여 행을 계속 처리한다.
+     * <p>독성 행은 {@code onFailure}로 통지하고 skip한 뒤 잔여 행을 계속 처리한다. 삽입 시도 행들의 최대 접수일자로 {@code
+     * disclosures} 워터마크를 forward-only 갱신한다(REQ-WM-001).
      *
      * @param rows 삽입할 파라미터 객체(빈 목록이면 무동작)
      * @param onFailure 행별 실패 통지 콜백
@@ -86,6 +94,14 @@ public class DisclosureInserter {
                             }
                         });
         batchMetrics.recordSilentDrops(drops == null ? 0L : drops);
+        watermarkMetrics.advance(WatermarkSeries.DISCLOSURES, maxRceptDt(rows));
+    }
+
+    private static LocalDate maxRceptDt(List<DisclosureRow> rows) {
+        return rows.stream()
+                .map(DisclosureRow::rceptDt)
+                .max(Comparator.naturalOrder())
+                .orElse(null);
     }
 
     private void bindRow(PreparedStatement ps, DisclosureRow row) throws SQLException {

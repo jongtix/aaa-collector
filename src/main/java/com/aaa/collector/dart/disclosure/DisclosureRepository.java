@@ -1,5 +1,7 @@
 package com.aaa.collector.dart.disclosure;
 
+import java.time.LocalDate;
+import java.util.Optional;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
@@ -45,4 +47,8 @@ public interface DisclosureRepository extends JpaRepository<Disclosure, Long> {
     /** 종목 ID로 행 수를 반환한다 (통합 테스트용). */
     @Query("SELECT COUNT(d) FROM Disclosure d WHERE d.stockId = :stockId")
     long countByStockId(@Param("stockId") Long stockId);
+
+    /** 최대 접수일자 조회 (SPEC-OBSV-WATERMARK-001 REQ-WM-003 warm-start용 — {@code disclosures}). */
+    @Query("SELECT MAX(d.rceptDt) FROM Disclosure d")
+    Optional<LocalDate> findMaxRceptDt();
 }

@@ -8,6 +8,7 @@ import com.aaa.collector.kis.gate.KeyLeaseRegistry;
 import com.aaa.collector.kis.gate.KeyLeaseRegistry.LeaseSession;
 import com.aaa.collector.kis.gate.NoHealthyKeyException;
 import com.aaa.collector.kis.token.KisTokenIssueException;
+import com.aaa.collector.observability.WatermarkSeries;
 import com.aaa.collector.stock.Stock;
 import com.aaa.collector.stock.StockRepository;
 import java.math.BigDecimal;
@@ -225,7 +226,7 @@ public class OverseasDailyOhlcvCollectionService {
         if (kept.isEmpty()) {
             return BackfillWindowResult.EMPTY;
         }
-        ohlcvInserter.insertBatch(stock.getId(), kept);
+        ohlcvInserter.insertBatch(stock.getId(), kept, WatermarkSeries.DAILY_OHLCV_US);
         LocalDate oldest =
                 kept.stream()
                         .map(ParsedOhlcvRow::tradeDate)
@@ -282,7 +283,7 @@ public class OverseasDailyOhlcvCollectionService {
         List<ParsedOhlcvRow> kept = keepValidRows(symbol, filteredRows);
         if (!kept.isEmpty()) {
             // REQ-INSERT-005: 단일 커넥션 배치 INSERT IGNORE (W-2 불변식)
-            ohlcvInserter.insertBatch(stock.getId(), kept);
+            ohlcvInserter.insertBatch(stock.getId(), kept, WatermarkSeries.DAILY_OHLCV_US);
         }
         return true;
     }
@@ -384,7 +385,7 @@ public class OverseasDailyOhlcvCollectionService {
             }
             return BackfillWindowResult.EMPTY;
         }
-        ohlcvInserter.insertBatch(stock.getId(), fetch.rows());
+        ohlcvInserter.insertBatch(stock.getId(), fetch.rows(), WatermarkSeries.DAILY_OHLCV_US);
         // SPEC-COLLECTOR-BACKFILL-006: rawRowCount(원본 행수)를 GROUP_A 종료 입력으로 전달. rowCount(저장 행수) 보존.
         return new BackfillWindowResult(
                 fetch.oldestTradeDate(), fetch.rowCount(), fetch.rawRowCount());

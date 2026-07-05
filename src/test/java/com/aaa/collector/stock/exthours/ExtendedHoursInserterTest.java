@@ -7,6 +7,7 @@ import static org.mockito.Mockito.when;
 
 import com.aaa.collector.observability.BatchMetrics;
 import com.aaa.collector.observability.RowFailureHandler;
+import com.aaa.collector.observability.WatermarkMetrics;
 import com.aaa.collector.stock.Stock;
 import java.math.BigDecimal;
 import java.time.LocalDate;
@@ -27,6 +28,7 @@ class ExtendedHoursInserterTest {
 
     @Mock private JdbcTemplate jdbcTemplate;
     @Mock private BatchMetrics batchMetrics;
+    @Mock private WatermarkMetrics watermarkMetrics;
 
     private ExtendedHours entity() {
         return ExtendedHours.builder()
@@ -47,7 +49,8 @@ class ExtendedHoursInserterTest {
         @Test
         @DisplayName("빈 목록 — JDBC·메트릭 미사용")
         void emptyRows_noJdbcNoMetric() {
-            ExtendedHoursInserter inserter = new ExtendedHoursInserter(jdbcTemplate, batchMetrics);
+            ExtendedHoursInserter inserter =
+                    new ExtendedHoursInserter(jdbcTemplate, batchMetrics, watermarkMetrics);
 
             inserter.insertBatch(List.of());
 
@@ -63,7 +66,8 @@ class ExtendedHoursInserterTest {
         @Test
         @DisplayName("execute가 드롭 수를 반환하면 BatchMetrics에 그대로 기록")
         void drops_recorded() {
-            ExtendedHoursInserter inserter = new ExtendedHoursInserter(jdbcTemplate, batchMetrics);
+            ExtendedHoursInserter inserter =
+                    new ExtendedHoursInserter(jdbcTemplate, batchMetrics, watermarkMetrics);
             when(jdbcTemplate.execute(any(ConnectionCallback.class))).thenReturn(2L);
 
             inserter.insertBatch(List.of(entity()));
@@ -74,7 +78,8 @@ class ExtendedHoursInserterTest {
         @Test
         @DisplayName("execute가 null 반환 시 0으로 대체하여 기록")
         void nullFromExecute_recordsZero() {
-            ExtendedHoursInserter inserter = new ExtendedHoursInserter(jdbcTemplate, batchMetrics);
+            ExtendedHoursInserter inserter =
+                    new ExtendedHoursInserter(jdbcTemplate, batchMetrics, watermarkMetrics);
             when(jdbcTemplate.execute(any(ConnectionCallback.class))).thenReturn(null);
 
             inserter.insertBatch(List.of(entity()));
@@ -90,7 +95,8 @@ class ExtendedHoursInserterTest {
         @Test
         @DisplayName("빈 목록 — JDBC·메트릭 미사용")
         void emptyRows_noJdbcNoMetric() {
-            ExtendedHoursInserter inserter = new ExtendedHoursInserter(jdbcTemplate, batchMetrics);
+            ExtendedHoursInserter inserter =
+                    new ExtendedHoursInserter(jdbcTemplate, batchMetrics, watermarkMetrics);
             RowFailureHandler<ExtendedHours> onFailure = (row, ex) -> {};
 
             inserter.insertBatchIsolated(List.of(), onFailure);
@@ -102,7 +108,8 @@ class ExtendedHoursInserterTest {
         @Test
         @DisplayName("execute가 드롭 수를 반환하면 BatchMetrics에 그대로 기록")
         void drops_recorded() {
-            ExtendedHoursInserter inserter = new ExtendedHoursInserter(jdbcTemplate, batchMetrics);
+            ExtendedHoursInserter inserter =
+                    new ExtendedHoursInserter(jdbcTemplate, batchMetrics, watermarkMetrics);
             when(jdbcTemplate.execute(any(ConnectionCallback.class))).thenReturn(1L);
             RowFailureHandler<ExtendedHours> onFailure = (row, ex) -> {};
 

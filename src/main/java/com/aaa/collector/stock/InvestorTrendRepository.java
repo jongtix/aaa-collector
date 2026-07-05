@@ -1,5 +1,6 @@
 package com.aaa.collector.stock;
 
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.Optional;
 import org.springframework.data.jpa.repository.JpaRepository;
@@ -54,4 +55,8 @@ public interface InvestorTrendRepository extends JpaRepository<InvestorTrend, Lo
     /** 최신 적재 시각 조회 (SPEC-OBSV-WARMSTART-001 warm-start용). */
     @Query("SELECT MAX(t.createdAt) FROM InvestorTrend t")
     Optional<LocalDateTime> findMaxCreatedAt();
+
+    /** 최대 거래일 조회 (SPEC-OBSV-WATERMARK-001 REQ-WM-003 warm-start용). */
+    @Query("SELECT MAX(t.tradeDate) FROM InvestorTrend t")
+    Optional<LocalDate> findMaxTradeDate();
 }

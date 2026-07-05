@@ -13,6 +13,7 @@ import static org.mockito.Mockito.when;
 
 import com.aaa.collector.common.gate.UsMarketOpenGate;
 import com.aaa.collector.observability.BatchMetrics;
+import com.aaa.collector.observability.WatermarkMetrics;
 import com.aaa.collector.stock.ShortSaleOverseasRepository;
 import com.aaa.collector.stock.Stock;
 import com.aaa.collector.stock.StockRepository;
@@ -44,6 +45,7 @@ class ShortSaleOverseasDailyCollectionServiceTest {
     @Mock private ShortSaleOverseasRepository shortSaleOverseasRepository;
     @Mock private BatchMetrics batchMetrics;
     @Mock private UsMarketOpenGate usMarketOpenGate;
+    @Mock private WatermarkMetrics watermarkMetrics;
 
     private ShortSaleOverseasDailyCollectionService service;
 
@@ -57,7 +59,8 @@ class ShortSaleOverseasDailyCollectionServiceTest {
                         stockRepository,
                         shortSaleOverseasRepository,
                         batchMetrics,
-                        usMarketOpenGate);
+                        usMarketOpenGate,
+                        watermarkMetrics);
         // T5 LOCF forward 배치 조회 — Daily 테스트는 forward 매칭 없음(빈 Map) 기본값으로 둔다(lenient)
         Mockito.lenient()
                 .when(

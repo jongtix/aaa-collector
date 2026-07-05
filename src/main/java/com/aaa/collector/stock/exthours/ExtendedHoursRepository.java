@@ -3,6 +3,7 @@ package com.aaa.collector.stock.exthours;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.util.Optional;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
@@ -40,4 +41,11 @@ public interface ExtendedHoursRepository extends JpaRepository<ExtendedHours, Lo
             @Param("referenceClose") BigDecimal referenceClose,
             @Param("source") String source,
             @Param("collectedAt") LocalDateTime collectedAt);
+
+    /**
+     * 세션별 최대 거래일 조회 (SPEC-OBSV-WATERMARK-001 REQ-WM-003 warm-start용 — {@code
+     * extended-hours-pre}/{@code extended-hours-after}).
+     */
+    @Query("SELECT MAX(e.tradeDate) FROM ExtendedHours e WHERE e.session = :session")
+    Optional<LocalDate> findMaxTradeDateBySession(@Param("session") Session session);
 }

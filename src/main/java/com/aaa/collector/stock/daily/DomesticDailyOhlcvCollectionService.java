@@ -7,6 +7,7 @@ import com.aaa.collector.kis.gate.KeyLeaseRegistry;
 import com.aaa.collector.kis.gate.KeyLeaseRegistry.LeaseSession;
 import com.aaa.collector.kis.gate.NoHealthyKeyException;
 import com.aaa.collector.kis.token.KisTokenIssueException;
+import com.aaa.collector.observability.WatermarkSeries;
 import com.aaa.collector.stock.Stock;
 import com.aaa.collector.stock.StockRepository;
 import java.math.BigDecimal;
@@ -270,7 +271,7 @@ public class DomesticDailyOhlcvCollectionService {
         }
         // REQ-OBSV-023: 한 종목의 유효 행들을 단일 커넥션 배치 INSERT IGNORE로 적재하고 침묵 드롭 경고를 캡처한다.
         // REQ-INSERT-004: ParsedOhlcvRow를 바인딩에 직접 사용 — 추가 파싱 없음.
-        ohlcvInserter.insertBatch(stock.getId(), validRows);
+        ohlcvInserter.insertBatch(stock.getId(), validRows, WatermarkSeries.DAILY_OHLCV_KRX);
         return validRows;
     }
 
@@ -344,7 +345,7 @@ public class DomesticDailyOhlcvCollectionService {
             return BackfillWindowResult.EMPTY;
         }
         // REQ-INSERT-004: ParsedOhlcvRow를 직접 바인딩 — fmt 파라미터 불필요
-        ohlcvInserter.insertBatch(stock.getId(), fetch.rows());
+        ohlcvInserter.insertBatch(stock.getId(), fetch.rows(), WatermarkSeries.DAILY_OHLCV_KRX);
         // SPEC-COLLECTOR-BACKFILL-006: rawRowCount(원본 행수)를 GROUP_A 종료 입력으로 전달. rowCount(저장 행수) 보존.
         return new BackfillWindowResult(
                 fetch.oldestTradeDate(), fetch.rowCount(), fetch.rawRowCount());
