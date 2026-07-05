@@ -42,14 +42,16 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 @Tag("integration")
 class BackfillStatusSeederTest {
 
-    // SPEC-COLLECTOR-BACKFILL-007 W2 (REQ-BACKFILL-090): corporate_events 편입 → 국내 5종
+    // SPEC-COLLECTOR-BACKFILL-007 W2 (REQ-BACKFILL-090): corporate_events 편입,
+    // SPEC-COLLECTOR-BACKFILL-009 W1 (REQ-BACKFILL-143): corporate_events_dividend 편입 → 국내 6종
     private static final List<String> DOMESTIC_TABLES =
             List.of(
                     "daily_ohlcv",
                     "investor_trend",
                     "short_sale_domestic",
                     "credit_balance",
-                    "corporate_events");
+                    "corporate_events",
+                    "corporate_events_dividend");
 
     @Container @ServiceConnection
     static final MySQLContainer<?> MYSQL = new MySQLContainer<>("mysql:8.4");
@@ -88,13 +90,14 @@ class BackfillStatusSeederTest {
     }
 
     @Nested
-    @DisplayName("AC-8.1/AC-2 국내 종목 시딩 — 5개 data_table 행 (PENDING/NULL, corporate_events 포함)")
+    @DisplayName(
+            "AC-8.1/AC-2 국내 종목 시딩 — 6개 data_table 행 (PENDING/NULL, corporate_events(_dividend) 포함)")
     class DomesticSeeding {
 
         @Test
         @DisplayName(
-                "행이 없던 국내 종목 → daily_ohlcv·investor_trend·short_sale_domestic·credit_balance·corporate_events 5행 생성")
-        void domesticStock_seedsFiveTables() {
+                "행이 없던 국내 종목 → daily_ohlcv·investor_trend·short_sale_domestic·credit_balance·corporate_events·corporate_events_dividend 6행 생성")
+        void domesticStock_seedsSixTables() {
             saveStock("005930", Market.KOSPI);
 
             seeder.seedActiveStocks();

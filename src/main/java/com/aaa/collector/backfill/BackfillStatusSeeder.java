@@ -44,6 +44,10 @@ public class BackfillStatusSeeder {
      * <p>[SPEC-COLLECTOR-BACKFILL-007 REQ-BACKFILL-090] {@code corporate_events}(SPLIT 과거 백필) 편입 —
      * 국내 5종. 미국 종목은 {@link #OVERSEAS_DATA_TABLES}로 분기되어 corporate_events를 시딩하지
      * 않는다(REQ-BACKFILL-092).
+     *
+     * <p>[SPEC-COLLECTOR-BACKFILL-009 REQ-BACKFILL-143] {@code corporate_events_dividend}(DIVIDEND
+     * 과거 백필) 편입 — 국내 6종. SPLIT과 구분되는 별도 {@code data_table} 논리 키로 활성 국내 관심종목을 {@code
+     * backfill_status}에 시딩해 진행 상태를 분리한다(RD-1). 미국 종목은 대상 아님(국내 배당 전용).
      */
     private static final List<String> DOMESTIC_DATA_TABLES =
             List.of(
@@ -51,7 +55,8 @@ public class BackfillStatusSeeder {
                     "investor_trend",
                     "short_sale_domestic",
                     "credit_balance",
-                    "corporate_events");
+                    "corporate_events",
+                    "corporate_events_dividend");
 
     /** 미국 종목 시딩 data_table 집합 — daily_ohlcv 1종만(수급 3종 비대상, AC-7.3). */
     private static final List<String> OVERSEAS_DATA_TABLES = List.of("daily_ohlcv");
