@@ -67,7 +67,17 @@ public class WatermarkWarmStarter implements ApplicationRunner {
     @Override
     public void run(ApplicationArguments args) {
         log.info("Watermark warm-start 시작 (SPEC-OBSV-WATERMARK-001 REQ-WM-003)");
+        resyncAll();
+        log.info("Watermark warm-start 완료");
+    }
 
+    /**
+     * §3 사전 17 시계열 전부를 DB {@code MAX(기준 날짜 컬럼)}로 재조회하여 절대값으로 재동기화한다.
+     *
+     * <p>부팅 warm-start(REQ-WM-003)와 일 1회 재동기화 스케줄러(REQ-WM-004, {@code WatermarkResyncScheduler})가
+     * 공유하는 진입점 — 두 호출자 모두 동일한 SELECT MAX 쿼리 집합을 사용하므로 로직을 중복 구현하지 않는다.
+     */
+    public void resyncAll() {
         warm(
                 WatermarkSeries.DAILY_OHLCV_KRX,
                 () -> dailyOhlcvRepository.findMaxTradeDateByMarketsIn(DOMESTIC_MARKETS));
@@ -109,8 +119,6 @@ public class WatermarkWarmStarter implements ApplicationRunner {
         warm(
                 WatermarkSeries.EXTENDED_HOURS_AFTER,
                 () -> extendedHoursRepository.findMaxTradeDateBySession(Session.AFTER));
-
-        log.info("Watermark warm-start 완료");
     }
 
     private void warm(WatermarkSeries series, DateQuery query) {
