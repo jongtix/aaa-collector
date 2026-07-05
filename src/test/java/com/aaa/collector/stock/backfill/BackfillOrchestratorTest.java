@@ -782,5 +782,22 @@ class BackfillOrchestratorTest {
             verify(windowExecutor, never()).fetchWindow(any(), any(), any());
             verify(windowExecutor, never()).persistWindow(any(), any(), any());
         }
+
+        @Test
+        @DisplayName("run() — 전 키 사망(빈 헬스 스냅샷) → 백필 미수행, 종목/status 미조회, 윈도우 미실행 (REQ-BACKFILL-137)")
+        void run_allKeysDead_skipsBackfillEntirely() throws InterruptedException {
+            // Arrange — 시딩 후 세션이 비어(전 키 사망) 있는 상태
+            when(session.isEmpty()).thenReturn(true);
+
+            // Act
+            orchestrator.run();
+
+            // Assert — 시딩은 수행되나 이후 종목 조회·윈도우 실행은 전면 skip (no fallback)
+            verify(seeder).seedActiveStocks();
+            verify(stockRepository, never()).findAllActiveTradable();
+            verify(backfillStatusRepository, never())
+                    .findByStatusInAndTargetTypeOrderById(any(), anyString());
+            verify(windowExecutor, never()).fetchWindow(any(), any(), any());
+        }
     }
 }

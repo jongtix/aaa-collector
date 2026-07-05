@@ -69,6 +69,14 @@ public class BackfillOrchestrator {
         // Step 2: per-run 세션 1회 고정 (REQ-KISGATE-006a 준수 — inner 루프 재오픈 금지)
         LeaseSession session = keyLeaseRegistry.openSession();
 
+        // Step 2b: 전 키 사망(빈 헬스 스냅샷) → 백필 미수행, ERROR (no fallback, REQ-BACKFILL-137).
+        // 라이브 DIVIDEND-FIX-001 REQ-DIVFIX-040 패턴을 백필 진입점에 이식 — 전 data_table 공통 가드.
+        // 가드 부재 시 전 키 사망은 윈도우별 NoHealthyKeyException으로 status churn을 유발한다.
+        if (session.isEmpty()) {
+            log.error("[backfill-orchestrator] 모든 키 죽음 — 백필 미수행, 전체 skip (REQ-BACKFILL-137)");
+            return;
+        }
+
         // Step 3: 활성 종목 맵 구축 (AC-7.4 비활성 종목 스킵)
         Map<String, Stock> activeStockBySymbol = buildActiveStockMap();
         if (activeStockBySymbol.isEmpty()) {
