@@ -11,9 +11,11 @@ import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 
 /**
- * FinraCdnFileParser 명세 (SPEC-COLLECTOR-BACKFILL-008 T3, AC-BF-05/-06/-07).
+ * FinraCdnFileParser 명세 (SPEC-COLLECTOR-BACKFILL-008 T3, DECIMAL 전환
+ * SPEC-COLLECTOR-SHORTSALE-DECIMAL-001).
  *
- * <p>헤더 기반 5/6컬럼 단일 파싱 + TOTALS/빈값/음수/소수부 skip 규칙을 검증한다.
+ * <p>헤더 기반 5/6컬럼 단일 파싱 + TOTALS/빈값/음수/scale 초과 skip 규칙을 검증한다. 2026-02-23 FINRA 소수 전환 이후 소수부는 더 이상
+ * skip 사유가 아니며 무손실 보존된다(REQ-SSD-007).
  */
 @DisplayName("FinraCdnFileParser")
 class FinraCdnFileParserTest {
@@ -41,11 +43,10 @@ class FinraCdnFileParserTest {
         void sixColumnFile_extractsSymbolShortTotalByHeader() {
             ParsedFileResult result = parser.parse(fixture("CNMSshvol_6col_sample.txt"));
 
-            assertThat(result.rows()).hasSize(1);
             ParsedRow row = result.rows().getFirst();
             assertThat(row.symbol()).isEqualTo("AAPL");
-            assertThat(row.shortVolume()).isEqualTo(1000L);
-            assertThat(row.totalVolume()).isEqualTo(5000L);
+            assertThat(row.shortVolume()).isEqualByComparingTo("1000");
+            assertThat(row.totalVolume()).isEqualByComparingTo("5000");
         }
 
         @Test
@@ -53,11 +54,10 @@ class FinraCdnFileParserTest {
         void fiveColumnFile_extractsSymbolShortTotalByHeader() {
             ParsedFileResult result = parser.parse(fixture("FNSQshvol_5col_sample.txt"));
 
-            assertThat(result.rows()).hasSize(1);
             ParsedRow row = result.rows().getFirst();
             assertThat(row.symbol()).isEqualTo("GOOG");
-            assertThat(row.shortVolume()).isEqualTo(2000L);
-            assertThat(row.totalVolume()).isEqualTo(8000L);
+            assertThat(row.shortVolume()).isEqualByComparingTo("2000");
+            assertThat(row.totalVolume()).isEqualByComparingTo("8000");
         }
     }
 
@@ -73,33 +73,69 @@ class FinraCdnFileParserTest {
             // ParsedRow는 symbol/shortVolume/totalVolume 3개 필드만 보유 — ShortExemptVolume(50)을
             // 담을 필드 자체가 없음을 레코드 계약으로 보증한다.
             ParsedRow row = result.rows().getFirst();
-            assertThat(row)
-                    .extracting("symbol", "shortVolume", "totalVolume")
-                    .containsExactly("AAPL", 1000L, 5000L);
+            assertThat(row.symbol()).isEqualTo("AAPL");
+            assertThat(row.shortVolume()).isEqualByComparingTo("1000");
+            assertThat(row.totalVolume()).isEqualByComparingTo("5000");
         }
     }
 
     @Nested
-    @DisplayName("TOTALS·빈값·음수·소수부 skip (AC-BF-07)")
-    class SkipRules {
+    @DisplayName("소수부 무손실 보존 (2026-02-23 FINRA 소수 전환, REQ-SSD-007)")
+    class DecimalPreservation {
 
         @Test
-        @DisplayName("6컬럼 파일: TOTALS·빈값·음수·소수부(FINRA 실측 케이스) 행은 skip 집계되고 예외 없이 처리된다")
-        void sixColumnFile_skipsInvalidRowsWithoutException() {
+        @DisplayName("소수 6자리 ShortVolume/TotalVolume 행은 skip하지 않고 무손실 보존한다 (기존 소수부 skip flip)")
+        void sixColumnFile_preservesFractionalRow() {
             ParsedFileResult result = parser.parse(fixture("CNMSshvol_6col_sample.txt"));
 
-            // 유효 행 1건(AAPL) + skip 4건(EMPTYV 빈값, NEGV 음수, FRACV 소수부, TOTALS 요약행)
-            assertThat(result.rows()).hasSize(1);
-            assertThat(result.skippedCount()).isEqualTo(4);
+            // 유효 행 2건 = AAPL(정수) + FRACV(소수 6자리, 종전엔 skip됐음)
+            ParsedRow fractional =
+                    result.rows().stream()
+                            .filter(r -> "FRACV".equals(r.symbol()))
+                            .findFirst()
+                            .orElseThrow();
+            assertThat(fractional.shortVolume()).isEqualByComparingTo("7546181.247857");
+            assertThat(fractional.totalVolume()).isEqualByComparingTo("10000000");
         }
 
         @Test
-        @DisplayName("5컬럼 파일: TOTALS·빈값·음수·소수부 행은 skip 집계되고 예외 없이 처리된다")
-        void fiveColumnFile_skipsInvalidRowsWithoutException() {
+        @DisplayName("scale(6)을 초과하는 소수(7자리)는 fail-loud로 skip한다 (조용한 반올림 금지, REQ-SSD-011)")
+        void scaleOverflowRowIsSkipped() {
+            String body =
+                    "Date|Symbol|ShortVolume|TotalVolume|Market\n"
+                            + "20260223|OVERSCALE|1.1234567|100|Q\n"
+                            + "20260223|OKROW|500|1000|Q\n";
+
+            ParsedFileResult result = parser.parse(body);
+
+            // OKROW만 유효, OVERSCALE는 scale 초과로 skip
+            assertThat(result.rows()).hasSize(1);
+            assertThat(result.rows().getFirst().symbol()).isEqualTo("OKROW");
+            assertThat(result.skippedCount()).isEqualTo(1);
+        }
+    }
+
+    @Nested
+    @DisplayName("TOTALS·빈값·음수 skip, 소수부는 보존 (AC-BF-07, REQ-SSD-007)")
+    class SkipRules {
+
+        @Test
+        @DisplayName("6컬럼 파일: TOTALS·빈값·음수는 skip, 소수부(FRACV)는 유효로 승격 — skip 4→3")
+        void sixColumnFile_skipsInvalidButKeepsFractional() {
+            ParsedFileResult result = parser.parse(fixture("CNMSshvol_6col_sample.txt"));
+
+            // 유효 행 2건(AAPL, FRACV) + skip 3건(EMPTYV 빈값, NEGV 음수, TOTALS 요약행)
+            assertThat(result.rows()).hasSize(2);
+            assertThat(result.skippedCount()).isEqualTo(3);
+        }
+
+        @Test
+        @DisplayName("5컬럼 파일: TOTALS·빈값·음수는 skip, 소수부(FRACV)는 유효로 승격 — skip 4→3")
+        void fiveColumnFile_skipsInvalidButKeepsFractional() {
             ParsedFileResult result = parser.parse(fixture("FNSQshvol_5col_sample.txt"));
 
-            assertThat(result.rows()).hasSize(1);
-            assertThat(result.skippedCount()).isEqualTo(4);
+            assertThat(result.rows()).hasSize(2);
+            assertThat(result.skippedCount()).isEqualTo(3);
         }
 
         @Test

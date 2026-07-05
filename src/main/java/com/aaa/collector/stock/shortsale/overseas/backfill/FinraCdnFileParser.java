@@ -13,7 +13,12 @@ import org.springframework.stereotype.Component;
  * <p>파일 첫 행(헤더)을 파싱해 컬럼명 기준으로 {@code Symbol}/{@code ShortVolume}/{@code TotalVolume}을 추출한다 — 컬럼 위치를
  * 하드코딩하지 않으므로 5컬럼(2011-02-25 이전, {@code ShortExemptVolume} 없음) 시대와 6컬럼(2011-02-28 이후) 시대를 단일 로직으로
  * 처리한다(REQ-BACKFILL-105). {@code ShortExemptVolume}은 V7 스키마에 컬럼이 없어 추출하지 않는다(REQ-BACKFILL-106). 요약
- * 행({@code {Date}|TOTALS|...}), 빈 값, 음수, 파싱 실패(소수부 존재 등) 행은 예외를 던지지 않고 skip 집계한다(REQ-BACKFILL-107).
+ * 행({@code {Date}|TOTALS|...}), 빈 값, 음수, scale(6) 초과(파싱 거부) 행은 예외를 던지지 않고 skip
+ * 집계한다(REQ-BACKFILL-107).
+ *
+ * <p>FINRA가 2026-02-23부로 CDN 수량 필드를 소수(최대 6자리) 정밀도로 항구 전환함에 따라, 소수부는 더 이상 skip 사유가 아니며 무손실 {@link
+ * BigDecimal}로 보존한다(SPEC-COLLECTOR-SHORTSALE-DECIMAL-001 REQ-SSD-007). 음수·scale 초과만 fail-loud
+ * 거부한다(REQ-SSD-011).
  */
 @Component
 public class FinraCdnFileParser {
@@ -23,6 +28,9 @@ public class FinraCdnFileParser {
     private static final String SHORT_VOLUME_HEADER = "ShortVolume";
     private static final String TOTAL_VOLUME_HEADER = "TotalVolume";
     private static final String TOTALS_SYMBOL = "TOTALS";
+
+    /** 저장 컬럼 scale — {@code short_volume}/{@code total_volume} DECIMAL(20,6). */
+    private static final int MAX_SCALE = 6;
 
     /**
      * 파일 본문을 파싱한다.
@@ -64,7 +72,7 @@ public class FinraCdnFileParser {
         return new ParsedFileResult(rows, skipped);
     }
 
-    /** 데이터 행 1건을 파싱한다. 컬럼 부족·요약 행·빈값/음수/소수부는 {@code null}(skip)로 반환한다(REQ-BACKFILL-107). */
+    /** 데이터 행 1건을 파싱한다. 컬럼 부족·요약 행·빈값/음수/scale 초과는 {@code null}(skip)로 반환한다(REQ-BACKFILL-107). */
     private static ParsedRow parseLine(String line, ColumnIndex columnIndex) {
         String[] fields = line.split(DELIMITER, -1);
         if (fields.length < columnIndex.minRequiredFields()) {
@@ -74,8 +82,8 @@ public class FinraCdnFileParser {
         if (TOTALS_SYMBOL.equals(symbol)) {
             return null;
         }
-        Long shortVolume = toNonNegativeLong(fields[columnIndex.shortIdx()]);
-        Long totalVolume = toNonNegativeLong(fields[columnIndex.totalIdx()]);
+        BigDecimal shortVolume = toNonNegativeDecimal(fields[columnIndex.shortIdx()]);
+        BigDecimal totalVolume = toNonNegativeDecimal(fields[columnIndex.totalIdx()]);
         if (shortVolume == null || totalVolume == null) {
             return null;
         }
@@ -102,18 +110,18 @@ public class FinraCdnFileParser {
 
     // @MX:NOTE: [AUTO] 의도적 중복 — 라이브
     // FinraQuantityParser(com.aaa.collector.stock.shortsale.overseas)와
-    // 동일 시맨틱, package-private라 서브패키지에서 재사용 불가. 추적: GitHub jongtix/aaa-infra#67 — 이슈 해결(DECIMAL
-    // 전환 또는 공용 유틸 추출) 시 이 중복 코드도 함께 정리 대상.
-    // @MX:SPEC: SPEC-COLLECTOR-BACKFILL-008
+    // 동일 시맨틱(소수 보존 변환), package-private라 서브패키지에서 재사용 불가. 두 파서에 DECIMAL 수정을 독립 적용한다. 추적:
+    // GitHub jongtix/aaa-infra#67 — 공용 유틸 추출(통합)은 이연된 열린 문제로 본 SPEC 범위 밖.
+    // @MX:SPEC: SPEC-COLLECTOR-SHORTSALE-DECIMAL-001
     /**
-     * {@link BigDecimal} 문자열을 음수 아님·무손실 {@code long}으로 변환한다. {@code null}/공백/음수/소수부 존재(2026-06-30
-     * FINRA CNMS AAPL ShortVolume=7,546,181.247857 실측 케이스 포함)는 {@code null}을 반환해 호출자가 skip 처리하게
-     * 한다(REQ-BACKFILL-107).
+     * 문자열 수량을 음수 아님·무손실 {@link BigDecimal}로 변환한다. 소수부는 무손실 보존하며(2026-02-23 FINRA CNMS 소수 전환, 예:
+     * AAPL ShortVolume=7,546,181.247857), {@code null}/공백/음수/scale({@value #MAX_SCALE}) 초과만 {@code
+     * null}을 반환해 호출자가 skip 처리하게 한다(REQ-BACKFILL-107·REQ-SSD-007/011).
      *
      * @param raw 원본 필드 문자열
-     * @return 변환된 {@code long}, 또는 변환 불가 시 {@code null}
+     * @return 무손실 {@link BigDecimal}, 또는 변환 불가 시 {@code null}
      */
-    private static Long toNonNegativeLong(String raw) {
+    private static BigDecimal toNonNegativeDecimal(String raw) {
         if (raw == null || raw.isBlank()) {
             return null;
         }
@@ -122,8 +130,12 @@ public class FinraCdnFileParser {
             if (value.signum() < 0) {
                 return null;
             }
-            return value.longValueExact();
-        } catch (NumberFormatException | ArithmeticException e) {
+            // scale 초과(무손실 저장 불가)는 fail-loud 거부 — 조용한 반올림 금지(REQ-SSD-011)
+            if (value.stripTrailingZeros().scale() > MAX_SCALE) {
+                return null;
+            }
+            return value;
+        } catch (NumberFormatException e) {
             return null;
         }
     }

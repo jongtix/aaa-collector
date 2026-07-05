@@ -3,6 +3,7 @@ package com.aaa.collector.stock.shortsale.overseas.backfill;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.doAnswer;
@@ -14,11 +15,13 @@ import static org.mockito.Mockito.when;
 import com.aaa.collector.backfill.BackfillStatus;
 import com.aaa.collector.backfill.BackfillStatusRepository;
 import com.aaa.collector.backfill.BackfillStatusType;
+import com.aaa.collector.observability.BatchMetrics;
 import com.aaa.collector.stock.ShortSaleOverseasRepository;
 import com.aaa.collector.stock.Stock;
 import com.aaa.collector.stock.StockRepository;
 import com.aaa.collector.stock.enums.AssetType;
 import com.aaa.collector.stock.enums.Market;
+import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
@@ -55,6 +58,7 @@ class FinraCdnShortSaleBackfillOrchestratorTest {
     @Mock private FinraCdnFileParser parser;
     @Mock private ShortSaleOverseasRepository shortSaleOverseasRepository;
     @Mock private TransactionTemplate transactionTemplate;
+    @Mock private BatchMetrics batchMetrics;
 
     private FinraCdnShortSaleBackfillProperties properties;
     private FinraCdnShortSaleBackfillOrchestrator orchestrator;
@@ -71,7 +75,8 @@ class FinraCdnShortSaleBackfillOrchestratorTest {
                         parser,
                         shortSaleOverseasRepository,
                         properties,
-                        transactionTemplate);
+                        transactionTemplate,
+                        batchMetrics);
 
         doAnswer(
                         inv -> {
@@ -92,6 +97,17 @@ class FinraCdnShortSaleBackfillOrchestratorTest {
                         .build();
         ReflectionTestUtils.setField(stock, "id", id);
         return stock;
+    }
+
+    /** DECIMAL 전환 — 거래량을 BigDecimal로 담는 ParsedRow 생성 헬퍼. */
+    private static ParsedRow row(String symbol, long shortVol, long totalVol) {
+        return new ParsedRow(symbol, BigDecimal.valueOf(shortVol), BigDecimal.valueOf(totalVol));
+    }
+
+    /** scale에 무관하게 값으로 비교하는 BigDecimal 인자 매처. */
+    private static BigDecimal bd(String value) {
+        BigDecimal expected = new BigDecimal(value);
+        return argThat(actual -> actual != null && actual.compareTo(expected) == 0);
     }
 
     private static BackfillStatus anchor(
@@ -172,9 +188,9 @@ class FinraCdnShortSaleBackfillOrchestratorTest {
             when(client.fetch(target))
                     .thenReturn(new FinraCdnFetchResult.Found(List.of("FNSQ-BODY", "FNYX-BODY")));
             when(parser.parse("FNSQ-BODY"))
-                    .thenReturn(new ParsedFileResult(List.of(new ParsedRow("AAPL", 100, 1000)), 0));
+                    .thenReturn(new ParsedFileResult(List.of(row("AAPL", 100, 1000)), 0));
             when(parser.parse("FNYX-BODY"))
-                    .thenReturn(new ParsedFileResult(List.of(new ParsedRow("AAPL", 50, 500)), 0));
+                    .thenReturn(new ParsedFileResult(List.of(row("AAPL", 50, 500)), 0));
 
             orchestrator.run();
 
@@ -182,8 +198,8 @@ class FinraCdnShortSaleBackfillOrchestratorTest {
                     .upsertDaily(
                             eq(1L),
                             eq(target),
-                            eq(150L),
-                            eq(1500L),
+                            bd("150"),
+                            bd("1500"),
                             any(LocalDateTime.class),
                             isNull(),
                             isNull());
@@ -215,9 +231,9 @@ class FinraCdnShortSaleBackfillOrchestratorTest {
                     .thenReturn(
                             new ParsedFileResult(
                                     List.of(
-                                            new ParsedRow("BRK/B", 10, 100),
-                                            new ParsedRow("AAPL/WS", 5, 50),
-                                            new ParsedRow("MSFT", 20, 200)),
+                                            row("BRK/B", 10, 100),
+                                            row("AAPL/WS", 5, 50),
+                                            row("MSFT", 20, 200)),
                                     0));
 
             orchestrator.run();
@@ -226,8 +242,8 @@ class FinraCdnShortSaleBackfillOrchestratorTest {
                     .upsertDaily(
                             eq(2L),
                             eq(target),
-                            eq(10L),
-                            eq(100L),
+                            bd("10"),
+                            bd("100"),
                             any(LocalDateTime.class),
                             isNull(),
                             isNull());
@@ -235,8 +251,8 @@ class FinraCdnShortSaleBackfillOrchestratorTest {
                     .upsertDaily(
                             anyLong(),
                             eq(target),
-                            any(Long.class),
-                            any(Long.class),
+                            any(BigDecimal.class),
+                            any(BigDecimal.class),
                             any(),
                             any(),
                             any());
@@ -478,7 +494,7 @@ class FinraCdnShortSaleBackfillOrchestratorTest {
                     .thenReturn(List.of(stock(1L, "AAPL")));
             when(client.fetch(target)).thenReturn(new FinraCdnFetchResult.Found(List.of("BODY")));
             when(parser.parse("BODY"))
-                    .thenReturn(new ParsedFileResult(List.of(new ParsedRow("AAPL", 10, 100)), 0));
+                    .thenReturn(new ParsedFileResult(List.of(row("AAPL", 10, 100)), 0));
 
             orchestrator.run();
 
@@ -489,8 +505,8 @@ class FinraCdnShortSaleBackfillOrchestratorTest {
                     .upsertDaily(
                             eq(1L),
                             eq(target),
-                            eq(10L),
-                            eq(100L),
+                            bd("10"),
+                            bd("100"),
                             any(LocalDateTime.class),
                             shortInterestCaptor.capture(),
                             shortInterestDateCaptor.capture());
@@ -521,7 +537,7 @@ class FinraCdnShortSaleBackfillOrchestratorTest {
                     .thenReturn(List.of(stock(1L, "AAPL")));
             when(client.fetch(d1)).thenReturn(new FinraCdnFetchResult.Found(List.of("BODY")));
             when(parser.parse("BODY"))
-                    .thenReturn(new ParsedFileResult(List.of(new ParsedRow("UNMATCHED", 1, 2)), 3));
+                    .thenReturn(new ParsedFileResult(List.of(row("UNMATCHED", 1, 2)), 3));
             when(client.fetch(d0))
                     .thenReturn(
                             new FinraCdnFetchResult.Absent(
@@ -533,12 +549,14 @@ class FinraCdnShortSaleBackfillOrchestratorTest {
                     .upsertDaily(
                             anyLong(),
                             any(),
-                            any(Long.class),
-                            any(Long.class),
+                            any(BigDecimal.class),
+                            any(BigDecimal.class),
                             any(),
                             any(),
                             any());
             verify(status).advance(eq(BackfillStatusType.IN_PROGRESS), eq(d0), eq(0), any());
+            // REQ-SSD-009: 파싱 거부(skip=3)가 last_load 독립 카운터로 계측된다(CDN 경로 계측 연결)
+            verify(batchMetrics).recordParseRejections("overseas-shortsale-backfill", 3L);
         }
     }
 }

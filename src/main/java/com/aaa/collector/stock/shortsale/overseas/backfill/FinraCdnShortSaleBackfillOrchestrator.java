@@ -3,10 +3,12 @@ package com.aaa.collector.stock.shortsale.overseas.backfill;
 import com.aaa.collector.backfill.BackfillStatus;
 import com.aaa.collector.backfill.BackfillStatusRepository;
 import com.aaa.collector.backfill.BackfillStatusType;
+import com.aaa.collector.observability.BatchMetrics;
 import com.aaa.collector.stock.ShortSaleOverseasRepository;
 import com.aaa.collector.stock.Stock;
 import com.aaa.collector.stock.StockRepository;
 import com.aaa.collector.stock.shortsale.overseas.FinraSymbolNormalizer;
+import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.HashMap;
@@ -47,6 +49,9 @@ public class FinraCdnShortSaleBackfillOrchestrator {
     static final String TARGET_CODE = "__GLOBAL__";
     static final String DATA_TABLE = "short_sale_overseas";
 
+    /** BatchMetrics 배치 라벨 — CDN 백필 경로(종전 Micrometer 계측 전무, REQ-SSD-009). */
+    private static final String BATCH_BACKFILL = "overseas-shortsale-backfill";
+
     private static final List<BackfillStatusType> ALL_STATUSES =
             List.of(
                     BackfillStatusType.PENDING,
@@ -60,6 +65,7 @@ public class FinraCdnShortSaleBackfillOrchestrator {
     private final ShortSaleOverseasRepository shortSaleOverseasRepository;
     private final FinraCdnShortSaleBackfillProperties properties;
     private final TransactionTemplate transactionTemplate;
+    private final BatchMetrics batchMetrics;
 
     /** 크론 1회 백필 사이클 진입점. */
     public void run() {
@@ -167,6 +173,10 @@ public class FinraCdnShortSaleBackfillOrchestrator {
                     currentActiveUsCount);
         }
 
+        // REQ-SSD-009: 파싱 거부(음수·scale 초과·형식 오류) 건수를 last_load와 독립적인 카운터로 계측 —
+        // 종전 Micrometer 계측이 전무하던 CDN 백필 경로를 관측 가능하게 노출한다(소수부는 더 이상 거부 사유가 아님).
+        batchMetrics.recordParseRejections(BATCH_BACKFILL, acc.parseSkips);
+
         log.info(
                 "[finra-cdn-backfill] 사이클 완료 — oldest={}, processedDays={}, absentDays={},"
                         + " parseSkips={}, matchFailures={}",
@@ -198,22 +208,23 @@ public class FinraCdnShortSaleBackfillOrchestrator {
     @SuppressWarnings("PMD.UseConcurrentHashMap") // 단일 스레드 빌드 전용, 이후 읽기만 함
     private DailyLoadOutcome loadDate(
             LocalDate date, List<String> fileBodies, Map<String, Stock> symbolMap) {
-        Map<String, Long> shortSums = new HashMap<>();
-        Map<String, Long> totalSums = new HashMap<>();
+        // REQ-SSD-007: 시설/행 합산을 소수 산술로 수행해 정밀도 보존(Long::sum → BigDecimal::add)
+        Map<String, BigDecimal> shortSums = new HashMap<>();
+        Map<String, BigDecimal> totalSums = new HashMap<>();
         int skipped = 0;
         for (String body : fileBodies) {
             ParsedFileResult parsed = parser.parse(body);
             skipped += parsed.skippedCount();
             for (ParsedRow row : parsed.rows()) {
                 String normalized = FinraSymbolNormalizer.normalize(row.symbol());
-                shortSums.merge(normalized, row.shortVolume(), Long::sum);
-                totalSums.merge(normalized, row.totalVolume(), Long::sum);
+                shortSums.merge(normalized, row.shortVolume(), BigDecimal::add);
+                totalSums.merge(normalized, row.totalVolume(), BigDecimal::add);
             }
         }
 
         int unmatched = 0;
         LocalDateTime now = LocalDateTime.now();
-        for (Map.Entry<String, Long> entry : shortSums.entrySet()) {
+        for (Map.Entry<String, BigDecimal> entry : shortSums.entrySet()) {
             String symbol = entry.getKey();
             Stock stock = symbolMap.get(symbol);
             if (stock == null) {
