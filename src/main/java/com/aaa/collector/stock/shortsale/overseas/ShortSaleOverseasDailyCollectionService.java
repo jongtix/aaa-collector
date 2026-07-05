@@ -6,6 +6,7 @@ import com.aaa.collector.stock.ShortSaleOverseasRepository;
 import com.aaa.collector.stock.ShortSaleOverseasRepository.ShortInterestSnapshot;
 import com.aaa.collector.stock.Stock;
 import com.aaa.collector.stock.StockRepository;
+import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
@@ -124,8 +125,8 @@ public class ShortSaleOverseasDailyCollectionService {
     }
 
     /**
-     * 한 종목의 시설 행들을 합산해 UPSERT한다. 행 중 하나라도 음수·소수부(무손실 long 변환 불가)·파싱 실패면 종목 단위
-     * skip+WARN(REQ-SSO-021).
+     * 한 종목의 시설 행들을 소수 정밀도를 보존한 채 합산해 UPSERT한다. 소수부는 무손실 보존하며(REQ-SSD-006), 행 중 하나라도 음수·scale 초과·파싱
+     * 실패면 종목 단위 skip+WARN하고 파싱 거부 카운터를 증가시킨다(REQ-SSO-021·REQ-SSD-009).
      *
      * @return 적재했으면 {@code true}, skip이면 {@code false}
      */
@@ -134,25 +135,28 @@ public class ShortSaleOverseasDailyCollectionService {
             LocalDate tradeReportDate,
             List<FinraRegShoDailyResponse> facilityRows,
             ShortInterestSnapshot forward) {
-        long shortVolume = 0;
-        long totalVolume = 0;
+        BigDecimal shortVolume = BigDecimal.ZERO;
+        BigDecimal totalVolume = BigDecimal.ZERO;
         List<String> reasons = new ArrayList<>();
         for (FinraRegShoDailyResponse row : facilityRows) {
-            Long shortQty =
-                    FinraQuantityParser.toNonNegativeLong(
+            // REQ-SSD-006/012/013: 소수부는 무손실 보존 — 한 시설 행이 소수라는 이유로 종목 전체를 skip하지 않는다
+            BigDecimal shortQty =
+                    FinraQuantityParser.toNonNegativeDecimal(
                             row.shortParQuantity(), "shortParQuantity", reasons);
-            Long totalQty =
-                    FinraQuantityParser.toNonNegativeLong(
+            BigDecimal totalQty =
+                    FinraQuantityParser.toNonNegativeDecimal(
                             row.totalParQuantity(), "totalParQuantity", reasons);
             if (shortQty == null || totalQty == null) {
                 continue;
             }
-            shortVolume += shortQty;
-            totalVolume += totalQty;
+            shortVolume = shortVolume.add(shortQty);
+            totalVolume = totalVolume.add(totalQty);
         }
 
         if (!reasons.isEmpty()) {
-            // REQ-SSO-021: 데이터 유실 가시화 — 잘못된 시설 행이 있으면 종목 합산 무결성을 위해 종목 단위 skip
+            // REQ-SSO-021: 데이터 유실 가시화 — 음수·scale 초과 등 무효 시설 행이 있으면 종목 합산 무결성을 위해 종목 단위 skip.
+            // REQ-SSD-009: 파싱 거부를 last_load와 독립적인 카운터로 계측(소수부는 더 이상 거부 사유가 아님).
+            batchMetrics.recordParseRejections(BATCH_DAILY, reasons.size());
             log.warn(
                     "[overseas-shortsale-daily] 검증 실패로 종목 skip — symbol={}, tradeDate={}, reasons={}",
                     stock.getSymbol(),

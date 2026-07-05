@@ -100,6 +100,8 @@ class ShortSaleOverseasDailyMetricsTest {
 
             // Assert: attempted=2, success=1, skip=1, fail=0
             verify(batchMetrics).recordCompletion("overseas-shortsale-daily", 2L, 1L, 0L, 1L);
+            // REQ-SSD-009: MSFT 음수 거부가 파싱 거부 카운터로 계측된다(last_load 독립)
+            verify(batchMetrics).recordParseRejections("overseas-shortsale-daily", 1L);
         }
 
         @Test

@@ -125,7 +125,8 @@ public class ShortSaleOverseasInterestCollectionService {
     /**
      * Short Interest 한 행을 UPSERT 한다. {@code (stock_id, settlementDate)} 쌍이 미적재이면 신규
      * 적재(REQ-SSO-014a), 이미 적재됐으면 {@code revisionFlag="R"}일 때만 갱신(REQ-SSO-014b), {@code ≠"R"}이면
-     * skip(REQ-SSO-014c). 잔고가 null·음수·소수부면 skip+WARN(REQ-SSO-021).
+     * skip(REQ-SSO-014c). 잔고가 null·음수·scale 초과·소수부면 skip+WARN하고 파싱 거부 카운터를
+     * 증가시킨다(REQ-SSO-021·REQ-SSD-016).
      */
     private boolean upsertInterestRow(
             Stock stock,
@@ -149,12 +150,16 @@ public class ShortSaleOverseasInterestCollectionService {
         }
 
         List<String> reasons = new ArrayList<>();
+        // REQ-SSD-016: short_interest는 BIGINT 유지(대조군 전건 정수). 소수부가 있으면(희소 조건) 조용히 버리지 않고
+        // 정수 검증 래퍼가 거부 사유를 누적 → 파싱 거부 카운터로 관측 가능한 신호화(침묵 skip 방지).
         Long shortInterest =
-                FinraQuantityParser.toNonNegativeLong(
+                FinraQuantityParser.toNonNegativeInteger(
                         row.currentShortPositionQuantity(),
                         "currentShortPositionQuantity",
                         reasons);
         if (shortInterest == null) {
+            // REQ-SSD-009/016: 파싱 거부를 last_load와 독립적인 카운터로 계측
+            batchMetrics.recordParseRejections(BATCH_INTEREST, reasons.size());
             log.warn(
                     "[overseas-shortsale-interest] 검증 실패로 skip — symbol={}, settlementDate={}, reasons={}",
                     stock.getSymbol(),

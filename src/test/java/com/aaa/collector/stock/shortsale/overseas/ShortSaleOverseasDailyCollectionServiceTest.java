@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyCollection;
 import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.never;
@@ -83,6 +84,12 @@ class ShortSaleOverseasDailyCollectionServiceTest {
                 TRADE_DATE, symbol, BigDecimal.valueOf(shortQty), BigDecimal.valueOf(totalQty));
     }
 
+    /** scale에 무관하게 값으로 비교하는 BigDecimal 인자 매처(합산 결과 scale 편차 흡수). */
+    private static BigDecimal bd(String value) {
+        BigDecimal expected = new BigDecimal(value);
+        return argThat(actual -> actual != null && actual.compareTo(expected) == 0);
+    }
+
     @Nested
     @DisplayName("reportingFacility 합산 (AC-DAILY-1)")
     class Aggregation {
@@ -109,12 +116,50 @@ class ShortSaleOverseasDailyCollectionServiceTest {
                     .upsertDaily(
                             eq(1L),
                             eq(TRADE_DATE),
-                            eq(5_159_846L),
-                            eq(18_442_863L),
+                            bd("5159846"),
+                            bd("18442863"),
                             any(LocalDateTime.class),
                             isNull(),
                             isNull());
             assertThat(result.succeeded()).isEqualTo(1);
+        }
+
+        @Test
+        @DisplayName("소수부를 가진 시설 행도 skip 없이 무손실 합산한다 (2026-02-23 FINRA 소수 전환, REQ-SSD-006/012/013)")
+        void preservesFractionalFacilityRows() {
+            // Arrange: AAPL 시설 2행 — 둘 다 소수 6자리(FINRA 2026-02-23 이후 실측 형태)
+            Stock aapl = stock(1L, "AAPL", Market.NASDAQ, AssetType.STOCK);
+            when(stockRepository.findAllActiveOverseasTradable()).thenReturn(List.of(aapl));
+            when(finraClient.fetchRegShoDaily(TRADE_DATE))
+                    .thenReturn(
+                            List.of(
+                                    new FinraRegShoDailyResponse(
+                                            TRADE_DATE,
+                                            "AAPL",
+                                            new BigDecimal("11479561.984835"),
+                                            new BigDecimal("240101.320702")),
+                                    new FinraRegShoDailyResponse(
+                                            TRADE_DATE,
+                                            "AAPL",
+                                            new BigDecimal("0.015165"),
+                                            new BigDecimal("0.679298"))));
+
+            // Act
+            ShortSaleOverseasDailyCollectionService.DailyResult result =
+                    service.collectDaily(TRADE_DATE);
+
+            // Assert: 소수 합산이 무손실 — short=11479562.000000, total=240102.000000, 종목 전체 skip 아님
+            verify(shortSaleOverseasRepository)
+                    .upsertDaily(
+                            eq(1L),
+                            eq(TRADE_DATE),
+                            bd("11479562.000000"),
+                            bd("240102.000000"),
+                            any(LocalDateTime.class),
+                            isNull(),
+                            isNull());
+            assertThat(result.succeeded()).isEqualTo(1);
+            assertThat(result.skipped()).isZero();
         }
     }
 
@@ -138,9 +183,15 @@ class ShortSaleOverseasDailyCollectionServiceTest {
             // Assert
             verify(shortSaleOverseasRepository)
                     .upsertDaily(
-                            eq(1L), eq(TRADE_DATE), eq(100L), eq(200L), any(), isNull(), isNull());
+                            eq(1L),
+                            eq(TRADE_DATE),
+                            bd("100"),
+                            bd("200"),
+                            any(),
+                            isNull(),
+                            isNull());
             verify(shortSaleOverseasRepository, never())
-                    .upsertDaily(eq(1L), eq(TRADE_DATE), eq(300L), eq(400L), any(), any(), any());
+                    .upsertDaily(eq(1L), eq(TRADE_DATE), bd("300"), bd("400"), any(), any(), any());
             assertThat(result.succeeded()).isEqualTo(1);
         }
 
@@ -159,7 +210,13 @@ class ShortSaleOverseasDailyCollectionServiceTest {
             // Assert
             verify(shortSaleOverseasRepository)
                     .upsertDaily(
-                            eq(2L), eq(TRADE_DATE), eq(500L), eq(900L), any(), isNull(), isNull());
+                            eq(2L),
+                            eq(TRADE_DATE),
+                            bd("500"),
+                            bd("900"),
+                            any(),
+                            isNull(),
+                            isNull());
         }
     }
 
@@ -168,9 +225,9 @@ class ShortSaleOverseasDailyCollectionServiceTest {
     class Validation {
 
         @Test
-        @DisplayName("음수/소수부 있는 수량 행은 skip+WARN, 적재하지 않는다 (REQ-SSO-021)")
+        @DisplayName("음수/scale 초과 수량 행은 skip+WARN, 적재하지 않는다 (REQ-SSO-021, REQ-SSD-010/011)")
         void skipsInvalidRows() {
-            // Arrange: AAPL 음수, MSFT 소수부(무손실 변환 불가), GOOG 정상
+            // Arrange: AAPL 음수, MSFT scale 초과(7자리 소수 — fail-loud 거부), GOOG 정상
             Stock aapl = stock(1L, "AAPL", Market.NASDAQ, AssetType.STOCK);
             Stock msft = stock(2L, "MSFT", Market.NASDAQ, AssetType.STOCK);
             Stock goog = stock(3L, "GOOG", Market.NASDAQ, AssetType.STOCK);
@@ -187,7 +244,7 @@ class ShortSaleOverseasDailyCollectionServiceTest {
                                     new FinraRegShoDailyResponse(
                                             TRADE_DATE,
                                             "MSFT",
-                                            new BigDecimal("10.5"),
+                                            new BigDecimal("10.1234567"),
                                             BigDecimal.valueOf(100)),
                                     dailyRow("GOOG", 300, 400)));
 
@@ -198,11 +255,31 @@ class ShortSaleOverseasDailyCollectionServiceTest {
             // Assert: GOOG만 적재
             verify(shortSaleOverseasRepository)
                     .upsertDaily(
-                            eq(3L), eq(TRADE_DATE), eq(300L), eq(400L), any(), isNull(), isNull());
+                            eq(3L),
+                            eq(TRADE_DATE),
+                            bd("300"),
+                            bd("400"),
+                            any(),
+                            isNull(),
+                            isNull());
             verify(shortSaleOverseasRepository, never())
-                    .upsertDaily(eq(1L), any(), anyLong(), anyLong(), any(), any(), any());
+                    .upsertDaily(
+                            eq(1L),
+                            any(),
+                            any(BigDecimal.class),
+                            any(BigDecimal.class),
+                            any(),
+                            any(),
+                            any());
             verify(shortSaleOverseasRepository, never())
-                    .upsertDaily(eq(2L), any(), anyLong(), anyLong(), any(), any(), any());
+                    .upsertDaily(
+                            eq(2L),
+                            any(),
+                            any(BigDecimal.class),
+                            any(BigDecimal.class),
+                            any(),
+                            any(),
+                            any());
             assertThat(result.succeeded()).isEqualTo(1);
             assertThat(result.skipped()).isEqualTo(2);
         }
@@ -219,7 +296,14 @@ class ShortSaleOverseasDailyCollectionServiceTest {
 
             // Assert
             verify(shortSaleOverseasRepository, never())
-                    .upsertDaily(anyLong(), any(), anyLong(), anyLong(), any(), any(), any());
+                    .upsertDaily(
+                            anyLong(),
+                            any(),
+                            any(BigDecimal.class),
+                            any(BigDecimal.class),
+                            any(),
+                            any(),
+                            any());
             assertThat(result.attempted()).isZero();
             assertThat(result.succeeded()).isZero();
         }

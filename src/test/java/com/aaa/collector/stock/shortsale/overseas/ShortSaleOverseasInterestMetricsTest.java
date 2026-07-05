@@ -2,6 +2,7 @@ package com.aaa.collector.stock.shortsale.overseas;
 
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -92,6 +93,34 @@ class ShortSaleOverseasInterestMetricsTest {
             verify(batchMetrics)
                     .recordCompletion(
                             eq("overseas-shortsale-interest"), eq(2L), eq(1L), eq(0L), eq(1L));
+            // REQ-SSD-009/016: MSFT 음수 거부가 파싱 거부 카운터로 계측된다(last_load 독립)
+            verify(batchMetrics).recordParseRejections("overseas-shortsale-interest", 1L);
+        }
+
+        @Test
+        @DisplayName("SI 수량이 소수부를 가지면(희소 조건) 침묵 skip이 아니라 파싱 거부 카운터로 신호화한다 (REQ-SSD-016)")
+        void fractionalShortInterestRoutedToRejectionCounter() {
+            // Arrange: AAPL의 currentShortPositionQuantity가 소수부를 가짐(FINRA가 SI에 소수 도입한 희소 조건)
+            Stock aapl = stock(1L, "AAPL");
+            when(stockRepository.findAllActiveOverseasTradable()).thenReturn(List.of(aapl));
+            when(shortSaleOverseasRepository.findExistingInterestPairsByStockIds(
+                            any(), any(), any()))
+                    .thenReturn(Map.of());
+            when(finraClient.fetchConsolidatedShortInterest(any(), any()))
+                    .thenReturn(
+                            List.of(
+                                    new FinraConsolidatedShortInterestResponse(
+                                            "AAPL",
+                                            LocalDate.of(2026, 4, 15),
+                                            new BigDecimal("134422787.5"),
+                                            null)));
+
+            // Act
+            service.collectShortInterest(TODAY);
+
+            // Assert: 적재 없이 skip + 파싱 거부 카운터 증가(침묵 skip 방지)
+            verify(shortSaleOverseasRepository, never()).upsertInterest(any(), any(), any(), any());
+            verify(batchMetrics).recordParseRejections("overseas-shortsale-interest", 1L);
         }
 
         @Test
