@@ -382,4 +382,73 @@ class MarketSessionGateTest {
             assertThat(registry.get(MarketSessionGate.MARKET_OPEN_NAME).gauge()).isNotNull();
         }
     }
+
+    @Nested
+    @DisplayName("expected watermark 게이지 (SPEC-OBSV-WATERMARK-001 REQ-WM-006/007/008)")
+    class ExpectedWatermark {
+
+        @Test
+        @DisplayName(
+                "부팅 후 updateCalendar 호출 전에는 NaN을 반환한다 (REQ-WM-008 근사 — 진성 absent는 registry 필드 보유 없이 구현 불가)")
+        void beforeFirstUpdateCalendar_returnsNaN() {
+            Clock clock = clockAt(TRADING_HOURS_INSTANT);
+            SimpleMeterRegistry registry = new SimpleMeterRegistry();
+            new MarketSessionGate(registry, new KisMarketSchedule(clock), clock);
+
+            Gauge gauge = registry.get(MarketSessionGate.EXPECTED_WATERMARK_NAME).gauge();
+            assertThat(gauge.value()).isNaN();
+        }
+
+        @Test
+        @DisplayName("최초 updateCalendar 성공 후 정상 값을 반환한다")
+        void afterFirstUpdateCalendar_returnsRealValue() {
+            Clock clock = clockAt(TRADING_HOURS_INSTANT);
+            SimpleMeterRegistry registry = new SimpleMeterRegistry();
+            MarketSessionGate gate =
+                    new MarketSessionGate(registry, new KisMarketSchedule(clock), clock);
+
+            gate.updateCalendar(Map.of());
+
+            Gauge gauge = registry.get(MarketSessionGate.EXPECTED_WATERMARK_NAME).gauge();
+            assertThat(gauge.value()).isNotNaN();
+        }
+
+        @Test
+        @DisplayName("세션 마감(15:30 KST) 이전이면 전날부터 역방향으로 개장일을 탐색한다")
+        void beforeClose_searchesBackwardFromYesterday() {
+            // Arrange — TRADING_HOURS_INSTANT = 2026-06-19 10:00 KST (마감 전)
+            Clock clock = clockAt(TRADING_HOURS_INSTANT);
+            LocalDate today = LocalDate.of(2026, 6, 19);
+            LocalDate d1 = today.minusDays(1);
+            LocalDate d2 = today.minusDays(2);
+            LocalDate d3 = today.minusDays(3);
+            SimpleMeterRegistry registry = new SimpleMeterRegistry();
+            MarketSessionGate gate =
+                    new MarketSessionGate(registry, new KisMarketSchedule(clock), clock);
+
+            // d1·d2 휴장, d3 개장 → d3가 expected
+            gate.updateCalendar(Map.of(d1, Boolean.FALSE, d2, Boolean.FALSE, d3, Boolean.TRUE));
+
+            Gauge gauge = registry.get(MarketSessionGate.EXPECTED_WATERMARK_NAME).gauge();
+            long expected = d3.atStartOfDay(KST).toEpochSecond();
+            assertThat(gauge.value()).isEqualTo((double) expected);
+        }
+
+        @Test
+        @DisplayName("세션 마감(15:30 KST) 이후이고 오늘이 개장일이면 오늘 날짜를 반환한다")
+        void afterClose_returnsToday() {
+            // Arrange — AFTER_HOURS_INSTANT = 2026-06-19 17:00 KST (마감 후)
+            Clock clock = clockAt(AFTER_HOURS_INSTANT);
+            LocalDate today = LocalDate.of(2026, 6, 19);
+            SimpleMeterRegistry registry = new SimpleMeterRegistry();
+            MarketSessionGate gate =
+                    new MarketSessionGate(registry, new KisMarketSchedule(clock), clock);
+
+            gate.updateCalendar(Map.of(today, Boolean.TRUE));
+
+            Gauge gauge = registry.get(MarketSessionGate.EXPECTED_WATERMARK_NAME).gauge();
+            long expected = today.atStartOfDay(KST).toEpochSecond();
+            assertThat(gauge.value()).isEqualTo((double) expected);
+        }
+    }
 }

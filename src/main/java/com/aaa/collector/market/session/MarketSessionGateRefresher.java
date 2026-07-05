@@ -4,6 +4,7 @@ import com.aaa.collector.kis.KisApiBusinessException;
 import com.aaa.collector.kis.KisRateLimitException;
 import com.aaa.collector.kis.holiday.KisHolidayClient;
 import com.aaa.collector.kis.holiday.KisHolidayResponse.HolidayRow;
+import com.aaa.collector.observability.WatermarkProperties;
 import java.time.Clock;
 import java.time.LocalDate;
 import java.time.ZoneId;
@@ -15,6 +16,8 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.boot.context.event.ApplicationReadyEvent;
+import org.springframework.context.event.EventListener;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClientException;
@@ -52,32 +55,45 @@ public class MarketSessionGateRefresher {
     private final KisHolidayClient kisHolidayClient;
     private final MarketSessionGate gate;
     private final Clock clock;
+    private final WatermarkProperties watermarkProperties;
 
     /**
      * KIS 휴장일 캘린더를 조회하여 게이트를 갱신한다.
      *
-     * <p>API 호출·파싱의 모든 실패는 catch하여 격리한다 — {@link MarketSessionGate#updateCalendar(Map)}을 호출하지 않음으로써
-     * 직전 캐시를 유지하고 예외를 전파하지 않는다(REQ-OBSV-033).
+     * <p>{@code today − N일}(N = {@code aaa.watermark.krx-calendar-lookback-days}, 기본 14)을 기준일로 조회하여
+     * 캘린더가 최근 과거 세션을 포함하게 한다(SPEC-OBSV-WATERMARK-001 REQ-WM-007, CR-01). API 호출·파싱의 모든 실패는 catch하여
+     * 격리한다 — {@link MarketSessionGate#updateCalendar(Map)}을 호출하지 않음으로써 직전 캐시를 유지하고 예외를 전파하지
+     * 않는다(REQ-OBSV-033).
      */
     @Scheduled(cron = REFRESH_CRON, zone = "Asia/Seoul")
     public void refresh() {
         LocalDate today = ZonedDateTime.now(clock).withZoneSameInstant(KST).toLocalDate();
+        LocalDate baseDate = today.minusDays(watermarkProperties.getKrxCalendarLookbackDays());
         try {
-            List<HolidayRow> rows = kisHolidayClient.fetchCalendar(today);
+            List<HolidayRow> rows = kisHolidayClient.fetchCalendar(baseDate);
             Map<LocalDate, Boolean> calendar = buildCalendar(rows);
             gate.updateCalendar(calendar);
-            log.info("시장 세션 게이트 갱신 성공 — date={}, rows={}", today, rows.size());
+            log.info("시장 세션 게이트 갱신 성공 — baseDate={}, rows={}", baseDate, rows.size());
         } catch (RestClientException
                 | KisApiBusinessException
                 | KisRateLimitException
                 | IllegalStateException
                 | DateTimeParseException ex) {
             log.warn(
-                    "시장 세션 게이트 갱신 실패 — 직전 상태 유지, date={}, exceptionType={}",
-                    today,
+                    "시장 세션 게이트 갱신 실패 — 직전 상태 유지, baseDate={}, exceptionType={}",
+                    baseDate,
                     ex.getClass().getSimpleName(),
                     ex);
         }
+    }
+
+    /**
+     * 부팅 시 1회 즉시 refresh를 수행한다(SPEC-OBSV-WATERMARK-001 REQ-WM-007/MA-01) — 재시작 직후에도 KRX expected
+     * watermark가 즉시 산출되도록 08:10 cron을 기다리지 않는다. KIS "1일 1회 권고" 대비 재시작일 최대 2회 호출은 수용한다.
+     */
+    @EventListener(ApplicationReadyEvent.class)
+    public void refreshOnStartup() {
+        refresh();
     }
 
     /**

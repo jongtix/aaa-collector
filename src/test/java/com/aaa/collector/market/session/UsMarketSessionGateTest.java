@@ -357,4 +357,71 @@ class UsMarketSessionGateTest {
             assertThat(g.value()).isGreaterThanOrEqualTo(20.0);
         }
     }
+
+    @Nested
+    @DisplayName("expected watermark 게이지 (SPEC-OBSV-WATERMARK-001 REQ-WM-006/009)")
+    class ExpectedWatermark {
+
+        private static final ZoneId KST = ZoneId.of("Asia/Seoul");
+
+        /** 2026-07-06 17:00 ET (Monday, 세션 마감 이후). UTC: 2026-07-06 21:00Z (EDT = UTC-4) */
+        private static final Instant MON_AFTER_CLOSE_INSTANT =
+                Instant.parse("2026-07-06T21:00:00Z");
+
+        @Test
+        @DisplayName("holiday_count>=20 도달 시 expected watermark 게이지가 등록된다")
+        void registersGaugeWhenHolidayCountReady() {
+            Clock clock = Clock.fixed(MON_TRADING_INSTANT, NEW_YORK);
+            SimpleMeterRegistry registry = new SimpleMeterRegistry();
+            UsMarketSessionGate gate =
+                    new UsMarketSessionGate(
+                            registry,
+                            new KisMarketSchedule(clock),
+                            clock,
+                            new UsMarketProperties());
+
+            gate.init();
+
+            Gauge gauge = registry.get(UsMarketSessionGate.EXPECTED_WATERMARK_NAME).gauge();
+            assertThat(gauge).isNotNull();
+        }
+
+        @Test
+        @DisplayName("세션 마감(16:00 ET) 이전이면 전날부터 역방향으로 개장일을 탐색한다")
+        void beforeClose_searchesBackwardFromYesterday() {
+            // Arrange — 2026-07-06(월) 10:00 ET, 마감 전. 전날(07-05 일)부터 역탐색:
+            // 07-05(일,휴장)→07-04(토,휴장)→07-03(금, Independence Day observed)→07-02(목, 개장)
+            Clock clock = Clock.fixed(MON_TRADING_INSTANT, NEW_YORK);
+            SimpleMeterRegistry registry = new SimpleMeterRegistry();
+            UsMarketSessionGate gate =
+                    new UsMarketSessionGate(
+                            registry,
+                            new KisMarketSchedule(clock),
+                            clock,
+                            new UsMarketProperties());
+            gate.init();
+
+            Gauge gauge = registry.get(UsMarketSessionGate.EXPECTED_WATERMARK_NAME).gauge();
+            long expected = LocalDate.of(2026, 7, 2).atStartOfDay(KST).toEpochSecond();
+            assertThat(gauge.value()).isEqualTo((double) expected);
+        }
+
+        @Test
+        @DisplayName("세션 마감(16:00 ET) 이후이고 오늘이 개장일이면 오늘 날짜를 반환한다")
+        void afterClose_returnsToday() {
+            Clock clock = Clock.fixed(MON_AFTER_CLOSE_INSTANT, NEW_YORK);
+            SimpleMeterRegistry registry = new SimpleMeterRegistry();
+            UsMarketSessionGate gate =
+                    new UsMarketSessionGate(
+                            registry,
+                            new KisMarketSchedule(clock),
+                            clock,
+                            new UsMarketProperties());
+            gate.init();
+
+            Gauge gauge = registry.get(UsMarketSessionGate.EXPECTED_WATERMARK_NAME).gauge();
+            long expected = LocalDate.of(2026, 7, 6).atStartOfDay(KST).toEpochSecond();
+            assertThat(gauge.value()).isEqualTo((double) expected);
+        }
+    }
 }

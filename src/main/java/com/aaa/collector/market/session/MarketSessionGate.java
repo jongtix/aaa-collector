@@ -4,8 +4,10 @@ import com.aaa.collector.common.gate.MarketOpenGate;
 import com.aaa.collector.kis.websocket.KisMarketSchedule;
 import io.micrometer.core.instrument.Gauge;
 import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.Tags;
 import java.time.Clock;
 import java.time.LocalDate;
+import java.time.LocalTime;
 import java.time.ZoneId;
 import java.time.ZonedDateTime;
 import java.util.Map;
@@ -51,7 +53,16 @@ public class MarketSessionGate implements MarketOpenGate {
     public static final String GATE_LAST_UPDATE_NAME =
             "aaa_collector_market_gate_last_update_seconds";
 
+    /** 데이터 워터마크 expected 게이지 이름 (SPEC-OBSV-WATERMARK-001 REQ-WM-006/007/008). */
+    public static final String EXPECTED_WATERMARK_NAME = "aaa_collector_expected_watermark_seconds";
+
     private static final ZoneId KST = ZoneId.of("Asia/Seoul");
+
+    /** KRX 정규장 세션 마감 시각 (REQ-WM-006, MA-02). */
+    private static final LocalTime KRX_SESSION_CLOSE = LocalTime.of(15, 30);
+
+    /** expected watermark 후방 탐색 상한 — 캘린더 lookback(N=14)을 상회하는 안전 마진(MI-04). */
+    private static final int MAX_LOOKBACK_DAYS = 20;
 
     private final KisMarketSchedule marketSchedule;
     private final Clock clock;
@@ -67,7 +78,9 @@ public class MarketSessionGate implements MarketOpenGate {
     private final AtomicLong lastUpdateEpoch = new AtomicLong(0L);
 
     /**
-     * 생성자. 두 gauge를 registry에 등록한다 — KIS API 호출 없음(REQ-OBSV-030).
+     * 생성자. 세 gauge를 registry에 등록한다 — KIS API 호출 없음(REQ-OBSV-030). {@code registry}는 필드로 보유하지 않고 생성자
+     * 스코프에서만 사용한다(Spring 싱글턴 빈을 필드로 저장하는 대신 등록 시점에만 사용 — market.session 패키지는 EI_EXPOSE_REP2 예외목록
+     * 미등재).
      *
      * @param registry Micrometer 레지스트리
      * @param marketSchedule 장중 시간 판정 컴포넌트
@@ -85,6 +98,15 @@ public class MarketSessionGate implements MarketOpenGate {
         Gauge.builder(GATE_LAST_UPDATE_NAME, lastUpdateEpoch, AtomicLong::doubleValue)
                 .description("시장 세션 게이트 마지막 갱신 시각 KST epoch 초; 0=미갱신 (REQ-OBSV-034)")
                 .register(registry);
+
+        Gauge.builder(
+                        EXPECTED_WATERMARK_NAME,
+                        this,
+                        MarketSessionGate::computeExpectedWatermarkEpoch)
+                .tags(Tags.of("market", "domestic"))
+                .description(
+                        "KRX 세션 마감이 지난 가장 최근 개장일의 KST 자정 epoch 초; 캘린더 미로드 시 NaN (REQ-WM-006/008)")
+                .register(registry);
     }
 
     /**
@@ -101,6 +123,31 @@ public class MarketSessionGate implements MarketOpenGate {
                 "시장 세션 게이트 캘린더 갱신 완료 — dates={}, lastUpdate={}",
                 calendar.size(),
                 lastUpdateEpoch.get());
+    }
+
+    /**
+     * KRX expected watermark(세션 마감이 지난 가장 최근 개장일)를 KST 자정 epoch 초로 계산한다(REQ-WM-006, stateless).
+     *
+     * <p>캘린더 미로드(boot-unset) 상태면 {@link Double#NaN}을 반환한다(REQ-WM-008 — 진성 Prometheus absent는
+     * registry field 보유 없이 구현할 수 없어, NaN 폴백으로 근사한다. NaN 비교는 PromQL {@code > 0} 등에서 false로 평가되어 오탐
+     * 방향 안전).
+     *
+     * <p>오늘이 세션 마감(15:30 KST) 이전이면 전날부터, 이후면 오늘부터 역방향으로 개장일을 탐색한다. {@value #MAX_LOOKBACK_DAYS}일 이내
+     * 개장일을 찾지 못하면 탐색 시작일을 그대로 반환한다(방어적 상한).
+     */
+    private double computeExpectedWatermarkEpoch() {
+        if (calendarRef.get() == null) {
+            return Double.NaN;
+        }
+        ZonedDateTime now = ZonedDateTime.now(clock).withZoneSameInstant(KST);
+        LocalDate candidate =
+                now.toLocalTime().isBefore(KRX_SESSION_CLOSE)
+                        ? now.toLocalDate().minusDays(1)
+                        : now.toLocalDate();
+        for (int i = 0; i < MAX_LOOKBACK_DAYS && !isOpenDay(candidate); i++) {
+            candidate = candidate.minusDays(1);
+        }
+        return candidate.atStartOfDay(KST).toEpochSecond();
     }
 
     /**

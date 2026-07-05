@@ -4,10 +4,12 @@ import com.aaa.collector.common.gate.UsMarketOpenGate;
 import com.aaa.collector.kis.websocket.KisMarketSchedule;
 import io.micrometer.core.instrument.Gauge;
 import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.Tags;
 import jakarta.annotation.PostConstruct;
 import java.time.Clock;
 import java.time.DayOfWeek;
 import java.time.LocalDate;
+import java.time.LocalTime;
 import java.time.Month;
 import java.time.ZoneId;
 import java.time.ZonedDateTime;
@@ -52,7 +54,20 @@ public class UsMarketSessionGate implements UsMarketOpenGate {
     public static final String US_MARKET_HOLIDAY_COUNT_NAME =
             "aaa_collector_us_market_gate_holiday_count";
 
+    /** 데이터 워터마크 expected 게이지 이름 (SPEC-OBSV-WATERMARK-001 REQ-WM-006/009). */
+    public static final String EXPECTED_WATERMARK_NAME = "aaa_collector_expected_watermark_seconds";
+
+    /** US expected watermark 등록/노출 임계 — holiday_count가 이 값 미만이면 게이트 init 미완료로 간주(REQ-WM-009). */
+    private static final int HOLIDAY_COUNT_READY_THRESHOLD = 20;
+
+    /** expected watermark 후방 탐색 상한(REQ-WM-006). */
+    private static final int MAX_LOOKBACK_DAYS = 20;
+
     private static final ZoneId NEW_YORK = ZoneId.of("America/New_York");
+    private static final ZoneId KST = ZoneId.of("Asia/Seoul");
+
+    /** US 정규장 세션 마감 시각 (REQ-WM-006, MA-02). */
+    private static final LocalTime US_SESSION_CLOSE = LocalTime.of(16, 0);
 
     private final KisMarketSchedule marketSchedule;
     private final Clock clock;
@@ -93,6 +108,16 @@ public class UsMarketSessionGate implements UsMarketOpenGate {
 
         Gauge.builder(US_MARKET_HOLIDAY_COUNT_NAME, this, g -> g.observedHolidaysRef.get().size())
                 .description("미국 시장 게이트 NYSE 휴장일 수 (REQ-USMKT-010)")
+                .register(registry);
+
+        Gauge.builder(
+                        EXPECTED_WATERMARK_NAME,
+                        this,
+                        UsMarketSessionGate::computeExpectedWatermarkEpoch)
+                .tags(Tags.of("market", "overseas"))
+                .description(
+                        "US 세션 마감이 지난 가장 최근 개장일의 KST 자정 epoch 초; holiday_count 미준비 시 NaN"
+                                + " (REQ-WM-006/009)")
                 .register(registry);
     }
 
@@ -204,6 +229,31 @@ public class UsMarketSessionGate implements UsMarketOpenGate {
         holidays.add(observed(LocalDate.of(year, Month.DECEMBER, 25)));
 
         return holidays;
+    }
+
+    /**
+     * US expected watermark(세션 마감이 지난 가장 최근 개장일)를 KST 자정 epoch 초로 계산한다(REQ-WM-006, stateless).
+     *
+     * <p>{@link #isOpenDay(LocalDate)}가 임의 과거 날짜를 결정론적으로 판정할 수 있어 캘린더 로드 상태와 무관하게 후방 탐색이 가능하다(§2 US
+     * expected 후방 조회, `[EXISTING]`).
+     */
+    private double computeExpectedWatermarkEpoch() {
+        if (observedHolidaysRef.get().size() < HOLIDAY_COUNT_READY_THRESHOLD) {
+            // REQ-WM-009: holiday_count 미준비 → NaN 폴백(진성 absent는 registry field 없이 구현 불가 —
+            // MarketSessionGate와
+            // 동일한 근거).
+            return Double.NaN;
+        }
+        ZonedDateTime now = ZonedDateTime.now(clock).withZoneSameInstant(NEW_YORK);
+        LocalDate candidate =
+                now.toLocalTime().isBefore(US_SESSION_CLOSE)
+                        ? now.toLocalDate().minusDays(1)
+                        : now.toLocalDate();
+        for (int i = 0; i < MAX_LOOKBACK_DAYS && !isOpenDay(candidate); i++) {
+            candidate = candidate.minusDays(1);
+        }
+        // 노출 값은 해당 거래일(candidate)의 KST 자정 epoch — US 세션 마감(ET) 기준 산출과 노출 인코딩을 분리한다(§11).
+        return candidate.atStartOfDay(KST).toEpochSecond();
     }
 
     /** gauge 조회 시 Micrometer가 호출하는 현재 장중 여부 계산. */
