@@ -7,10 +7,10 @@ import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.when;
 
-import com.aaa.collector.common.gate.UsMarketOpenGate;
 import com.aaa.collector.kis.gate.GuardedKisExecutor;
 import com.aaa.collector.kis.gate.KeyLeaseRegistry;
 import com.aaa.collector.kis.gate.KeyLeaseRegistry.LeaseSession;
+import com.aaa.collector.market.session.UsMarketSessionGate;
 import com.aaa.collector.stock.CorporateEvent;
 import com.aaa.collector.stock.CorporateEventRepository;
 import com.aaa.collector.stock.Stock;
@@ -70,7 +70,21 @@ class OverseasSplitIntegrationTest {
 
     @MockitoBean private GuardedKisExecutor guardedKisExecutor;
     @MockitoBean private KeyLeaseRegistry keyLeaseRegistry;
-    @MockitoBean private UsMarketOpenGate usMarketOpenGate;
+
+    // main 병합(SPEC-COLLECTOR-USMKT-001)으로 MarketSessionGateRefresher가 ApplicationReadyEvent에서
+    // KisHolidayClient.fetchCalendar를 즉시 호출한다(REQ-WM-007 MA-01) — @BeforeEach 스텁보다 먼저
+    // 실행되므로 guardedKisExecutor/keyLeaseRegistry를 스텁 없이 두면 이 호출이 NPE로 컨텍스트 기동을
+    // 깨뜨린다. KisHolidayClient 자체를 RETURNS_MOCKS로 모킹해 흡수한다 — fetchCalendar의 반환 타입은
+    // 제네릭 소거가 없는 구체 List<HolidayRow>라 deep-mock이 안전하게 빈 리스트처럼 동작한다(반대로
+    // GuardedKisExecutor.execute(...)는 제네릭 반환형이라 RETURNS_MOCKS 적용 시 ClassCastException
+    // 유발 — 이 SPEC과 무관한 본 클라이언트 자체를 모킹해 그 경로를 아예 타지 않게 우회).
+    @MockitoBean(answers = org.mockito.Answers.RETURNS_MOCKS)
+    private com.aaa.collector.kis.holiday.KisHolidayClient kisHolidayClient;
+
+    // main 병합(SPEC-COLLECTOR-USMKT-001)으로 UsMarketOpenGate는 인터페이스가 되고 유일 구현체
+    // UsMarketSessionGate를 CoverageRefresher가 구체 타입으로 직접 주입받는다 — 인터페이스로 모킹하면
+    // 같은 빈 이름에 타입 불일치(BeanNotOfRequiredTypeException)가 발생하므로 구체 타입으로 모킹한다.
+    @MockitoBean private UsMarketSessionGate usMarketOpenGate;
 
     @Autowired private OverseasSplitCollectionService service;
     @Autowired private StockRepository stockRepository;

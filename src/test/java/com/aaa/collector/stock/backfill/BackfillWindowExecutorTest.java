@@ -15,6 +15,7 @@ import com.aaa.collector.backfill.BackfillWindowAdvancer;
 import com.aaa.collector.backfill.BackfillWindowResult;
 import com.aaa.collector.backfill.TerminationDecision;
 import com.aaa.collector.kis.gate.KeyLeaseRegistry.LeaseSession;
+import com.aaa.collector.stock.DividendScheduleCollectionService;
 import com.aaa.collector.stock.RevSplitBackfillFetch;
 import com.aaa.collector.stock.RevSplitCollectionService;
 import com.aaa.collector.stock.Stock;
@@ -58,6 +59,7 @@ class BackfillWindowExecutorTest {
     @Mock private InvestorTrendCollectionService investorTrendService;
     @Mock private CreditBalanceCollectionService creditBalanceService;
     @Mock private RevSplitCollectionService revSplitService;
+    @Mock private DividendScheduleCollectionService dividendService;
     @Mock private OverseasSplitCollectionService overseasSplitService;
     @Mock private BackfillTerminationPolicy terminationPolicy;
     @Mock private BackfillWindowAdvancer windowAdvancer;
@@ -80,6 +82,7 @@ class BackfillWindowExecutorTest {
                         investorTrendService,
                         creditBalanceService,
                         revSplitService,
+                        dividendService,
                         overseasSplitService,
                         terminationPolicy,
                         windowAdvancer,

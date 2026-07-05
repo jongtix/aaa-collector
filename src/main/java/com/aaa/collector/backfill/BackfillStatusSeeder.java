@@ -42,8 +42,8 @@ public class BackfillStatusSeeder {
      * 국내 종목 시딩 data_table 집합(REQ-BACKFILL-008).
      *
      * <p>[SPEC-COLLECTOR-BACKFILL-007 REQ-BACKFILL-090] {@code corporate_events}(SPLIT 과거 백필) 편입 —
-     * 국내 5종. 미국 종목은 {@link #OVERSEAS_DATA_TABLES}로 분기되며, SPLIT 소스 확보 후(REQ-OSPLIT-063)
-     * 미국도 {@code corporate_events}를 시딩한다 — 수급 3종은 여전히 국내 전용이라 미국은 시딩하지 않는다.
+     * 국내 5종. 미국 종목은 {@link #OVERSEAS_DATA_TABLES}로 분기되며, SPLIT 소스 확보 후(REQ-OSPLIT-063) 미국도 {@code
+     * corporate_events}를 시딩한다 — 수급 3종은 여전히 국내 전용이라 미국은 시딩하지 않는다.
      *
      * <p>[SPEC-COLLECTOR-BACKFILL-009 REQ-BACKFILL-143] {@code corporate_events_dividend}(DIVIDEND
      * 과거 백필) 편입 — 국내 6종. SPLIT과 구분되는 별도 {@code data_table} 논리 키로 활성 국내 관심종목을 {@code
