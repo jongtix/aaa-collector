@@ -43,11 +43,16 @@ public class ShortSaleOverseas extends BaseEntity {
     @Column(name = "trade_date")
     private final LocalDate tradeDate;
 
-    @Column(name = "short_volume")
-    private final long shortVolume;
+    // @MX:NOTE: [AUTO] short_volume/total_volume은 DECIMAL(20,6)(V34) — FINRA 2026-02-23 소수 정밀도 항구
+    // 전환
+    // 대응(SPEC-COLLECTOR-SHORTSALE-DECIMAL-001 REQ-SSD-001/002). DB는 NOT NULL DEFAULT 0이므로 생성자에서
+    // null → ZERO로 정규화해 네이티브 UPSERT에 null이 새지 않도록 보장한다.
+    // @MX:SPEC: SPEC-COLLECTOR-SHORTSALE-DECIMAL-001
+    @Column(name = "short_volume", precision = 20, scale = 6)
+    private final BigDecimal shortVolume;
 
-    @Column(name = "total_volume")
-    private final long totalVolume;
+    @Column(name = "total_volume", precision = 20, scale = 6)
+    private final BigDecimal totalVolume;
 
     @Column(name = "short_interest")
     private final Long shortInterest;
@@ -71,8 +76,8 @@ public class ShortSaleOverseas extends BaseEntity {
     private ShortSaleOverseas(
             Stock stock,
             LocalDate tradeDate,
-            long shortVolume,
-            long totalVolume,
+            BigDecimal shortVolume,
+            BigDecimal totalVolume,
             Long shortInterest,
             Long floatShares,
             BigDecimal siPctFloat,
@@ -82,8 +87,9 @@ public class ShortSaleOverseas extends BaseEntity {
         super();
         this.stock = stock;
         this.tradeDate = tradeDate;
-        this.shortVolume = shortVolume;
-        this.totalVolume = totalVolume;
+        // DB NOT NULL DEFAULT 0 정합 — null 거래량은 ZERO로 정규화(REQ-SSD-001)
+        this.shortVolume = shortVolume == null ? BigDecimal.ZERO : shortVolume;
+        this.totalVolume = totalVolume == null ? BigDecimal.ZERO : totalVolume;
         this.shortInterest = shortInterest;
         this.floatShares = floatShares;
         this.siPctFloat = siPctFloat;

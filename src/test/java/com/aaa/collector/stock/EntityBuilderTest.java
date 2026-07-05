@@ -516,8 +516,8 @@ class EntityBuilderTest {
                     ShortSaleOverseas.builder()
                             .stock(stock)
                             .tradeDate(tradeDate)
-                            .shortVolume(100L)
-                            .totalVolume(10_000L)
+                            .shortVolume(new BigDecimal("100"))
+                            .totalVolume(new BigDecimal("10000"))
                             .build();
 
             assertThat(sso.getStock()).isSameAs(stock);
@@ -525,18 +525,33 @@ class EntityBuilderTest {
         }
 
         @Test
-        @DisplayName("볼륨 필드들이 설정된다")
+        @DisplayName("볼륨 필드는 소수 6자리를 무손실 보존한다 (REQ-SSD-001/002)")
         void shortSaleOverseas_volumeFieldsSet() {
             ShortSaleOverseas sso =
                     ShortSaleOverseas.builder()
                             .stock(sampleStock())
                             .tradeDate(LocalDate.of(2026, 6, 5))
-                            .shortVolume(200_000L)
-                            .totalVolume(5_000_000L)
+                            .shortVolume(new BigDecimal("11479561.984835"))
+                            .totalVolume(new BigDecimal("240101.320702"))
                             .build();
 
-            assertThat(sso.getShortVolume()).isEqualTo(200_000L);
-            assertThat(sso.getTotalVolume()).isEqualTo(5_000_000L);
+            assertThat(sso.getShortVolume()).isEqualByComparingTo("11479561.984835");
+            assertThat(sso.getTotalVolume()).isEqualByComparingTo("240101.320702");
+        }
+
+        @Test
+        @DisplayName("null 거래량은 ZERO로 정규화된다 (DB NOT NULL DEFAULT 0 정합, REQ-SSD-001)")
+        void shortSaleOverseas_nullVolumeNormalizedToZero() {
+            ShortSaleOverseas sso =
+                    ShortSaleOverseas.builder()
+                            .stock(sampleStock())
+                            .tradeDate(LocalDate.of(2026, 6, 5))
+                            .shortVolume(null)
+                            .totalVolume(null)
+                            .build();
+
+            assertThat(sso.getShortVolume()).isEqualByComparingTo("0");
+            assertThat(sso.getTotalVolume()).isEqualByComparingTo("0");
         }
 
         @Test
@@ -548,8 +563,8 @@ class EntityBuilderTest {
                     ShortSaleOverseas.builder()
                             .stock(sampleStock())
                             .tradeDate(LocalDate.of(2026, 6, 5))
-                            .shortVolume(100L)
-                            .totalVolume(10_000L)
+                            .shortVolume(new BigDecimal("100"))
+                            .totalVolume(new BigDecimal("10000"))
                             .shortInterest(1_000_000L)
                             .floatShares(50_000_000L)
                             .siPctFloat(new BigDecimal("2.0000"))
@@ -571,8 +586,8 @@ class EntityBuilderTest {
                     ShortSaleOverseas.builder()
                             .stock(sampleStock())
                             .tradeDate(LocalDate.of(2026, 6, 5))
-                            .shortVolume(100L)
-                            .totalVolume(10_000L)
+                            .shortVolume(new BigDecimal("100"))
+                            .totalVolume(new BigDecimal("10000"))
                             .dailyCollectedAt(collectedAt)
                             .interestCollectedAt(collectedAt)
                             .build();
@@ -588,8 +603,8 @@ class EntityBuilderTest {
                     ShortSaleOverseas.builder()
                             .stock(sampleStock())
                             .tradeDate(LocalDate.of(2026, 1, 1))
-                            .shortVolume(100L)
-                            .totalVolume(10_000L)
+                            .shortVolume(new BigDecimal("100"))
+                            .totalVolume(new BigDecimal("10000"))
                             .shortInterest(null)
                             .siPctFloat(null)
                             .build();

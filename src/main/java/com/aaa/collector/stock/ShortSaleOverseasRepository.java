@@ -1,5 +1,6 @@
 package com.aaa.collector.stock;
 
+import java.math.BigDecimal;
 import java.sql.Date;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -45,8 +46,8 @@ public interface ShortSaleOverseasRepository extends JpaRepository<ShortSaleOver
      *
      * @param stockId 종목 PK
      * @param tradeDate 거래일
-     * @param shortVolume 합산 공매도 거래량(Σ shortParQuantity)
-     * @param totalVolume 합산 전체 거래량(Σ totalParQuantity)
+     * @param shortVolume 합산 공매도 거래량(Σ shortParQuantity, 소수 6자리 무손실 — REQ-SSD-001)
+     * @param totalVolume 합산 전체 거래량(Σ totalParQuantity, 소수 6자리 무손실 — REQ-SSD-001)
      * @param dailyCollectedAt Daily 수집 시각
      * @param shortInterest forward 매칭 공매도 잔고(없으면 {@code null})
      * @param shortInterestDate forward 매칭 잔고 기준일(없으면 {@code null})
@@ -74,8 +75,8 @@ public interface ShortSaleOverseasRepository extends JpaRepository<ShortSaleOver
     void upsertDaily(
             @Param("stockId") Long stockId,
             @Param("tradeDate") LocalDate tradeDate,
-            @Param("shortVolume") long shortVolume,
-            @Param("totalVolume") long totalVolume,
+            @Param("shortVolume") BigDecimal shortVolume,
+            @Param("totalVolume") BigDecimal totalVolume,
             @Param("dailyCollectedAt") LocalDateTime dailyCollectedAt,
             @Param("shortInterest") Long shortInterest,
             @Param("shortInterestDate") LocalDate shortInterestDate);
