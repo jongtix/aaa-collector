@@ -211,7 +211,6 @@ class OverseasSplitBackfillTest {
     class PersistStage {
 
         @Test
-        @SuppressWarnings("PMD.UnitTestContainsTooManyAsserts")
         @DisplayName("AC-8: 단일 유효 분할 → rowCount=1·rawRowCount=1, insertBatch 1행")
         void singleValidSplit_persist() {
             Stock aapl = stock("AAPL");
@@ -230,7 +229,6 @@ class OverseasSplitBackfillTest {
         }
 
         @Test
-        @SuppressWarnings("PMD.UnitTestContainsTooManyAsserts")
         @DisplayName("AC-4: AAPL 3행 dedup → 저장 rowCount=1이나 종료 입력 rawRowCount=3(발산 결정적)")
         void dedupRowCountDivergesFromRawRowCount() {
             Stock aapl = stock("AAPL");

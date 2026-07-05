@@ -76,12 +76,10 @@ class OverseasSplitIntegrationTest {
     @Autowired private StockRepository stockRepository;
     @Autowired private CorporateEventRepository corporateEventRepository;
 
-    /** LeaseSession은 final이라 @Mock 대신 @BeforeEach에서 직접 mock 생성. */
-    private LeaseSession leaseSession;
-
     @BeforeEach
     void setUp() {
-        leaseSession = Mockito.mock(LeaseSession.class);
+        // LeaseSession은 final이라 @Mock 대신 직접 mock 생성 — GuardedKisExecutor mock이 세션을 무시하므로 스텁만 필요.
+        LeaseSession leaseSession = Mockito.mock(LeaseSession.class);
         when(usMarketOpenGate.isOpenDay(any())).thenReturn(true);
         when(keyLeaseRegistry.openSession()).thenReturn(leaseSession);
         when(leaseSession.isEmpty()).thenReturn(false);

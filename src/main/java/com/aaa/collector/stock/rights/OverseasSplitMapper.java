@@ -74,9 +74,60 @@ class OverseasSplitMapper {
             String rghtTypeCd,
             Map<String, Stock> trackedStockBySymbol) {
 
-        String eventSubtype = RGHT_TYPE_MERGE.equals(rghtTypeCd) ? SUBTYPE_MERGE : SUBTYPE_SPLIT;
+        // REQ-OSPLIT-020/021/029: 확정·추적 필터 후 이벤트 동일성으로 그룹핑
+        Grouping grouping = groupAdmissibleRows(rows, trackedStockBySymbol);
 
-        // REQ-OSPLIT-029: 그룹핑 키 = (bass_dt·acpl_bass_dt 제외 필드) → 그룹별 평일 bass_dt 목록
+        String eventSubtype = RGHT_TYPE_MERGE.equals(rghtTypeCd) ? SUBTYPE_MERGE : SUBTYPE_SPLIT;
+        List<CorporateEvent> events = new ArrayList<>();
+        int skippedNoWeekday = 0;
+        int skippedInvalidRate = 0;
+
+        for (Map.Entry<EventIdentityKey, List<LocalDate>> entry : grouping.groups().entrySet()) {
+            EventIdentityKey key = entry.getKey();
+            // REQ-OSPLIT-030: 그룹 내 주말 bass_dt 이상치 제외 후 최댓값(REQ-OSPLIT-031)
+            LocalDate eventDate =
+                    entry.getValue().stream()
+                            .filter(OverseasSplitMapper::isWeekday)
+                            .max(LocalDate::compareTo)
+                            .orElse(null);
+            if (eventDate == null) {
+                // REQ-OSPLIT-032: 유효 평일 bass_dt 없음 → 이벤트 skip
+                skippedNoWeekday++;
+                continue;
+            }
+            // REQ-OSPLIT-040/043: stck_alct_rt ÷ 100 정규화 + 경계 가드
+            BigDecimal stockRate = normalizeStockRate(key.stckAlctRt());
+            if (stockRate == null) {
+                skippedInvalidRate++;
+                continue;
+            }
+            events.add(
+                    CorporateEvent.builder()
+                            .stock(trackedStockBySymbol.get(key.pdno()))
+                            .eventType(EventType.SPLIT)
+                            .eventDate(eventDate)
+                            .eventSubtype(eventSubtype)
+                            .stockRate(stockRate)
+                            .build());
+        }
+
+        return new MapResult(
+                events,
+                grouping.skippedUnconfirmed(),
+                grouping.skippedUntracked(),
+                grouping.skippedUnparsableDate(),
+                skippedNoWeekday,
+                skippedInvalidRate);
+    }
+
+    /** 확정(dfnt_yn=Y)·추적 종목 행만 채택해 이벤트 동일성 키로 그룹핑하고, 그룹별 평일 후보 bass_dt 목록을 구축한다(REQ-OSPLIT-029). */
+    @SuppressWarnings({
+        "PMD.UseConcurrentHashMap", // 단일 스레드 그룹핑 빌드 전용, 공유 없음
+        "PMD.AvoidInstantiatingObjectsInLoops" // 그룹별 누적 리스트는 dedup에 불가피
+    })
+    private Grouping groupAdmissibleRows(
+            List<KisPeriodRightsResponse.PeriodRightsRow> rows,
+            Map<String, Stock> trackedStockBySymbol) {
         Map<EventIdentityKey, List<LocalDate>> groups = new LinkedHashMap<>();
         int skippedUnconfirmed = 0;
         int skippedUntracked = 0;
@@ -102,49 +153,22 @@ class OverseasSplitMapper {
             }
             groups.computeIfAbsent(identityKey(row), k -> new ArrayList<>()).add(bassDt);
         }
-
-        List<CorporateEvent> events = new ArrayList<>();
-        int skippedNoWeekday = 0;
-        int skippedInvalidRate = 0;
-
-        for (Map.Entry<EventIdentityKey, List<LocalDate>> entry : groups.entrySet()) {
-            EventIdentityKey key = entry.getKey();
-            // REQ-OSPLIT-030: 그룹 내 주말 bass_dt 이상치 제외 후 최댓값(REQ-OSPLIT-031)
-            LocalDate eventDate =
-                    entry.getValue().stream()
-                            .filter(OverseasSplitMapper::isWeekday)
-                            .max(LocalDate::compareTo)
-                            .orElse(null);
-            if (eventDate == null) {
-                // REQ-OSPLIT-032: 유효 평일 bass_dt 없음 → 이벤트 skip
-                skippedNoWeekday++;
-                continue;
-            }
-            // REQ-OSPLIT-040/043: stck_alct_rt ÷ 100 정규화 + 경계 가드
-            BigDecimal stockRate = normalizeStockRate(key.stckAlctRt());
-            if (stockRate == null) {
-                skippedInvalidRate++;
-                continue;
-            }
-            Stock stock = trackedStockBySymbol.get(key.pdno());
-            events.add(
-                    CorporateEvent.builder()
-                            .stock(stock)
-                            .eventType(EventType.SPLIT)
-                            .eventDate(eventDate)
-                            .eventSubtype(eventSubtype)
-                            .stockRate(stockRate)
-                            .build());
-        }
-
-        return new MapResult(
-                events,
-                skippedUnconfirmed,
-                skippedUntracked,
-                skippedUnparsableDate,
-                skippedNoWeekday,
-                skippedInvalidRate);
+        return new Grouping(groups, skippedUnconfirmed, skippedUntracked, skippedUnparsableDate);
     }
+
+    /**
+     * 확정·추적 필터 통과 행을 이벤트 동일성으로 묶은 중간 결과.
+     *
+     * @param groups 이벤트 동일성 키 → 그룹별 후보 bass_dt 목록
+     * @param skippedUnconfirmed 미확정 skip 행 수
+     * @param skippedUntracked 비추적 종목 skip 행 수
+     * @param skippedUnparsableDate bass_dt 파싱 실패 skip 행 수
+     */
+    private record Grouping(
+            Map<EventIdentityKey, List<LocalDate>> groups,
+            int skippedUnconfirmed,
+            int skippedUntracked,
+            int skippedUnparsableDate) {}
 
     /** {@code bass_dt}·{@code acpl_bass_dt}를 제외한 이벤트 동일성 필드로 그룹핑 키를 구성한다(REQ-OSPLIT-029). */
     private EventIdentityKey identityKey(KisPeriodRightsResponse.PeriodRightsRow row) {

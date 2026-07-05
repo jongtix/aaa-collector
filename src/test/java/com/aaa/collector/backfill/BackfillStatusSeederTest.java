@@ -53,6 +53,9 @@ class BackfillStatusSeederTest {
                     "corporate_events",
                     "corporate_events_dividend");
 
+    // SPEC-COLLECTOR-OVERSEAS-SPLIT-001 REQ-OSPLIT-063: 미국 corporate_events 편입 → 2종
+    private static final List<String> OVERSEAS_TABLES = List.of("daily_ohlcv", "corporate_events");
+
     @Container @ServiceConnection
     static final MySQLContainer<?> MYSQL = new MySQLContainer<>("mysql:8.4");
 
@@ -123,9 +126,6 @@ class BackfillStatusSeederTest {
             assertThat(row.getAttemptCount()).isZero();
         }
     }
-
-    // SPEC-COLLECTOR-OVERSEAS-SPLIT-001 REQ-OSPLIT-063: 미국 corporate_events 편입 → 2종
-    private static final List<String> OVERSEAS_TABLES = List.of("daily_ohlcv", "corporate_events");
 
     @Nested
     @DisplayName("AC-13/AC-7.3 미국 종목 시딩 — daily_ohlcv+corporate_events 2행 (수급 3종 미대상)")

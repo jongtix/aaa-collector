@@ -150,8 +150,8 @@ public class OverseasSplitCollectionService {
     // persistWindowForBackfill과 교차 빈으로 순차 호출. rawRowCount=14+15 원본 행수(dedup 전).
     public OverseasSplitBackfillFetch fetchWindowForBackfill(
             Stock stock, LeaseSession session, LocalDate from, LocalDate to) {
-        Map<String, Stock> trackedStockBySymbol = new LinkedHashMap<>();
-        trackedStockBySymbol.put(stock.getSymbol(), stock);
+        // 백필은 호출자가 종목을 지정하므로 추적 필터 집합은 단일 종목이다.
+        Map<String, Stock> trackedStockBySymbol = Map.of(stock.getSymbol(), stock);
 
         OverseasSplitPrefetch prefetch =
                 prefetcher.prefetch(

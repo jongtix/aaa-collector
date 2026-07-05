@@ -41,6 +41,7 @@ class OverseasSplitMapperTest {
                 .build();
     }
 
+    @SuppressWarnings("PMD.UseConcurrentHashMap") // 테스트 픽스처 — 단일 스레드 빌드 전용
     private Map<String, Stock> trackedMap(Stock... stocks) {
         Map<String, Stock> map = new LinkedHashMap<>();
         for (Stock s : stocks) {
