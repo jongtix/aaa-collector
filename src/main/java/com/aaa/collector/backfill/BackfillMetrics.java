@@ -3,6 +3,7 @@ package com.aaa.collector.backfill;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
 import jakarta.annotation.PostConstruct;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.DoubleAdder;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
@@ -32,10 +33,16 @@ public class BackfillMetrics {
     static final String CLAMP_SUSPECTED_NAME = "aaa_collector_backfill_clamp_suspected_total";
     static final String WINDOWS_TOTAL_NAME = "aaa_collector_backfill_windows_total";
 
+    /** 백필 미완료(PENDING+IN_PROGRESS) 슬롯 수 게이지 이름 (SPEC-OBSV-WATERMARK-001 REQ-WM-029). */
+    static final String PENDING_SLOTS_NAME = "aaa_collector_backfill_pending_slots";
+
     private final MeterRegistry registry;
 
     /** 진행률(완료/전체) gauge가 지연 조회하는 가변 상태. */
     private final DoubleAdder progressHolder = new DoubleAdder();
+
+    /** 미완료(PENDING+IN_PROGRESS) 슬롯 수 gauge가 지연 조회하는 가변 상태(REQ-WM-029). */
+    private final AtomicLong pendingSlotsHolder = new AtomicLong(0L);
 
     /** 카운터를 0으로 사전 등록한다 (백필 실행 전에도 0 시계열 노출). */
     @PostConstruct
@@ -44,6 +51,17 @@ public class BackfillMetrics {
         Counter.builder(CLAMP_SUSPECTED_NAME).register(registry);
         Counter.builder(WINDOWS_TOTAL_NAME).register(registry);
         registry.gauge(PROGRESS_NAME, progressHolder, DoubleAdder::doubleValue);
+        registry.gauge(PENDING_SLOTS_NAME, pendingSlotsHolder, AtomicLong::doubleValue);
+    }
+
+    /**
+     * 미완료(PENDING+IN_PROGRESS) 슬롯 수를 설정한다(REQ-WM-029). FAILED·COMPLETED는 포함하지 않는다 — FAILED 영구 잔류가
+     * 상시 알림을 유발하지 않도록 한다.
+     *
+     * @param pendingSlots PENDING+IN_PROGRESS 슬롯 수
+     */
+    public void setPendingSlots(long pendingSlots) {
+        pendingSlotsHolder.set(pendingSlots);
     }
 
     /**

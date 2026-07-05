@@ -98,4 +98,14 @@ public interface BackfillStatusRepository extends JpaRepository<BackfillStatus, 
      * @return 해당 상태·유형 항목 수
      */
     long countByStatusAndTargetType(BackfillStatusType status, String targetType);
+
+    /**
+     * 상태 집합·대상 유형 기준 항목 수를 반환한다 (SPEC-OBSV-WATERMARK-001 REQ-WM-029 — 백필 pending_slots 게이지,
+     * PENDING+IN_PROGRESS 집계용).
+     *
+     * @param statuses 상태 필터 집합
+     * @param targetType 대상 유형 (예: {@code "STOCK"})
+     * @return 해당 상태 집합·유형 항목 수
+     */
+    long countByStatusInAndTargetType(Collection<BackfillStatusType> statuses, String targetType);
 }

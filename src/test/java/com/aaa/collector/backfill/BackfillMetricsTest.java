@@ -15,6 +15,7 @@ class BackfillMetricsTest {
     private static final String WINDOW_ROWS = "aaa_collector_backfill_window_rows_total";
     private static final String CLAMP_SUSPECTED = "aaa_collector_backfill_clamp_suspected_total";
     private static final String WINDOWS_TOTAL = "aaa_collector_backfill_windows_total";
+    private static final String PENDING_SLOTS = "aaa_collector_backfill_pending_slots";
 
     @Nested
     @DisplayName("@PostConstruct 사전 등록")
@@ -32,6 +33,40 @@ class BackfillMetricsTest {
             assertThat(registry.get(WINDOWS_TOTAL).counter().count()).isEqualTo(0.0);
             Gauge gauge = registry.get(PROGRESS).gauge();
             assertThat(gauge.value()).isEqualTo(0.0);
+            Gauge pendingGauge = registry.get(PENDING_SLOTS).gauge();
+            assertThat(pendingGauge.value()).isEqualTo(0.0);
+        }
+    }
+
+    @Nested
+    @DisplayName("미완료 슬롯 gauge (setPendingSlots, REQ-WM-029)")
+    class PendingSlots {
+
+        @Test
+        @DisplayName("setPendingSlots 호출 시 gauge가 해당 값으로 갱신된다")
+        void setPendingSlots_updatesGauge() {
+            SimpleMeterRegistry registry = new SimpleMeterRegistry();
+            BackfillMetrics metrics = new BackfillMetrics(registry);
+            metrics.initCounters();
+
+            metrics.setPendingSlots(42);
+
+            Gauge gauge = registry.get(PENDING_SLOTS).gauge();
+            assertThat(gauge.value()).isEqualTo(42.0);
+        }
+
+        @Test
+        @DisplayName("재호출 시 최신값으로 덮어씌워진다 (FAILED 종결 시 감소 반영)")
+        void setPendingSlots_overwritesPreviousValue() {
+            SimpleMeterRegistry registry = new SimpleMeterRegistry();
+            BackfillMetrics metrics = new BackfillMetrics(registry);
+            metrics.initCounters();
+
+            metrics.setPendingSlots(10);
+            metrics.setPendingSlots(3);
+
+            Gauge gauge = registry.get(PENDING_SLOTS).gauge();
+            assertThat(gauge.value()).isEqualTo(3.0);
         }
     }
 

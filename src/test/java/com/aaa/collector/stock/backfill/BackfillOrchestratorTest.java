@@ -715,12 +715,42 @@ class BackfillOrchestratorTest {
             when(backfillStatusRepository.countByStatusAndTargetType(any(), anyString()))
                     .thenReturn(5L);
             when(backfillStatusRepository.countByTargetType(anyString())).thenReturn(10L);
+            when(backfillStatusRepository.countByStatusInAndTargetType(any(), anyString()))
+                    .thenReturn(2L);
 
             // Act
             orchestrator.run();
 
             // Assert — recordProgress가 COMPLETED 수 / 전체 수로 호출됨(의미 불변)
             verify(backfillMetrics).recordProgress(5L, 10L);
+        }
+
+        @Test
+        @DisplayName(
+                "SPEC-OBSV-WATERMARK-001 REQ-WM-029 — recordProgress와 동일 지점에서 pending_slots 갱신")
+        void reqWm029_setsPendingSlotsAtSamePoint() throws InterruptedException {
+            when(properties.getPerTableCompletionCap()).thenReturn(10);
+
+            Stock stock = buildDomesticStock("005930");
+            when(stockRepository.findAllActiveTradable()).thenReturn(List.of(stock));
+            when(stockRepository.findAllActiveOverseasTradable()).thenReturn(List.of());
+
+            BackfillStatus s1 = buildPendingStatus("005930", "daily_ohlcv");
+            when(backfillStatusRepository.findByStatusInAndTargetTypeOrderById(any(), anyString()))
+                    .thenReturn(List.of(s1));
+
+            BackfillStatus completed = buildCompletedStatus("005930", "daily_ohlcv");
+            when(backfillStatusRepository.findById(any())).thenReturn(Optional.of(completed));
+
+            when(backfillStatusRepository.countByStatusAndTargetType(any(), anyString()))
+                    .thenReturn(5L);
+            when(backfillStatusRepository.countByTargetType(anyString())).thenReturn(10L);
+            when(backfillStatusRepository.countByStatusInAndTargetType(any(), anyString()))
+                    .thenReturn(4L);
+
+            orchestrator.run();
+
+            verify(backfillMetrics).setPendingSlots(4L);
         }
     }
 

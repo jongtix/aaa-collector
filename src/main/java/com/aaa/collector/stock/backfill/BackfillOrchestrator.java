@@ -47,6 +47,10 @@ public class BackfillOrchestrator {
 
     private static final String TARGET_TYPE_STOCK = "STOCK";
 
+    /** 백필 pending_slots 게이지 집계 대상 상태(REQ-WM-029) — FAILED·COMPLETED는 제외. */
+    private static final List<BackfillStatusType> PENDING_STATUSES =
+            List.of(BackfillStatusType.PENDING, BackfillStatusType.IN_PROGRESS);
+
     private final BackfillStatusSeeder seeder;
     private final BackfillStatusRepository backfillStatusRepository;
     private final BackfillWindowExecutor windowExecutor;
@@ -89,8 +93,7 @@ public class BackfillOrchestrator {
         // Step 4: 미완료 항목 조회 (PENDING | IN_PROGRESS, STOCK 유형)
         List<BackfillStatus> pending =
                 backfillStatusRepository.findByStatusInAndTargetTypeOrderById(
-                        List.of(BackfillStatusType.PENDING, BackfillStatusType.IN_PROGRESS),
-                        TARGET_TYPE_STOCK);
+                        PENDING_STATUSES, TARGET_TYPE_STOCK);
 
         if (pending.isEmpty()) {
             log.info("[backfill-orchestrator] 처리 대상 없음 (AC-6.5)");
@@ -110,6 +113,10 @@ public class BackfillOrchestrator {
                         BackfillStatusType.COMPLETED, TARGET_TYPE_STOCK);
         long totalCount = backfillStatusRepository.countByTargetType(TARGET_TYPE_STOCK);
         backfillMetrics.recordProgress(completedCount, totalCount);
+        // SPEC-OBSV-WATERMARK-001 REQ-WM-029: 동일 지점에서 미완료(PENDING+IN_PROGRESS) 슬롯 수 갱신
+        backfillMetrics.setPendingSlots(
+                backfillStatusRepository.countByStatusInAndTargetType(
+                        PENDING_STATUSES, TARGET_TYPE_STOCK));
 
         log.info(
                 "[backfill-orchestrator] 백필 cron 완료 — completedSlots={}, processedWindows={}",
