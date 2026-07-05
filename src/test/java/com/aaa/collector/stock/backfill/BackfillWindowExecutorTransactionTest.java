@@ -15,6 +15,8 @@ import com.aaa.collector.backfill.BackfillStatusType;
 import com.aaa.collector.backfill.BackfillWindowResult;
 import com.aaa.collector.kis.gate.KeyLeaseRegistry.LeaseSession;
 import com.aaa.collector.kis.token.KisTokenIssueException;
+import com.aaa.collector.stock.DividendBackfillFetch;
+import com.aaa.collector.stock.DividendScheduleCollectionService;
 import com.aaa.collector.stock.RevSplitBackfillFetch;
 import com.aaa.collector.stock.RevSplitCollectionService;
 import com.aaa.collector.stock.Stock;
@@ -77,6 +79,7 @@ class BackfillWindowExecutorTransactionTest {
     @MockitoBean private InvestorTrendCollectionService investorTrendService;
     @MockitoBean private CreditBalanceCollectionService creditBalanceService;
     @MockitoBean private RevSplitCollectionService revSplitService;
+    @MockitoBean private DividendScheduleCollectionService dividendService;
 
     @Autowired private BackfillWindowExecutor windowExecutor;
     // SpyBean: 실제 구현 유지, advance() spy 기반 예외 주입 가능 (AC-4.2 롤백 테스트)
@@ -578,6 +581,84 @@ class BackfillWindowExecutorTransactionTest {
             when(revSplitService.fetchWindowForBackfill(any(), any(), any(), any()))
                     .thenReturn(fetch);
             when(revSplitService.persistWindowForBackfill(eq(fetch)))
+                    .thenReturn(BackfillWindowResult.EMPTY);
+
+            // Act
+            windowExecutor.executeWindow(status, domesticStock, session);
+
+            // Assert
+            BackfillStatus updated =
+                    backfillStatusRepository.findById(status.getId()).orElseThrow();
+            assertThat(updated.getStatus()).isEqualTo(BackfillStatusType.COMPLETED);
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // SPEC-COLLECTOR-BACKFILL-009 W2 — corporate_events_dividend GROUP_A 라우팅
+    // -------------------------------------------------------------------------
+
+    @Nested
+    @DisplayName(
+            "BACKFILL-009: corporate_events_dividend GROUP_A 라우팅·종료 (REQ-BACKFILL-133~135,144)")
+    class DividendCorporateEventsRouting {
+
+        @Test
+        @DisplayName(
+                "AC-6c: corporate_events_dividend fetch는 고정 플로어(1950)로 DIVIDEND 경로 라우팅, SPLIT 분기 미호출")
+        void dividendKey_routesToDividendService_notRevSplit() throws InterruptedException {
+            // Arrange — corporate_events_dividend status PENDING, rate-only 1건 반환
+            BackfillStatus status = seedPending("005930", "corporate_events_dividend");
+            LocalDate oldest = LocalDate.of(2015, 3, 31);
+            DividendBackfillFetch fetch = new DividendBackfillFetch(List.of(), oldest, 1);
+            when(dividendService.fetchWindowForBackfill(any(), any(), any(), any()))
+                    .thenReturn(fetch);
+            when(dividendService.persistWindowForBackfill(eq(fetch)))
+                    .thenReturn(new BackfillWindowResult(oldest, 1));
+
+            // Act
+            windowExecutor.executeWindow(status, domesticStock, session);
+
+            // Assert — DIVIDEND 경로가 고정 플로어(1950-01-01)로 호출되고, SPLIT(rev-split) 분기는 오염되지 않음
+            verify(dividendService)
+                    .fetchWindowForBackfill(
+                            eq(domesticStock), eq(session), eq(LocalDate.of(1950, 1, 1)), any());
+            Mockito.verifyNoInteractions(revSplitService);
+            BackfillStatus updated =
+                    backfillStatusRepository.findById(status.getId()).orElseThrow();
+            assertThat(updated.getStatus()).isEqualTo(BackfillStatusType.COMPLETED);
+            assertThat(updated.getLastCollectedDate()).isEqualTo(oldest);
+        }
+
+        @Test
+        @DisplayName("AC-9a: rawRowCount=100(캡 도달) → GROUP_A 종료 조건 미충족 → IN_PROGRESS 유지(다음 회차 이월)")
+        void dividendKey_hundredRowCap_staysInProgress() throws InterruptedException {
+            // Arrange — 원본 100행(캡 도달), 저장 100행 — GROUP_A "100행 미만" 미충족
+            BackfillStatus status = seedPending("005930", "corporate_events_dividend");
+            LocalDate oldest = LocalDate.of(2015, 3, 31);
+            DividendBackfillFetch fetch = new DividendBackfillFetch(List.of(), oldest, 100);
+            when(dividendService.fetchWindowForBackfill(any(), any(), any(), any()))
+                    .thenReturn(fetch);
+            when(dividendService.persistWindowForBackfill(eq(fetch)))
+                    .thenReturn(new BackfillWindowResult(oldest, 100, 100));
+
+            // Act
+            windowExecutor.executeWindow(status, domesticStock, session);
+
+            // Assert — rawRowCount=100 → COMPLETED 미전이, IN_PROGRESS 유지(기간분할 재조회 미수행 — RD-2)
+            BackfillStatus updated =
+                    backfillStatusRepository.findById(status.getId()).orElseThrow();
+            assertThat(updated.getStatus()).isEqualTo(BackfillStatusType.IN_PROGRESS);
+        }
+
+        @Test
+        @DisplayName("EC: 배당 이력 0건 → rawRowCount=0 → GROUP_A 0건 종료 COMPLETED")
+        void dividendKey_emptyHistory_completes() throws InterruptedException {
+            // Arrange
+            BackfillStatus status = seedPending("005930", "corporate_events_dividend");
+            DividendBackfillFetch fetch = new DividendBackfillFetch(List.of(), null, 0);
+            when(dividendService.fetchWindowForBackfill(any(), any(), any(), any()))
+                    .thenReturn(fetch);
+            when(dividendService.persistWindowForBackfill(eq(fetch)))
                     .thenReturn(BackfillWindowResult.EMPTY);
 
             // Act

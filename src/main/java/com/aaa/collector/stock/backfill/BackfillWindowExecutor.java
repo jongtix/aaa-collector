@@ -12,6 +12,8 @@ import com.aaa.collector.backfill.BackfillWindowResult;
 import com.aaa.collector.backfill.TerminationDecision;
 import com.aaa.collector.kis.gate.KeyLeaseRegistry.LeaseSession;
 import com.aaa.collector.kis.token.KisTokenIssueException;
+import com.aaa.collector.stock.DividendBackfillFetch;
+import com.aaa.collector.stock.DividendScheduleCollectionService;
 import com.aaa.collector.stock.RevSplitBackfillFetch;
 import com.aaa.collector.stock.RevSplitCollectionService;
 import com.aaa.collector.stock.Stock;
@@ -73,6 +75,7 @@ public class BackfillWindowExecutor {
     private final InvestorTrendCollectionService investorTrendService;
     private final CreditBalanceCollectionService creditBalanceService;
     private final RevSplitCollectionService revSplitService;
+    private final DividendScheduleCollectionService dividendService;
     private final BackfillTerminationPolicy terminationPolicy;
     private final BackfillWindowAdvancer windowAdvancer;
     private final BackfillMetrics backfillMetrics;
@@ -115,6 +118,12 @@ public class BackfillWindowExecutor {
             // from-date=고정 플로어(REQ-BACKFILL-094), to-date=today(KST, REQ-BACKFILL-095).
             case "corporate_events" ->
                     revSplitService.fetchWindowForBackfill(
+                            stock, session, windowAdvancer.groupAFromDate(), LocalDate.now(KST));
+            // @MX:NOTE SPEC-COLLECTOR-BACKFILL-009 W2 — 종목지정 현금배당 백필(SPLIT과 별도 data_table 논리 키).
+            // from-date=고정 플로어(REQ-BACKFILL-126), to-date=today(KST). SPLIT(rev-split) 분기
+            // 불변(REQ-BACKFILL-144).
+            case "corporate_events_dividend" ->
+                    dividendService.fetchWindowForBackfill(
                             stock, session, windowAdvancer.groupAFromDate(), LocalDate.now(KST));
             default -> {
                 log.warn(
@@ -269,6 +278,9 @@ public class BackfillWindowExecutor {
             case CreditBalanceFetch f -> creditBalanceService.persistWindow(status, stock, f);
             // SPEC-COLLECTOR-BACKFILL-007 W4 — 매핑+CorporateEventInserter INSERT IGNORE → 종료 입력
             case RevSplitBackfillFetch f -> revSplitService.persistWindowForBackfill(f);
+            // SPEC-COLLECTOR-BACKFILL-009 W2 — DividendRowAccumulator 저장 정책+INSERT IGNORE → 종료 입력.
+            // 별도 DTO 타입이라 SPLIT(RevSplitBackfillFetch) 분기와 오염 없이 분리(REQ-BACKFILL-144).
+            case DividendBackfillFetch f -> dividendService.persistWindowForBackfill(f);
             default -> {
                 log.warn(
                         "[backfill] 알 수 없는 fetchDto 타입 — type={}",
