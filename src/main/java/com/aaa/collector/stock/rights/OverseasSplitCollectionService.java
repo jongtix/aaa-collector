@@ -1,5 +1,6 @@
 package com.aaa.collector.stock.rights;
 
+import com.aaa.collector.backfill.BackfillWindowResult;
 import com.aaa.collector.common.gate.UsMarketOpenGate;
 import com.aaa.collector.kis.gate.KeyLeaseRegistry;
 import com.aaa.collector.kis.gate.KeyLeaseRegistry.LeaseSession;
@@ -12,6 +13,7 @@ import com.aaa.collector.stock.rights.OverseasSplitPrefetcher.TypeResult;
 import java.time.LocalDate;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -19,6 +21,8 @@ import java.util.concurrent.atomic.AtomicInteger;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
+import org.springframework.transaction.annotation.Transactional;
 
 /**
  * 해외(미국) 액면분할·병합(SPLIT) 수집 서비스 (TR CTRGT011R {@code RGHT_TYPE_CD ∈ {14, 15}},
@@ -124,6 +128,98 @@ public class OverseasSplitCollectionService {
                 result.prefetchTruncated(),
                 result.prefetchFailed());
         return result;
+    }
+
+    /**
+     * [REQ-OSPLIT-060/061] 종목지정 해외 SPLIT 백필 fetch 단계 — 비트랜잭션, DB 미접촉.
+     *
+     * <p>국내 {@link com.aaa.collector.stock.RevSplitCollectionService#fetchWindowForBackfill}와 동일 규약
+     * (BackfillWindowExecutor 계약). {@code PDNO=<심볼>}·광폭 과거 윈도우로 14/15를 조회하고, 정기 수집과 동일한 dedup·÷100
+     * 정규화·매핑 규약({@link OverseasSplitMapper})을 재사용해 적재 대상 엔티티를 구성한다 — 매핑 로직 중복 없음(REQ-OSPLIT-061).
+     *
+     * <p>종료 판정 입력 {@code rawRowCount}는 CTRGT011R 14+15 원본 응답 행수(dedup 전)로 고정하고, 실제 적재 행수({@code
+     * validRows.size()})와 결정적으로 분리한다. 정기 수집과 달리 추적 종목 필터 집합은 호출자가 지정한 단일 종목이다.
+     *
+     * @param stock 백필 대상 종목 (corporate_events status의 target)
+     * @param session 호출자가 1회 고정한 per-run 헬스 스냅샷 세션
+     * @param from 윈도우 하단 조회 시작일 (고정 플로어)
+     * @param to 윈도우 상단 조회 종료일 (today)
+     * @return 적재 대상 엔티티 + 최소 event_date + 원본 응답 행수
+     */
+    // @MX:NOTE: [AUTO] 종목지정 SPLIT 백필 fetch — 비tx HTTP 단계. BackfillWindowExecutor가 @Transactional
+    // persistWindowForBackfill과 교차 빈으로 순차 호출. rawRowCount=14+15 원본 행수(dedup 전).
+    public OverseasSplitBackfillFetch fetchWindowForBackfill(
+            Stock stock, LeaseSession session, LocalDate from, LocalDate to) {
+        Map<String, Stock> trackedStockBySymbol = new LinkedHashMap<>();
+        trackedStockBySymbol.put(stock.getSymbol(), stock);
+
+        OverseasSplitPrefetch prefetch =
+                prefetcher.prefetch(
+                        session, stock.getSymbol(), from.format(DATE_FMT), to.format(DATE_FMT));
+
+        List<CorporateEvent> validRows = new ArrayList<>();
+        int rawRowCount = 0;
+        rawRowCount +=
+                mapBackfillType(
+                        prefetch.split(),
+                        OverseasSplitMapper.RGHT_TYPE_SPLIT,
+                        trackedStockBySymbol,
+                        validRows);
+        rawRowCount +=
+                mapBackfillType(
+                        prefetch.merge(),
+                        OverseasSplitMapper.RGHT_TYPE_MERGE,
+                        trackedStockBySymbol,
+                        validRows);
+
+        LocalDate oldest =
+                validRows.stream()
+                        .map(CorporateEvent::getEventDate)
+                        .min(LocalDate::compareTo)
+                        .orElse(null);
+        return new OverseasSplitBackfillFetch(validRows, oldest, rawRowCount);
+    }
+
+    /**
+     * 백필 한 유형(14/15)의 SUCCESS 원본 행을 매핑해 {@code validRows}에 누적하고 원본 행수를 반환한다. TRUNCATED/FAILED는
+     * fail-closed로 폐기(0건 기여).
+     *
+     * @return 이 유형의 원본 응답 행수(SUCCESS만, 종료 판정 입력)
+     */
+    private int mapBackfillType(
+            TypeResult typeResult,
+            String rghtTypeCd,
+            Map<String, Stock> trackedStockBySymbol,
+            List<CorporateEvent> validRows) {
+        if (typeResult.status() != OverseasSplitPrefetcher.PrefetchStatus.SUCCESS) {
+            return 0;
+        }
+        OverseasSplitMapper.MapResult mapped =
+                mapper.mapRows(typeResult.rows(), rghtTypeCd, trackedStockBySymbol);
+        validRows.addAll(mapped.events());
+        return typeResult.rows().size();
+    }
+
+    /**
+     * [REQ-OSPLIT-060] 종목지정 해외 SPLIT 백필 persist 단계 — 적재 대상 엔티티를 INSERT IGNORE 적재한다.
+     *
+     * <p>{@code MANDATORY} 전파 — 활성 트랜잭션 없이 호출 시 {@code IllegalTransactionStateException}이 발생한다.
+     * 트랜잭션은 {@code BackfillWindowExecutor.routePersist}가 소유하며 이 메서드는 그 경계 안에서 호출된다(국내 {@link
+     * com.aaa.collector.stock.RevSplitCollectionService#persistWindowForBackfill} 동일 패턴). {@link
+     * CorporateEventInserter#insertBatch}(Tier-1 INSERT IGNORE, ON DUPLICATE KEY UPDATE 금지)로 멱등
+     * 적재한다.
+     *
+     * @param fetch {@link #fetchWindowForBackfill}가 반환한 DTO
+     * @return 종료 판정 입력 (oldestTradeDate=최소 event_date, rowCount=저장 행수, rawRowCount=원본 응답 행수)
+     */
+    // @MX:NOTE: [AUTO] 종목지정 SPLIT 백필 persist — BackfillWindowExecutor @Transactional 경계에서 호출.
+    // INSERT IGNORE 적재 후 3-arg BackfillWindowResult(rowCount=validRows.size, rawRowCount=원본) 반환.
+    // MANDATORY 가드 — tx 없이 호출 시 즉시 실패.
+    @Transactional(propagation = Propagation.MANDATORY)
+    public BackfillWindowResult persistWindowForBackfill(OverseasSplitBackfillFetch fetch) {
+        corporateEventInserter.insertBatch(fetch.validRows());
+        return new BackfillWindowResult(
+                fetch.oldestRecordDate(), fetch.validRows().size(), fetch.rawRowCount());
     }
 
     /**
