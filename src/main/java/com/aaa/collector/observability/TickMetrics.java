@@ -37,14 +37,18 @@ public class TickMetrics {
     static final String COUNTER_NAME = "aaa_collector_tick_received_total";
     static final String LAST_SEEN_NAME = "aaa_collector_tick_last_seen_seconds";
     private static final String MARKET_DOMESTIC = "domestic";
+    private static final String MARKET_OVERSEAS = "overseas";
+
+    /** 해외 틱 집계용 고정 키 — symbol 라벨 미생성(카디널리티 가드, REQ-WM-015). */
+    private static final String OVERSEAS_KEY = "__overseas__";
 
     private final MeterRegistry registry;
     private final Clock clock;
 
-    /** symbol → 누적 수신 카운터. */
+    /** symbol(국내) 또는 고정 키(해외) → 누적 수신 카운터. */
     private final Map<String, Counter> counters = new ConcurrentHashMap<>();
 
-    /** symbol → last-seen epoch 초 (gauge가 지연 조회하는 가변 상태). */
+    /** symbol(국내) 또는 고정 키(해외) → last-seen epoch 초 (gauge가 지연 조회하는 가변 상태). */
     private final Map<String, AtomicLong> lastSeen = new ConcurrentHashMap<>();
 
     /**
@@ -56,24 +60,38 @@ public class TickMetrics {
      * @param symbol 국내 종목 코드 (단축코드)
      */
     public void recordDomesticTick(String symbol) {
-        counters.computeIfAbsent(symbol, this::registerCounter).increment();
-        lastSeen.computeIfAbsent(symbol, this::registerLastSeenGauge)
+        counters.computeIfAbsent(symbol, s -> registerCounter(s, MARKET_DOMESTIC)).increment();
+        lastSeen.computeIfAbsent(symbol, s -> registerLastSeenGauge(s, MARKET_DOMESTIC))
                 .set(clock.instant().getEpochSecond());
     }
 
-    private Counter registerCounter(String symbol) {
-        return Counter.builder(COUNTER_NAME)
-                .tag("symbol", symbol)
-                .tag("market", MARKET_DOMESTIC)
-                .register(registry);
+    /**
+     * 해외(미국) 틱 1건 수신을 기록한다 (SPEC-OBSV-WATERMARK-001 REQ-WM-015).
+     *
+     * <p>{@code market="overseas"} 라벨로 단일 집계 시계열을 갱신한다 — 미국 종목 수가 많아 symbol 라벨은 생성하지 않는다(카디널리티 가드).
+     * 국내 틱 계측({@link #recordDomesticTick(String)})은 이 메서드와 무관하게 불변 유지된다.
+     */
+    public void recordOverseasTick() {
+        counters.computeIfAbsent(OVERSEAS_KEY, s -> registerCounter(null, MARKET_OVERSEAS))
+                .increment();
+        lastSeen.computeIfAbsent(OVERSEAS_KEY, s -> registerLastSeenGauge(null, MARKET_OVERSEAS))
+                .set(clock.instant().getEpochSecond());
     }
 
-    private AtomicLong registerLastSeenGauge(String symbol) {
+    private Counter registerCounter(String symbol, String market) {
+        Counter.Builder builder = Counter.builder(COUNTER_NAME).tag("market", market);
+        if (symbol != null) {
+            builder = builder.tag("symbol", symbol);
+        }
+        return builder.register(registry);
+    }
+
+    private AtomicLong registerLastSeenGauge(String symbol, String market) {
         AtomicLong holder = new AtomicLong();
-        return registry.gauge(
-                LAST_SEEN_NAME,
-                Tags.of("symbol", symbol, "market", MARKET_DOMESTIC),
-                holder,
-                AtomicLong::doubleValue);
+        Tags tags =
+                symbol != null
+                        ? Tags.of("symbol", symbol, "market", market)
+                        : Tags.of("market", market);
+        return registry.gauge(LAST_SEEN_NAME, tags, holder, AtomicLong::doubleValue);
     }
 }

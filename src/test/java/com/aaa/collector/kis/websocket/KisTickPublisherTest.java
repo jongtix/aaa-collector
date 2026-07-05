@@ -128,17 +128,39 @@ class KisTickPublisherTest {
         }
 
         @Test
-        @DisplayName("해외 틱은 틱 메트릭을 생성하지 않는다 (카디널리티 가드, REQ-OBSV-012)")
-        void doesNotRecordTickMetricForOverseas() {
+        @DisplayName("해외 틱은 symbol 라벨 없는 시계열을 생성하지 않는다 (카디널리티 가드, REQ-OBSV-012)")
+        void doesNotRecordSymbolTaggedMetricForOverseas() {
             // Arrange
             ParsedTick tick = new ParsedTick("HDFSCNT0", "AAPL", "AAPL|...", false, "trace-002");
 
             // Act
             publisher.publish(tick);
 
-            // Assert — AAPL 틱 시계열이 생성되지 않음
-            assertThat(meterRegistry.find("aaa_collector_tick_received_total").counters())
-                    .isEmpty();
+            // Assert — symbol=AAPL 태그의 시계열은 생성되지 않음
+            boolean hasSymbolTag =
+                    meterRegistry.find("aaa_collector_tick_received_total").counters().stream()
+                            .anyMatch(c -> c.getId().getTag("symbol") != null);
+            assertThat(hasSymbolTag).isFalse();
+        }
+
+        @Test
+        @DisplayName(
+                "해외 틱은 market=\"overseas\" 단일 집계 시계열로 계측된다 (SPEC-OBSV-WATERMARK-001 REQ-WM-015)")
+        void recordsOverseasAggregateMetric() {
+            // Arrange
+            ParsedTick tick = new ParsedTick("HDFSCNT0", "AAPL", "AAPL|...", false, "trace-002");
+
+            // Act
+            publisher.publish(tick);
+
+            // Assert
+            double count =
+                    meterRegistry
+                            .get("aaa_collector_tick_received_total")
+                            .tags("market", "overseas")
+                            .counter()
+                            .count();
+            assertThat(count).isEqualTo(1.0);
         }
     }
 

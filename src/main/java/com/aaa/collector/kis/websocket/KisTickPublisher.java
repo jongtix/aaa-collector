@@ -31,9 +31,12 @@ public class KisTickPublisher {
      * @param tick 발행할 틱 데이터
      */
     public void publish(ParsedTick tick) {
-        // REQ-OBSV-010/012: 국내 구독 종목 틱만 종목 단위 계측 — 해외 틱은 라벨 미생성(카디널리티 가드)
+        // REQ-OBSV-010/012: 국내 구독 종목 틱만 종목 단위 계측 — 해외 틱은 symbol 라벨 미생성(카디널리티 가드)
+        // SPEC-OBSV-WATERMARK-001 REQ-WM-015: 해외 틱은 market="overseas" 단일 집계 시계열로 계측
         if (tick.isDomestic()) {
             tickMetrics.recordDomesticTick(tick.trKey());
+        } else {
+            tickMetrics.recordOverseasTick();
         }
 
         String streamKey = tick.isDomestic() ? DOMESTIC_STREAM : OVERSEAS_STREAM;

@@ -126,4 +126,88 @@ class TickMetricsTest {
             assertThat(allDomestic).isTrue();
         }
     }
+
+    @Nested
+    @DisplayName("해외 틱 수신 시 (SPEC-OBSV-WATERMARK-001 REQ-WM-015)")
+    class OverseasTick {
+
+        @Test
+        @DisplayName("market=\"overseas\" 단일 집계 카운터가 증가한다 (symbol 라벨 없음)")
+        void incrementsOverseasAggregateCounter() {
+            SimpleMeterRegistry registry = new SimpleMeterRegistry();
+            TickMetrics metrics = new TickMetrics(registry, Clock.systemDefaultZone());
+
+            metrics.recordOverseasTick();
+            metrics.recordOverseasTick();
+
+            double count = registry.get(COUNTER).tags("market", "overseas").counter().count();
+            assertThat(count).isEqualTo(2.0);
+        }
+
+        @Test
+        @DisplayName("해외 틱은 symbol 태그를 생성하지 않는다 (카디널리티 가드)")
+        void doesNotCreateSymbolTag() {
+            SimpleMeterRegistry registry = new SimpleMeterRegistry();
+            TickMetrics metrics = new TickMetrics(registry, Clock.systemDefaultZone());
+
+            metrics.recordOverseasTick();
+
+            boolean hasSymbolTag =
+                    registry.getMeters().stream()
+                            .filter(m -> COUNTER.equals(m.getId().getName()))
+                            .anyMatch(m -> m.getId().getTag("symbol") != null);
+            assertThat(hasSymbolTag).isFalse();
+        }
+
+        @Test
+        @DisplayName("반복 수신은 단일 시계열만 유지한다 (카디널리티 가드)")
+        void repeatedCallsCreateSingleSeries() {
+            SimpleMeterRegistry registry = new SimpleMeterRegistry();
+            TickMetrics metrics = new TickMetrics(registry, Clock.systemDefaultZone());
+
+            for (int i = 0; i < 10; i++) {
+                metrics.recordOverseasTick();
+            }
+
+            long counterSeries =
+                    registry.getMeters().stream()
+                            .filter(m -> COUNTER.equals(m.getId().getName()))
+                            .count();
+            assertThat(counterSeries).isEqualTo(1);
+        }
+
+        @Test
+        @DisplayName("last-seen gauge가 KST epoch 초로 갱신된다")
+        void updatesLastSeenGauge() {
+            Instant fixed = Instant.parse("2026-06-19T03:00:00Z");
+            Clock clock = Clock.fixed(fixed, KST);
+            SimpleMeterRegistry registry = new SimpleMeterRegistry();
+            TickMetrics metrics = new TickMetrics(registry, clock);
+
+            metrics.recordOverseasTick();
+
+            Gauge gauge = registry.get(LAST_SEEN).tags("market", "overseas").gauge();
+            assertThat(gauge.value()).isEqualTo((double) fixed.getEpochSecond());
+        }
+
+        @Test
+        @DisplayName("국내 틱 계측과 독립적으로 유지된다")
+        void independentFromDomesticMetrics() {
+            SimpleMeterRegistry registry = new SimpleMeterRegistry();
+            TickMetrics metrics = new TickMetrics(registry, Clock.systemDefaultZone());
+
+            metrics.recordDomesticTick("005930");
+            metrics.recordOverseasTick();
+
+            double domesticCount =
+                    registry.get(COUNTER)
+                            .tags("symbol", "005930", "market", "domestic")
+                            .counter()
+                            .count();
+            double overseasCount =
+                    registry.get(COUNTER).tags("market", "overseas").counter().count();
+            assertThat(domesticCount).isEqualTo(1.0);
+            assertThat(overseasCount).isEqualTo(1.0);
+        }
+    }
 }
