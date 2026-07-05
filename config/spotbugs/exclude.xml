@@ -70,6 +70,18 @@
     </Match>
 
     <!--
+        EI_EXPOSE_REP2: Spring DI 생성자 주입 패턴 (kis.token/kis.websocket과 동일).
+        MarketSessionGate/UsMarketSessionGate가 expected_watermark 게이지를 REQ-WM-008/009에 따라
+        조건부로 등록/해제(unregister)하려면 MeterRegistry를 필드로 보유해야 한다(생성자 스코프 한정
+        사용 불가). 싱글턴 Bean을 final 필드에 저장하는 표준 패턴이며 방어적 복사가 불필요.
+        (SPEC-OBSV-WATERMARK-001, user-approved 2026-07-05)
+    -->
+    <Match>
+        <Package name="com.aaa.collector.market.session"/>
+        <Bug pattern="EI_EXPOSE_REP2"/>
+    </Match>
+
+    <!--
         CIPHER_INTEGRITY / PADDING_ORACLE: KIS Open API 프로토콜 강제 사양.
         KIS WebSocket은 AES-256-CBC + PKCS5Padding을 서버가 지정하므로 알고리즘 변경 불가.
         외부 네트워크에서 수신한 암호문을 신뢰 채널(KIS 서버 직접 연결)에서만 처리함.

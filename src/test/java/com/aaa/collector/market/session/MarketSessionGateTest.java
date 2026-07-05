@@ -388,15 +388,14 @@ class MarketSessionGateTest {
     class ExpectedWatermark {
 
         @Test
-        @DisplayName(
-                "부팅 후 updateCalendar 호출 전에는 NaN을 반환한다 (REQ-WM-008 근사 — 진성 absent는 registry 필드 보유 없이 구현 불가)")
-        void beforeFirstUpdateCalendar_returnsNaN() {
+        @DisplayName("부팅 후 updateCalendar 호출 전에는 게이지 자체가 absent이다 (REQ-WM-008)")
+        void beforeFirstUpdateCalendar_gaugeIsAbsent() {
             Clock clock = clockAt(TRADING_HOURS_INSTANT);
             SimpleMeterRegistry registry = new SimpleMeterRegistry();
             new MarketSessionGate(registry, new KisMarketSchedule(clock), clock);
 
-            Gauge gauge = registry.get(MarketSessionGate.EXPECTED_WATERMARK_NAME).gauge();
-            assertThat(gauge.value()).isNaN();
+            Gauge gauge = registry.find(MarketSessionGate.EXPECTED_WATERMARK_NAME).gauge();
+            assertThat(gauge).isNull();
         }
 
         @Test

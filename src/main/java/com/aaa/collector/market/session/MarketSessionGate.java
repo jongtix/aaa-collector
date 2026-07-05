@@ -64,6 +64,7 @@ public class MarketSessionGate implements MarketOpenGate {
     /** expected watermark 후방 탐색 상한 — 캘린더 lookback(N=14)을 상회하는 안전 마진(MI-04). */
     private static final int MAX_LOOKBACK_DAYS = 20;
 
+    private final MeterRegistry registry;
     private final KisMarketSchedule marketSchedule;
     private final Clock clock;
 
@@ -78,9 +79,16 @@ public class MarketSessionGate implements MarketOpenGate {
     private final AtomicLong lastUpdateEpoch = new AtomicLong(0L);
 
     /**
-     * 생성자. 세 gauge를 registry에 등록한다 — KIS API 호출 없음(REQ-OBSV-030). {@code registry}는 필드로 보유하지 않고 생성자
-     * 스코프에서만 사용한다(Spring 싱글턴 빈을 필드로 저장하는 대신 등록 시점에만 사용 — market.session 패키지는 EI_EXPOSE_REP2 예외목록
-     * 미등재).
+     * KRX expected watermark 게이지 핸들. null = 미등록(캘린더 미로드, REQ-WM-008 진성 absent). {@link
+     * #updateCalendar}에서 캘린더가 최초로 로드되면 등록된다.
+     */
+    private final AtomicReference<Gauge> expectedWatermarkGaugeRef = new AtomicReference<>(null);
+
+    /**
+     * 생성자. 두 gauge를 registry에 즉시 등록한다 — KIS API 호출 없음(REQ-OBSV-030). {@value
+     * #EXPECTED_WATERMARK_NAME}은 캘린더가 로드되기 전까지 진성 absent를 유지해야 하므로({@link #updateCalendar}) 지연
+     * 등록한다(REQ-WM-008). {@code registry}는 이 지연 등록/해제를 위해 필드로 보유한다(EI_EXPOSE_REP2 — market.session
+     * 패키지 예외목록 등재, SPEC-OBSV-WATERMARK-001).
      *
      * @param registry Micrometer 레지스트리
      * @param marketSchedule 장중 시간 판정 컴포넌트
@@ -88,6 +96,7 @@ public class MarketSessionGate implements MarketOpenGate {
      */
     public MarketSessionGate(
             MeterRegistry registry, KisMarketSchedule marketSchedule, Clock clock) {
+        this.registry = registry;
         this.marketSchedule = marketSchedule;
         this.clock = clock;
 
@@ -97,15 +106,6 @@ public class MarketSessionGate implements MarketOpenGate {
 
         Gauge.builder(GATE_LAST_UPDATE_NAME, lastUpdateEpoch, AtomicLong::doubleValue)
                 .description("시장 세션 게이트 마지막 갱신 시각 KST epoch 초; 0=미갱신 (REQ-OBSV-034)")
-                .register(registry);
-
-        Gauge.builder(
-                        EXPECTED_WATERMARK_NAME,
-                        this,
-                        MarketSessionGate::computeExpectedWatermarkEpoch)
-                .tags(Tags.of("market", "domestic"))
-                .description(
-                        "KRX 세션 마감이 지난 가장 최근 개장일의 KST 자정 epoch 초; 캘린더 미로드 시 NaN (REQ-WM-006/008)")
                 .register(registry);
     }
 
@@ -119,6 +119,7 @@ public class MarketSessionGate implements MarketOpenGate {
     public void updateCalendar(Map<LocalDate, Boolean> calendar) {
         calendarRef.set(Map.copyOf(calendar));
         lastUpdateEpoch.set(clock.instant().getEpochSecond());
+        registerExpectedWatermarkIfAbsent();
         log.info(
                 "시장 세션 게이트 캘린더 갱신 완료 — dates={}, lastUpdate={}",
                 calendar.size(),
@@ -126,14 +127,35 @@ public class MarketSessionGate implements MarketOpenGate {
     }
 
     /**
-     * KRX expected watermark(세션 마감이 지난 가장 최근 개장일)를 KST 자정 epoch 초로 계산한다(REQ-WM-006, stateless).
+     * 캘린더가 최초로 로드된 시점에 {@value #EXPECTED_WATERMARK_NAME} 게이지를 등록한다(REQ-WM-008).
      *
-     * <p>캘린더 미로드(boot-unset) 상태면 {@link Double#NaN}을 반환한다(REQ-WM-008 — 진성 Prometheus absent는
-     * registry field 보유 없이 구현할 수 없어, NaN 폴백으로 근사한다. NaN 비교는 PromQL {@code > 0} 등에서 false로 평가되어 오탐
-     * 방향 안전).
+     * <p>캘린더는 로드 후 실패해도 이전 값을 유지하므로(REQ-OBSV-033) 일단 등록되면 이후 다시 해제되지 않는다.
+     */
+    private void registerExpectedWatermarkIfAbsent() {
+        if (expectedWatermarkGaugeRef.get() != null) {
+            return;
+        }
+        Gauge gauge =
+                Gauge.builder(
+                                EXPECTED_WATERMARK_NAME,
+                                this,
+                                MarketSessionGate::computeExpectedWatermarkEpoch)
+                        .tags(Tags.of("market", "domestic"))
+                        .description(
+                                "KRX 세션 마감이 지난 가장 최근 개장일의 KST 자정 epoch 초; 캘린더 미로드 시 게이지 자체가 absent"
+                                        + " (REQ-WM-006/008)")
+                        .register(registry);
+        expectedWatermarkGaugeRef.set(gauge);
+    }
+
+    /**
+     * KRX expected watermark(세션 마감이 지난 가장 최근 개장일)를 KST 자정 epoch 초로 계산한다(REQ-WM-006, stateless).
      *
      * <p>오늘이 세션 마감(15:30 KST) 이전이면 전날부터, 이후면 오늘부터 역방향으로 개장일을 탐색한다. {@value #MAX_LOOKBACK_DAYS}일 이내
      * 개장일을 찾지 못하면 탐색 시작일을 그대로 반환한다(방어적 상한).
+     *
+     * <p>이 게이지는 캘린더가 로드된 이후에만 등록되므로({@link #registerExpectedWatermarkIfAbsent}) 호출 시점에 {@link
+     * #computeExpectedTradeDate}가 {@code null}을 반환하는 경우는 없다.
      */
     private double computeExpectedWatermarkEpoch() {
         LocalDate candidate = computeExpectedTradeDate();

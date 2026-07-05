@@ -72,6 +72,7 @@ public class UsMarketSessionGate implements UsMarketOpenGate {
     /** 반일(조기폐장) 시각 (REQ-WM-030, MA-05). */
     private static final LocalTime EARLY_CLOSE_TIME = LocalTime.of(13, 0);
 
+    private final MeterRegistry registry;
     private final KisMarketSchedule marketSchedule;
     private final Clock clock;
 
@@ -91,7 +92,17 @@ public class UsMarketSessionGate implements UsMarketOpenGate {
             new AtomicReference<>(Set.of());
 
     /**
-     * 생성자. 두 게이지를 registry에 등록한다 — API 호출 없음(REQ-010).
+     * US expected watermark 게이지 핸들. null = 미등록(holiday_count 미준비, REQ-WM-009 진성 absent). {@link
+     * #syncExpectedWatermarkRegistration()}이 {@value #HOLIDAY_COUNT_READY_THRESHOLD} 도달 여부에 따라
+     * 등록/해제한다.
+     */
+    private final AtomicReference<Gauge> expectedWatermarkGaugeRef = new AtomicReference<>(null);
+
+    /**
+     * 생성자. 두 게이지를 registry에 등록한다 — API 호출 없음(REQ-010). {@value #EXPECTED_WATERMARK_NAME}은
+     * holiday_count가 준비되기 전까지 진성 absent를 유지해야 하므로({@link #init()}) 지연 등록한다(REQ-WM-009). {@code
+     * registry}는 이 지연 등록/해제를 위해 필드로 보유한다(EI_EXPOSE_REP2 — market.session 패키지 예외목록 등재,
+     * SPEC-OBSV-WATERMARK-001).
      *
      * @param registry Micrometer 레지스트리
      * @param marketSchedule ET 장 시간 판정 컴포넌트
@@ -103,6 +114,7 @@ public class UsMarketSessionGate implements UsMarketOpenGate {
             KisMarketSchedule marketSchedule,
             Clock clock,
             UsMarketProperties properties) {
+        this.registry = registry;
         this.marketSchedule = marketSchedule;
         this.clock = clock;
         // 불변 복사본으로 보관 — EI_EXPOSE_REP2 방지 (SpotBugs)
@@ -115,16 +127,6 @@ public class UsMarketSessionGate implements UsMarketOpenGate {
 
         Gauge.builder(US_MARKET_HOLIDAY_COUNT_NAME, this, g -> g.observedHolidaysRef.get().size())
                 .description("미국 시장 게이트 NYSE 휴장일 수 (REQ-USMKT-010)")
-                .register(registry);
-
-        Gauge.builder(
-                        EXPECTED_WATERMARK_NAME,
-                        this,
-                        UsMarketSessionGate::computeExpectedWatermarkEpoch)
-                .tags(Tags.of("market", "overseas"))
-                .description(
-                        "US 세션 마감이 지난 가장 최근 개장일의 KST 자정 epoch 초; holiday_count 미준비 시 NaN"
-                                + " (REQ-WM-006/009)")
                 .register(registry);
     }
 
@@ -141,11 +143,39 @@ public class UsMarketSessionGate implements UsMarketOpenGate {
         holidays.addAll(computeObservedHolidays(year + 1));
         holidays.addAll(extraHolidays);
         observedHolidaysRef.set(Set.copyOf(holidays));
+        syncExpectedWatermarkRegistration();
         log.info(
                 "[us-market-gate] NYSE 휴장일 Set 초기화 완료 — count={}, year={}/{}",
                 observedHolidaysRef.get().size(),
                 year,
                 year + 1);
+    }
+
+    /**
+     * holiday_count가 {@value #HOLIDAY_COUNT_READY_THRESHOLD}에 도달했는지에 따라 {@value
+     * #EXPECTED_WATERMARK_NAME} 게이지를 등록하거나 해제한다(REQ-WM-009).
+     */
+    private void syncExpectedWatermarkRegistration() {
+        boolean ready = observedHolidaysRef.get().size() >= HOLIDAY_COUNT_READY_THRESHOLD;
+        Gauge existing = expectedWatermarkGaugeRef.get();
+        if (ready) {
+            if (existing == null) {
+                Gauge gauge =
+                        Gauge.builder(
+                                        EXPECTED_WATERMARK_NAME,
+                                        this,
+                                        UsMarketSessionGate::computeExpectedWatermarkEpoch)
+                                .tags(Tags.of("market", "overseas"))
+                                .description(
+                                        "US 세션 마감이 지난 가장 최근 개장일의 KST 자정 epoch 초; holiday_count 미준비 시 게이지"
+                                                + " 자체가 absent (REQ-WM-006/009)")
+                                .register(registry);
+                expectedWatermarkGaugeRef.set(gauge);
+            }
+        } else if (existing != null) {
+            registry.remove(existing);
+            expectedWatermarkGaugeRef.set(null);
+        }
     }
 
     /**

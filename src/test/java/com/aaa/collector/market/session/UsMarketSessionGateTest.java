@@ -433,6 +433,18 @@ class UsMarketSessionGateTest {
                 Instant.parse("2026-07-06T21:00:00Z");
 
         @Test
+        @DisplayName("init() 호출 전(holiday_count=0)에는 게이지 자체가 absent이다 (REQ-WM-009)")
+        void beforeInit_gaugeIsAbsent() {
+            Clock clock = Clock.fixed(MON_TRADING_INSTANT, NEW_YORK);
+            SimpleMeterRegistry registry = new SimpleMeterRegistry();
+            new UsMarketSessionGate(
+                    registry, new KisMarketSchedule(clock), clock, new UsMarketProperties());
+
+            Gauge gauge = registry.find(UsMarketSessionGate.EXPECTED_WATERMARK_NAME).gauge();
+            assertThat(gauge).isNull();
+        }
+
+        @Test
         @DisplayName("holiday_count>=20 도달 시 expected watermark 게이지가 등록된다")
         void registersGaugeWhenHolidayCountReady() {
             Clock clock = Clock.fixed(MON_TRADING_INSTANT, NEW_YORK);
