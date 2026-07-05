@@ -29,8 +29,10 @@ import org.springframework.stereotype.Component;
  * <p>침묵 드롭(REQ-OBSV-023, DP4 단일 카운터): {@value #SILENT_DROP_NAME}는 사유별 라벨 없이 INSERT IGNORE 중복 외 사유로
  * 침묵 드롭된 행 수를 단일 카운터로 누적한다.
  */
-// @MX:ANCHOR: [AUTO] 배치 집계 계측 진입점 — 일봉·수급 배치 완료 지점에서 호출
-// @MX:REASON: SPEC-COLLECTOR-OBSV-001 REQ-OBSV-020/021/022/023 — 일봉 1 + 수급 3종 + 침묵 드롭에서 fan_in >= 4
+// @MX:ANCHOR: [AUTO] 배치 집계 계측 진입점 — 일봉·수급 배치 완료 지점 + 파싱 거부 계측에서 호출
+// @MX:REASON: SPEC-COLLECTOR-OBSV-001 REQ-OBSV-020/021/022/023 +
+// SPEC-COLLECTOR-SHORTSALE-DECIMAL-001
+// REQ-SSD-009 — 일봉 1 + 수급 3종 + 침묵 드롭 + 파싱 거부(Daily·Interest·CDN 백필)에서 fan_in >= 4
 // @MX:SPEC: SPEC-COLLECTOR-OBSV-001
 @Component
 @RequiredArgsConstructor
@@ -43,6 +45,7 @@ public class BatchMetrics {
     static final String COMPLETENESS_NAME = "aaa_collector_batch_completeness_ratio";
     static final String LAST_LOAD_NAME = "aaa_collector_batch_last_load_seconds";
     static final String SILENT_DROP_NAME = "aaa_collector_batch_silent_drops_total";
+    static final String PARSE_REJECT_NAME = "aaa_collector_batch_parse_rejections_total";
 
     private final MeterRegistry registry;
     private final Clock clock;
@@ -108,6 +111,19 @@ public class BatchMetrics {
             return;
         }
         counter.increment(drops);
+    }
+
+    /**
+     * 파싱 거부(음수·scale 초과·형식 오류) 건수를 배치 라벨별 카운터로 누적한다 (REQ-SSD-009).
+     *
+     * <p>기존 {@code last_load} gauge·{@code skip_total}와 독립적인 시계열로, 특히 종전 Micrometer 계측이 전무하던 CDN 백필
+     * 경로의 파싱 거부를 관측 가능하게 한다. {@code rejections=0}으로 호출하면 0 값으로 시계열을 등록해 "계측 연결됨"을 노출한다(멱등).
+     *
+     * @param batch 배치 라벨(예: {@code overseas-shortsale-backfill}, {@code overseas-shortsale-daily})
+     * @param rejections 이번 배치에서 관측된 파싱 거부 건수(음수는 0으로 취급)
+     */
+    public void recordParseRejections(String batch, long rejections) {
+        counter(PARSE_REJECT_NAME, batch).increment(Math.max(0L, rejections));
     }
 
     private Counter counter(String name, String batch) {

@@ -23,6 +23,7 @@ class BatchMetricsTest {
     private static final String COMPLETENESS = "aaa_collector_batch_completeness_ratio";
     private static final String LAST_LOAD = "aaa_collector_batch_last_load_seconds";
     private static final String SILENT_DROP = "aaa_collector_batch_silent_drops_total";
+    private static final String PARSE_REJECT = "aaa_collector_batch_parse_rejections_total";
 
     @Nested
     @DisplayName("배치 회차 완료 기록 (REQ-OBSV-020)")
@@ -143,6 +144,52 @@ class BatchMetricsTest {
     }
 
     @Nested
+    @DisplayName("파싱 거부 카운터 (REQ-SSD-009 — last_load 독립)")
+    class ParseRejections {
+
+        @Test
+        @DisplayName("배치 라벨별로 파싱 거부 건수를 누적한다")
+        void accumulatesByBatchLabel() {
+            SimpleMeterRegistry registry = new SimpleMeterRegistry();
+            BatchMetrics metrics = new BatchMetrics(registry, Clock.systemDefaultZone());
+
+            metrics.recordParseRejections("overseas-shortsale-backfill", 3);
+            metrics.recordParseRejections("overseas-shortsale-backfill", 2);
+            metrics.recordParseRejections("overseas-shortsale-daily", 1);
+
+            assertThat(counter(registry, PARSE_REJECT, "overseas-shortsale-backfill"))
+                    .isEqualTo(5.0);
+            assertThat(counter(registry, PARSE_REJECT, "overseas-shortsale-daily")).isEqualTo(1.0);
+        }
+
+        @Test
+        @DisplayName("0건 호출도 시계열을 0으로 등록한다 (계측 연결 노출)")
+        void zeroRegistersSeries() {
+            SimpleMeterRegistry registry = new SimpleMeterRegistry();
+            BatchMetrics metrics = new BatchMetrics(registry, Clock.systemDefaultZone());
+
+            metrics.recordParseRejections("overseas-shortsale-backfill", 0);
+
+            assertThat(counter(registry, PARSE_REJECT, "overseas-shortsale-backfill"))
+                    .isEqualTo(0.0);
+        }
+
+        @Test
+        @DisplayName("파싱 거부 카운터는 last_load gauge를 갱신하지 않는다 (독립 시계열)")
+        void doesNotTouchLastLoad() {
+            SimpleMeterRegistry registry = new SimpleMeterRegistry();
+            BatchMetrics metrics = new BatchMetrics(registry, Clock.systemDefaultZone());
+
+            metrics.recordParseRejections("overseas-shortsale-backfill", 4);
+
+            boolean noLastLoad =
+                    registry.getMeters().stream()
+                            .noneMatch(m -> LAST_LOAD.equals(m.getId().getName()));
+            assertThat(noLastLoad).isTrue();
+        }
+    }
+
+    @Nested
     @DisplayName("warm-start API (REQ-001/002/003)")
     class WarmStart {
 
@@ -206,7 +253,15 @@ class BatchMetricsTest {
             metrics.warmLastLoad("domestic-daily", instant);
 
             Set<String> knownNames =
-                    Set.of(TARGET, SUCCESS, FAIL, SKIP, COMPLETENESS, LAST_LOAD, SILENT_DROP);
+                    Set.of(
+                            TARGET,
+                            SUCCESS,
+                            FAIL,
+                            SKIP,
+                            COMPLETENESS,
+                            LAST_LOAD,
+                            SILENT_DROP,
+                            PARSE_REJECT);
             boolean onlyKnownNames =
                     registry.getMeters().stream()
                             .map(m -> m.getId().getName())
