@@ -6,6 +6,7 @@ import com.aaa.collector.stock.ShortSaleOverseasRepository.ShortInterestSnapshot
 import com.aaa.collector.stock.enums.AssetType;
 import com.aaa.collector.stock.enums.Market;
 import com.aaa.collector.support.SharedMySqlContainer;
+import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
@@ -61,6 +62,11 @@ class ShortSaleOverseasRepositoryIT {
                         .build());
     }
 
+    /** 정수 거래량을 BigDecimal로 만드는 헬퍼 — 문자열 리터럴 중복(PMD AvoidDuplicateLiterals) 회피. */
+    private static BigDecimal vol(long value) {
+        return BigDecimal.valueOf(value);
+    }
+
     private List<ShortSaleOverseas> rowsOf(Long stockId) {
         return repository.findAll().stream()
                 .filter(r -> r.getStock().getId().equals(stockId))
@@ -86,14 +92,14 @@ class ShortSaleOverseasRepositoryIT {
             Stock aapl = savedUsStock();
             LocalDate tradeDate = LocalDate.of(2026, 1, 6);
             repository.upsertDaily(
-                    aapl.getId(), tradeDate, 100L, 200L, LocalDateTime.now(), null, null);
+                    aapl.getId(), tradeDate, vol(100), vol(200), LocalDateTime.now(), null, null);
 
             // Act: 같은 키 재수집 — 합산값 변경
             repository.upsertDaily(
                     aapl.getId(),
                     tradeDate,
-                    5_159_846L,
-                    18_442_863L,
+                    vol(5_159_846),
+                    vol(18_442_863),
                     LocalDateTime.now(),
                     null,
                     null);
@@ -101,9 +107,33 @@ class ShortSaleOverseasRepositoryIT {
             // Assert
             assertThat(rowsOf(aapl.getId())).hasSize(1);
             ShortSaleOverseas row = findRow(aapl.getId(), tradeDate);
-            assertThat(row.getShortVolume()).isEqualTo(5_159_846L);
-            assertThat(row.getTotalVolume()).isEqualTo(18_442_863L);
+            assertThat(row.getShortVolume()).isEqualByComparingTo("5159846");
+            assertThat(row.getTotalVolume()).isEqualByComparingTo("18442863");
             assertThat(row.getDailyCollectedAt()).isNotNull();
+        }
+
+        @Test
+        @DisplayName(
+                "소수 6자리 거래량이 DECIMAL(20,6)로 무손실 round-trip된다 (AC-1, REQ-SSD-001/002 — mysql:8.4)")
+        void losslessDecimalRoundTrip() {
+            // Arrange: FINRA 2026-02-23 이후 실측 최대 정밀도(소수 6자리)
+            Stock aapl = savedUsStock();
+            LocalDate tradeDate = LocalDate.of(2026, 2, 23);
+
+            // Act: UPSERT 후 재조회
+            repository.upsertDaily(
+                    aapl.getId(),
+                    tradeDate,
+                    new BigDecimal("11479561.984835"),
+                    new BigDecimal("240101.320702"),
+                    LocalDateTime.now(),
+                    null,
+                    null);
+
+            // Assert: 반올림·절삭 없이 원천 정밀도 그대로 (scale 편차 흡수 위해 compareTo 기반 isEqualByComparingTo)
+            ShortSaleOverseas row = findRow(aapl.getId(), tradeDate);
+            assertThat(row.getShortVolume()).isEqualByComparingTo("11479561.984835");
+            assertThat(row.getTotalVolume()).isEqualByComparingTo("240101.320702");
         }
 
         @Test
@@ -116,7 +146,13 @@ class ShortSaleOverseasRepositoryIT {
 
             // Act
             repository.upsertDaily(
-                    aapl.getId(), tradeDate, 100L, 200L, LocalDateTime.now(), 134_422_787L, siDate);
+                    aapl.getId(),
+                    tradeDate,
+                    vol(100),
+                    vol(200),
+                    LocalDateTime.now(),
+                    134_422_787L,
+                    siDate);
 
             // Assert
             ShortSaleOverseas row = findRow(aapl.getId(), tradeDate);
@@ -135,19 +171,19 @@ class ShortSaleOverseasRepositoryIT {
             repository.upsertDaily(
                     aapl.getId(),
                     tradeDate,
-                    100L,
-                    200L,
+                    vol(100),
+                    vol(200),
                     LocalDateTime.now(),
                     134_422_787L,
                     LocalDate.of(2026, 1, 2));
 
             // Act: forward 매칭 없는(null) Daily 재수집
             repository.upsertDaily(
-                    aapl.getId(), tradeDate, 999L, 1000L, LocalDateTime.now(), null, null);
+                    aapl.getId(), tradeDate, vol(999), vol(1000), LocalDateTime.now(), null, null);
 
             // Assert: volume은 갱신, interest는 보존
             ShortSaleOverseas row = findRow(aapl.getId(), tradeDate);
-            assertThat(row.getShortVolume()).isEqualTo(999L);
+            assertThat(row.getShortVolume()).isEqualByComparingTo("999");
             assertThat(row.getShortInterest()).isEqualTo(134_422_787L);
         }
     }
@@ -176,7 +212,7 @@ class ShortSaleOverseasRepositoryIT {
                                 assertThat(r.getShortInterest()).isEqualTo(134_422_787L);
                                 assertThat(r.getShortInterestDate()).isEqualTo(settlementDate);
                                 assertThat(r.getInterestCollectedAt()).isNotNull();
-                                assertThat(r.getShortVolume()).isEqualTo(0L);
+                                assertThat(r.getShortVolume()).isEqualByComparingTo("0");
                                 assertThat(r.getDailyCollectedAt()).isNull();
                             })
                     .satisfies(
@@ -193,15 +229,15 @@ class ShortSaleOverseasRepositoryIT {
             Stock aapl = savedUsStock();
             LocalDate date = LocalDate.of(2026, 1, 15);
             LocalDateTime dailyAt = LocalDateTime.of(2026, 1, 16, 10, 0);
-            repository.upsertDaily(aapl.getId(), date, 5000L, 9000L, dailyAt, null, null);
+            repository.upsertDaily(aapl.getId(), date, vol(5000), vol(9000), dailyAt, null, null);
 
             // Act: 같은 날짜에 SI 적재 (settlementDate == trade_date)
             repository.upsertInterest(aapl.getId(), date, 134_422_787L, LocalDateTime.now());
 
             // Assert: Daily 컬럼 보존, interest 컬럼만 갱신
             ShortSaleOverseas row = findRow(aapl.getId(), date);
-            assertThat(row.getShortVolume()).isEqualTo(5000L);
-            assertThat(row.getTotalVolume()).isEqualTo(9000L);
+            assertThat(row.getShortVolume()).isEqualByComparingTo("5000");
+            assertThat(row.getTotalVolume()).isEqualByComparingTo("9000");
             assertThat(row.getDailyCollectedAt()).isEqualTo(dailyAt);
             assertThat(row.getShortInterest()).isEqualTo(134_422_787L);
         }
@@ -213,7 +249,7 @@ class ShortSaleOverseasRepositoryIT {
             Stock aapl = savedUsStock();
             LocalDate date = LocalDate.of(2026, 4, 15);
             LocalDateTime dailyAt = LocalDateTime.of(2026, 4, 16, 10, 0);
-            repository.upsertDaily(aapl.getId(), date, 7_000L, 12_000L, dailyAt, null, null);
+            repository.upsertDaily(aapl.getId(), date, vol(7000), vol(12_000), dailyAt, null, null);
             repository.upsertInterest(aapl.getId(), date, 126_771_284L, LocalDateTime.now());
 
             // Act: revision 갱신값 UPSERT (같은 settlementDate, 수정 잔고)
@@ -222,8 +258,8 @@ class ShortSaleOverseasRepositoryIT {
             // Assert
             ShortSaleOverseas row = findRow(aapl.getId(), date);
             assertThat(row.getShortInterest()).isEqualTo(140_000_000L);
-            assertThat(row.getShortVolume()).isEqualTo(7_000L);
-            assertThat(row.getTotalVolume()).isEqualTo(12_000L);
+            assertThat(row.getShortVolume()).isEqualByComparingTo("7000");
+            assertThat(row.getTotalVolume()).isEqualByComparingTo("12000");
             assertThat(row.getDailyCollectedAt()).isEqualTo(dailyAt);
         }
     }
@@ -285,8 +321,8 @@ class ShortSaleOverseasRepositoryIT {
             repository.upsertDaily(
                     aapl.getId(),
                     LocalDate.of(2026, 1, 2),
-                    100L,
-                    200L,
+                    vol(100),
+                    vol(200),
                     LocalDateTime.now(),
                     null,
                     null);

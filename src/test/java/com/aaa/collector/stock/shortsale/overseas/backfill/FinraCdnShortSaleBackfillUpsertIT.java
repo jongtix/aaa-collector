@@ -8,9 +8,9 @@ import com.aaa.collector.stock.Stock;
 import com.aaa.collector.stock.StockRepository;
 import com.aaa.collector.stock.enums.AssetType;
 import com.aaa.collector.stock.enums.Market;
+import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
-import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Tag;
@@ -63,6 +63,11 @@ class FinraCdnShortSaleBackfillUpsertIT {
 
     private static final AtomicInteger SYMBOL_SEQ = new AtomicInteger();
 
+    /** 정수 거래량을 BigDecimal로 만드는 헬퍼 — 문자열 리터럴 중복·ONE/TEN 인스턴스화(PMD) 회피. */
+    private static BigDecimal vol(long value) {
+        return BigDecimal.valueOf(value);
+    }
+
     private Stock savedUsStock() {
         String symbol = "BF" + SYMBOL_SEQ.incrementAndGet();
         return stockRepository.save(
@@ -98,19 +103,44 @@ class FinraCdnShortSaleBackfillUpsertIT {
         Stock stock = savedUsStock();
         LocalDate tradeDate = LocalDate.of(2013, 1, 2);
         LocalDateTime firstCollectedAt = LocalDateTime.of(2026, 7, 1, 5, 0);
-        repository.upsertDaily(stock.getId(), tradeDate, 100L, 1000L, firstCollectedAt, null, null);
+        repository.upsertDaily(
+                stock.getId(), tradeDate, vol(100), vol(1000), firstCollectedAt, null, null);
 
         // Act — 동일 (stock_id, trade_date) 재적재(값 변경)
         LocalDateTime secondCollectedAt = LocalDateTime.of(2026, 7, 2, 5, 0);
         repository.upsertDaily(
-                stock.getId(), tradeDate, 150L, 1500L, secondCollectedAt, null, null);
+                stock.getId(), tradeDate, vol(150), vol(1500), secondCollectedAt, null, null);
 
         // Assert
         assertThat(rowCountFor(stock.getId())).isEqualTo(1);
         ShortSaleOverseas row = rowAt(stock.getId(), tradeDate);
-        assertThat(row.getShortVolume()).isEqualTo(150L);
-        assertThat(row.getTotalVolume()).isEqualTo(1500L);
+        assertThat(row.getShortVolume()).isEqualByComparingTo("150");
+        assertThat(row.getTotalVolume()).isEqualByComparingTo("1500");
         assertThat(row.getDailyCollectedAt()).isEqualTo(secondCollectedAt);
+    }
+
+    @Test
+    @DisplayName(
+            "소수 6자리 거래량이 DECIMAL(20,6)로 무손실 round-trip된다 (AC-1/AC-14, REQ-SSD-001/002 — mysql:8.4)")
+    void losslessDecimalRoundTripThroughRealMySql() {
+        // Arrange — FINRA 2026-02-23 이후 CDN 실측 최대 정밀도(소수 6자리)
+        Stock stock = savedUsStock();
+        LocalDate tradeDate = LocalDate.of(2026, 2, 23);
+
+        // Act — UPSERT 후 실 MySQL에서 재조회(H2 미재현 — DECIMAL 정밀도는 mysql:8.4 필수)
+        repository.upsertDaily(
+                stock.getId(),
+                tradeDate,
+                new BigDecimal("11479561.984835"),
+                new BigDecimal("240101.320702"),
+                LocalDateTime.now(),
+                null,
+                null);
+
+        // Assert — 반올림·절삭 없이 원천 정밀도 그대로. scale 편차 흡수 위해 compareTo(=isEqualByComparingTo) 사용
+        ShortSaleOverseas row = rowAt(stock.getId(), tradeDate);
+        assertThat(row.getShortVolume()).isEqualByComparingTo("11479561.984835");
+        assertThat(row.getTotalVolume()).isEqualByComparingTo("240101.320702");
     }
 
     @Test
@@ -129,7 +159,7 @@ class FinraCdnShortSaleBackfillUpsertIT {
         // Act — 백필이 Daily 3컬럼을 interest 파라미터 null로 덮어 채움
         LocalDateTime dailyCollectedAt = LocalDateTime.of(2026, 7, 3, 5, 0);
         repository.upsertDaily(
-                stock.getId(), tradeDate, 7_000L, 12_000L, dailyCollectedAt, null, null);
+                stock.getId(), tradeDate, vol(7000), vol(12_000), dailyCollectedAt, null, null);
 
         // Assert — Daily 갱신, 행 수 불변(DELETE 없음)
         assertThat(rowCountFor(stock.getId())).isEqualTo(1);
@@ -137,8 +167,8 @@ class FinraCdnShortSaleBackfillUpsertIT {
         assertThat(after)
                 .satisfies(
                         r -> {
-                            assertThat(r.getShortVolume()).isEqualTo(7_000L);
-                            assertThat(r.getTotalVolume()).isEqualTo(12_000L);
+                            assertThat(r.getShortVolume()).isEqualByComparingTo("7000");
+                            assertThat(r.getTotalVolume()).isEqualByComparingTo("12000");
                             assertThat(r.getDailyCollectedAt()).isEqualTo(dailyCollectedAt);
                         })
                 .satisfies(
@@ -159,7 +189,7 @@ class FinraCdnShortSaleBackfillUpsertIT {
 
         // Act
         repository.upsertDaily(
-                stock.getId(), tradeDate, 10L, 100L, LocalDateTime.now(), null, null);
+                stock.getId(), tradeDate, vol(10), vol(100), LocalDateTime.now(), null, null);
 
         // Assert
         ShortSaleOverseas row = rowAt(stock.getId(), tradeDate);
@@ -174,16 +204,18 @@ class FinraCdnShortSaleBackfillUpsertIT {
         Stock stock = savedUsStock();
         LocalDate tradeDate = LocalDate.of(2012, 5, 10);
         LocalDateTime collectedAt = LocalDateTime.of(2026, 7, 1, 5, 0);
-        repository.upsertDaily(stock.getId(), tradeDate, 42L, 420L, collectedAt, null, null);
+        repository.upsertDaily(
+                stock.getId(), tradeDate, vol(42), vol(420), collectedAt, null, null);
 
         // Act — 같은 값으로 재기록(재순회)
-        repository.upsertDaily(stock.getId(), tradeDate, 42L, 420L, collectedAt, null, null);
+        repository.upsertDaily(
+                stock.getId(), tradeDate, vol(42), vol(420), collectedAt, null, null);
 
         // Assert — 값 불변, 행 수 불변
         assertThat(rowCountFor(stock.getId())).isEqualTo(1);
         ShortSaleOverseas row = rowAt(stock.getId(), tradeDate);
-        assertThat(row.getShortVolume()).isEqualTo(42L);
-        assertThat(row.getTotalVolume()).isEqualTo(420L);
+        assertThat(row.getShortVolume()).isEqualByComparingTo("42");
+        assertThat(row.getTotalVolume()).isEqualByComparingTo("420");
         assertThat(row.getDailyCollectedAt()).isEqualTo(collectedAt);
     }
 
@@ -196,12 +228,13 @@ class FinraCdnShortSaleBackfillUpsertIT {
         LocalDate tradeDate = LocalDate.of(2011, 3, 1);
 
         // Act
-        repository.upsertDaily(stockA.getId(), tradeDate, 1L, 10L, LocalDateTime.now(), null, null);
-        repository.upsertDaily(stockB.getId(), tradeDate, 2L, 20L, LocalDateTime.now(), null, null);
+        repository.upsertDaily(
+                stockA.getId(), tradeDate, vol(1), vol(10), LocalDateTime.now(), null, null);
+        repository.upsertDaily(
+                stockB.getId(), tradeDate, vol(2), vol(20), LocalDateTime.now(), null, null);
 
-        // Assert
-        assertThat(List.of(rowAt(stockA.getId(), tradeDate), rowAt(stockB.getId(), tradeDate)))
-                .extracting(ShortSaleOverseas::getShortVolume)
-                .containsExactlyInAnyOrder(1L, 2L);
+        // Assert — 종목별 독립 적재(scale 편차 흡수 위해 개별 compareTo)
+        assertThat(rowAt(stockA.getId(), tradeDate).getShortVolume()).isEqualByComparingTo("1");
+        assertThat(rowAt(stockB.getId(), tradeDate).getShortVolume()).isEqualByComparingTo("2");
     }
 }

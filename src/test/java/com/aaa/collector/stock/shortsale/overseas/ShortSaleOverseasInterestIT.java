@@ -113,7 +113,7 @@ class ShortSaleOverseasInterestIT {
                             assertThat(r.getShortInterestDate()).isEqualTo(settlement);
                             assertThat(r.getInterestCollectedAt()).isNotNull();
                             assertThat(r.getDailyCollectedAt()).isNull();
-                            assertThat(r.getShortVolume()).isZero();
+                            assertThat(r.getShortVolume()).isEqualByComparingTo("0");
                         })
                 .satisfies(
                         r -> {
@@ -147,7 +147,14 @@ class ShortSaleOverseasInterestIT {
         Stock stock = savedUsStock();
         LocalDate settlement = LocalDate.of(2026, 4, 13).minusDays(SYMBOL_SEQ.get());
         LocalDateTime dailyAt = LocalDateTime.of(2026, 4, 16, 10, 0);
-        repository.upsertDaily(stock.getId(), settlement, 7_000L, 12_000L, dailyAt, null, null);
+        repository.upsertDaily(
+                stock.getId(),
+                settlement,
+                new BigDecimal("7000"),
+                new BigDecimal("12000"),
+                dailyAt,
+                null,
+                null);
         repository.upsertInterest(stock.getId(), settlement, 126_771_284L, LocalDateTime.now());
 
         when(finraClient.fetchConsolidatedShortInterest(any(), any()))
@@ -159,8 +166,8 @@ class ShortSaleOverseasInterestIT {
         // Assert: interest 갱신, Daily 보존
         ShortSaleOverseas row = rowAt(stock, settlement);
         assertThat(row.getShortInterest()).isEqualTo(140_000_000L);
-        assertThat(row.getShortVolume()).isEqualTo(7_000L);
-        assertThat(row.getTotalVolume()).isEqualTo(12_000L);
+        assertThat(row.getShortVolume()).isEqualByComparingTo("7000");
+        assertThat(row.getTotalVolume()).isEqualByComparingTo("12000");
         assertThat(row.getDailyCollectedAt()).isEqualTo(dailyAt);
     }
 

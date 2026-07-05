@@ -96,7 +96,7 @@ class ShortSaleOverseasLocfIT {
 
         // Assert: Daily 행(2026-01-06)에 forward 잔고(2026-01-02, 200) 복사
         ShortSaleOverseas row = dailyRow(stock);
-        assertThat(row.getShortVolume()).isEqualTo(100L);
+        assertThat(row.getShortVolume()).isEqualByComparingTo("100");
         assertThat(row.getShortInterest()).isEqualTo(200L);
         assertThat(row.getShortInterestDate()).isEqualTo(LocalDate.of(2026, 1, 2));
         assertThat(row.getDailyCollectedAt()).isNotNull();
@@ -115,7 +115,7 @@ class ShortSaleOverseasLocfIT {
 
         // Assert
         ShortSaleOverseas row = dailyRow(stock);
-        assertThat(row.getShortVolume()).isEqualTo(100L);
+        assertThat(row.getShortVolume()).isEqualByComparingTo("100");
         assertThat(row.getShortInterest()).isNull();
         assertThat(row.getShortInterestDate()).isNull();
     }
