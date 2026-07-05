@@ -146,5 +146,21 @@ class FinraCdnFileParserTest {
             assertThat(result.rows()).isEmpty();
             assertThat(result.skippedCount()).isZero();
         }
+
+        @Test
+        @DisplayName("숫자로 변환 불가한 값(NumberFormatException)은 예외 없이 skip 처리한다")
+        void nonNumericValueIsSkippedWithoutException() {
+            String body =
+                    "Date|Symbol|ShortVolume|TotalVolume|Market\n"
+                            + "20260223|BADV|abc|100|Q\n"
+                            + "20260223|OKROW|500|1000|Q\n";
+
+            ParsedFileResult result = parser.parse(body);
+
+            // OKROW만 유효, BADV는 ShortVolume이 숫자가 아니라 skip
+            assertThat(result.rows()).hasSize(1);
+            assertThat(result.rows().getFirst().symbol()).isEqualTo("OKROW");
+            assertThat(result.skippedCount()).isEqualTo(1);
+        }
     }
 }
