@@ -1,6 +1,7 @@
 package com.aaa.collector.dart.disclosure;
 
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.util.Optional;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;
@@ -51,4 +52,11 @@ public interface DisclosureRepository extends JpaRepository<Disclosure, Long> {
     /** 최대 접수일자 조회 (SPEC-OBSV-WATERMARK-001 REQ-WM-003 warm-start용 — {@code disclosures}). */
     @Query("SELECT MAX(d.rceptDt) FROM Disclosure d")
     Optional<LocalDate> findMaxRceptDt();
+
+    /**
+     * 최신 적재 시각 조회 (SPEC-OBSV-WATERMARK-001 REQ-WM-014 warm-start용 — {@code dart-disclosure} 실행
+     * 신선도).
+     */
+    @Query("SELECT MAX(d.createdAt) FROM Disclosure d")
+    Optional<LocalDateTime> findMaxCreatedAt();
 }

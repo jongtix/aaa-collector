@@ -1,5 +1,6 @@
 package com.aaa.collector.news.overseas;
 
+import com.aaa.collector.observability.BatchMetrics;
 import java.time.Clock;
 import java.time.LocalDate;
 import java.time.ZoneId;
@@ -26,14 +27,21 @@ public class OverseasNewsScheduler {
 
     private static final ZoneId ET = ZoneId.of("America/New_York");
 
+    /**
+     * BatchMetrics 배치 라벨 (SPEC-OBSV-WATERMARK-001 REQ-WM-013). warm-start=X(MI-01, sub-daily 임계).
+     */
+    private static final String BATCH_LABEL = "overseas-news";
+
     private final OverseasNewsTitleCollectionService collectionService;
     private final Clock clock;
+    private final BatchMetrics batchMetrics;
 
     /**
      * 해외 뉴스 제목 수집 배치 진입점 (REQ-OVE-002, -003, -004).
      *
      * <p>예외 흡수: 수집 단계의 예외가 전파되어 스케줄러 스레드가 종료되는 것을 방지한다(다음 실행 때 재시도). 로그 기준일은 ET 거래일이다 — cron 발화
-     * 시각(미국 장중, =서버 KST 익일)을 ET zone으로 환산한다. Clock은 테스트에서 {@code Clock.fixed(...)}로 대체된다.
+     * 시각(미국 장중, =서버 KST 익일)을 ET zone으로 환산한다. Clock은 테스트에서 {@code Clock.fixed(...)}로 대체된다. 완료 시
+     * {@code overseas-news} 배치 라벨로 실행 신선도를 계측한다(SPEC-OBSV-WATERMARK-001 REQ-WM-013).
      */
     @Scheduled(cron = "0 0/10 9-16 * * MON-FRI", zone = "America/New_York")
     @SuppressWarnings("PMD.AvoidCatchingGenericException") // 스케줄러 스레드 종료 방지 — 해외 일봉/권리 스케줄러와 동일 패턴
@@ -46,6 +54,12 @@ public class OverseasNewsScheduler {
                     "[overseas-news] 수집 배치 완료 — attempted={}, succeeded={}, skipped={}",
                     result.attempted(),
                     result.succeeded(),
+                    result.skipped());
+            batchMetrics.recordCompletion(
+                    BATCH_LABEL,
+                    result.attempted(),
+                    result.succeeded(),
+                    Math.max(0L, (long) result.attempted() - result.succeeded() - result.skipped()),
                     result.skipped());
         } catch (Exception e) {
             log.error("[overseas-news] 수집 배치 예외 — 다음 실행 때 재시도", e);

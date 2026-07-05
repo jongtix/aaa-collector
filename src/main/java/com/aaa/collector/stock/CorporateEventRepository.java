@@ -1,5 +1,9 @@
 package com.aaa.collector.stock;
 
+import com.aaa.collector.stock.enums.Market;
+import java.time.LocalDateTime;
+import java.util.Collection;
+import java.util.Optional;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
@@ -51,4 +55,15 @@ public interface CorporateEventRepository extends JpaRepository<CorporateEvent, 
     /** 종목별 저장 행 수 (멱등성 검증용). */
     @Query("SELECT COUNT(c) FROM CorporateEvent c WHERE c.stock.id = :stockId")
     long countByStockId(@Param("stockId") Long stockId);
+
+    /**
+     * 시장 필터로 최신 적재 시각을 조회한다 (SPEC-OBSV-WATERMARK-001 REQ-WM-014 warm-start용 — {@code
+     * overseas-rights}). 해외 시장(NYSE/NASDAQ/AMEX) 필터로 국내 배당/분할 기록과 분리한다.
+     *
+     * @param markets 조회 대상 Market enum 컬렉션
+     * @return MAX(createdAt) — 한 건도 없으면 {@link Optional#empty()}
+     */
+    @Query("SELECT MAX(c.createdAt) FROM CorporateEvent c WHERE c.stock.market IN :markets")
+    Optional<LocalDateTime> findMaxCreatedAtByMarketsIn(
+            @Param("markets") Collection<Market> markets);
 }

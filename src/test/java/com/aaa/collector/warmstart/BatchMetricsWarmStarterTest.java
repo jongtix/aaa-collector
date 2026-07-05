@@ -7,10 +7,13 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.aaa.collector.dart.corpcode.CorpCodeMappingRepository;
+import com.aaa.collector.dart.disclosure.DisclosureRepository;
 import com.aaa.collector.macro.MacroIndicatorRepository;
 import com.aaa.collector.market.MarketIndicatorRepository;
 import com.aaa.collector.observability.BatchMetrics;
 import com.aaa.collector.stock.AnalystEstimateRepository;
+import com.aaa.collector.stock.CorporateEventRepository;
 import com.aaa.collector.stock.CreditBalanceRepository;
 import com.aaa.collector.stock.DailyOhlcvRepository;
 import com.aaa.collector.stock.FinancialRepository;
@@ -18,6 +21,7 @@ import com.aaa.collector.stock.InvestorTrendRepository;
 import com.aaa.collector.stock.ShortSaleDomesticRepository;
 import com.aaa.collector.stock.ShortSaleOverseasRepository;
 import com.aaa.collector.stock.etf.EtfRepresentativeHistoryRepository;
+import com.aaa.collector.stock.exthours.ExtendedHoursRepository;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
@@ -27,7 +31,6 @@ import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
-import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.dao.QueryTimeoutException;
@@ -49,8 +52,33 @@ class BatchMetricsWarmStarterTest {
     @Mock private MacroIndicatorRepository macroIndicatorRepository;
     @Mock private MarketIndicatorRepository marketIndicatorRepository;
     @Mock private EtfRepresentativeHistoryRepository etfRepresentativeHistoryRepository;
+    @Mock private DisclosureRepository disclosureRepository;
+    @Mock private CorporateEventRepository corporateEventRepository;
+    @Mock private ExtendedHoursRepository extendedHoursRepository;
+    @Mock private CorpCodeMappingRepository corpCodeMappingRepository;
 
-    @InjectMocks private BatchMetricsWarmStarter warmStarter;
+    /**
+     * 매 호출마다 새 인스턴스를 생성한다 — {@code @InjectMocks} 필드를 두지 않아 PMD {@code TooManyFields} 임계를 넘지 않는다(15개
+     * {@code @Mock} 필드 유지).
+     */
+    private BatchMetricsWarmStarter warmStarter() {
+        return new BatchMetricsWarmStarter(
+                batchMetrics,
+                dailyOhlcvRepository,
+                investorTrendRepository,
+                creditBalanceRepository,
+                shortSaleDomesticRepository,
+                shortSaleOverseasRepository,
+                analystEstimateRepository,
+                financialRepository,
+                macroIndicatorRepository,
+                marketIndicatorRepository,
+                etfRepresentativeHistoryRepository,
+                disclosureRepository,
+                corporateEventRepository,
+                extendedHoursRepository,
+                corpCodeMappingRepository);
+    }
 
     @Nested
     @DisplayName("정상 set — 조회 결과 있으면 warmLastLoad 호출됨")
@@ -71,7 +99,7 @@ class BatchMetricsWarmStarterTest {
                             );
 
             // Act
-            warmStarter.run(null);
+            warmStarter().run(null);
 
             // Assert
             ArgumentCaptor<Instant> captor = ArgumentCaptor.forClass(Instant.class);
@@ -91,7 +119,7 @@ class BatchMetricsWarmStarterTest {
             stubAllEmpty();
 
             // Act
-            warmStarter.run(null);
+            warmStarter().run(null);
 
             // Assert
             verify(batchMetrics, never()).warmLastLoad(any(), any());
@@ -113,7 +141,7 @@ class BatchMetricsWarmStarterTest {
             stubNonDailyEmpty();
 
             // Act & Assert
-            assertThatNoException().isThrownBy(() -> warmStarter.run(null));
+            assertThatNoException().isThrownBy(() -> warmStarter().run(null));
         }
 
         @Test
@@ -127,7 +155,7 @@ class BatchMetricsWarmStarterTest {
             stubNonDailyEmpty();
 
             // Act
-            warmStarter.run(null);
+            warmStarter().run(null);
 
             // Assert: overseas-daily는 정상 호출
             verify(batchMetrics).warmLastLoad(eq("overseas-daily"), any(Instant.class));
@@ -142,7 +170,7 @@ class BatchMetricsWarmStarterTest {
         @DisplayName("domestic-news로 warmLastLoad가 호출된 적 없다")
         void doesNotWarmDomesticNews() throws Exception {
             stubAllEmpty();
-            warmStarter.run(null);
+            warmStarter().run(null);
             verify(batchMetrics, never()).warmLastLoad(eq("domestic-news"), any());
         }
 
@@ -150,7 +178,7 @@ class BatchMetricsWarmStarterTest {
         @DisplayName("watchlist-sync-krx로 warmLastLoad가 호출된 적 없다")
         void doesNotWarmWatchlistSyncKrx() throws Exception {
             stubAllEmpty();
-            warmStarter.run(null);
+            warmStarter().run(null);
             verify(batchMetrics, never()).warmLastLoad(eq("watchlist-sync-krx"), any());
         }
 
@@ -158,8 +186,74 @@ class BatchMetricsWarmStarterTest {
         @DisplayName("watchlist-sync-us로 warmLastLoad가 호출된 적 없다")
         void doesNotWarmWatchlistSyncUs() throws Exception {
             stubAllEmpty();
-            warmStarter.run(null);
+            warmStarter().run(null);
             verify(batchMetrics, never()).warmLastLoad(eq("watchlist-sync-us"), any());
+        }
+
+        @Test
+        @DisplayName("overseas-news로 warmLastLoad가 호출된 적 없다 (MI-01, sub-daily 임계 부팅 오발 회피)")
+        void doesNotWarmOverseasNews() throws Exception {
+            stubAllEmpty();
+            warmStarter().run(null);
+            verify(batchMetrics, never()).warmLastLoad(eq("overseas-news"), any());
+        }
+    }
+
+    @Nested
+    @DisplayName("신규 4라벨 warm-start (SPEC-OBSV-WATERMARK-001 REQ-WM-014)")
+    class NewLabelsWarmStart {
+
+        @Test
+        @DisplayName("dart-disclosure 조회 결과가 있으면 warmLastLoad('dart-disclosure', instant) 호출")
+        void warmsDartDisclosure() throws Exception {
+            LocalDateTime kstTime = LocalDateTime.of(2026, 7, 3, 22, 0, 0);
+            Instant expected = kstTime.atZone(KST).toInstant();
+            stubAllEmpty();
+            when(disclosureRepository.findMaxCreatedAt()).thenReturn(Optional.of(kstTime));
+
+            warmStarter().run(null);
+
+            verify(batchMetrics).warmLastLoad(eq("dart-disclosure"), eq(expected));
+        }
+
+        @Test
+        @DisplayName("overseas-rights 조회 결과가 있으면 warmLastLoad('overseas-rights', instant) 호출")
+        void warmsOverseasRights() throws Exception {
+            LocalDateTime kstTime = LocalDateTime.of(2026, 7, 3, 22, 0, 0);
+            Instant expected = kstTime.atZone(KST).toInstant();
+            stubAllEmpty();
+            when(corporateEventRepository.findMaxCreatedAtByMarketsIn(any()))
+                    .thenReturn(Optional.of(kstTime));
+
+            warmStarter().run(null);
+
+            verify(batchMetrics).warmLastLoad(eq("overseas-rights"), eq(expected));
+        }
+
+        @Test
+        @DisplayName("extended-hours 조회 결과가 있으면 warmLastLoad('extended-hours', instant) 호출")
+        void warmsExtendedHours() throws Exception {
+            LocalDateTime kstTime = LocalDateTime.of(2026, 7, 3, 22, 0, 0);
+            Instant expected = kstTime.atZone(KST).toInstant();
+            stubAllEmpty();
+            when(extendedHoursRepository.findMaxCollectedAt()).thenReturn(Optional.of(kstTime));
+
+            warmStarter().run(null);
+
+            verify(batchMetrics).warmLastLoad(eq("extended-hours"), eq(expected));
+        }
+
+        @Test
+        @DisplayName("corp-code 조회 결과가 있으면 warmLastLoad('corp-code', instant) 호출")
+        void warmsCorpCode() throws Exception {
+            LocalDateTime kstTime = LocalDateTime.of(2026, 7, 3, 22, 0, 0);
+            Instant expected = kstTime.atZone(KST).toInstant();
+            stubAllEmpty();
+            when(corpCodeMappingRepository.findMaxCreatedAt()).thenReturn(Optional.of(kstTime));
+
+            warmStarter().run(null);
+
+            verify(batchMetrics).warmLastLoad(eq("corp-code"), eq(expected));
         }
     }
 
@@ -182,5 +276,10 @@ class BatchMetricsWarmStarterTest {
         when(marketIndicatorRepository.findMaxCreatedAt()).thenReturn(Optional.empty());
         when(etfRepresentativeHistoryRepository.findMaxEffectiveFrom())
                 .thenReturn(Optional.empty());
+        when(disclosureRepository.findMaxCreatedAt()).thenReturn(Optional.empty());
+        when(corporateEventRepository.findMaxCreatedAtByMarketsIn(any()))
+                .thenReturn(Optional.empty());
+        when(extendedHoursRepository.findMaxCollectedAt()).thenReturn(Optional.empty());
+        when(corpCodeMappingRepository.findMaxCreatedAt()).thenReturn(Optional.empty());
     }
 }

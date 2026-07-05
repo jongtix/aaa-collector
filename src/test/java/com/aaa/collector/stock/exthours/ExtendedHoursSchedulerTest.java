@@ -4,7 +4,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 
+import com.aaa.collector.observability.BatchMetrics;
 import java.lang.reflect.Method;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -20,12 +22,13 @@ import org.springframework.scheduling.annotation.Scheduled;
 class ExtendedHoursSchedulerTest {
 
     @Mock private ExtendedHoursCollectionService collectionService;
+    @Mock private BatchMetrics batchMetrics;
 
     private ExtendedHoursScheduler scheduler;
 
     @BeforeEach
     void setUp() {
-        scheduler = new ExtendedHoursScheduler(collectionService);
+        scheduler = new ExtendedHoursScheduler(collectionService, batchMetrics);
     }
 
     @Nested
@@ -33,20 +36,22 @@ class ExtendedHoursSchedulerTest {
     class CollectPre {
 
         @Test
-        @DisplayName("collectPre 발화 → collect(PRE) 1회 호출")
+        @DisplayName("collectPre 발화 → collect(PRE) 1회 호출 + extended-hours 배치 완료 계측")
         void collectPre_callsCollectWithPreSession() {
             scheduler.collectPre();
 
             verify(collectionService).collect(Session.PRE);
+            verify(batchMetrics).recordCompletion("extended-hours", 1, 1, 0, 0);
         }
 
         @Test
-        @DisplayName("collectPre — collect(PRE) 예외 흡수, 스레드 생존")
+        @DisplayName("collectPre — collect(PRE) 예외 흡수, 스레드 생존, 계측 미호출")
         void collectPre_absorbsException() {
             doThrow(new RuntimeException("PRE 수집 오류")).when(collectionService).collect(Session.PRE);
 
             // Act & Assert — 예외 전파 없음
             assertThatCode(scheduler::collectPre).doesNotThrowAnyException();
+            verifyNoInteractions(batchMetrics);
         }
     }
 
@@ -55,15 +60,16 @@ class ExtendedHoursSchedulerTest {
     class CollectAfter {
 
         @Test
-        @DisplayName("collectAfter 발화 → collect(AFTER) 1회 호출")
+        @DisplayName("collectAfter 발화 → collect(AFTER) 1회 호출 + extended-hours 배치 완료 계측")
         void collectAfter_callsCollectWithAfterSession() {
             scheduler.collectAfter();
 
             verify(collectionService).collect(Session.AFTER);
+            verify(batchMetrics).recordCompletion("extended-hours", 1, 1, 0, 0);
         }
 
         @Test
-        @DisplayName("collectAfter — collect(AFTER) 예외 흡수, 스레드 생존")
+        @DisplayName("collectAfter — collect(AFTER) 예외 흡수, 스레드 생존, 계측 미호출")
         void collectAfter_absorbsException() {
             doThrow(new RuntimeException("AFTER 수집 오류"))
                     .when(collectionService)
@@ -71,6 +77,7 @@ class ExtendedHoursSchedulerTest {
 
             // Act & Assert — 예외 전파 없음
             assertThatCode(scheduler::collectAfter).doesNotThrowAnyException();
+            verifyNoInteractions(batchMetrics);
         }
     }
 

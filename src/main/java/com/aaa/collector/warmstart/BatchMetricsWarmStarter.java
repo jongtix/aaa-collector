@@ -1,9 +1,12 @@
 package com.aaa.collector.warmstart;
 
+import com.aaa.collector.dart.corpcode.CorpCodeMappingRepository;
+import com.aaa.collector.dart.disclosure.DisclosureRepository;
 import com.aaa.collector.macro.MacroIndicatorRepository;
 import com.aaa.collector.market.MarketIndicatorRepository;
 import com.aaa.collector.observability.BatchMetrics;
 import com.aaa.collector.stock.AnalystEstimateRepository;
+import com.aaa.collector.stock.CorporateEventRepository;
 import com.aaa.collector.stock.CreditBalanceRepository;
 import com.aaa.collector.stock.DailyOhlcvRepository;
 import com.aaa.collector.stock.FinancialRepository;
@@ -12,6 +15,7 @@ import com.aaa.collector.stock.ShortSaleDomesticRepository;
 import com.aaa.collector.stock.ShortSaleOverseasRepository;
 import com.aaa.collector.stock.enums.Market;
 import com.aaa.collector.stock.etf.EtfRepresentativeHistoryRepository;
+import com.aaa.collector.stock.exthours.ExtendedHoursRepository;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
@@ -59,6 +63,10 @@ public class BatchMetricsWarmStarter implements ApplicationRunner {
     private final MacroIndicatorRepository macroIndicatorRepository;
     private final MarketIndicatorRepository marketIndicatorRepository;
     private final EtfRepresentativeHistoryRepository etfRepresentativeHistoryRepository;
+    private final DisclosureRepository disclosureRepository;
+    private final CorporateEventRepository corporateEventRepository;
+    private final ExtendedHoursRepository extendedHoursRepository;
+    private final CorpCodeMappingRepository corpCodeMappingRepository;
 
     @Override
     public void run(ApplicationArguments args) {
@@ -84,6 +92,15 @@ public class BatchMetricsWarmStarter implements ApplicationRunner {
         warm(
                 "domestic-etf-representative",
                 etfRepresentativeHistoryRepository::findMaxEffectiveFrom);
+
+        // SPEC-OBSV-WATERMARK-001 REQ-WM-014: dart-disclosure(현행 암묵 누락) + 신규 라벨 중 warm-start=O 3종
+        warm("dart-disclosure", disclosureRepository::findMaxCreatedAt);
+        warm(
+                "overseas-rights",
+                () -> corporateEventRepository.findMaxCreatedAtByMarketsIn(OVERSEAS_MARKETS));
+        warm("extended-hours", extendedHoursRepository::findMaxCollectedAt);
+        // corp-code: corp_code_mapping이 BaseEntity.createdAt(per-run 삽입 시각)을 보유하므로 편입(MI-06)
+        warm("corp-code", corpCodeMappingRepository::findMaxCreatedAt);
 
         log.info("BatchMetrics warm-start 완료");
     }

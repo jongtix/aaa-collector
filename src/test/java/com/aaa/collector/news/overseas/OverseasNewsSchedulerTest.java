@@ -6,6 +6,7 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.aaa.collector.observability.BatchMetrics;
 import java.lang.reflect.Method;
 import java.time.Clock;
 import java.time.Instant;
@@ -29,12 +30,13 @@ class OverseasNewsSchedulerTest {
     private static final ZoneId KST = ZoneId.of("Asia/Seoul");
 
     @Mock private OverseasNewsTitleCollectionService collectionService;
+    @Mock private BatchMetrics batchMetrics;
 
     private OverseasNewsScheduler scheduler;
 
     @BeforeEach
     void setUp() {
-        scheduler = new OverseasNewsScheduler(collectionService, Clock.system(KST));
+        scheduler = new OverseasNewsScheduler(collectionService, Clock.system(KST), batchMetrics);
     }
 
     private OverseasNewsCollectionResult result() {
@@ -84,6 +86,16 @@ class OverseasNewsSchedulerTest {
         }
 
         @Test
+        @DisplayName("collect 성공 시 overseas-news 배치 라벨로 완료 계측한다 (REQ-WM-013)")
+        void collectNews_recordsBatchCompletion() {
+            when(collectionService.collect()).thenReturn(result());
+
+            scheduler.collectNews();
+
+            verify(batchMetrics).recordCompletion("overseas-news", 10, 8, 0, 2);
+        }
+
+        @Test
         @DisplayName("collect 예외 — 흡수, 스케줄러 미종료 (REQ-OVE-004)")
         void collectNews_exceptionInCollect_absorbed() {
             when(collectionService.collect()).thenThrow(new RuntimeException("수집 예외"));
@@ -109,7 +121,7 @@ class OverseasNewsSchedulerTest {
 
             Clock fixedClock = Clock.fixed(firingInstant, ET);
             OverseasNewsScheduler schedulerUnderTest =
-                    new OverseasNewsScheduler(collectionService, fixedClock);
+                    new OverseasNewsScheduler(collectionService, fixedClock, batchMetrics);
             when(collectionService.collect()).thenReturn(result());
 
             // Act & Assert — ET 환산 + collect 발화가 예외 없이 완료

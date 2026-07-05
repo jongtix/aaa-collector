@@ -48,4 +48,11 @@ public interface ExtendedHoursRepository extends JpaRepository<ExtendedHours, Lo
      */
     @Query("SELECT MAX(e.tradeDate) FROM ExtendedHours e WHERE e.session = :session")
     Optional<LocalDate> findMaxTradeDateBySession(@Param("session") Session session);
+
+    /**
+     * 최신 수집 시각 조회 (SPEC-OBSV-WATERMARK-001 REQ-WM-014 warm-start용 — {@code extended-hours} 실행 신선도,
+     * PRE/AFTER 공유).
+     */
+    @Query("SELECT MAX(e.collectedAt) FROM ExtendedHours e")
+    Optional<LocalDateTime> findMaxCollectedAt();
 }

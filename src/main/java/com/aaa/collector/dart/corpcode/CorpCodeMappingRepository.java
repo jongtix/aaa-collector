@@ -1,6 +1,7 @@
 package com.aaa.collector.dart.corpcode;
 
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.util.Optional;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;
@@ -51,4 +52,12 @@ public interface CorpCodeMappingRepository extends JpaRepository<CorpCodeMapping
     /** stock_code로 행 수를 반환한다 (통합 테스트용). */
     @Query("SELECT COUNT(m) FROM CorpCodeMapping m WHERE m.stockCode = :stockCode")
     long countByStockCode(@Param("stockCode") String stockCode);
+
+    /**
+     * 최신 적재 시각 조회 (SPEC-OBSV-WATERMARK-001 REQ-WM-014 warm-start용 — {@code corp-code} 실행 신선도).
+     * {@code corp_code_mapping}은 {@code BaseEntity}의 {@code created_at}(per-run 삽입 시각)을 보유하므로
+     * warm-start 대상에 편입한다(MI-06).
+     */
+    @Query("SELECT MAX(m.createdAt) FROM CorpCodeMapping m")
+    Optional<LocalDateTime> findMaxCreatedAt();
 }

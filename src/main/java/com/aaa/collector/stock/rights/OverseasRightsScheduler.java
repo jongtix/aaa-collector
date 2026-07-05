@@ -1,5 +1,6 @@
 package com.aaa.collector.stock.rights;
 
+import com.aaa.collector.observability.BatchMetrics;
 import java.time.Clock;
 import java.time.LocalDate;
 import java.time.ZoneId;
@@ -26,14 +27,19 @@ public class OverseasRightsScheduler {
 
     private static final ZoneId ET = ZoneId.of("America/New_York");
 
+    /** BatchMetrics 배치 라벨 (SPEC-OBSV-WATERMARK-001 REQ-WM-013). warm-start=O. */
+    private static final String BATCH_LABEL = "overseas-rights";
+
     private final OverseasRightsCollectionService collectionService;
     private final Clock clock;
+    private final BatchMetrics batchMetrics;
 
     /**
      * 해외 현금배당 수집 배치 진입점 (REQ-OVE-001, -003, -004).
      *
      * <p>예외 흡수: 수집 단계의 예외가 전파되어 스케줄러 스레드가 종료되는 것을 방지한다(다음 실행 때 재시도). 로그 기준일은 ET 거래일이다 — cron 17:00
-     * ET(=서버 KST 익일) 발화 시각을 ET zone으로 환산한다. Clock은 테스트에서 {@code Clock.fixed(...)}로 대체된다.
+     * ET(=서버 KST 익일) 발화 시각을 ET zone으로 환산한다. Clock은 테스트에서 {@code Clock.fixed(...)}로 대체된다. 완료 시
+     * {@code overseas-rights} 배치 라벨로 실행 신선도를 계측한다(SPEC-OBSV-WATERMARK-001 REQ-WM-013).
      */
     @Scheduled(cron = "0 0 17 * * MON-FRI", zone = "America/New_York")
     @SuppressWarnings("PMD.AvoidCatchingGenericException") // 스케줄러 스레드 종료 방지 — 해외 일봉 스케줄러와 동일 패턴
@@ -50,6 +56,21 @@ public class OverseasRightsScheduler {
                     result.skippedNonCashRows(),
                     result.skippedValidationRows(),
                     result.skippedToxicRows());
+            long totalSkipped =
+                    (long) result.skippedStocks()
+                            + result.skippedNonCashRows()
+                            + result.skippedValidationRows()
+                            + result.skippedToxicRows();
+            batchMetrics.recordCompletion(
+                    BATCH_LABEL,
+                    result.attemptedStocks(),
+                    result.succeededRows(),
+                    Math.max(
+                            0L,
+                            (long) result.attemptedStocks()
+                                    - result.succeededRows()
+                                    - totalSkipped),
+                    totalSkipped);
         } catch (Exception e) {
             log.error("[overseas-rights] 수집 배치 예외 — 다음 실행 때 재시도", e);
         }

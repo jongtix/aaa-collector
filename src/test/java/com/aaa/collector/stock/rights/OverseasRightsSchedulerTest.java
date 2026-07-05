@@ -6,6 +6,7 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.aaa.collector.observability.BatchMetrics;
 import java.lang.reflect.Method;
 import java.time.Clock;
 import java.time.Instant;
@@ -29,12 +30,13 @@ class OverseasRightsSchedulerTest {
     private static final ZoneId KST = ZoneId.of("Asia/Seoul");
 
     @Mock private OverseasRightsCollectionService collectionService;
+    @Mock private BatchMetrics batchMetrics;
 
     private OverseasRightsScheduler scheduler;
 
     @BeforeEach
     void setUp() {
-        scheduler = new OverseasRightsScheduler(collectionService, Clock.system(KST));
+        scheduler = new OverseasRightsScheduler(collectionService, Clock.system(KST), batchMetrics);
     }
 
     private OverseasRightsCollectionResult result() {
@@ -84,6 +86,16 @@ class OverseasRightsSchedulerTest {
         }
 
         @Test
+        @DisplayName("collect 성공 시 overseas-rights 배치 라벨로 완료 계측한다 (REQ-WM-013)")
+        void collectRights_recordsBatchCompletion() {
+            when(collectionService.collect()).thenReturn(result());
+
+            scheduler.collectRights();
+
+            verify(batchMetrics).recordCompletion("overseas-rights", 5, 3, 0, 2);
+        }
+
+        @Test
         @DisplayName("collect 예외 — 흡수, 스케줄러 미종료 (REQ-OVE-004)")
         void collectRights_exceptionInCollect_absorbed() {
             when(collectionService.collect()).thenThrow(new RuntimeException("수집 예외"));
@@ -111,7 +123,7 @@ class OverseasRightsSchedulerTest {
 
             Clock fixedClock = Clock.fixed(firingInstant, ET);
             OverseasRightsScheduler schedulerUnderTest =
-                    new OverseasRightsScheduler(collectionService, fixedClock);
+                    new OverseasRightsScheduler(collectionService, fixedClock, batchMetrics);
             when(collectionService.collect()).thenReturn(result());
 
             // Act & Assert — ET 환산 + collect 발화가 예외 없이 완료
