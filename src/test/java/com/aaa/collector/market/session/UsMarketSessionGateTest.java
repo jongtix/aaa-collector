@@ -166,6 +166,70 @@ class UsMarketSessionGateTest {
         }
     }
 
+    @Nested
+    @DisplayName("반일 조기폐장 (SPEC-OBSV-WATERMARK-001 REQ-WM-030)")
+    class EarlyClose {
+
+        // 2026-11-27(토요일 아님, 금요일=Black Friday) — NYSE 표준 10휴장일 미포함, 반일 config 대상
+        private static final LocalDate BLACK_FRIDAY_2026 = LocalDate.of(2026, 11, 27);
+
+        // 2026-11-27 10:00 ET(EST, UTC-5) = 15:00 UTC — 반일 폐장(13:00 ET) 이전
+        private static final Instant BEFORE_EARLY_CLOSE = Instant.parse("2026-11-27T15:00:00Z");
+
+        // 2026-11-27 14:00 ET(EST) = 19:00 UTC — 반일 폐장(13:00 ET) 이후
+        private static final Instant AFTER_EARLY_CLOSE = Instant.parse("2026-11-27T19:00:00Z");
+
+        // 2026-11-27 13:00 ET(EST) 정각 = 18:00 UTC — 경계값(미포함)
+        private static final Instant AT_EARLY_CLOSE_BOUNDARY =
+                Instant.parse("2026-11-27T18:00:00Z");
+
+        private UsMarketSessionGate createGateWithEarlyClose(Instant now) {
+            Clock clock = Clock.fixed(now, NEW_YORK);
+            KisMarketSchedule schedule = new KisMarketSchedule(clock);
+            UsMarketProperties props = new UsMarketProperties();
+            props.setEarlyCloseDays(List.of(BLACK_FRIDAY_2026));
+            UsMarketSessionGate gate =
+                    new UsMarketSessionGate(new SimpleMeterRegistry(), schedule, clock, props);
+            gate.init();
+            return gate;
+        }
+
+        @Test
+        @DisplayName("반일 config 대상 날짜 + 13:00 ET 이전 → true (정상 개장)")
+        void beforeEarlyCloseTime_returnsTrue() {
+            UsMarketSessionGate gate = createGateWithEarlyClose(BEFORE_EARLY_CLOSE);
+            assertThat(gate.isMarketOpenNow()).isTrue();
+        }
+
+        @Test
+        @DisplayName("반일 config 대상 날짜 + 13:00 ET 이후 → false (반일 폐장, REQ-WM-030)")
+        void afterEarlyCloseTime_returnsFalse() {
+            UsMarketSessionGate gate = createGateWithEarlyClose(AFTER_EARLY_CLOSE);
+            assertThat(gate.isMarketOpenNow()).isFalse();
+        }
+
+        @Test
+        @DisplayName("13:00 ET 경계(미포함) → false")
+        void atEarlyCloseBoundary_returnsFalse() {
+            UsMarketSessionGate gate = createGateWithEarlyClose(AT_EARLY_CLOSE_BOUNDARY);
+            assertThat(gate.isMarketOpenNow()).isFalse();
+        }
+
+        @Test
+        @DisplayName("반일 config 미설정이면 동일 시각에도 정상 개장(16:05까지) — 기존 extraHolidays 경로 불변")
+        void withoutEarlyCloseConfig_regularCloseApplies() {
+            // Arrange — earlyCloseDays 미설정(빈 목록) 게이트
+            Clock clock = Clock.fixed(AFTER_EARLY_CLOSE, NEW_YORK);
+            KisMarketSchedule schedule = new KisMarketSchedule(clock);
+            UsMarketSessionGate gate =
+                    new UsMarketSessionGate(
+                            new SimpleMeterRegistry(), schedule, clock, new UsMarketProperties());
+            gate.init();
+
+            assertThat(gate.isMarketOpenNow()).isTrue();
+        }
+    }
+
     // -------------------------------------------------------------------------
     // AC-9: NYSE 10개 표준 휴장일 알고리즘 정확 계산
     // -------------------------------------------------------------------------

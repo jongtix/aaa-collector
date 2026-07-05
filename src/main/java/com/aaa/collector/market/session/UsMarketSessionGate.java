@@ -69,11 +69,17 @@ public class UsMarketSessionGate implements UsMarketOpenGate {
     /** US 정규장 세션 마감 시각 (REQ-WM-006, MA-02). */
     private static final LocalTime US_SESSION_CLOSE = LocalTime.of(16, 0);
 
+    /** 반일(조기폐장) 시각 (REQ-WM-030, MA-05). */
+    private static final LocalTime EARLY_CLOSE_TIME = LocalTime.of(13, 0);
+
     private final KisMarketSchedule marketSchedule;
     private final Clock clock;
 
     /** 오버라이드 날짜 목록 — 불변 복사본으로 보관 (EI_EXPOSE_REP2 방지). */
     private final List<LocalDate> extraHolidays;
+
+    /** 반일(조기폐장) 날짜 목록 — 불변 복사본으로 보관(REQ-WM-030, EI_EXPOSE_REP2 방지). */
+    private final Set<LocalDate> earlyCloseDays;
 
     /**
      * 알고리즘 계산 + 오버라이드를 합산한 불변 NYSE 휴장일 Set.
@@ -101,6 +107,7 @@ public class UsMarketSessionGate implements UsMarketOpenGate {
         this.clock = clock;
         // 불변 복사본으로 보관 — EI_EXPOSE_REP2 방지 (SpotBugs)
         this.extraHolidays = List.copyOf(properties.getExtraHolidays());
+        this.earlyCloseDays = Set.copyOf(properties.getEarlyCloseDays());
 
         Gauge.builder(US_MARKET_OPEN_NAME, this, UsMarketSessionGate::computeMarketOpen)
                 .description("미국 시장 게이트 — 장중 1, 장외·휴장 0 (REQ-USMKT-008)")
@@ -180,11 +187,12 @@ public class UsMarketSessionGate implements UsMarketOpenGate {
     @Override
     public boolean isMarketOpenNow() {
         ZonedDateTime now = ZonedDateTime.now(clock);
-        if (!marketSchedule.isOverseasOpen(now)) {
-            return false;
-        }
-        LocalDate today = now.withZoneSameInstant(NEW_YORK).toLocalDate();
-        return isOpenDay(today);
+        ZonedDateTime nowEt = now.withZoneSameInstant(NEW_YORK);
+        LocalDate today = nowEt.toLocalDate();
+        // REQ-WM-030: 반일 조기폐장일은 13:00 ET 이후 폐장 — extraHolidays(전일 휴장)와 별개 경로, 기존 경로 불변
+        boolean pastEarlyClose =
+                earlyCloseDays.contains(today) && !nowEt.toLocalTime().isBefore(EARLY_CLOSE_TIME);
+        return marketSchedule.isOverseasOpen(now) && isOpenDay(today) && !pastEarlyClose;
     }
 
     /**
