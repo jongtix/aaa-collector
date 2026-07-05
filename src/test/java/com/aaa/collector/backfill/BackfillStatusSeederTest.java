@@ -124,18 +124,32 @@ class BackfillStatusSeederTest {
         }
     }
 
+    // SPEC-COLLECTOR-OVERSEAS-SPLIT-001 REQ-OSPLIT-063: 미국 corporate_events 편입 → 2종
+    private static final List<String> OVERSEAS_TABLES = List.of("daily_ohlcv", "corporate_events");
+
     @Nested
-    @DisplayName("AC-8.2/AC-7.3/AC-3 미국 종목 시딩 — daily_ohlcv 1행만 (수급 3종·corporate_events 미대상)")
+    @DisplayName("AC-13/AC-7.3 미국 종목 시딩 — daily_ohlcv+corporate_events 2행 (수급 3종 미대상)")
     class UsSeeding {
 
         @Test
-        @DisplayName("AC-3: 미국 종목 → daily_ohlcv 1행만 생성, 수급 3종·corporate_events 미생성")
-        void usStock_seedsOnlyDailyOhlcv() {
+        @DisplayName("REQ-OSPLIT-063: 미국 종목 → daily_ohlcv·corporate_events 2행 생성, 수급 3종 미생성")
+        void usStock_seedsDailyOhlcvAndCorporateEvents() {
             saveStock("AAPL", Market.NASDAQ);
 
             seeder.seedActiveStocks();
 
-            assertThat(dataTablesOf("AAPL")).containsExactly("daily_ohlcv");
+            assertThat(dataTablesOf("AAPL")).containsExactlyInAnyOrderElementsOf(OVERSEAS_TABLES);
+        }
+
+        @Test
+        @DisplayName("비회귀: 미국 종목은 수급 3종(investor_trend/short_sale_domestic/credit_balance) 미시딩")
+        void usStock_doesNotSeedDomesticSupplyTables() {
+            saveStock("TSLA", Market.NASDAQ);
+
+            seeder.seedActiveStocks();
+
+            assertThat(dataTablesOf("TSLA"))
+                    .doesNotContain("investor_trend", "short_sale_domestic", "credit_balance");
         }
     }
 
