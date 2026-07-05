@@ -12,6 +12,7 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.aaa.collector.backfill.BackfillWindowResult;
 import com.aaa.collector.kis.gate.GuardedKisExecutor;
 import com.aaa.collector.kis.gate.KeyLeaseRegistry;
 import com.aaa.collector.kis.gate.KeyLeaseRegistry.LeaseSession;
@@ -21,8 +22,10 @@ import com.aaa.collector.stock.enums.EventType;
 import com.aaa.collector.stock.enums.Market;
 import java.net.URI;
 import java.sql.SQLException;
+import java.time.LocalDate;
 import java.util.List;
 import java.util.function.Function;
+import java.util.stream.IntStream;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -32,6 +35,7 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.Captor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.web.util.DefaultUriBuilderFactory;
 import org.springframework.web.util.UriBuilder;
 import org.springframework.web.util.UriComponentsBuilder;
 
@@ -744,6 +748,186 @@ class DividendScheduleCollectionServiceTest {
             assertThat(inserterCaptor.getAllValues())
                     .flatMap(l -> l)
                     .allMatch(e -> e.getEventType() == EventType.DIVIDEND);
+        }
+    }
+
+    // ────────────────────────────────────────────────────────────────────
+    // SPEC-COLLECTOR-BACKFILL-009 W2 — 종목지정 전기간 배당 백필 fetch/persist
+    // ────────────────────────────────────────────────────────────────────
+
+    @Nested
+    @DisplayName("BACKFILL-009: 종목지정 배당 백필 fetch/persist (REQ-BACKFILL-124~135)")
+    class BackfillFetchPersist {
+
+        private final LocalDate floor = LocalDate.of(1950, 1, 1);
+        private final LocalDate today = LocalDate.of(2026, 6, 28);
+
+        /** rate-only 행: amt=0·rate=400.00(액면가 대비 %), face_val=5000 — 저장 대상(RD-7), 역산 미수행(RD-3). */
+        private KisDividendScheduleResponse.DividendRow rateOnlyRow(
+                String shtCd, String recordDate) {
+            return new KisDividendScheduleResponse.DividendRow(
+                    shtCd, recordDate, "결산", "0", "400.00", "0.00", "", "", "", "5000", "보통주", "0");
+        }
+
+        /** 0/0 무배당 기준일 행: amt=0·rate=0.00 — 무조건 defer(RD-6). */
+        private KisDividendScheduleResponse.DividendRow zeroZeroRow(
+                String shtCd, String recordDate) {
+            return new KisDividendScheduleResponse.DividendRow(
+                    shtCd, recordDate, "결산", "0", "0.00", "0.00", "", "", "", "5000", "보통주", "0");
+        }
+
+        @SuppressWarnings("unchecked")
+        private URI capturedUri() throws InterruptedException {
+            ArgumentCaptor<Function<UriBuilder, URI>> uriCaptor =
+                    ArgumentCaptor.forClass(Function.class);
+            verify(guardedKisExecutor).execute(eq(session), uriCaptor.capture(), eq(TR_ID), any());
+            UriBuilder builder =
+                    new DefaultUriBuilderFactory().uriString("https://openapi.koreainvestment.com");
+            return uriCaptor.getValue().apply(builder);
+        }
+
+        @Test
+        @DisplayName("AC-1: SHT_CD=종목코드·GB1=0·F_DT=19500101·T_DT=today 호출 파라미터 (전체조회·전기간 윈도우)")
+        void backfillFetch_callsWithTickerSpecifiedFullHistoryParams() throws Exception {
+            // Arrange
+            Stock stock = watchlistStock("005930");
+            when(guardedKisExecutor.execute(
+                            eq(session), any(), eq(TR_ID), eq(KisDividendScheduleResponse.class)))
+                    .thenReturn(response(List.of()));
+
+            // Act
+            service.fetchWindowForBackfill(stock, session, floor, today);
+
+            // Assert — 종목지정 + 전기간 윈도우, 전체조회(SHT_CD 공백) 아님
+            URI uri = capturedUri();
+            assertThat(uri.getRawQuery())
+                    .contains("SHT_CD=005930")
+                    .contains("GB1=0")
+                    .contains("F_DT=19500101")
+                    .contains("T_DT=20260628");
+            assertThat(uri.getRawQuery()).doesNotContain("SHT_CD=&");
+        }
+
+        @Test
+        @SuppressWarnings("PMD.UnitTestContainsTooManyAsserts")
+        @DisplayName(
+                "AC-3/AC-8: rate-only 행(amt=0·rate=400.00) → 저장, cash_amount=0 원본·역산(20000) 미수행")
+        void backfillFetch_rateOnlyRow_storedRawNoBackCalc() throws Exception {
+            // Arrange — 삼성전자 2015 결산 재현: face=5000·rate=400.00·amt=0
+            Stock stock = watchlistStock("005930");
+            when(guardedKisExecutor.execute(
+                            eq(session), any(), eq(TR_ID), eq(KisDividendScheduleResponse.class)))
+                    .thenReturn(response(List.of(rateOnlyRow("005930", "20150331"))));
+
+            // Act
+            DividendBackfillFetch fetch =
+                    service.fetchWindowForBackfill(stock, session, floor, today);
+
+            // Assert — defer 아님, 원본 저장
+            assertThat(fetch.validRows()).hasSize(1);
+            CorporateEvent e = fetch.validRows().getFirst();
+            assertThat(e.getEventType()).isEqualTo(EventType.DIVIDEND);
+            assertThat(e.getEventSubtype()).isEqualTo("결산");
+            assertThat(e.getEventDate()).isEqualTo(LocalDate.of(2015, 3, 31));
+            assertThat(e.getFaceValue()).isEqualTo(5000L);
+            assertThat(e.getCashRate()).isEqualByComparingTo("400.0000");
+            // RD-3: cash_amount는 파싱 원본값 0 — face_val × divi_rate / 100 = 20000 역산 미수행
+            assertThat(e.getCashAmount()).isEqualByComparingTo("0");
+        }
+
+        @Test
+        @DisplayName("AC-2: 0/0 행은 defer(validRows 미포함), 단 rawRowCount에는 원본 행수로 집계")
+        void backfillFetch_zeroZeroRow_deferredButCountedInRaw() throws Exception {
+            // Arrange — 확정 rate-only 1건 + 0/0 무배당 1건
+            Stock stock = watchlistStock("005930");
+            when(guardedKisExecutor.execute(
+                            eq(session), any(), eq(TR_ID), eq(KisDividendScheduleResponse.class)))
+                    .thenReturn(
+                            response(
+                                    List.of(
+                                            rateOnlyRow("005930", "20150331"),
+                                            zeroZeroRow("005930", "19991231"))));
+
+            // Act
+            DividendBackfillFetch fetch =
+                    service.fetchWindowForBackfill(stock, session, floor, today);
+
+            // Assert — 종료 입력 rawRowCount=원본 2, 저장 1(0/0 defer)
+            assertThat(fetch.rawRowCount()).isEqualTo(2);
+            assertThat(fetch.validRows()).hasSize(1);
+            assertThat(fetch.validRows().getFirst().getEventDate())
+                    .isEqualTo(LocalDate.of(2015, 3, 31));
+        }
+
+        @Test
+        @SuppressWarnings("PMD.UnitTestContainsTooManyAsserts")
+        @DisplayName(
+                "AC-4: 단일 rate-only 저장 → rowCount=1·rawRowCount=1·oldest=2015-03-31, insertBatch 1행")
+        void backfillPersist_singleValidRow() throws Exception {
+            // Arrange
+            Stock stock = watchlistStock("005930");
+            when(guardedKisExecutor.execute(
+                            eq(session), any(), eq(TR_ID), eq(KisDividendScheduleResponse.class)))
+                    .thenReturn(response(List.of(rateOnlyRow("005930", "20150331"))));
+
+            // Act
+            DividendBackfillFetch fetch =
+                    service.fetchWindowForBackfill(stock, session, floor, today);
+            BackfillWindowResult result = service.persistWindowForBackfill(fetch);
+
+            // Assert
+            assertThat(fetch.rawRowCount()).isEqualTo(1);
+            assertThat(result.rowCount()).isEqualTo(1);
+            assertThat(result.rawRowCount()).isEqualTo(1);
+            assertThat(result.oldestTradeDate()).isEqualTo(LocalDate.of(2015, 3, 31));
+            verify(corporateEventInserter).insertBatch(inserterCaptor.capture());
+            assertThat(inserterCaptor.getValue()).hasSize(1);
+        }
+
+        @Test
+        @DisplayName("EC/AC-9a: 100행 캡 도달 → rawRowCount=100(GROUP_A 종료 조건 미충족), fetch 정상 반환")
+        void backfillFetch_hundredRowCap_rawRowCountReflectsCap() throws Exception {
+            // Arrange — 100개 rate-only 행(전부 서로 다른 record_date)
+            Stock stock = watchlistStock("005930");
+            List<KisDividendScheduleResponse.DividendRow> rows =
+                    IntStream.range(0, 100)
+                            .mapToObj(
+                                    i -> rateOnlyRow("005930", String.format("2015%04d", 1000 + i)))
+                            .toList();
+            when(guardedKisExecutor.execute(
+                            eq(session), any(), eq(TR_ID), eq(KisDividendScheduleResponse.class)))
+                    .thenReturn(response(rows));
+
+            // Act
+            DividendBackfillFetch fetch =
+                    service.fetchWindowForBackfill(stock, session, floor, today);
+
+            // Assert — rawRowCount=100 → GROUP_A 종료 조건("100행 미만") 미충족 → 이월(경고 로그, 분할 미구현 RD-2)
+            assertThat(fetch.rawRowCount()).isEqualTo(100);
+        }
+
+        @Test
+        @SuppressWarnings("PMD.UnitTestContainsTooManyAsserts")
+        @DisplayName("EC: 빈 output1(무배당·1999년 이전) → rawRowCount=0·validRows 비어있음, persist 0행")
+        void backfillFetch_emptyResponse() throws Exception {
+            // Arrange
+            Stock stock = watchlistStock("005930");
+            when(guardedKisExecutor.execute(
+                            eq(session), any(), eq(TR_ID), eq(KisDividendScheduleResponse.class)))
+                    .thenReturn(response(List.of()));
+
+            // Act
+            DividendBackfillFetch fetch =
+                    service.fetchWindowForBackfill(stock, session, floor, today);
+            BackfillWindowResult result = service.persistWindowForBackfill(fetch);
+
+            // Assert
+            assertThat(fetch.rawRowCount()).isZero();
+            assertThat(fetch.validRows()).isEmpty();
+            assertThat(result.rowCount()).isZero();
+            assertThat(result.rawRowCount()).isZero();
+            assertThat(result.oldestTradeDate()).isNull();
+            verify(corporateEventInserter).insertBatch(List.of());
         }
     }
 }
