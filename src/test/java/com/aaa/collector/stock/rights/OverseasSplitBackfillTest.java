@@ -1,6 +1,7 @@
 package com.aaa.collector.stock.rights;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.verify;
@@ -203,6 +204,32 @@ class OverseasSplitBackfillTest {
             service.fetchWindowForBackfill(aapl, session, floor, today);
 
             verify(prefetcher).prefetch(eq(session), eq("AAPL"), eq("19500101"), eq("20260628"));
+        }
+
+        @Test
+        @DisplayName("결함 수정: 프리페치 FAILED(재시도 소진) 도달 시 rawRowCount=0으로 조작하지 않고 예외를 전파해 백필 재시도를 유도한다")
+        void prefetchFailed_propagatesException_insteadOfFabricatingLowRawRowCount() {
+            Stock aapl = stock("AAPL");
+            OverseasSplitPrefetch failedSplit =
+                    new OverseasSplitPrefetch(TypeResult.failed(), TypeResult.success(List.of()));
+            stubBackfillPrefetch("AAPL", failedSplit);
+
+            assertThatThrownBy(() -> service.fetchWindowForBackfill(aapl, session, floor, today))
+                    .isInstanceOf(OverseasSplitBackfillPrefetchFailedException.class);
+        }
+
+        @Test
+        @DisplayName(
+                "결함 수정: 프리페치 TRUNCATED(MAX_PAGES 절단) 도달 시 rawRowCount=0으로 조작하지 않고 예외를 전파해 백필 재시도를 유도한다")
+        void prefetchTruncated_propagatesException_insteadOfFabricatingLowRawRowCount() {
+            Stock aapl = stock("AAPL");
+            OverseasSplitPrefetch truncatedMerge =
+                    new OverseasSplitPrefetch(
+                            TypeResult.success(List.of()), TypeResult.truncated());
+            stubBackfillPrefetch("AAPL", truncatedMerge);
+
+            assertThatThrownBy(() -> service.fetchWindowForBackfill(aapl, session, floor, today))
+                    .isInstanceOf(OverseasSplitBackfillPrefetchFailedException.class);
         }
     }
 

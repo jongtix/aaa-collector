@@ -34,10 +34,14 @@ import org.springframework.transaction.annotation.Transactional;
  * 적재 순으로 진행한다.
  *
  * <p>fail-closed(REQ-OSPLIT-070/071): 세션이 비어(전 키 사망) 페이징 개시 전 전역 실패면 이번 배치에서 SPLIT 행을 하나도 만들지 않는다.
- * 유형(14/15) 단위 절단/실패는 그 유형만 폐기하고 다른 유형의 완전한 결과는 그대로 적재한다(프리페처가 유형 격리 보장).
+ * 유형(14/15) 단위 절단/실패는 그 유형만 폐기하고 다른 유형의 완전한 결과는 그대로 적재한다(프리페처가 유형 격리 보장). 정기 수집은 "다음 배치"가 내일
+ * cron이므로 이 fail-closed 폐기가 안전하다.
  *
  * <p>백필({@link #fetchWindowForBackfill}/{@link #persistWindowForBackfill})은 종목지정 광폭 윈도우로 정기 수집과 동일
- * dedup·정규화·매핑 규약을 재사용한다(REQ-OSPLIT-060/061, W5 참조 — 별도 커밋).
+ * dedup·정규화·매핑 규약을 재사용한다(REQ-OSPLIT-060/061, W5 참조 — 별도 커밋). 단, [HARD, 결함 수정] 유형 단위 실패/절단 처리는 정기
+ * 수집과 다르다 — 백필은 1회성 윈도우라 "다음 배치"가 없으므로, {@link #mapBackfillType}은 폐기 대신 {@link
+ * OverseasSplitBackfillPrefetchFailedException}을 던져 {@code BackfillOrchestrator}가 재시도(IN_PROGRESS
+ * 유지)하게 한다 — rawRowCount를 낮게 조작해 슬롯이 영구 COMPLETED로 오판되는 것을 방지한다.
  */
 @Slf4j
 @Service
@@ -145,9 +149,13 @@ public class OverseasSplitCollectionService {
      * @param from 윈도우 하단 조회 시작일 (고정 플로어)
      * @param to 윈도우 상단 조회 종료일 (today)
      * @return 적재 대상 엔티티 + 최소 event_date + 원본 응답 행수
+     * @throws OverseasSplitBackfillPrefetchFailedException 14/15 중 한 유형이라도 프리페치 TRUNCATED/FAILED인
+     *     경우(결함 수정) — {@code BackfillOrchestrator}가 재시도(IN_PROGRESS 유지)하도록 전파한다
      */
     // @MX:NOTE: [AUTO] 종목지정 SPLIT 백필 fetch — 비tx HTTP 단계. BackfillWindowExecutor가 @Transactional
-    // persistWindowForBackfill과 교차 빈으로 순차 호출. rawRowCount=14+15 원본 행수(dedup 전).
+    // persistWindowForBackfill과 교차 빈으로 순차 호출. rawRowCount=14+15 원본 행수(dedup 전). 유형 단위
+    // TRUNCATED/FAILED는
+    // rawRowCount 0 조작 대신 예외 전파(결함 수정, mapBackfillType 참조).
     public OverseasSplitBackfillFetch fetchWindowForBackfill(
             Stock stock, LeaseSession session, LocalDate from, LocalDate to) {
         // 백필은 호출자가 종목을 지정하므로 추적 필터 집합은 단일 종목이다.
@@ -181,10 +189,17 @@ public class OverseasSplitCollectionService {
     }
 
     /**
-     * 백필 한 유형(14/15)의 SUCCESS 원본 행을 매핑해 {@code validRows}에 누적하고 원본 행수를 반환한다. TRUNCATED/FAILED는
-     * fail-closed로 폐기(0건 기여).
+     * 백필 한 유형(14/15)의 SUCCESS 원본 행을 매핑해 {@code validRows}에 누적하고 원본 행수를 반환한다.
+     *
+     * <p>[HARD, 결함 수정] TRUNCATED/FAILED는 정기 수집({@link #processType})과 달리 0건으로 폐기하지 않는다 — 백필은 1회성
+     * 윈도우이므로 폐기 시 {@code rawRowCount}가 실제보다 낮게 조작되어 {@link
+     * com.aaa.collector.backfill.BackfillTerminationPolicy}가 슬롯을 영구 {@code COMPLETED}로 오판하고 SPLIT
+     * 이벤트가 재시도 없이 유실될 수 있다. 대신 {@link OverseasSplitBackfillPrefetchFailedException}을 던져 호출자 ({@code
+     * BackfillOrchestrator})가 재시도(IN_PROGRESS 유지)하도록 한다 — 국내 {@link
+     * com.aaa.collector.stock.RevSplitCollectionService}의 예외 전파 계약과 동등.
      *
      * @return 이 유형의 원본 응답 행수(SUCCESS만, 종료 판정 입력)
+     * @throws OverseasSplitBackfillPrefetchFailedException 이 유형이 TRUNCATED 또는 FAILED인 경우
      */
     private int mapBackfillType(
             TypeResult typeResult,
@@ -192,7 +207,11 @@ public class OverseasSplitCollectionService {
             Map<String, Stock> trackedStockBySymbol,
             List<CorporateEvent> validRows) {
         if (typeResult.status() != OverseasSplitPrefetcher.PrefetchStatus.SUCCESS) {
-            return 0;
+            throw new OverseasSplitBackfillPrefetchFailedException(
+                    "CTRGT011R 백필 프리페치 실패/절단(rawRowCount 조작 방지, 재시도 유도) — rghtTypeCd="
+                            + rghtTypeCd
+                            + ", status="
+                            + typeResult.status());
         }
         OverseasSplitMapper.MapResult mapped =
                 mapper.mapRows(typeResult.rows(), rghtTypeCd, trackedStockBySymbol);
