@@ -24,8 +24,11 @@ import org.springframework.stereotype.Component;
 @ConditionalOnProperty(name = "aaa.watermark.resync.enabled", havingValue = "true")
 public class WatermarkResyncScheduler {
 
-    /** 매일 03:00 KST — 다른 배치와 충돌하지 않는 새벽 시간대(REQ-WM-004). */
-    static final String RESYNC_CRON = "0 0 3 * * *";
+    /**
+     * 매일 03:10 KST — 다른 배치와 충돌하지 않는 새벽 시간대(REQ-WM-004). {@code MacroIndicatorBackfillScheduler} 기본
+     * cron(03:00 KST, {@code aaa.macro.backfill.cron})과의 정면 충돌을 피하기 위해 10분 오프셋을 둔다.
+     */
+    static final String RESYNC_CRON = "0 10 3 * * *";
 
     private final WatermarkWarmStarter watermarkWarmStarter;
 
