@@ -135,7 +135,9 @@ public class FinraCdnFileParser {
                 return null;
             }
             return value;
-        } catch (NumberFormatException e) {
+        } catch (NumberFormatException | ArithmeticException e) {
+            // ArithmeticException: 극단적 지수(예: 1E+2000000000) 입력에서 stripTrailingZeros()가 int scale
+            // 오버플로로 던짐 — scale 초과와 동일하게 skip 처리해 파일 전체 파싱이 죽는 것을 막는다(REQ-BACKFILL-107)
             return null;
         }
     }

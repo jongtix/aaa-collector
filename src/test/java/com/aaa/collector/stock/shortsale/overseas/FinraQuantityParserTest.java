@@ -99,6 +99,19 @@ class FinraQuantityParserTest {
             assertThat(result).isEqualByComparingTo("1");
             assertThat(reasons).isEmpty();
         }
+
+        @Test
+        @DisplayName("극단적 지수 입력(stripTrailingZeros scale 오버플로)은 예외 없이 fail-loud 거부한다")
+        void returnsNullOnExtremeExponentWithoutThrowing() {
+            List<String> reasons = new ArrayList<>();
+            BigDecimal result =
+                    FinraQuantityParser.toNonNegativeDecimal(
+                            new BigDecimal("100E2147483647"), "qty", reasons);
+
+            assertThat(result).isNull();
+            assertThat(reasons).hasSize(1);
+            assertThat(reasons.getFirst()).startsWith("qty scale 오버플로");
+        }
     }
 
     @Nested

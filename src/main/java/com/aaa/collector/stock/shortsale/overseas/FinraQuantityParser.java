@@ -35,18 +35,31 @@ final class FinraQuantityParser {
      * @param reasons 검증 실패 사유 누적 리스트(호출자가 skip·거부 계측에 사용)
      * @return 무손실 {@link BigDecimal}, 또는 검증 실패 시 {@code null}
      */
+    // @MX:WARN: [AUTO] reasons 메시지에는 반드시 value.toString()만 사용한다 — toPlainString()은 scale이 큰(음수)
+    // 값에서 무손실 전개를 강제해 OutOfMemoryError를 유발한다(극단 지수 입력 실측 확인). 사유 문자열은 사람이 읽는 로그일 뿐
+    // 무손실 표현이 필요 없으므로 항상 toString() 사용.
+    // @MX:REASON: toPlainString() OOM은 이 클래스가 막으려는 바로 그 배치 크래시를 재도입하는 회귀이므로 재발 방지 표식.
     static BigDecimal toNonNegativeDecimal(BigDecimal value, String field, List<String> reasons) {
         if (value == null) {
             reasons.add(field + "=null");
             return null;
         }
         if (value.signum() < 0) {
-            reasons.add(field + "<0(" + value.toPlainString() + ")");
+            reasons.add(field + "<0(" + value.toString() + ")");
             return null;
         }
-        // 유효 소수 자릿수(후행 0 제거 후 scale)가 컬럼 scale을 초과하면 무손실 저장 불가 → fail-loud 거부(REQ-SSD-011)
-        if (value.stripTrailingZeros().scale() > MAX_SCALE) {
-            reasons.add(field + " scale 초과(" + value.toPlainString() + ")");
+        // 유효 소수 자릿수(후행 0 제거 후 scale)가 컬럼 scale을 초과하면 무손실 저장 불가 → fail-loud 거부(REQ-SSD-011).
+        // stripTrailingZeros()는 극단적 지수(예: 1E+2000000000)에서 int scale 오버플로로 ArithmeticException을 던질
+        // 수 있으므로,
+        // 이 또한 scale 초과와 동일하게 거부 처리한다 — 예외로 배치 전체가 죽는 것을 막는다(REQ-BACKFILL-107 skip-and-continue
+        // 계약).
+        try {
+            if (value.stripTrailingZeros().scale() > MAX_SCALE) {
+                reasons.add(field + " scale 초과(" + value.toString() + ")");
+                return null;
+            }
+        } catch (ArithmeticException e) {
+            reasons.add(field + " scale 오버플로(" + value.toString() + ")");
             return null;
         }
         return value;
@@ -71,7 +84,7 @@ final class FinraQuantityParser {
             return decimal.longValueExact();
         } catch (ArithmeticException e) {
             // 소수부 존재 — SI에 소수가 도입된 희소 조건. 침묵 skip이 아니라 거부 신호로 드러낸다(REQ-SSD-016).
-            reasons.add(field + " 정수 아님·소수부 존재(" + decimal.toPlainString() + ")");
+            reasons.add(field + " 정수 아님·소수부 존재(" + decimal.toString() + ")");
             return null;
         }
     }

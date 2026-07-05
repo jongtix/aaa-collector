@@ -113,6 +113,22 @@ class FinraCdnFileParserTest {
             assertThat(result.rows().getFirst().symbol()).isEqualTo("OKROW");
             assertThat(result.skippedCount()).isEqualTo(1);
         }
+
+        @Test
+        @DisplayName("극단적 지수 입력(stripTrailingZeros scale 오버플로)은 예외 없이 skip한다")
+        void extremeExponentRowIsSkippedWithoutThrowing() {
+            String body =
+                    "Date|Symbol|ShortVolume|TotalVolume|Market\n"
+                            + "20260223|HUGEEXP|100E2147483647|100|Q\n"
+                            + "20260223|OKROW|500|1000|Q\n";
+
+            ParsedFileResult result = parser.parse(body);
+
+            // OKROW만 유효, HUGEEXP는 scale 오버플로 예외 없이 skip
+            assertThat(result.rows()).hasSize(1);
+            assertThat(result.rows().getFirst().symbol()).isEqualTo("OKROW");
+            assertThat(result.skippedCount()).isEqualTo(1);
+        }
     }
 
     @Nested
