@@ -22,6 +22,8 @@ import com.aaa.collector.stock.daily.DomesticDailyOhlcvFetch;
 import com.aaa.collector.stock.daily.OverseasDailyOhlcvCollectionService;
 import com.aaa.collector.stock.daily.OverseasDailyOhlcvFetch;
 import com.aaa.collector.stock.enums.Market;
+import com.aaa.collector.stock.rights.OverseasSplitBackfillFetch;
+import com.aaa.collector.stock.rights.OverseasSplitCollectionService;
 import com.aaa.collector.stock.supply.CreditBalanceCollectionService;
 import com.aaa.collector.stock.supply.CreditBalanceFetch;
 import com.aaa.collector.stock.supply.InvestorTrendCollectionService;
@@ -76,6 +78,7 @@ public class BackfillWindowExecutor {
     private final CreditBalanceCollectionService creditBalanceService;
     private final RevSplitCollectionService revSplitService;
     private final DividendScheduleCollectionService dividendService;
+    private final OverseasSplitCollectionService overseasSplitService;
     private final BackfillTerminationPolicy terminationPolicy;
     private final BackfillWindowAdvancer windowAdvancer;
     private final BackfillMetrics backfillMetrics;
@@ -114,11 +117,19 @@ public class BackfillWindowExecutor {
             case "short_sale_domestic" -> shortSaleService.fetchWindow(resolved, stock, session);
             case "investor_trend" -> investorTrendService.fetchWindow(anchor, stock, session);
             case "credit_balance" -> creditBalanceService.fetchWindow(resolved, stock, session);
-            // @MX:NOTE SPEC-COLLECTOR-BACKFILL-007 W3 — 종목지정 액면교체 백필.
-            // from-date=고정 플로어(REQ-BACKFILL-094), to-date=today(KST, REQ-BACKFILL-095).
-            case "corporate_events" ->
-                    revSplitService.fetchWindowForBackfill(
-                            stock, session, windowAdvancer.groupAFromDate(), LocalDate.now(KST));
+            // @MX:NOTE SPEC-COLLECTOR-BACKFILL-007 W3 + SPEC-COLLECTOR-OVERSEAS-SPLIT-001
+            // REQ-OSPLIT-063 —
+            // 종목지정 SPLIT 백필. from-date=고정 플로어(REQ-BACKFILL-094), to-date=today(KST,
+            // REQ-BACKFILL-095).
+            // 시장별 소스 분기: 미국→CTRGT011R(OverseasSplitCollectionService), 국내→HHKDB669105C0(RevSplit).
+            case "corporate_events" -> {
+                LocalDate floor = windowAdvancer.groupAFromDate();
+                LocalDate to = LocalDate.now(KST);
+                if (OVERSEAS_MARKETS.contains(stock.getMarket())) {
+                    yield overseasSplitService.fetchWindowForBackfill(stock, session, floor, to);
+                }
+                yield revSplitService.fetchWindowForBackfill(stock, session, floor, to);
+            }
             // @MX:NOTE SPEC-COLLECTOR-BACKFILL-009 W2 — 종목지정 현금배당 백필(SPLIT과 별도 data_table 논리 키).
             // from-date=고정 플로어(REQ-BACKFILL-126), to-date=today(KST). SPLIT(rev-split) 분기
             // 불변(REQ-BACKFILL-144).
@@ -276,8 +287,10 @@ public class BackfillWindowExecutor {
             case ShortSaleFetch f -> shortSaleService.persistWindow(status, stock, f);
             case InvestorTrendFetch f -> investorTrendService.persistWindow(stock, f);
             case CreditBalanceFetch f -> creditBalanceService.persistWindow(status, stock, f);
-            // SPEC-COLLECTOR-BACKFILL-007 W4 — 매핑+CorporateEventInserter INSERT IGNORE → 종료 입력
+            // SPEC-COLLECTOR-BACKFILL-007 W4 — 국내 매핑+CorporateEventInserter INSERT IGNORE → 종료 입력
             case RevSplitBackfillFetch f -> revSplitService.persistWindowForBackfill(f);
+            // SPEC-COLLECTOR-OVERSEAS-SPLIT-001 REQ-OSPLIT-063 — 미국 SPLIT 매핑+INSERT IGNORE → 종료 입력
+            case OverseasSplitBackfillFetch f -> overseasSplitService.persistWindowForBackfill(f);
             // SPEC-COLLECTOR-BACKFILL-009 W2 — DividendRowAccumulator 저장 정책+INSERT IGNORE → 종료 입력.
             // 별도 DTO 타입이라 SPLIT(RevSplitBackfillFetch) 분기와 오염 없이 분리(REQ-BACKFILL-144).
             case DividendBackfillFetch f -> dividendService.persistWindowForBackfill(f);
