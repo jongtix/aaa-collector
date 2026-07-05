@@ -92,6 +92,13 @@ public final class CorporateEvent extends BaseEntity {
     @Column(name = "cash_rate", precision = 12, scale = 4)
     private final BigDecimal cashRate;
 
+    /**
+     * 주식분할 비율(원배율) — SPLIT 이벤트에 한해 적용(국내/해외 공통, ADR-025 §조정 범위 계약).
+     *
+     * <p>분할이면 (분할 후 주식수 ÷ 분할 전 주식수), 병합(리버스 스플릿)이면 그 역수로 1.0 미만 값이다. 저장 시점에 이미 원배율로 정규화되어 있으므로(해외는
+     * KIS {@code stck_alct_rt}를 ÷100 정규화) 소비자(analyzer)는 시장 구분 없이 값을 그대로 곱셈/나눗셈에 사용할 수 있다 — 예: AAPL
+     * 4:1 분할 → {@code 4.0000}, GE 1:8 리버스 스플릿 → {@code 0.1250}.
+     */
     @Column(name = "stock_rate", precision = 12, scale = 4)
     private final BigDecimal stockRate;
 

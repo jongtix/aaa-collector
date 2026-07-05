@@ -208,7 +208,7 @@ public class OverseasSplitCollectionService {
             List<CorporateEvent> validRows) {
         if (typeResult.status() != OverseasSplitPrefetcher.PrefetchStatus.SUCCESS) {
             throw new OverseasSplitBackfillPrefetchFailedException(
-                    "CTRGT011R 백필 프리페치 실패/절단(rawRowCount 조작 방지, 재시도 유도) — rghtTypeCd="
+                    "CTRGT011R 백필은 1회성 윈도우라 실패를 삼키면 재시도 기회가 없다 — 재시도 유도를 위해 예외 전파 — rghtTypeCd="
                             + rghtTypeCd
                             + ", status="
                             + typeResult.status());
