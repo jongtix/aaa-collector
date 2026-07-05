@@ -162,4 +162,17 @@ public interface DailyOhlcvRepository extends JpaRepository<DailyOhlcv, Long> {
     // @MX:SPEC: SPEC-COLLECTOR-STOCKMETA-001
     @Query("SELECT MIN(o.tradeDate) FROM DailyOhlcv o WHERE o.stock.id = :stockId")
     Optional<LocalDate> findMinTradeDateByStockId(@Param("stockId") Long stockId);
+
+    /**
+     * 지정 거래일에 지정 종목 집합 중 행을 보유한 유니크 종목 수를 조회한다 (SPEC-OBSV-WATERMARK-001 REQ-WM-010 커버리지 분자).
+     *
+     * @param tradeDate 기준 거래일(= expected_watermark 날짜)
+     * @param stockIds 분모 활성 유니버스 종목 PK 집합
+     * @return 해당 거래일에 행을 보유한 유니크 {@code stock_id} 수
+     */
+    @Query(
+            "SELECT COUNT(DISTINCT o.stock.id) FROM DailyOhlcv o"
+                    + " WHERE o.tradeDate = :tradeDate AND o.stock.id IN :stockIds")
+    long countDistinctStockIdsByTradeDateAndStockIdIn(
+            @Param("tradeDate") LocalDate tradeDate, @Param("stockIds") Collection<Long> stockIds);
 }

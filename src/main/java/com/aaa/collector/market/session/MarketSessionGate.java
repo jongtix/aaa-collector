@@ -136,8 +136,18 @@ public class MarketSessionGate implements MarketOpenGate {
      * 개장일을 찾지 못하면 탐색 시작일을 그대로 반환한다(방어적 상한).
      */
     private double computeExpectedWatermarkEpoch() {
+        LocalDate candidate = computeExpectedTradeDate();
+        return candidate == null ? Double.NaN : candidate.atStartOfDay(KST).toEpochSecond();
+    }
+
+    /**
+     * KRX expected watermark의 기준 거래일을 계산한다(REQ-WM-006/010 — 커버리지 게이지의 분모 기준일로도 재사용).
+     *
+     * @return 세션 마감이 지난 가장 최근 개장일. 캘린더 미로드(boot-unset) 상태면 {@code null}(REQ-WM-008 근사)
+     */
+    public LocalDate computeExpectedTradeDate() {
         if (calendarRef.get() == null) {
-            return Double.NaN;
+            return null;
         }
         ZonedDateTime now = ZonedDateTime.now(clock).withZoneSameInstant(KST);
         LocalDate candidate =
@@ -147,7 +157,7 @@ public class MarketSessionGate implements MarketOpenGate {
         for (int i = 0; i < MAX_LOOKBACK_DAYS && !isOpenDay(candidate); i++) {
             candidate = candidate.minusDays(1);
         }
-        return candidate.atStartOfDay(KST).toEpochSecond();
+        return candidate;
     }
 
     /**
