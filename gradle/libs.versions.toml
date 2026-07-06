@@ -1,9 +1,9 @@
 [versions]
 spring-boot = "3.5.16"
 dependency-management = "1.1.7"
-spotless = "8.7.0"
+spotless = "8.8.0"
 spotbugs = "6.5.8"
-pmd = "7.25.0"
+pmd = "7.26.0"
 google-java-format = "1.35.0"
 archunit = "1.4.2"
 wiremock = "3.10.6"
