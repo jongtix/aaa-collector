@@ -4,6 +4,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import java.time.Duration;
+import java.util.Optional;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -104,5 +106,78 @@ class SafeModeRepositoryTest {
 
         // Assert
         verify(valueOps).set("safe_mode:collector:ws:" + alias, "ON");
+    }
+
+    // ── T-001: TTL 부여 (REQ-SAFEMODE-001) ──────────────────────────────────
+
+    @Test
+    @DisplayName("setSafeMode(alias, true, ttl) — opsForValue().set(key, \"ON\", ttl) 호출")
+    void setSafeMode_withTtl_callsSetWithOnValueAndTtl() {
+        stubOpsForValue();
+        String alias = "test-alias";
+        Duration ttl = Duration.ofHours(1);
+
+        repository.setSafeMode(alias, true, ttl);
+
+        verify(valueOps).set("safe_mode:collector:token:" + alias, "ON", ttl);
+    }
+
+    @Test
+    @DisplayName(
+            "setSafeMode(alias, false, ttl) — ttl과 무관하게 opsForValue().set(key, \"OFF\") 호출(TTL 없음)")
+    void setSafeMode_withTtlButOff_ignoresTtlAndCallsSetWithoutTtl() {
+        stubOpsForValue();
+        String alias = "test-alias";
+
+        repository.setSafeMode(alias, false, Duration.ofHours(1));
+
+        verify(valueOps).set("safe_mode:collector:token:" + alias, "OFF");
+    }
+
+    // ── T-001: 백오프 수준 지속 저장 (REQ-SAFEMODE-004, D-A) ─────────────────
+
+    @Test
+    @DisplayName("saveBackoffLevel — 별도 backoff 키에 레벨 문자열을 TTL 없이 저장")
+    void saveBackoffLevel_callsSetOnBackoffKeyWithoutTtl() {
+        stubOpsForValue();
+        String alias = "test-alias";
+
+        repository.saveBackoffLevel(alias, 1);
+
+        verify(valueOps).set("safe_mode:collector:token:backoff:" + alias, "1");
+    }
+
+    @Test
+    @DisplayName("getBackoffLevel — 저장된 값이 있으면 정수로 파싱하여 반환")
+    void getBackoffLevel_whenPresent_returnsParsedInt() {
+        stubOpsForValue();
+        String alias = "test-alias";
+        when(valueOps.get("safe_mode:collector:token:backoff:" + alias)).thenReturn("2");
+
+        Optional<Integer> result = repository.getBackoffLevel(alias);
+
+        assertThat(result).contains(2);
+    }
+
+    @Test
+    @DisplayName("getBackoffLevel — 키 없음(null) 시 Optional.empty() 반환")
+    void getBackoffLevel_whenAbsent_returnsEmpty() {
+        stubOpsForValue();
+        String alias = "test-alias";
+        when(valueOps.get("safe_mode:collector:token:backoff:" + alias)).thenReturn(null);
+
+        Optional<Integer> result = repository.getBackoffLevel(alias);
+
+        assertThat(result).isEmpty();
+    }
+
+    @Test
+    @DisplayName("deleteBackoffLevel — backoff 키 삭제 호출")
+    void deleteBackoffLevel_callsDeleteOnBackoffKey() {
+        String alias = "test-alias";
+
+        repository.deleteBackoffLevel(alias);
+
+        verify(redisTemplate).delete("safe_mode:collector:token:backoff:" + alias);
     }
 }
