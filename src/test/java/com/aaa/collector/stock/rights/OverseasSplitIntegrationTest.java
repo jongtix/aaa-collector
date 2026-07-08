@@ -3,6 +3,7 @@ package com.aaa.collector.stock.rights;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.when;
@@ -155,13 +156,15 @@ class OverseasSplitIntegrationTest {
                         any(LeaseSession.class),
                         argThat(rightTypeIs(SPLIT)),
                         eq(TR_ID),
-                        eq(KisPeriodRightsResponse.class)))
+                        eq(KisPeriodRightsResponse.class),
+                        anyString()))
                 .thenReturn(response(rows));
         when(guardedKisExecutor.execute(
                         any(LeaseSession.class),
                         argThat(rightTypeIs(MERGE)),
                         eq(TR_ID),
-                        eq(KisPeriodRightsResponse.class)))
+                        eq(KisPeriodRightsResponse.class),
+                        anyString()))
                 .thenReturn(response(List.of()));
     }
 
