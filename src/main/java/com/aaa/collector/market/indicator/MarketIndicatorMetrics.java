@@ -91,11 +91,7 @@ public class MarketIndicatorMetrics {
      * @param toSource Fallback 이후 소스
      * @param reason 전환 사유 ("empty_result" / "error")
      */
-    @SuppressWarnings({
-        "PMD.AvoidCatchingGenericException", // 메트릭 실패 격리 — REQ-012
-        "PMD.UseObjectForClearerAPI" // indicator/fromSource/toSource/reason 라벨 구조가 Prometheus 태그
-        // 계약이므로 래핑 불필요
-    })
+    @SuppressWarnings("PMD.AvoidCatchingGenericException") // 메트릭 실패 격리 — REQ-012
     public void recordFallback(
             String indicator, String fromSource, String toSource, String reason) {
         try {

@@ -112,7 +112,7 @@ public class MarketFundsCollectionService {
                     buildIndicator("MKTFUND_SECURED_LOAN", row.secuLendAmt(), tradeDate, batch);
 
             succeeded += rowSucceeded;
-            skipped += (9 - rowSucceeded);
+            skipped += 9 - rowSucceeded;
         }
 
         if (!batch.isEmpty()) {

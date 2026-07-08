@@ -265,16 +265,7 @@ public class KisWebSocketMessageHandler extends TextWebSocketHandler {
                 if (msg1.startsWith(UNSUB_PREFIX)) {
                     log.info("[{}] 구독 해제 확인: trId={}, msg={}", alias, trId, msg1);
                 } else {
-                    // AES 키 저장
-                    JsonNode output = body.path("output");
-                    if (!output.isMissingNode()) {
-                        String iv = output.path("iv").asText();
-                        String key = output.path("key").asText();
-                        registerAesKey(trId, new AesKey(iv, key));
-                        log.info("[{}] AES 키 저장: trId={}", alias, trId);
-                    }
-                    // 연속 실패 카운터 초기화
-                    subscriptionFailureCount.set(0);
+                    handleSubscriptionSuccess(trId, body);
                 }
             } else {
                 // 구독 실패
@@ -293,6 +284,18 @@ public class KisWebSocketMessageHandler extends TextWebSocketHandler {
                     raw.substring(0, Math.min(200, raw.length())),
                     e);
         }
+    }
+
+    /** 구독 성공(UNSUB 제외) 처리 — AES 키 저장 및 연속 실패 카운터 초기화. */
+    private void handleSubscriptionSuccess(String trId, JsonNode body) {
+        JsonNode output = body.path("output");
+        if (!output.isMissingNode()) {
+            String iv = output.path("iv").asText();
+            String key = output.path("key").asText();
+            registerAesKey(trId, new AesKey(iv, key));
+            log.info("[{}] AES 키 저장: trId={}", alias, trId);
+        }
+        subscriptionFailureCount.set(0);
     }
 
     /** PINGPONG 메시지에 PongMessage로 응답. */

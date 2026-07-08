@@ -46,7 +46,6 @@ public record DartListResponse(
          *
          * <p>단위 테스트에서 목(mock) 항목을 생성할 때 사용한다.
          */
-        @SuppressWarnings("PMD.UseObjectForClearerAPI") // JSON 응답 필드와 1:1 대응 — 컨테이너 불필요
         public static DisclosureItem of(
                 String corpCode,
                 String corpCls,
