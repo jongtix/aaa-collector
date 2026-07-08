@@ -93,7 +93,7 @@ class OverseasSplitPrefetcher {
             try {
                 response =
                         fetchPeriodRightsPage(
-                                session, rghtTypeCd, pdno, startDate, endDate, nk50, fk50);
+                                session, rghtTypeCd, pdno, startDate, endDate, nk50, fk50, page);
             } catch (KisRateLimitException
                     | RestClientException
                     | NoHealthyKeyException
@@ -138,7 +138,12 @@ class OverseasSplitPrefetcher {
         return TypeResult.truncated();
     }
 
-    /** 게이트를 경유해 CTRGT011R 1페이지를 조회한다(REQ-OSPLIT-010, 011). */
+    /**
+     * 게이트를 경유해 CTRGT011R 1페이지를 조회한다(REQ-OSPLIT-010, 011).
+     *
+     * <p>SPEC-COLLECTOR-TRCONT-001 REQ-TRCONT-011 — 배당 프리페처와 동일 규약(REQ-TRCONT-012)으로 첫 페이지({@code
+     * page == 1})는 {@code trCont=""}(헤더 미부착), 2페이지째부터는 {@code trCont="N"}을 전달한다.
+     */
     private KisPeriodRightsResponse fetchPeriodRightsPage(
             LeaseSession session,
             String rghtTypeCd,
@@ -146,7 +151,8 @@ class OverseasSplitPrefetcher {
             String startDate,
             String endDate,
             String nk50,
-            String fk50)
+            String fk50,
+            int page)
             throws InterruptedException {
         Function<UriBuilder, URI> uriCustomizer =
                 uri ->
@@ -160,8 +166,9 @@ class OverseasSplitPrefetcher {
                                 .queryParam("CTX_AREA_NK50", nk50)
                                 .queryParam("CTX_AREA_FK50", fk50)
                                 .build();
+        String trCont = page == 1 ? "" : "N";
         return guardedKisExecutor.execute(
-                session, uriCustomizer, PERIOD_RIGHTS_TR_ID, KisPeriodRightsResponse.class);
+                session, uriCustomizer, PERIOD_RIGHTS_TR_ID, KisPeriodRightsResponse.class, trCont);
     }
 
     /** 권리유형 1종 프리페치 결과 상태(REQ-OSPLIT-012/071). */

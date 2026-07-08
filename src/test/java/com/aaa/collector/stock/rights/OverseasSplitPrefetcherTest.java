@@ -2,8 +2,11 @@ package com.aaa.collector.stock.rights;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.aaa.collector.kis.gate.GuardedKisExecutor;
@@ -21,6 +24,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.ArgumentMatcher;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -109,7 +113,8 @@ class OverseasSplitPrefetcherTest {
                         any(LeaseSession.class),
                         argThat(rightTypeIs(rghtTypeCd)),
                         eq(TR_ID),
-                        eq(KisPeriodRightsResponse.class)))
+                        eq(KisPeriodRightsResponse.class),
+                        anyString()))
                 .thenReturn(resp);
     }
 
@@ -141,7 +146,8 @@ class OverseasSplitPrefetcherTest {
                             any(LeaseSession.class),
                             argThat(rightTypeIs(SPLIT)),
                             eq(TR_ID),
-                            eq(KisPeriodRightsResponse.class)))
+                            eq(KisPeriodRightsResponse.class),
+                            anyString()))
                     .thenReturn(page1, page2);
             stubType(MERGE, empty());
 
@@ -167,7 +173,8 @@ class OverseasSplitPrefetcherTest {
                             any(LeaseSession.class),
                             argThat(rightTypeIs(SPLIT)),
                             eq(TR_ID),
-                            eq(KisPeriodRightsResponse.class)))
+                            eq(KisPeriodRightsResponse.class),
+                            anyString()))
                     .thenReturn(infinite);
             stubType(MERGE, empty());
 
@@ -185,7 +192,8 @@ class OverseasSplitPrefetcherTest {
                             any(LeaseSession.class),
                             argThat(rightTypeIs(SPLIT)),
                             eq(TR_ID),
-                            eq(KisPeriodRightsResponse.class)))
+                            eq(KisPeriodRightsResponse.class),
+                            anyString()))
                     .thenThrow(new RestClientException("boom"));
             stubType(MERGE, response(List.of(splitRow("GE", "20210802")), null, null));
 
@@ -203,7 +211,8 @@ class OverseasSplitPrefetcherTest {
                             any(LeaseSession.class),
                             any(),
                             eq(TR_ID),
-                            eq(KisPeriodRightsResponse.class)))
+                            eq(KisPeriodRightsResponse.class),
+                            anyString()))
                     .thenThrow(new RestClientException("session/token failure"));
 
             OverseasSplitPrefetch result = prefetcher.prefetch(session, "", "20260601", "20260901");
@@ -230,13 +239,48 @@ class OverseasSplitPrefetcherTest {
                                         return uri.toString().contains("PDNO=AAPL");
                                     }),
                             eq(TR_ID),
-                            eq(KisPeriodRightsResponse.class)))
+                            eq(KisPeriodRightsResponse.class),
+                            anyString()))
                     .thenReturn(empty());
 
             OverseasSplitPrefetch result =
                     prefetcher.prefetch(session, "AAPL", "19500101", "20260901");
 
             assertThat(result.split().status()).isEqualTo(PrefetchStatus.SUCCESS);
+        }
+    }
+
+    @Nested
+    @DisplayName("tr_cont 연속조회 헤더 전달 (SPEC-COLLECTOR-TRCONT-001 REQ-TRCONT-011/012/040)")
+    class TrContCursorPaging {
+
+        @Test
+        @DisplayName("첫 페이지 trCont=\"\", 2페이지째부터 trCont=\"N\" — 인자 캡처로 검증")
+        void firstPageBlank_secondPageOnwardsN() throws Exception {
+            KisPeriodRightsResponse page1 =
+                    response(List.of(splitRow("AAPL", "20200831")), "cursor-1", "fk-1");
+            KisPeriodRightsResponse page2 =
+                    response(List.of(splitRow("TSLA", "20220825")), null, null);
+            when(guardedKisExecutor.execute(
+                            any(LeaseSession.class),
+                            argThat(rightTypeIs(SPLIT)),
+                            eq(TR_ID),
+                            eq(KisPeriodRightsResponse.class),
+                            anyString()))
+                    .thenReturn(page1, page2);
+            stubType(MERGE, empty());
+
+            prefetcher.prefetch(session, "", "20260601", "20260901");
+
+            ArgumentCaptor<String> trContCaptor = ArgumentCaptor.forClass(String.class);
+            verify(guardedKisExecutor, times(2))
+                    .execute(
+                            any(LeaseSession.class),
+                            argThat(rightTypeIs(SPLIT)),
+                            eq(TR_ID),
+                            eq(KisPeriodRightsResponse.class),
+                            trContCaptor.capture());
+            assertThat(trContCaptor.getAllValues()).containsExactly("", "N");
         }
     }
 }
