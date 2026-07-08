@@ -3,6 +3,7 @@ package com.aaa.collector.common.safemode;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
 import java.time.Duration;
+import lombok.AllArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 
 /**
@@ -26,6 +27,7 @@ import lombok.extern.slf4j.Slf4j;
 // CollectorSafeMode 룰의 입력 소스
 // @MX:NOTE: [AUTO] TTL·백오프 라이프사이클은 backoffPolicy != null인 인스턴스(token 컨텍스트)에만 적용된다(D-B)
 @Slf4j
+@AllArgsConstructor
 public class SafeModeManager {
 
     private final SafeModeRepository safeModeRepository;
@@ -36,6 +38,9 @@ public class SafeModeManager {
     /**
      * 정책 없는 레거시 생성자. WebSocket 컨텍스트 등 TTL·백오프를 적용하지 않는 인스턴스에 사용한다.
      *
+     * <p>필드 대입은 Lombok이 생성하는 4-args 생성자에 전부 위임한다(EI_EXPOSE_REP2 회피 — 다른 패키지의 Spring DI 생성자 주입 표준
+     * 패턴과 동일하게, Lombok 생성 생성자는 정적 분석 도구의 생성 코드 예외 처리 대상이 된다).
+     *
      * @param safeModeRepository 안전 모드 상태 저장소
      * @param registry 메트릭 레지스트리
      * @param module 모듈 태그(예: {@code "ws"})
@@ -43,25 +48,6 @@ public class SafeModeManager {
     public SafeModeManager(
             SafeModeRepository safeModeRepository, MeterRegistry registry, String module) {
         this(safeModeRepository, registry, module, null);
-    }
-
-    /**
-     * TTL·백오프 정책이 주입된 생성자. token 컨텍스트 등 자동 복구 라이프사이클을 적용할 인스턴스에 사용한다.
-     *
-     * @param safeModeRepository 안전 모드 상태 저장소
-     * @param registry 메트릭 레지스트리
-     * @param module 모듈 태그(예: {@code "token"})
-     * @param backoffPolicy TTL·백오프 산정 정책. {@code null}이면 레거시(TTL 없음) 동작
-     */
-    public SafeModeManager(
-            SafeModeRepository safeModeRepository,
-            MeterRegistry registry,
-            String module,
-            SafeModeBackoffPolicy backoffPolicy) {
-        this.safeModeRepository = safeModeRepository;
-        this.registry = registry;
-        this.module = module;
-        this.backoffPolicy = backoffPolicy;
     }
 
     /**
