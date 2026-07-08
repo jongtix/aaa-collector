@@ -1,6 +1,7 @@
 package com.aaa.collector.kis.token;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 
 import java.lang.reflect.Method;
@@ -37,6 +38,30 @@ class KisTokenSchedulerTest {
 
         assertThat(scheduled).isNotNull();
         assertThat(scheduled.cron()).isEqualTo("0 15 8 * * MON-FRI");
+        assertThat(scheduled.zone()).isEqualTo("Asia/Seoul");
+    }
+
+    // ── T-004: 주말 전용 무조건 발급 트리거 (REQ-SAFEMODE-009/010/012) ────────
+
+    @Test
+    @DisplayName(
+            "refreshWeekendTokens 호출 시 issueAllTokens()만 호출되고 issueAllApprovalKeys()는 호출되지 않는다(AC-6)")
+    void refreshWeekendTokens_callsOnlyIssueAllTokens() {
+        kisTokenScheduler.refreshWeekendTokens();
+
+        verify(kisTokenService).issueAllTokens();
+        verify(kisTokenService, never()).issueAllApprovalKeys();
+    }
+
+    @Test
+    @DisplayName(
+            "refreshWeekendTokens의 @Scheduled cron은 '0 15 8 * * SAT,SUN'이고 zone은 'Asia/Seoul'이다(D-3)")
+    void refreshWeekendTokens_hasCorrectScheduledAnnotation() throws NoSuchMethodException {
+        Method method = KisTokenScheduler.class.getMethod("refreshWeekendTokens");
+        Scheduled scheduled = method.getAnnotation(Scheduled.class);
+
+        assertThat(scheduled).isNotNull();
+        assertThat(scheduled.cron()).isEqualTo("0 15 8 * * SAT,SUN");
         assertThat(scheduled.zone()).isEqualTo("Asia/Seoul");
     }
 }

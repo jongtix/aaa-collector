@@ -10,6 +10,11 @@ import org.springframework.stereotype.Component;
  *
  * <p>평일(월~금) 08:15 KST에 전 계좌 REST access_token을 사전(eager) 발급하고 WebSocket approval_key를 일괄 재발급한다.
  * REST access_token은 Lazy 발급 경로를 fallback으로 보존한다(SPEC-COLLECTOR-WLSYNC-006 REQ-WLSYNC-103).
+ *
+ * <p><b>주말 무조건 발급 일일 플로어(SPEC-COLLECTOR-SAFEMODE-001, D-3)</b>: 주말(토·일) 08:15 KST에는 별도 트리거({@link
+ * #refreshWeekendTokens()})가 access_token 사전발급만 수행한다. approval_key는 평일 전용으로 유지한다
+ * (SPEC-COLLECTOR-TOKEN-001 REQ-TOKEN-003 보존, REQ-SAFEMODE-009~012). 이 무조건 발급은 SafeMode 활성 여부와 무관하게
+ * 시도되므로(REQ-SAFEMODE-011), 짧은 KIS 장애 이후에도 하루 최소 1회 자동 복구 시도를 보장하는 안전망 역할을 한다.
  */
 @Slf4j
 @Component
@@ -31,5 +36,19 @@ public class KisTokenScheduler {
         kisTokenService.issueAllTokens();
         kisTokenService.issueAllApprovalKeys();
         log.info("스케줄 토큰 갱신 완료");
+    }
+
+    /**
+     * 주말(토·일) 08:15 KST에 전 계좌 REST access_token 사전발급만 수행한다. approval_key는 재발급하지 않는다
+     * (REQ-SAFEMODE-010/012, TOKEN-001 REQ-TOKEN-003 "approval_key 평일 전용" 보존).
+     *
+     * <p>{@link #refreshTokens()}와 별개 트리거로 분리하여, 요일 필드만 확장(MON-FRI → *)하는 방식으로는 발생할 주말 approval_key
+     * 재발급 부수효과를 원천 차단한다(D-3).
+     */
+    @Scheduled(cron = "0 15 8 * * SAT,SUN", zone = "Asia/Seoul")
+    public void refreshWeekendTokens() {
+        log.info("주말 스케줄 access_token 무조건 발급 시작");
+        kisTokenService.issueAllTokens();
+        log.info("주말 스케줄 access_token 무조건 발급 완료");
     }
 }
