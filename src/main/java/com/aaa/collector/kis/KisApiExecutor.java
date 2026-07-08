@@ -80,7 +80,37 @@ public class KisApiExecutor {
             Class<T> responseType) {
 
         String token = kisTokenService.getValidToken(credential.alias());
-        T response = fetchBodyMultikey(uriCustomizer, trId, credential, token, responseType);
+        T response = fetchBodyMultikey(uriCustomizer, trId, credential, token, responseType, null);
+        Objects.requireNonNull(response, "KIS API 응답 바디가 null입니다 — tr_id=" + trId);
+        response.validateRtCd();
+        return response;
+    }
+
+    /**
+     * KIS REST API GET 요청을 실행한다 (멀티키 경로, KIS 연속조회 {@code tr_cont} 헤더 지원).
+     *
+     * <p>SPEC-COLLECTOR-TRCONT-001 REQ-TRCONT-001/002/003 — {@code trCont}가 non-null AND
+     * non-blank이면 KIS 연속조회 규약에 따라 요청 HTTP 헤더 {@code tr_cont}로 전송한다. null/공백이면 헤더 자체를 부착하지 않는다(빈 값
+     * 헤더 송신은 미검증 동작이므로 회피, RD-2).
+     *
+     * @param credential 호출에 사용할 계좌 자격증명
+     * @param uriCustomizer URI 빌더 커스터마이저
+     * @param trId KIS TR ID
+     * @param responseType 응답 역직렬화 대상 클래스
+     * @param trCont KIS 연속조회 헤더 값 — 첫 페이지는 공백, 연속 페이지는 {@code "N"}(REQ-TRCONT-010/011)
+     * @return 검증 완료된 응답 객체
+     * @throws KisRateLimitException HTTP 500 + msg_cd=EGW00201 rate-limit 오류 식별 시
+     */
+    public <T extends KisApiResponse> T executeGet(
+            KisAccountCredential credential,
+            Function<UriBuilder, URI> uriCustomizer,
+            String trId,
+            Class<T> responseType,
+            String trCont) {
+
+        String token = kisTokenService.getValidToken(credential.alias());
+        T response =
+                fetchBodyMultikey(uriCustomizer, trId, credential, token, responseType, trCont);
         Objects.requireNonNull(response, "KIS API 응답 바디가 null입니다 — tr_id=" + trId);
         response.validateRtCd();
         return response;
@@ -91,22 +121,31 @@ public class KisApiExecutor {
      *
      * <p>msg_cd == EGW00201 → {@link KisRateLimitException} (일시적·재시도 가능). 그 외 5xx → 원래 {@link
      * RestClientResponseException} 그대로 전파 (영구 오류, 재시도 없음).
+     *
+     * <p>SPEC-COLLECTOR-TRCONT-001 REQ-TRCONT-002/003/005 — {@code trCont}가 non-null AND non-blank일
+     * 때만 {@code tr_cont} 헤더를 조건부로 부착한다. 기존 보안·식별 헤더 조립 경로를 그대로 재사용하며 중복 조립 경로를 만들지 않는다(단일 조립 지점).
      */
     private <T extends KisApiResponse> T fetchBodyMultikey(
             Function<UriBuilder, URI> uriCustomizer,
             String trId,
             KisAccountCredential credential,
             String token,
-            Class<T> responseType) {
-        return kisRestClient
-                .get()
-                .uri(uriCustomizer)
-                .header("Content-Type", "application/json; charset=utf-8")
-                .header("Authorization", "Bearer " + token)
-                .header("appkey", credential.appKey())
-                .header("appsecret", credential.appSecret())
-                .header("tr_id", trId)
-                .header("custtype", "P")
+            Class<T> responseType,
+            String trCont) {
+        RestClient.RequestHeadersSpec<?> requestSpec =
+                kisRestClient
+                        .get()
+                        .uri(uriCustomizer)
+                        .header("Content-Type", "application/json; charset=utf-8")
+                        .header("Authorization", "Bearer " + token)
+                        .header("appkey", credential.appKey())
+                        .header("appsecret", credential.appSecret())
+                        .header("tr_id", trId)
+                        .header("custtype", "P");
+        if (trCont != null && !trCont.isBlank()) {
+            requestSpec = requestSpec.header("tr_cont", trCont);
+        }
+        return requestSpec
                 .retrieve()
                 .onStatus(
                         HttpStatusCode::is5xxServerError,

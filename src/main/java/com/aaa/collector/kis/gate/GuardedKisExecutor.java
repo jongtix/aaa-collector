@@ -129,13 +129,65 @@ public class GuardedKisExecutor {
                 () -> attempt(session, uriCustomizer, trId, responseType, throttle, lastAlias));
     }
 
-    /** 한 시도: lease(막힌 키 회피) → throttle → executeGet → finally release. */
+    /**
+     * KIS 연속조회 헤더 {@code tr_cont}를 전달하며 보호된 KIS REST GET을 실행한다(SPEC-COLLECTOR-TRCONT-001
+     * REQ-TRCONT-001).
+     *
+     * <p>내부적으로 항상 {@code throttle=true} 경로로 위임한다(RD-2) — 현재 커서 페이징 호출부(배당·분할 프리페처)가 모두
+     * throttle-on이며, {@code trCont}+{@code throttle=false} 동시 조합 수요는 아직 없다(YAGNI, 6-arg 오버로드 미도입).
+     *
+     * @param session per-batch 헬스 스냅샷 lease 세션
+     * @param uriCustomizer URI 빌더 커스터마이저
+     * @param trId KIS TR ID
+     * @param responseType 응답 역직렬화 대상 클래스
+     * @param trCont KIS 연속조회 헤더 값 — 첫 페이지는 공백, 연속 페이지는 {@code "N"}(REQ-TRCONT-010/011). null/공백이면
+     *     {@code tr_cont} 헤더 자체가 부착되지 않는다(REQ-TRCONT-003).
+     * @param <T> 응답 타입
+     * @return 검증 완료된 응답 객체
+     * @throws InterruptedException 작업 또는 백오프 sleep 중 인터럽트 수신 시(플래그 복원 후 전파)
+     */
+    public <T extends KisApiResponse> T execute(
+            LeaseSession session,
+            Function<UriBuilder, URI> uriCustomizer,
+            String trId,
+            Class<T> responseType,
+            String trCont)
+            throws InterruptedException {
+
+        RetryExecutor retryExecutor =
+                new RetryExecutor(MAX_RETRIES + 1, BACKOFF_BASE_DELAY_MS, sleeper, RETRYABLE);
+
+        AtomicReference<String> lastAlias = new AtomicReference<>();
+
+        return retryExecutor.execute(
+                () -> attempt(session, uriCustomizer, trId, responseType, true, trCont, lastAlias));
+    }
+
+    /** 한 시도: lease(막힌 키 회피) → throttle → executeGet(4-arg, tr_cont 미송신) → finally release. */
     private <T extends KisApiResponse> T attempt(
             LeaseSession session,
             Function<UriBuilder, URI> uriCustomizer,
             String trId,
             Class<T> responseType,
             boolean throttle,
+            AtomicReference<String> lastAlias)
+            throws InterruptedException {
+        return attempt(session, uriCustomizer, trId, responseType, throttle, null, lastAlias);
+    }
+
+    /**
+     * 한 시도: lease(막힌 키 회피) → throttle → executeGet → finally release.
+     *
+     * <p>{@code trCont}가 null이면 기존 4-arg {@code executeGet}(tr_cont 미송신, REQ-TRCONT-004 보존)을,
+     * non-null이면 5-arg {@code executeGet}(tr_cont 송신, REQ-TRCONT-002)을 호출한다.
+     */
+    private <T extends KisApiResponse> T attempt(
+            LeaseSession session,
+            Function<UriBuilder, URI> uriCustomizer,
+            String trId,
+            Class<T> responseType,
+            boolean throttle,
+            String trCont,
             AtomicReference<String> lastAlias)
             throws InterruptedException {
 
@@ -153,8 +205,11 @@ public class GuardedKisExecutor {
             // 내곽 try/finally: limiter.release()는 consume() 성공 이후에만 실행 — acquire/release 페어링 보존
             // (consume() 미성공 시 release() 호출 시 세마포어 permit이 과반환되는 것을 방지).
             try {
-                return kisApiExecutor.executeGet(
-                        lease.credential(), uriCustomizer, trId, responseType);
+                return trCont == null
+                        ? kisApiExecutor.executeGet(
+                                lease.credential(), uriCustomizer, trId, responseType)
+                        : kisApiExecutor.executeGet(
+                                lease.credential(), uriCustomizer, trId, responseType, trCont);
             } finally {
                 if (limiter != null) {
                     limiter.release();

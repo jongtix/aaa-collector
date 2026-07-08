@@ -303,6 +303,38 @@ class GuardedKisExecutorTest {
     }
 
     @Nested
+    @DisplayName("trCont 파라미터 (SPEC-COLLECTOR-TRCONT-001 REQ-TRCONT-001/002)")
+    class TrContOverload {
+
+        @Test
+        @DisplayName(
+                "trCont=\"N\" 전달 — throttle=true 위임 + KisApiExecutor 5-arg executeGet(trCont) 호출")
+        void execute_withTrCont_delegatesThrottleTrueAndPassesTrCont() throws Exception {
+            when(healthyKeySelector.selectHealthy()).thenReturn(List.of(K1, K2));
+            KisRateLimiter limiter = mock(KisRateLimiter.class);
+            when(kisRateLimiterRegistry.forAlias("isa")).thenReturn(limiter);
+            StubResponse stub = new StubResponse();
+            when(kisApiExecutor.executeGet(
+                            eq(K1), any(), eq(TR_ID), eq(StubResponse.class), eq("N")))
+                    .thenReturn(stub);
+
+            LeaseSession session = keyLeaseRegistry.openSession();
+            StubResponse result =
+                    gate.execute(session, URI_CUSTOMIZER, TR_ID, StubResponse.class, "N");
+
+            assertThat(result).isSameAs(stub);
+            // throttle=true 위임 — rate limiter를 정상 경유(consume/release)
+            verify(limiter, times(1)).consume();
+            verify(limiter, times(1)).release();
+            verify(kisApiExecutor, times(1))
+                    .executeGet(eq(K1), any(), eq(TR_ID), eq(StubResponse.class), eq("N"));
+            // 신규 오버로드는 기존 4-arg executeGet을 호출하지 않는다
+            verify(kisApiExecutor, never())
+                    .executeGet(any(), any(), anyString(), eq(StubResponse.class));
+        }
+    }
+
+    @Nested
     @DisplayName("소진 + 전 키 사망 (REQ-KISGATE-022/024)")
     class ExhaustionAndDeadKeys {
 

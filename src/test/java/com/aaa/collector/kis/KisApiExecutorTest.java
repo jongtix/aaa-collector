@@ -216,5 +216,91 @@ class KisApiExecutorTest {
                     .isNotInstanceOf(KisRateLimitException.class)
                     .isInstanceOf(RestClientResponseException.class);
         }
+
+        @Test
+        @DisplayName("trCont=\"N\" 전달 — 실제 HTTP tr_cont 헤더 송신 (REQ-TRCONT-041)")
+        void executeGet_multikey_withTrCont_sendsTrContHeader() {
+            // Arrange
+            when(kisTokenService.getValidToken("gold")).thenReturn("gold-token");
+            mockServer
+                    .expect(
+                            MockRestRequestMatchers.requestTo(
+                                    "https://openapi.koreainvestment.com:9443/test"))
+                    .andExpect(MockRestRequestMatchers.header("tr_cont", "N"))
+                    .andRespond(
+                            MockRestResponseCreators.withSuccess(
+                                    "{\"rt_cd\":\"0\",\"msg1\":\"OK\"}",
+                                    MediaType.APPLICATION_JSON));
+
+            // Act
+            StubResponse response =
+                    executor.executeGet(
+                            GOLD_CREDENTIAL,
+                            b -> b.path("/test").build(),
+                            "FHKST00000000",
+                            StubResponse.class,
+                            "N");
+
+            // Assert
+            assertThat(response).isNotNull();
+            mockServer.verify();
+        }
+
+        @Test
+        @DisplayName("trCont=\"\"(공백) 전달 — tr_cont 헤더 미부착 (REQ-TRCONT-003)")
+        void executeGet_multikey_withBlankTrCont_omitsTrContHeader() {
+            // Arrange
+            when(kisTokenService.getValidToken("gold")).thenReturn("gold-token");
+            mockServer
+                    .expect(
+                            MockRestRequestMatchers.requestTo(
+                                    "https://openapi.koreainvestment.com:9443/test"))
+                    .andExpect(MockRestRequestMatchers.headerDoesNotExist("tr_cont"))
+                    .andRespond(
+                            MockRestResponseCreators.withSuccess(
+                                    "{\"rt_cd\":\"0\",\"msg1\":\"OK\"}",
+                                    MediaType.APPLICATION_JSON));
+
+            // Act
+            StubResponse response =
+                    executor.executeGet(
+                            GOLD_CREDENTIAL,
+                            b -> b.path("/test").build(),
+                            "FHKST00000000",
+                            StubResponse.class,
+                            "");
+
+            // Assert
+            assertThat(response).isNotNull();
+            mockServer.verify();
+        }
+
+        @Test
+        @DisplayName("기존 4-arg executeGet — tr_cont 헤더 미송신 회귀 방지 (REQ-TRCONT-042/004)")
+        void executeGet_multikey_legacyFourArg_neverSendsTrContHeader() {
+            // Arrange
+            when(kisTokenService.getValidToken("gold")).thenReturn("gold-token");
+            mockServer
+                    .expect(
+                            MockRestRequestMatchers.requestTo(
+                                    "https://openapi.koreainvestment.com:9443/test"))
+                    .andExpect(MockRestRequestMatchers.headerDoesNotExist("tr_cont"))
+                    .andRespond(
+                            MockRestResponseCreators.withSuccess(
+                                    "{\"rt_cd\":\"0\",\"msg1\":\"OK\"}",
+                                    MediaType.APPLICATION_JSON));
+
+            // Act
+            StubResponse response =
+                    executor.executeGet(
+                            GOLD_CREDENTIAL,
+                            b -> b.path("/test").build(),
+                            "FHKST00000000",
+                            StubResponse.class);
+
+            // Assert
+            assertThat(response).isNotNull();
+            mockServer.verify();
+        }
     }
 }
