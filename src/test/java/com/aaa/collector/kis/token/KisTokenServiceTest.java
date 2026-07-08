@@ -214,6 +214,64 @@ class KisTokenServiceTest {
         verify(safeModeManager).exit("test");
     }
 
+    // ── T-005 (D-F): 백오프 리셋 게이트 분리 ─────────────────────────────────
+
+    @Test
+    @DisplayName(
+            "issueOne 성공 시 안전 모드 활성 여부와 무관하게 resetBackoff가 무조건 호출된다" + "(REQ-SAFEMODE-005, D-F)")
+    void issueOne_successRegardlessOfSafeModeActive_callsResetBackoffUnconditionally() {
+        // Arrange
+        String expectedToken = "reset-backoff-token";
+        KisTokenResponse response =
+                tokenResponse(expectedToken, LocalDateTime.of(2026, 3, 19, 9, 0));
+        when(kisTokenClient.requestToken(credential)).thenReturn(response);
+        when(safeModeManager.isActive("test")).thenReturn(true);
+
+        // Act
+        kisTokenService.issueOne(credential);
+
+        // Assert
+        verify(safeModeManager).resetBackoff("test");
+        verify(safeModeManager).exit("test");
+    }
+
+    @Test
+    @DisplayName(
+            "issueOne 성공 시 안전 모드가 이미 비활성(TTL 자연만료 후 성공 경로)이어도 resetBackoff는 호출되고 exit은 호출되지"
+                    + " 않는다(REQ-SAFEMODE-005 핵심 시나리오, D-F)")
+    void issueOne_successWhenSafeModeAlreadyInactive_callsResetBackoffButNotExit() {
+        // Arrange: TTL 자연만료로 이미 isActive=false인 키가 발급에 성공하는 가장 흔한 회복 경로
+        String expectedToken = "stale-backoff-reset-token";
+        KisTokenResponse response =
+                tokenResponse(expectedToken, LocalDateTime.of(2026, 3, 19, 9, 0));
+        when(kisTokenClient.requestToken(credential)).thenReturn(response);
+        when(safeModeManager.isActive("test")).thenReturn(false);
+
+        // Act
+        kisTokenService.issueOne(credential);
+
+        // Assert: exit()이 호출되지 않는 경로에서도 resetBackoff는 호출되어야 한다
+        verify(safeModeManager).resetBackoff("test");
+        verify(safeModeManager, never()).exit("test");
+    }
+
+    @Test
+    @DisplayName("issueOne MAX_ATTEMPTS 모두 실패 시 resetBackoff는 호출되지 않는다(발급 실패는 회복 신호가 아님)")
+    void issueOne_allAttemptsFail_doesNotCallResetBackoff() {
+        // Arrange
+        when(kisTokenClient.requestToken(credential))
+                .thenThrow(new RuntimeException("persistent error"));
+
+        // Act
+        try {
+            kisTokenService.issueOne(credential);
+        } catch (KisTokenIssueException ignored) {
+        }
+
+        // Assert
+        verify(safeModeManager, never()).resetBackoff(any());
+    }
+
     @Test
     @DisplayName("issueOne — 응답 만료시각이 마진(10분) 이내면 기본 TTL 1시간으로 저장된다")
     void issueOne_nearExpiryResponse_savesWithFallbackTtl() {

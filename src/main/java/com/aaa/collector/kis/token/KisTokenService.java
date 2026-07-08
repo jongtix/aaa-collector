@@ -169,9 +169,13 @@ public class KisTokenService {
         String token = response.accessToken();
         kisTokenRepository.saveToken(alias, token, ttl);
 
-        // 토큰 발급 성공 시 안전 모드가 켜져 있으면 해제한다.
+        // 발급 성공 시 백오프 수준은 안전 모드 활성 여부와 무관하게 무조건 리셋한다(REQ-SAFEMODE-005, D-F).
+        // TTL 자연만료로 이미 isActive=false로 복귀한 키가 재시도 성공하는 경로(가장 흔한 회복 경로)에서도
+        // stale 백오프 레벨이 남지 않도록 하기 위함이다(SPEC-COLLECTOR-SAFEMODE-001 §3 D-5).
+        // 안전 모드 해제(exit)는 종전과 동일하게 활성 상태였을 때만 수행한다.
         // 정상 경로(안전 모드 OFF)에서도 isActive()로 Redis GET이 1회 발생하지만,
         // 일 1회·5개 계좌 규모에서 무시할 수 있는 비용이므로 현행 유지.
+        safeModeManager.resetBackoff(alias);
         if (safeModeManager.isActive(alias)) {
             safeModeManager.exit(alias);
         }
