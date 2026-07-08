@@ -2,9 +2,12 @@ package com.aaa.collector.stock.rights;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.lenient;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.aaa.collector.kis.gate.GuardedKisExecutor;
@@ -21,6 +24,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.ArgumentMatcher;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -66,7 +70,8 @@ class DividendAmountPrefetcherTest {
                                 any(LeaseSession.class),
                                 argThat(rightTypeIs(RIGHT_TYPE_SCRIP)),
                                 eq(PERIOD_RIGHTS_TR_ID),
-                                eq(KisPeriodRightsResponse.class)))
+                                eq(KisPeriodRightsResponse.class),
+                                anyString()))
                 .thenReturn(emptyPeriodRightsResponse());
     }
 
@@ -132,7 +137,8 @@ class DividendAmountPrefetcherTest {
                         any(LeaseSession.class),
                         argThat(rightTypeIs(rghtTypeCd)),
                         eq(PERIOD_RIGHTS_TR_ID),
-                        eq(KisPeriodRightsResponse.class)))
+                        eq(KisPeriodRightsResponse.class),
+                        anyString()))
                 .thenReturn(response);
     }
 
@@ -181,7 +187,8 @@ class DividendAmountPrefetcherTest {
                             any(LeaseSession.class),
                             argThat(rightTypeIs(RIGHT_TYPE_GENERAL)),
                             eq(PERIOD_RIGHTS_TR_ID),
-                            eq(KisPeriodRightsResponse.class)))
+                            eq(KisPeriodRightsResponse.class),
+                            anyString()))
                     .thenReturn(page1, page2);
             stubType(RIGHT_TYPE_SPECIAL, emptyPeriodRightsResponse());
 
@@ -215,7 +222,8 @@ class DividendAmountPrefetcherTest {
                             any(LeaseSession.class),
                             argThat(rightTypeIs(RIGHT_TYPE_GENERAL)),
                             eq(PERIOD_RIGHTS_TR_ID),
-                            eq(KisPeriodRightsResponse.class)))
+                            eq(KisPeriodRightsResponse.class),
+                            anyString()))
                     .thenReturn(infinitePage);
             stubType(RIGHT_TYPE_SPECIAL, emptyPeriodRightsResponse());
 
@@ -246,7 +254,8 @@ class DividendAmountPrefetcherTest {
                             any(LeaseSession.class),
                             argThat(rightTypeIs(RIGHT_TYPE_SPECIAL)),
                             eq(PERIOD_RIGHTS_TR_ID),
-                            eq(KisPeriodRightsResponse.class)))
+                            eq(KisPeriodRightsResponse.class),
+                            anyString()))
                     .thenThrow(new RestClientException("boom"));
 
             DividendAmountPrefetch result = prefetcher.prefetch(session, Set.of("AAPL"));
@@ -265,7 +274,8 @@ class DividendAmountPrefetcherTest {
                             any(LeaseSession.class),
                             argThat(rightTypeIs(RIGHT_TYPE_GENERAL)),
                             eq(PERIOD_RIGHTS_TR_ID),
-                            eq(KisPeriodRightsResponse.class)))
+                            eq(KisPeriodRightsResponse.class),
+                            anyString()))
                     .thenThrow(new RestClientException("boom"));
             stubType(
                     RIGHT_TYPE_SPECIAL,
@@ -294,7 +304,8 @@ class DividendAmountPrefetcherTest {
                             any(LeaseSession.class),
                             any(),
                             eq(PERIOD_RIGHTS_TR_ID),
-                            eq(KisPeriodRightsResponse.class)))
+                            eq(KisPeriodRightsResponse.class),
+                            anyString()))
                     .thenThrow(new RestClientException("session/token failure"));
 
             DividendAmountPrefetch result = prefetcher.prefetch(session, Set.of("AAPL"));
@@ -748,7 +759,8 @@ class DividendAmountPrefetcherTest {
                             any(LeaseSession.class),
                             argThat(rightTypeIs(RIGHT_TYPE_SCRIP)),
                             eq(PERIOD_RIGHTS_TR_ID),
-                            eq(KisPeriodRightsResponse.class)))
+                            eq(KisPeriodRightsResponse.class),
+                            anyString()))
                     .thenThrow(new RestClientException("boom"));
 
             DividendAmountPrefetch result = prefetcher.prefetch(session, Set.of("AAPL"));
@@ -791,6 +803,59 @@ class DividendAmountPrefetcherTest {
             assertThat(result.amountsByKey())
                     .containsOnlyKeys(
                             new DividendAmountKey("PEP", java.time.LocalDate.of(2026, 6, 5)));
+        }
+    }
+
+    @Nested
+    @DisplayName("tr_cont 연속조회 헤더 전달 (SPEC-COLLECTOR-TRCONT-001 REQ-TRCONT-010/012/040)")
+    class TrContCursorPaging {
+
+        @Test
+        @DisplayName("첫 페이지 trCont=\"\", 2페이지째부터 trCont=\"N\" — 인자 캡처로 검증")
+        void firstPageBlank_secondPageOnwardsN() throws Exception {
+            KisPeriodRightsResponse page1 =
+                    periodRightsResponse(
+                            List.of(
+                                    confirmedRow(
+                                            "AAPL",
+                                            RIGHT_TYPE_GENERAL,
+                                            "20260511",
+                                            "0.26000",
+                                            "USD")),
+                            "cursor-1",
+                            "fk-1");
+            KisPeriodRightsResponse page2 =
+                    periodRightsResponse(
+                            List.of(
+                                    confirmedRow(
+                                            "AAPL",
+                                            RIGHT_TYPE_GENERAL,
+                                            "20260611",
+                                            "0.27000",
+                                            "USD")),
+                            null,
+                            null);
+            when(guardedKisExecutor.execute(
+                            any(LeaseSession.class),
+                            argThat(rightTypeIs(RIGHT_TYPE_GENERAL)),
+                            eq(PERIOD_RIGHTS_TR_ID),
+                            eq(KisPeriodRightsResponse.class),
+                            anyString()))
+                    .thenReturn(page1, page2);
+            stubType(RIGHT_TYPE_SPECIAL, emptyPeriodRightsResponse());
+
+            prefetcher.prefetch(session, Set.of("AAPL"));
+
+            ArgumentCaptor<String> trContCaptor = ArgumentCaptor.forClass(String.class);
+            verify(guardedKisExecutor, times(2))
+                    .execute(
+                            any(LeaseSession.class),
+                            argThat(rightTypeIs(RIGHT_TYPE_GENERAL)),
+                            eq(PERIOD_RIGHTS_TR_ID),
+                            eq(KisPeriodRightsResponse.class),
+                            trContCaptor.capture());
+            List<String> capturedTrCont = trContCaptor.getAllValues();
+            assertThat(capturedTrCont).containsExactly("", "N");
         }
     }
 }

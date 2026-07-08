@@ -235,7 +235,8 @@ class DividendAmountPrefetcher {
             KisPeriodRightsResponse response;
             try {
                 response =
-                        fetchPeriodRightsPage(session, rghtTypeCd, startDate, endDate, nk50, fk50);
+                        fetchPeriodRightsPage(
+                                session, rghtTypeCd, startDate, endDate, nk50, fk50, page);
             } catch (KisRateLimitException
                     | RestClientException
                     | NoHealthyKeyException
@@ -313,14 +314,21 @@ class DividendAmountPrefetcher {
         typeMap.put(key, item);
     }
 
-    /** 게이트를 경유해 CTRGT011R 1페이지를 조회한다(REQ-ODA-010, 011). */
+    /**
+     * 게이트를 경유해 CTRGT011R 1페이지를 조회한다(REQ-ODA-010, 011).
+     *
+     * <p>SPEC-COLLECTOR-TRCONT-001 REQ-TRCONT-010 — KIS 연속조회 규약(body 커서 + HTTP 헤더 {@code tr_cont})을
+     * 만족시키기 위해 첫 페이지({@code page == 1})는 {@code trCont=""}(헤더 미부착), 2페이지째부터는 {@code trCont="N"}으로
+     * 신규 {@link GuardedKisExecutor} 오버로드를 호출한다.
+     */
     private KisPeriodRightsResponse fetchPeriodRightsPage(
             LeaseSession session,
             String rghtTypeCd,
             String startDate,
             String endDate,
             String nk50,
-            String fk50)
+            String fk50,
+            int page)
             throws InterruptedException {
         Function<UriBuilder, URI> uriCustomizer =
                 uri ->
@@ -334,8 +342,9 @@ class DividendAmountPrefetcher {
                                 .queryParam("CTX_AREA_NK50", nk50)
                                 .queryParam("CTX_AREA_FK50", fk50)
                                 .build();
+        String trCont = page == 1 ? "" : "N";
         return guardedKisExecutor.execute(
-                session, uriCustomizer, PERIOD_RIGHTS_TR_ID, KisPeriodRightsResponse.class);
+                session, uriCustomizer, PERIOD_RIGHTS_TR_ID, KisPeriodRightsResponse.class, trCont);
     }
 
     /**
