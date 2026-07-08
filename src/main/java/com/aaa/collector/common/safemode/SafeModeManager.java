@@ -122,6 +122,8 @@ public class SafeModeManager {
      *
      * @param alias 계정/연결 식별자
      */
+    // @MX:NOTE: [AUTO] KisTokenService.requestAndSaveToken()이 발급 성공마다 무조건 호출 — exit()의 isActive
+    // 게이트와 분리된 별도 진입점(D-F). TTL 자연만료 후 성공 경로의 stale 백오프 리셋 누락을 방지한다
     public void resetBackoff(String alias) {
         if (backoffPolicy == null) {
             return;

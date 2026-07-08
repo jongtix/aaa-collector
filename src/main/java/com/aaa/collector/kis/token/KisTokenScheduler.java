@@ -45,6 +45,8 @@ public class KisTokenScheduler {
      * <p>{@link #refreshTokens()}와 별개 트리거로 분리하여, 요일 필드만 확장(MON-FRI → *)하는 방식으로는 발생할 주말 approval_key
      * 재발급 부수효과를 원천 차단한다(D-3).
      */
+    // @MX:NOTE: [AUTO] 평일 refreshTokens()와 독립된 트리거 — 요일 필드만 확장(MON-FRI→*)하지 않고 별도 메서드로 분리해
+    // 주말 approval_key 재발급 부수효과를 차단(D-3, TOKEN-001 REQ-TOKEN-003 보존)
     @Scheduled(cron = "0 15 8 * * SAT,SUN", zone = "Asia/Seoul")
     public void refreshWeekendTokens() {
         log.info("주말 스케줄 access_token 무조건 발급 시작");

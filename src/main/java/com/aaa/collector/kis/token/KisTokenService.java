@@ -204,10 +204,16 @@ public class KisTokenService {
      *
      * <p>발급/재시도/SafeMode 기록 로직은 모두 {@link #issueOne(KisAccountCredential)}에 위임하며 이 메서드는 병렬 오케스트레이션만
      * 담당한다(SPEC-COLLECTOR-TOKEN-001 REQ-TOKEN-002 supersede — §1.4).
+     *
+     * <p>SPEC-COLLECTOR-SAFEMODE-001 이후 {@code KisTokenScheduler.refreshTokens()}(평일)와 {@code
+     * refreshWeekendTokens()}(주말, 신규) 양쪽에서 호출되는 무조건 발급의 access_token 축을 담당한다(REQ-SAFEMODE-009~011).
+     * SafeMode 활성 여부와 무관하게 발급을 시도하는 현행 동작이 그대로 "무조건 발급" 시맨틱을 충족한다.
      */
-    // @MX:ANCHOR: [AUTO] REST access_token 5계좌 병렬 사전발급 진입점 — 토큰 스케줄러가 호출
-    // @MX:REASON: SPEC-COLLECTOR-WLSYNC-006 REQ-WLSYNC-100,101,103 — eager 사전발급으로 ②단계 멀티키 소비처 토큰 준비
-    // @MX:SPEC: SPEC-COLLECTOR-WLSYNC-006
+    // @MX:ANCHOR: [AUTO] REST access_token 5계좌 병렬 사전발급 진입점 — 평일/주말 토큰 스케줄러가 호출
+    // @MX:REASON: SPEC-COLLECTOR-WLSYNC-006 REQ-WLSYNC-100,101,103 — eager 사전발급으로 ②단계 멀티키 소비처 토큰
+    // 준비.
+    // SPEC-COLLECTOR-SAFEMODE-001 REQ-SAFEMODE-009~011 — SafeMode 무시 무조건 발급 일일 플로어(평일+주말)
+    // @MX:SPEC: SPEC-COLLECTOR-WLSYNC-006, SPEC-COLLECTOR-SAFEMODE-001
     public void issueAllTokens() {
         runForAllAccounts("access_token 사전발급", this::issueOne);
     }

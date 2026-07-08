@@ -23,6 +23,8 @@ import org.springframework.data.redis.core.StringRedisTemplate;
  * SafeModeBackoffPolicy})의 유무로 결정하며, 본 레포지토리는 호출된 대로 저장만 수행한다(REQ-SAFEMODE-016 스코프 격리는
  * SafeModeManager/SafeModeConfig 계층에서 보장).
  */
+// @MX:NOTE: [AUTO] 백오프 레벨 키({keyPrefix}backoff:{alias})는 안전 모드 "ON" 키와 별도 Redis 키로 TTL 없이
+// 보관된다(D-A) — "ON" 키의 TTL 만료(REQ-SAFEMODE-006)와 독립적으로 지속되어야 하는 요구(REQ-SAFEMODE-004) 때문
 @RequiredArgsConstructor
 public class SafeModeRepository {
 
