@@ -7,7 +7,9 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.aaa.collector.backfill.BackfillStatus;
 import com.aaa.collector.backfill.BackfillStatusRepository;
+import com.aaa.collector.backfill.BackfillStatusType;
 import com.aaa.collector.observability.BackfillDensityMetrics;
 import com.aaa.collector.observability.CoverageMetrics;
 import com.aaa.collector.observability.WatermarkSeries;
@@ -18,13 +20,19 @@ import com.aaa.collector.stock.enums.AssetType;
 import com.aaa.collector.stock.enums.Market;
 import java.time.LocalDate;
 import java.util.List;
+import java.util.Optional;
+import java.util.function.Consumer;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
+import org.mockito.Mockito;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.transaction.TransactionStatus;
+import org.springframework.transaction.support.TransactionTemplate;
 
 @ExtendWith(MockitoExtension.class)
 @DisplayName("CoverageRefresher — 일봉 커버리지 일1회 계산 (REQ-WM-010/011)")
@@ -37,8 +45,24 @@ class CoverageRefresherTest {
     @Mock private CoverageMetrics coverageMetrics;
     @Mock private BackfillStatusRepository backfillStatusRepository;
     @Mock private BackfillDensityMetrics densityMetrics;
+    @Mock private TransactionTemplate transactionTemplate;
 
     @InjectMocks private CoverageRefresher refresher;
+
+    @BeforeEach
+    @SuppressWarnings("unchecked")
+    void stubTransactionTemplate() {
+        // executeWithoutResult(Consumer<TransactionStatus>)를 즉시 동기 실행 — 실제 DB 트랜잭션 없이 콜백만 구동한다.
+        Mockito.lenient()
+                .doAnswer(
+                        invocation -> {
+                            Consumer<TransactionStatus> callback = invocation.getArgument(0);
+                            callback.accept(Mockito.mock(TransactionStatus.class));
+                            return null;
+                        })
+                .when(transactionTemplate)
+                .executeWithoutResult(any());
+    }
 
     private static Stock stock(long id, Market market) {
         return Stock.builder()
@@ -220,6 +244,102 @@ class CoverageRefresherTest {
 
             verify(densityMetrics).setBelowFloorCount(WatermarkSeries.DAILY_OHLCV_KRX, 0L);
             verify(densityMetrics).setInternalGapCount(WatermarkSeries.DAILY_OHLCV_KRX, 0L);
+        }
+    }
+
+    @Nested
+    @DisplayName(
+            "listed_date 하향 보정 + 표적 재처리 (SPEC-COLLECTOR-BACKFILL-010 REQ-BACKFILL-159/-160, AC-16/AC-17,"
+                    + " EC-14)")
+    class ListedDateCorrectionAndTargetedReset {
+
+        @Test
+        @DisplayName("AC-16(a): MIN(trade_date) < listed_date → managed 인스턴스에 하향 보정 적용(원자적 트랜잭션)")
+        void minBeforeListedDate_correctsManagedInstance() {
+            Stock pltr = stock(1, Market.NASDAQ); // listed_date=2015-01-01 fixture
+            Stock managedPltr = stock(1, Market.NASDAQ);
+            LocalDate trueMin = LocalDate.of(2010, 9, 30); // 과대평가 사례 — 진짜 IPO가 더 이름
+            when(usMarketSessionGate.computeExpectedTradeDate()).thenReturn(null);
+            when(stockRepository.findAllActiveOverseasTradable()).thenReturn(List.of(pltr));
+            when(dailyOhlcvRepository.findMinMaxCountByStockIds(anyCollection()))
+                    .thenReturn(
+                            List.<Object[]>of(
+                                    new Object[] {
+                                        pltr.getId(), trueMin, LocalDate.of(2020, 1, 1), 100
+                                    }));
+            when(dailyOhlcvRepository.findDistinctTradeDatesByStockIds(anyCollection()))
+                    .thenReturn(List.of(trueMin));
+            when(stockRepository.findById(pltr.getId())).thenReturn(Optional.of(managedPltr));
+
+            refresher.refreshUsCoverage();
+
+            // managed 인스턴스가 실제로 하향 보정됨(영속 대상)
+            org.assertj.core.api.Assertions.assertThat(managedPltr.getListedDate())
+                    .isEqualTo(trueMin);
+            // 호출자 detached 인스턴스도 이번 cron 실행 내 즉시 갱신되어 게이지 계산에 반영됨
+            org.assertj.core.api.Assertions.assertThat(pltr.getListedDate()).isEqualTo(trueMin);
+        }
+
+        @Test
+        @DisplayName("AC-17: 보정된 종목의 GROUP_A daily_ohlcv backfill_status만 표적 리셋")
+        void correctedStock_resetsTargetedBackfillStatus() {
+            Stock pltr = stock(1, Market.NASDAQ);
+            Stock managedPltr = stock(1, Market.NASDAQ);
+            LocalDate trueMin = LocalDate.of(2010, 9, 30);
+            BackfillStatus completedStatus =
+                    BackfillStatus.builder()
+                            .targetType("STOCK")
+                            .targetCode("SYM1")
+                            .dataTable("daily_ohlcv")
+                            .status(BackfillStatusType.COMPLETED)
+                            .build();
+            BackfillStatus spyStatus = Mockito.spy(completedStatus);
+            when(usMarketSessionGate.computeExpectedTradeDate()).thenReturn(null);
+            when(stockRepository.findAllActiveOverseasTradable()).thenReturn(List.of(pltr));
+            when(dailyOhlcvRepository.findMinMaxCountByStockIds(anyCollection()))
+                    .thenReturn(
+                            List.<Object[]>of(
+                                    new Object[] {
+                                        pltr.getId(), trueMin, LocalDate.of(2020, 1, 1), 100
+                                    }));
+            when(dailyOhlcvRepository.findDistinctTradeDatesByStockIds(anyCollection()))
+                    .thenReturn(List.of(trueMin));
+            when(stockRepository.findById(pltr.getId())).thenReturn(Optional.of(managedPltr));
+            when(backfillStatusRepository.findByTargetTypeAndTargetCodeAndDataTable(
+                            "STOCK", "SYM1", "daily_ohlcv"))
+                    .thenReturn(Optional.of(spyStatus));
+
+            refresher.refreshUsCoverage();
+
+            verify(spyStatus).resetForReprocess();
+        }
+
+        @Test
+        @DisplayName("AC-16(c)/(d): 정상(MIN>listed_date) 또는 데이터 없음 — 상향 보정·표적 리셋 모두 미발생")
+        void normalOrNoData_neverCorrectsOrResets() {
+            Stock stock = stock(1, Market.NASDAQ); // listed_date=2015-01-01
+            when(usMarketSessionGate.computeExpectedTradeDate()).thenReturn(null);
+            when(stockRepository.findAllActiveOverseasTradable()).thenReturn(List.of(stock));
+            // MIN > listed_date(2015-01-01) — 정상 케이스, 상향 보정 없음
+            when(dailyOhlcvRepository.findMinMaxCountByStockIds(anyCollection()))
+                    .thenReturn(
+                            List.<Object[]>of(
+                                    new Object[] {
+                                        stock.getId(),
+                                        LocalDate.of(2016, 1, 1),
+                                        LocalDate.of(2020, 1, 1),
+                                        100
+                                    }));
+            when(dailyOhlcvRepository.findDistinctTradeDatesByStockIds(anyCollection()))
+                    .thenReturn(List.of(LocalDate.of(2016, 1, 1)));
+
+            refresher.refreshUsCoverage();
+
+            verify(stockRepository, never()).findById(any());
+            verify(backfillStatusRepository, never())
+                    .findByTargetTypeAndTargetCodeAndDataTable(any(), any(), any());
+            org.assertj.core.api.Assertions.assertThat(stock.getListedDate())
+                    .isEqualTo(LocalDate.of(2015, 1, 1)); // 불변
         }
     }
 }

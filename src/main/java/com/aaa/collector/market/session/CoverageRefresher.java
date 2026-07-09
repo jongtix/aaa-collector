@@ -2,6 +2,7 @@ package com.aaa.collector.market.session;
 
 import com.aaa.collector.backfill.BackfillDensityCalculator;
 import com.aaa.collector.backfill.BackfillDensityCalculator.StockDensityInput;
+import com.aaa.collector.backfill.BackfillStatus;
 import com.aaa.collector.backfill.BackfillStatusRepository;
 import com.aaa.collector.observability.BackfillDensityMetrics;
 import com.aaa.collector.observability.CoverageMetrics;
@@ -19,6 +20,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
+import org.springframework.transaction.support.TransactionTemplate;
 
 /**
  * 일봉 데이터 커버리지 일1회(deadline 직후) 계산 (SPEC-OBSV-WATERMARK-001 REQ-WM-010/011).
@@ -63,6 +65,7 @@ public class CoverageRefresher {
     private final CoverageMetrics coverageMetrics;
     private final BackfillStatusRepository backfillStatusRepository;
     private final BackfillDensityMetrics densityMetrics;
+    private final TransactionTemplate transactionTemplate;
 
     /** KRX 일봉 커버리지·밀도 게이지를 계산해 반영한다(REQ-WM-010, REQ-BACKFILL-154/-155). */
     @Scheduled(cron = KRX_CRON, zone = "Asia/Seoul")
@@ -115,6 +118,15 @@ public class CoverageRefresher {
         }
         List<LocalDate> calendar = dailyOhlcvRepository.findDistinctTradeDatesByStockIds(stockIds);
 
+        // REQ-159/160: listed_date 하향 보정 + 표적 backfill_status 리셋 — 게이지 A 카운트보다 먼저 적용해
+        // 같은 cron 실행 내에서 게이지 A가 이미 정정된 floor로 계산되게 한다(§4.5).
+        for (Stock stock : universe) {
+            Object[] row = minMaxCountByStockId.get(stock.getId());
+            if (row != null) {
+                correctListedDateAndReset(stock, (LocalDate) row[1]);
+            }
+        }
+
         List<StockDensityInput> inputs =
                 universe.stream()
                         .map(stock -> toDensityInput(stock, minMaxCountByStockId, overseas))
@@ -131,6 +143,44 @@ public class CoverageRefresher {
                 belowFloor,
                 internalGap,
                 universe.size());
+    }
+
+    /**
+     * {@code listed_date} 자동 하향 보정 + 표적 {@code backfill_status} 리셋을 원자적으로 수행한다
+     * (SPEC-COLLECTOR-BACKFILL-010 REQ-BACKFILL-159/-160, §4.5).
+     *
+     * <p>[HARD] 보정과 리셋은 반드시 같은 트랜잭션으로 묶는다 — 따로 커밋하다 리셋이 실패하면 보정된 {@code listed_date}가 다음 cron의 재감지
+     * 조건({@code MIN(trade_date) < listed_date})을 스스로 소멸시켜 영구 고아 상태가 된다. {@code @Scheduled} 메서드 자체는
+     * non-tx로 유지하고(장시간 커넥션 점유 방지), 보정이 필요한 종목별로만 작은 트랜잭션 단위를 연다.
+     *
+     * <p>먼저 호출자의(detached) {@code stock} 인스턴스에 하향 전용 가드를 직접 적용해 이번 cron 실행 내 게이지 A/B 계산이 정정된 {@code
+     * listed_date}를 즉시 반영하게 한다(§4.5 "이후 게이지 A/B 계산은 정정된 floor 사용"). 실제 영속은 managed 인스턴스로 별도 조회해
+     * 수행한다.
+     *
+     * @param stock 활성 유니버스에서 로드된(detached) 종목 — 보정 시 이 인스턴스도 즉시 갱신된다
+     * @param minTradeDate 이미 저장된 {@code daily_ohlcv}의 {@code MIN(trade_date)}
+     */
+    // @MX:SPEC: SPEC-COLLECTOR-BACKFILL-010
+    private void correctListedDateAndReset(Stock stock, LocalDate minTradeDate) {
+        if (!stock.correctListedDateDownTo(minTradeDate)) {
+            return; // 하향 보정 불필요 — 표적 리셋도 없음(보정↔리셋 인과 결합)
+        }
+        transactionTemplate.executeWithoutResult(
+                tx -> {
+                    stockRepository
+                            .findById(stock.getId())
+                            .ifPresent(managed -> managed.correctListedDateDownTo(minTradeDate));
+                    // REQ-160: 보정된 종목의 GROUP_A daily_ohlcv backfill_status만 표적 리셋
+                    // (corporate_events*·GROUP_B·미보정 종목 무영향)
+                    backfillStatusRepository
+                            .findByTargetTypeAndTargetCodeAndDataTable(
+                                    TARGET_TYPE_STOCK, stock.getSymbol(), DAILY_OHLCV)
+                            .ifPresent(BackfillStatus::resetForReprocess);
+                });
+        log.info(
+                "[density] listed_date 하향 보정 + 표적 리셋 — symbol={}, correctedTo={}",
+                stock.getSymbol(),
+                minTradeDate);
     }
 
     private StockDensityInput toDensityInput(
