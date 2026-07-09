@@ -132,7 +132,7 @@ class BackfillWindowExecutorTransactionTest {
                     .thenReturn(new BackfillWindowResult(oldest, 30));
 
             // Act
-            windowExecutor.persistWindow(status, domesticStock, fetch);
+            windowExecutor.persistWindow(status, domesticStock, FetchEnvelope.notApplicable(fetch));
 
             // Assert
             BackfillStatus updated =
@@ -162,7 +162,12 @@ class BackfillWindowExecutorTransactionTest {
                     .thenReturn(Optional.of(spyStatus));
 
             // Act & Assert — 예외 전파
-            assertThatThrownBy(() -> windowExecutor.persistWindow(status, domesticStock, fetch))
+            assertThatThrownBy(
+                            () ->
+                                    windowExecutor.persistWindow(
+                                            status,
+                                            domesticStock,
+                                            FetchEnvelope.notApplicable(fetch)))
                     .isInstanceOf(RuntimeException.class)
                     .hasMessageContaining("DB write failure");
 
@@ -391,7 +396,12 @@ class BackfillWindowExecutorTransactionTest {
                     .thenReturn(Optional.of(spyStatus));
 
             // Act & Assert
-            assertThatThrownBy(() -> windowExecutor.persistWindow(status, domesticStock, fetch))
+            assertThatThrownBy(
+                            () ->
+                                    windowExecutor.persistWindow(
+                                            status,
+                                            domesticStock,
+                                            FetchEnvelope.notApplicable(fetch)))
                     .isInstanceOf(RuntimeException.class)
                     .hasMessageContaining("advance rollback trigger");
 

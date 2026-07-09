@@ -7,6 +7,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.aaa.collector.backfill.BackfillMetrics;
+import com.aaa.collector.backfill.BackfillProperties;
 import com.aaa.collector.backfill.BackfillStatus;
 import com.aaa.collector.backfill.BackfillStatusRepository;
 import com.aaa.collector.backfill.BackfillStatusType;
@@ -87,7 +88,8 @@ class BackfillWindowExecutorTest {
                         terminationPolicy,
                         windowAdvancer,
                         backfillMetrics,
-                        transactionTemplate);
+                        transactionTemplate,
+                        new BackfillProperties());
     }
 
     private Stock stock(String symbol, Market market) {
@@ -173,7 +175,7 @@ class BackfillWindowExecutorTest {
             when(terminationPolicy.decide(any()))
                     .thenReturn(TerminationDecision.completed(0, false));
 
-            executor.persistWindow(status, aapl, fetch);
+            executor.persistWindow(status, aapl, FetchEnvelope.notApplicable(fetch));
 
             verify(overseasSplitService).persistWindowForBackfill(fetch);
             verify(revSplitService, never()).persistWindowForBackfill(any());
@@ -191,7 +193,7 @@ class BackfillWindowExecutorTest {
             when(terminationPolicy.decide(any()))
                     .thenReturn(TerminationDecision.completed(0, false));
 
-            executor.persistWindow(status, samsung, fetch);
+            executor.persistWindow(status, samsung, FetchEnvelope.notApplicable(fetch));
 
             verify(revSplitService).persistWindowForBackfill(fetch);
             verify(overseasSplitService, never()).persistWindowForBackfill(any());
