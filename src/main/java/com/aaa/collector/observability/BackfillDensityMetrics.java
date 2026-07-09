@@ -1,0 +1,85 @@
+package com.aaa.collector.observability;
+
+import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.Tags;
+import jakarta.annotation.PostConstruct;
+import java.util.EnumMap;
+import java.util.Map;
+import java.util.concurrent.atomic.AtomicLong;
+import lombok.RequiredArgsConstructor;
+import org.springframework.stereotype.Component;
+
+/**
+ * 과거 데이터 밀도 게이지 계측 (SPEC-COLLECTOR-BACKFILL-010 REQ-BACKFILL-154/-155/-156, Axis 3).
+ *
+ * <p>{@link CoverageRefresher}가 시장별 일1회 cron에서 계산한 두 값을 노출한다:
+ *
+ * <ul>
+ *   <li>{@value #BELOW_FLOOR_NAME}(게이지 A) — 신뢰 가능한 하한(trusted floor) 존재 종목 중 {@code MIN(trade_date)
+ *       > floor}인 하한 미달 종목 수(REQ-154). 신뢰 하한이 없는 미검증 레거시 국내 종목은 모집단에서 제외돼 영구 오탐이 없다.
+ *   <li>{@value #INTERNAL_GAP_NAME}(게이지 B) — 활성 유니버스 거래일 캘린더 합집합 대비 보유 구간 내부에 부재 거래일이 1개 이상인 종목
+ *       수(REQ-155). 레거시 포함 전 COMPLETED를 감시한다(신뢰 하한 불필요).
+ * </ul>
+ *
+ * <p>부팅 직후 스크랩 공백을 없애기 위해 두 시장(KRX/US) 라벨을 0으로 pre-register한다({@link
+ * com.aaa.collector.warmstart.BatchMetricsWarmStarter} 패턴과 동일한 목적, REQ-156) — 실제 cron이 값을 갱신하기 전까지
+ * 0 시계열이 노출된다.
+ */
+// @MX:NOTE: [AUTO] 밀도 게이지 A(하한 미달)·B(내부 구멍) 계측 진입점 — CoverageRefresher 일1회 계산에서 호출
+// @MX:REASON: SPEC-COLLECTOR-BACKFILL-010 REQ-BACKFILL-154/-155/-156
+// @MX:SPEC: SPEC-COLLECTOR-BACKFILL-010
+@Component
+@RequiredArgsConstructor
+public class BackfillDensityMetrics {
+
+    static final String BELOW_FLOOR_NAME = "aaa_collector_backfill_below_floor_stocks";
+    static final String INTERNAL_GAP_NAME = "aaa_collector_backfill_internal_gap_stocks";
+
+    private final MeterRegistry registry;
+
+    private final Map<WatermarkSeries, AtomicLong> belowFloorHolders =
+            new EnumMap<>(WatermarkSeries.class);
+    private final Map<WatermarkSeries, AtomicLong> internalGapHolders =
+            new EnumMap<>(WatermarkSeries.class);
+
+    /** 부팅 직후 KRX/US 두 시장 라벨을 0으로 pre-register한다(REQ-156, 스크랩 공백 방지). */
+    @PostConstruct
+    void initGauges() {
+        holder(belowFloorHolders, BELOW_FLOOR_NAME, WatermarkSeries.DAILY_OHLCV_KRX);
+        holder(belowFloorHolders, BELOW_FLOOR_NAME, WatermarkSeries.DAILY_OHLCV_US);
+        holder(internalGapHolders, INTERNAL_GAP_NAME, WatermarkSeries.DAILY_OHLCV_KRX);
+        holder(internalGapHolders, INTERNAL_GAP_NAME, WatermarkSeries.DAILY_OHLCV_US);
+    }
+
+    /**
+     * 게이지 A(하한 미달 종목 수)를 설정한다(REQ-154).
+     *
+     * @param series 시장 시리즈(daily-ohlcv-krx/us)
+     * @param count 하한 미달 종목 수
+     */
+    public void setBelowFloorCount(WatermarkSeries series, long count) {
+        holder(belowFloorHolders, BELOW_FLOOR_NAME, series).set(count);
+    }
+
+    /**
+     * 게이지 B(내부 구멍 보유 종목 수)를 설정한다(REQ-155).
+     *
+     * @param series 시장 시리즈(daily-ohlcv-krx/us)
+     * @param count 내부 구멍 보유 종목 수
+     */
+    public void setInternalGapCount(WatermarkSeries series, long count) {
+        holder(internalGapHolders, INTERNAL_GAP_NAME, series).set(count);
+    }
+
+    private AtomicLong holder(
+            Map<WatermarkSeries, AtomicLong> holders, String name, WatermarkSeries series) {
+        return holders.computeIfAbsent(
+                series,
+                s -> {
+                    AtomicLong value = new AtomicLong(0L);
+                    registry.gauge(
+                            name, Tags.of("series", s.seriesLabel(), "market", s.market()), value);
+                    return value;
+                });
+    }
+}

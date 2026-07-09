@@ -175,4 +175,37 @@ public interface DailyOhlcvRepository extends JpaRepository<DailyOhlcv, Long> {
                     + " WHERE o.tradeDate = :tradeDate AND o.stock.id IN :stockIds")
     long countDistinctStockIdsByTradeDateAndStockIdIn(
             @Param("tradeDate") LocalDate tradeDate, @Param("stockIds") Collection<Long> stockIds);
+
+    /**
+     * 종목 ID 목록에 대해 {@code MIN(trade_date)}·{@code MAX(trade_date)}·보유 행 수를 배치 조회한다
+     * (SPEC-COLLECTOR-BACKFILL-010 REQ-BACKFILL-154/-155/-159 — 밀도 게이지 A/B + {@code listed_date} 보정
+     * 공유 조회).
+     *
+     * <p>결과 배열: {@code [stockId, minTradeDate, maxTradeDate, rowCount]}. {@code daily_ohlcv} 행이 0건인
+     * 종목은 결과에 포함되지 않는다.
+     *
+     * @param stockIds 조회 대상 종목 PK 집합
+     * @return 종목별 [stockId, min, max, count] 배열 목록
+     */
+    // @MX:SPEC: SPEC-COLLECTOR-BACKFILL-010
+    @Query(
+            "SELECT o.stock.id, MIN(o.tradeDate), MAX(o.tradeDate), COUNT(o) FROM DailyOhlcv o"
+                    + " WHERE o.stock.id IN :stockIds GROUP BY o.stock.id")
+    List<Object[]> findMinMaxCountByStockIds(@Param("stockIds") Collection<Long> stockIds);
+
+    /**
+     * 종목 ID 목록의 합집합 거래일 캘린더(distinct trade_date)를 조회한다 (SPEC-COLLECTOR-BACKFILL-010
+     * REQ-BACKFILL-155 — 게이지 B 내부 구멍 판정용, §A10).
+     *
+     * <p>거래정지일은 v1.44.0+가 {@code volume=0} 행으로 저장하므로, 전 종목에서 완전히 부재한 날짜만 이 캘린더에서 빠진다(안전하게 구멍으로 취급
+     * 가능).
+     *
+     * @param stockIds 조회 대상 종목 PK 집합(해당 시장 활성 유니버스)
+     * @return 합집합 거래일 오름차순 목록
+     */
+    // @MX:SPEC: SPEC-COLLECTOR-BACKFILL-010
+    @Query(
+            "SELECT DISTINCT o.tradeDate FROM DailyOhlcv o"
+                    + " WHERE o.stock.id IN :stockIds ORDER BY o.tradeDate")
+    List<LocalDate> findDistinctTradeDatesByStockIds(@Param("stockIds") Collection<Long> stockIds);
 }
