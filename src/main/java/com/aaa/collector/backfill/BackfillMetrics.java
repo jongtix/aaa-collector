@@ -36,6 +36,20 @@ public class BackfillMetrics {
     /** 백필 미완료(PENDING+IN_PROGRESS) 슬롯 수 게이지 이름 (SPEC-OBSV-WATERMARK-001 REQ-WM-029). */
     static final String PENDING_SLOTS_NAME = "aaa_collector_backfill_pending_slots";
 
+    /**
+     * GROUP_A 조기 완료 의심 카운터 (SPEC-COLLECTOR-BACKFILL-010 REQ-BACKFILL-157). 확인 프로브가 조기 완료를 차단할 때만 증가
+     * — GROUP_B 전용 {@link #CLAMP_SUSPECTED_NAME}와 대칭인 GROUP_A 신호.
+     */
+    static final String EARLY_COMPLETION_SUSPECT_NAME =
+            "aaa_collector_backfill_early_completion_suspect_total";
+
+    /**
+     * GROUP_A anomaly-FAILED 종결 카운터 (SPEC-COLLECTOR-BACKFILL-010 REQ-BACKFILL-146b). oldest=null·
+     * rawRowCount>0 이상 status가 N 사이클 끝에 terminal FAILED로 종결될 때 status당 1회만 증가 — {@code
+     * windows_total}·{@code pending_slots}(FAILED 제외)와 무관한 독립 관측.
+     */
+    static final String ANOMALY_FAILED_NAME = "aaa_collector_backfill_anomaly_failed_total";
+
     private final MeterRegistry registry;
 
     /** 진행률(완료/전체) gauge가 지연 조회하는 가변 상태. */
@@ -50,6 +64,8 @@ public class BackfillMetrics {
         Counter.builder(WINDOW_ROWS_NAME).register(registry);
         Counter.builder(CLAMP_SUSPECTED_NAME).register(registry);
         Counter.builder(WINDOWS_TOTAL_NAME).register(registry);
+        Counter.builder(EARLY_COMPLETION_SUSPECT_NAME).register(registry);
+        Counter.builder(ANOMALY_FAILED_NAME).register(registry);
         registry.gauge(PROGRESS_NAME, progressHolder, DoubleAdder::doubleValue);
         registry.gauge(PENDING_SLOTS_NAME, pendingSlotsHolder, AtomicLong::doubleValue);
     }
@@ -79,6 +95,23 @@ public class BackfillMetrics {
     /** 클램프 의심 종료 시 호출 (REQ-BACKFILL-014a). */
     public void recordClampSuspected() {
         Counter.builder(CLAMP_SUSPECTED_NAME).register(registry).increment();
+    }
+
+    /**
+     * GROUP_A 확인 프로브가 조기 완료를 차단했을 때 호출한다 (SPEC-COLLECTOR-BACKFILL-010 REQ-BACKFILL-157). 정상 완료 (빈
+     * 응답 확정)·하한 이미 도달 시에는 호출하지 않는다 — "조기 완료를 막았다 = 구코드였다면 손상이 났을 지점"만 센다.
+     */
+    public void recordEarlyCompletionSuspect() {
+        Counter.builder(EARLY_COMPLETION_SUSPECT_NAME).register(registry).increment();
+    }
+
+    /**
+     * GROUP_A anomaly(oldest=null·rawRowCount>0) status가 N 사이클 끝에 terminal FAILED로 종결됐을 때 호출한다
+     * (SPEC-COLLECTOR-BACKFILL-010 REQ-BACKFILL-146b). status당 정확히 1회만 호출돼야 한다([R5-CR-01] FAILED 멱등
+     * 가드가 재호출을 방지).
+     */
+    public void recordAnomalyFailed() {
+        Counter.builder(ANOMALY_FAILED_NAME).register(registry).increment();
     }
 
     /**
