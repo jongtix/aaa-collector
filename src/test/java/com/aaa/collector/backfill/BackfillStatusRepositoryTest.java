@@ -375,4 +375,62 @@ class BackfillStatusRepositoryTest {
             assertThat(found.getUpdatedAt()).isNotNull();
         }
     }
+
+    @Nested
+    @DisplayName(
+            "findByTargetTypeAndTargetCodeAndDataTable — 표적 재처리 조회 (SPEC-COLLECTOR-BACKFILL-010 REQ-160)")
+    class FindByTargetTypeAndTargetCodeAndDataTable {
+
+        @Test
+        @DisplayName("존재하는 (targetType, targetCode, dataTable) 조합 조회 성공")
+        void existingCombination_found() {
+            BackfillStatus seeded =
+                    backfillStatusRepository.saveAndFlush(row("PLTR-STUB", "daily_ohlcv").build());
+
+            var found =
+                    backfillStatusRepository.findByTargetTypeAndTargetCodeAndDataTable(
+                            "STOCK", "PLTR-STUB", "daily_ohlcv");
+
+            assertThat(found).isPresent();
+            assertThat(found.orElseThrow().getId()).isEqualTo(seeded.getId());
+        }
+
+        @Test
+        @DisplayName("존재하지 않는 조합 조회 시 empty (아직 시딩되지 않은 종목)")
+        void missingCombination_empty() {
+            var found =
+                    backfillStatusRepository.findByTargetTypeAndTargetCodeAndDataTable(
+                            "STOCK", "NOSUCH", "daily_ohlcv");
+
+            assertThat(found).isEmpty();
+        }
+
+        @Test
+        @DisplayName("resetForReprocess() 후 표적 리셋 필드 전부 영속(PENDING/NULL/0)")
+        void resetForReprocess_persists() {
+            BackfillStatus seeded =
+                    backfillStatusRepository.saveAndFlush(
+                            row("PLTR-STUB", "daily_ohlcv")
+                                    .status(BackfillStatusType.COMPLETED)
+                                    .lastCollectedDate(LocalDate.of(2020, 9, 30))
+                                    .staleCount(2)
+                                    .lastError("prior error")
+                                    .verifiedAt(LocalDateTime.of(2026, 7, 8, 12, 0))
+                                    .build());
+
+            transactionTemplate.executeWithoutResult(
+                    tx -> {
+                        BackfillStatus managed =
+                                backfillStatusRepository.findById(seeded.getId()).orElseThrow();
+                        managed.resetForReprocess();
+                    });
+
+            BackfillStatus found = backfillStatusRepository.findById(seeded.getId()).orElseThrow();
+            assertThat(found.getStatus()).isEqualTo(BackfillStatusType.PENDING);
+            assertThat(found.getLastCollectedDate()).isNull();
+            assertThat(found.getVerifiedAt()).isNull();
+            assertThat(found.getStaleCount()).isZero();
+            assertThat(found.getLastError()).isNull();
+        }
+    }
 }

@@ -140,4 +140,26 @@ public class Stock extends BaseEntity {
 
         return changed;
     }
+
+    /**
+     * 이미 저장된 {@code daily_ohlcv}가 증거로 제시하는 더 이른 날짜로 {@code listed_date}를 하향 보정한다
+     * (SPEC-COLLECTOR-BACKFILL-010 REQ-BACKFILL-159).
+     *
+     * <p>{@code min}이 현재 {@code listedDate}보다 이전(더 과거)일 때만 적용하는 **하향 전용 가드**다 — 상향 보정은 결코 하지
+     * 않는다(§Exclusions "종목 하드코딩 금지"와 별개로, KIS {@code CTPF1702R lstg_dt}가 현 거래소 상장일이라 최초 거래일보다 늦게 잡히는
+     * 거래소 이전 종목류의 메타데이터 과대평가를 정정한다). {@link #correctMetadata(Market, LocalDate)}(NULL→non-null 채우기
+     * 전용)와는 별도 메서드다 — 이 메서드는 non-null이 이미 있는 경우에도 더 이른 값으로 하향할 수 있다.
+     *
+     * @param min 이미 저장된 {@code daily_ohlcv}의 {@code MIN(trade_date)} — 이 값이 현재 {@code listedDate}보다
+     *     이르면 그 자체로 과대평가 증거다(KIS 재조회 불요)
+     * @return {@code listedDate}가 실제로 하향 변경된 경우 {@code true}
+     */
+    // @MX:SPEC: SPEC-COLLECTOR-BACKFILL-010
+    public boolean correctListedDateDownTo(LocalDate min) {
+        if (min == null || this.listedDate == null || !min.isBefore(this.listedDate)) {
+            return false;
+        }
+        this.listedDate = min;
+        return true;
+    }
 }

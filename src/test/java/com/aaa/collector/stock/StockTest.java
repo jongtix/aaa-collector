@@ -162,4 +162,71 @@ class StockTest {
             assertThat(stock.getListedDate()).isEqualTo(date);
         }
     }
+
+    @Nested
+    @DisplayName(
+            "correctListedDateDownTo — listed_date 하향 전용 보정 (SPEC-COLLECTOR-BACKFILL-010 REQ-159, AC-16)")
+    class CorrectListedDateDownTo {
+
+        @Test
+        @DisplayName("MIN(trade_date) < listed_date → 하향 보정되고 true 반환")
+        void minBeforeListedDate_correctsDown() {
+            LocalDate overestimated = LocalDate.of(2024, 11, 26); // 거래소 이전일(과대평가)
+            Stock stock = kosdaqStockWithDate(overestimated);
+            LocalDate trueMin = LocalDate.of(2020, 9, 30); // 진짜 IPO
+
+            boolean changed = stock.correctListedDateDownTo(trueMin);
+
+            assertThat(changed).isTrue();
+            assertThat(stock.getListedDate()).isEqualTo(trueMin);
+        }
+
+        @Test
+        @DisplayName("MIN(trade_date) == listed_date(정합) → 변경 없음, false 반환")
+        void minEqualsListedDate_noChange() {
+            LocalDate date = LocalDate.of(2020, 9, 30);
+            Stock stock = kosdaqStockWithDate(date);
+
+            boolean changed = stock.correctListedDateDownTo(date);
+
+            assertThat(changed).isFalse();
+            assertThat(stock.getListedDate()).isEqualTo(date);
+        }
+
+        @Test
+        @DisplayName("MIN(trade_date) > listed_date(정상, 상장 후 시작) → 상향 보정 금지, false 반환")
+        void minAfterListedDate_neverCorrectsUp() {
+            LocalDate date = LocalDate.of(2015, 1, 1);
+            Stock stock = kosdaqStockWithDate(date);
+            LocalDate laterMin = LocalDate.of(2015, 6, 1);
+
+            boolean changed = stock.correctListedDateDownTo(laterMin);
+
+            assertThat(changed).isFalse();
+            assertThat(stock.getListedDate()).isEqualTo(date); // 불변 — 상향 보정 없음
+        }
+
+        @Test
+        @DisplayName("listed_date가 NULL이면 보정 대상 아님 — false 반환, null 유지")
+        void listedDateNull_noCorrection() {
+            Stock stock = kospiStockNullDate();
+
+            boolean changed = stock.correctListedDateDownTo(LocalDate.of(2020, 1, 1));
+
+            assertThat(changed).isFalse();
+            assertThat(stock.getListedDate()).isNull();
+        }
+
+        @Test
+        @DisplayName("min이 NULL(daily_ohlcv 행 없음)이면 보정 대상 아님 — false 반환")
+        void minNull_noCorrection() {
+            LocalDate date = LocalDate.of(2020, 1, 1);
+            Stock stock = kosdaqStockWithDate(date);
+
+            boolean changed = stock.correctListedDateDownTo(null);
+
+            assertThat(changed).isFalse();
+            assertThat(stock.getListedDate()).isEqualTo(date);
+        }
+    }
 }

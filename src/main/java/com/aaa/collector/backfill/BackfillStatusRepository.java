@@ -134,4 +134,17 @@ public interface BackfillStatusRepository extends JpaRepository<BackfillStatus, 
             @Param("targetType") String targetType,
             @Param("targetCode") String targetCode,
             @Param("dataTable") String dataTable);
+
+    /**
+     * {@code (target_type, target_code, data_table)} 단일 항목을 조회한다 (SPEC-COLLECTOR-BACKFILL-010
+     * REQ-BACKFILL-160 — {@code listed_date} 하향 보정 종목의 표적 GROUP_A {@code daily_ohlcv} status 리셋 대상
+     * 조회).
+     *
+     * @param targetType 대상 유형 (예: {@code "STOCK"})
+     * @param targetCode 대상 코드 = 종목 symbol
+     * @param dataTable 데이터 테이블명 (예: {@code "daily_ohlcv"})
+     * @return 해당 항목(없으면 {@link Optional#empty()} — 아직 시딩되지 않은 종목)
+     */
+    Optional<BackfillStatus> findByTargetTypeAndTargetCodeAndDataTable(
+            String targetType, String targetCode, String dataTable);
 }
