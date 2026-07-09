@@ -235,6 +235,102 @@ class BackfillStatusRepositoryTest {
     }
 
     @Nested
+    @DisplayName("verified_at 검증 마커 + 신뢰 기준선 (SPEC-COLLECTOR-BACKFILL-010 AC-5, AC-6)")
+    class VerifiedBaseline {
+
+        @Test
+        @DisplayName("V35 verified_at 컬럼이 datetime·nullable로 존재한다 (AC-5)")
+        void verifiedAtColumn_existsAsNullableDatetime() {
+            // Arrange & Act
+            String dataType =
+                    jdbcTemplate.queryForObject(
+                            "SELECT data_type FROM information_schema.columns "
+                                    + "WHERE table_schema = DATABASE() "
+                                    + "AND table_name = 'backfill_status' "
+                                    + "AND column_name = 'verified_at'",
+                            String.class);
+            String nullable =
+                    jdbcTemplate.queryForObject(
+                            "SELECT is_nullable FROM information_schema.columns "
+                                    + "WHERE table_schema = DATABASE() "
+                                    + "AND table_name = 'backfill_status' "
+                                    + "AND column_name = 'verified_at'",
+                            String.class);
+
+            // Assert
+            assertThat(dataType).isEqualTo("datetime");
+            assertThat(nullable).isEqualTo("YES");
+        }
+
+        @Test
+        @DisplayName("기존 COMPLETED 행은 verified_at IS NULL(소급 검증 없음) (AC-5)")
+        void existingCompleted_hasNullVerifiedAt() {
+            BackfillStatus completed =
+                    backfillStatusRepository.saveAndFlush(
+                            row("005930", "daily_ohlcv")
+                                    .status(BackfillStatusType.COMPLETED)
+                                    .lastCollectedDate(LocalDate.of(2019, 12, 17))
+                                    .build());
+
+            BackfillStatus found =
+                    backfillStatusRepository.findById(completed.getId()).orElseThrow();
+
+            assertThat(found.getVerifiedAt()).isNull();
+        }
+
+        @Test
+        @DisplayName("markVerified 후 verified_at이 영속된다 (dirty-check)")
+        void markVerified_persists() {
+            BackfillStatus seeded =
+                    backfillStatusRepository.saveAndFlush(
+                            row("AAPL", "daily_ohlcv")
+                                    .status(BackfillStatusType.COMPLETED)
+                                    .lastCollectedDate(LocalDate.of(2007, 8, 20))
+                                    .build());
+            LocalDateTime verifiedAt = LocalDateTime.of(2026, 7, 9, 10, 0);
+
+            transactionTemplate.executeWithoutResult(
+                    tx -> {
+                        BackfillStatus managed =
+                                backfillStatusRepository.findById(seeded.getId()).orElseThrow();
+                        managed.markVerified(verifiedAt);
+                    });
+
+            BackfillStatus found = backfillStatusRepository.findById(seeded.getId()).orElseThrow();
+            assertThat(found.getVerifiedAt()).isEqualTo(verifiedAt);
+        }
+
+        @Test
+        @DisplayName("findVerifiedBaseline: 검증된 완료만 기준선, 미검증 COMPLETED는 승격 안 됨 (AC-6)")
+        void findVerifiedBaseline_onlyVerifiedCompletion() {
+            // Arrange — (a) 검증된 완료, (b) 미검증 완료
+            LocalDate verifiedDate = LocalDate.of(2007, 8, 20);
+            BackfillStatus verified =
+                    row("VER", "daily_ohlcv")
+                            .status(BackfillStatusType.COMPLETED)
+                            .lastCollectedDate(verifiedDate)
+                            .verifiedAt(LocalDateTime.of(2026, 7, 9, 10, 0))
+                            .build();
+            backfillStatusRepository.saveAndFlush(verified);
+            backfillStatusRepository.saveAndFlush(
+                    row("UNVER", "daily_ohlcv")
+                            .status(BackfillStatusType.COMPLETED)
+                            .lastCollectedDate(LocalDate.of(2019, 12, 17))
+                            .build());
+
+            // Act
+            var verifiedBaseline =
+                    backfillStatusRepository.findVerifiedBaseline("STOCK", "VER", "daily_ohlcv");
+            var unverifiedBaseline =
+                    backfillStatusRepository.findVerifiedBaseline("STOCK", "UNVER", "daily_ohlcv");
+
+            // Assert
+            assertThat(verifiedBaseline).contains(verifiedDate);
+            assertThat(unverifiedBaseline).isEmpty();
+        }
+    }
+
+    @Nested
     @DisplayName("엔티티 매핑 round-trip")
     class EntityMapping {
 

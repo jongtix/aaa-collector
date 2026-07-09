@@ -1,7 +1,9 @@
 package com.aaa.collector.backfill;
 
+import java.time.LocalDate;
 import java.util.Collection;
 import java.util.List;
+import java.util.Optional;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
@@ -108,4 +110,28 @@ public interface BackfillStatusRepository extends JpaRepository<BackfillStatus, 
      * @return 해당 상태 집합·유형 항목 수
      */
     long countByStatusInAndTargetType(Collection<BackfillStatusType> statuses, String targetType);
+
+    /**
+     * 한 종목의 신뢰 하한 기준선(baseline)을 조회한다 (SPEC-COLLECTOR-BACKFILL-010 REQ-BACKFILL-152/-153).
+     *
+     * <p>오직 검증된 완료({@code status = COMPLETED AND verified_at IS NOT NULL})의 {@code
+     * last_collected_date}(도달 최과거)만 반환한다 — 미검증 COMPLETED의 도달 최과거는 오염 가능 증거이므로 기준선으로 승격되지 않는다(순환 신뢰
+     * 차단, REQ-153). 검증된 완료가 없으면 {@link Optional#empty()}를 반환한다(신뢰 하한 부재).
+     *
+     * @param targetType 대상 유형 (예: {@code "STOCK"})
+     * @param targetCode 대상 코드 = 종목 symbol
+     * @param dataTable 데이터 테이블명 (예: {@code "daily_ohlcv"})
+     * @return 검증된 완료의 last_collected_date (없으면 empty)
+     */
+    // @MX:SPEC: SPEC-COLLECTOR-BACKFILL-010
+    @Query(
+            "SELECT b.lastCollectedDate FROM BackfillStatus b"
+                    + " WHERE b.targetType = :targetType AND b.targetCode = :targetCode"
+                    + " AND b.dataTable = :dataTable"
+                    + " AND b.status = com.aaa.collector.backfill.BackfillStatusType.COMPLETED"
+                    + " AND b.verifiedAt IS NOT NULL")
+    Optional<LocalDate> findVerifiedBaseline(
+            @Param("targetType") String targetType,
+            @Param("targetCode") String targetCode,
+            @Param("dataTable") String dataTable);
 }

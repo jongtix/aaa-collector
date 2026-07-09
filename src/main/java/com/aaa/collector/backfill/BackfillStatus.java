@@ -10,6 +10,7 @@ import jakarta.persistence.Index;
 import jakarta.persistence.Table;
 import jakarta.persistence.UniqueConstraint;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import lombok.AccessLevel;
 import lombok.Builder;
 import lombok.Getter;
@@ -89,6 +90,19 @@ public class BackfillStatus extends BaseEntity {
     private String lastError;
 
     /**
+     * 종료 확인 프로브로 검증된 완료 시각(KST). NULL=미검증 (SPEC-COLLECTOR-BACKFILL-010 REQ-BACKFILL-151/-152).
+     *
+     * <p>검증된 완료({@code verified_at IS NOT NULL})의 {@code last_collected_date}만 그 종목의 신뢰 하한
+     * 기준선(baseline)으로 승격된다(REQ-152). 미검증 COMPLETED의 도달 최과거는 오염 가능 증거이므로 기준선이 되지 않는다(REQ-153) —
+     * 2026-06-28 재구축 사고처럼 오염 완료가 스스로를 신뢰 기준으로 축복하는 순환 신뢰를 차단한다.
+     */
+    // @MX:NOTE: [AUTO] 검증된 완료만 신뢰 기준선 — verified_at IS NOT NULL 완료의 last_collected_date만 baseline
+    // @MX:REASON: SPEC-COLLECTOR-BACKFILL-010 REQ-152/-153 — 순환 신뢰 차단(2026-06-28 오염 완료 자축 실패 모드)
+    // @MX:SPEC: SPEC-COLLECTOR-BACKFILL-010
+    @Column(name = "verified_at")
+    private LocalDateTime verifiedAt;
+
+    /**
      * 윈도우 수집 성공 후 진행점·상태·stale_count·attempt_count를 갱신한다 (REQ-UPDATEDAT-002, REQ-UPDATEDAT-003).
      *
      * <p>JPA dirty-check 경로 — 관리 엔티티에서 호출해야 {@code @LastModifiedDate}(updated_at)가 발화한다. {@code
@@ -138,6 +152,39 @@ public class BackfillStatus extends BaseEntity {
         this.attemptCount++;
     }
 
+    /**
+     * 종료 확인 프로브로 검증된 완료임을 표시한다 (SPEC-COLLECTOR-BACKFILL-010 REQ-BACKFILL-147/-150/-146a).
+     *
+     * <p>JPA dirty-check 경로 — {@link #advance(BackfillStatusType, LocalDate, int, Integer)}로 {@code
+     * COMPLETED} 전이한 직후 동일 트랜잭션 안에서 호출해 {@code verified_at}을 설정한다. 검증된 완료만 신뢰 기준선으로 승격되므로(REQ-152)
+     * 소진이 확인된 완료에만 호출해야 한다.
+     *
+     * @param verifiedAt 검증 시각(KST 기준)
+     */
+    // @MX:SPEC: SPEC-COLLECTOR-BACKFILL-010
+    public void markVerified(LocalDateTime verifiedAt) {
+        this.verifiedAt = verifiedAt;
+    }
+
+    /**
+     * 표적 재처리를 위해 진행점·검증 마커·이상 카운터를 초기화한다 (SPEC-COLLECTOR-BACKFILL-010 REQ-BACKFILL-160, §7 재복구 절차
+     * 리셋 필드 집합 재사용).
+     *
+     * <p>{@code MIN(daily_ohlcv.trade_date) < listed_date} 증거로 {@code listed_date}가 하향 보정된 종목의
+     * GROUP_A {@code daily_ohlcv} status를 표적 리셋해, 정정된(신뢰 가능해진) floor로 기존 오케스트레이터 cron이 재처리하게 한다.
+     * {@code last_collected_date=NULL}까지 반드시 초기화해야 옛 진행점 위 구간을 재방문한다(§7 이음새 손상 교훈). {@code
+     * stale_count}도 0으로 되돌려 리셋 후 첫 이상 사이클이 N 사이클 만에 종결되게 한다([R5-MI-01]).
+     */
+    // @MX:SPEC: SPEC-COLLECTOR-BACKFILL-010
+    @SuppressWarnings("PMD.NullAssignment") // 진행점·검증 마커·오류 의도적 null 초기화 (표적 재처리 리셋)
+    public void resetForReprocess() {
+        this.status = BackfillStatusType.PENDING;
+        this.lastCollectedDate = null;
+        this.verifiedAt = null;
+        this.staleCount = 0;
+        this.lastError = null;
+    }
+
     @Builder
     private BackfillStatus(
             String targetType,
@@ -148,7 +195,8 @@ public class BackfillStatus extends BaseEntity {
             int staleCount,
             Integer lastRowCount,
             int attemptCount,
-            String lastError) {
+            String lastError,
+            LocalDateTime verifiedAt) {
         super();
         this.targetType = targetType;
         this.targetCode = targetCode;
@@ -159,5 +207,6 @@ public class BackfillStatus extends BaseEntity {
         this.lastRowCount = lastRowCount;
         this.attemptCount = attemptCount;
         this.lastError = lastError;
+        this.verifiedAt = verifiedAt;
     }
 }
