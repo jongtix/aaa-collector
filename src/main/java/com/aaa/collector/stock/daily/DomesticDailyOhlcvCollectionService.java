@@ -312,6 +312,32 @@ public class DomesticDailyOhlcvCollectionService {
     }
 
     /**
+     * [SPEC-COLLECTOR-BACKFILL-010] 종료 확인 프로브 — {@code below} 아래 구간에 거래일이 남아있는지 확인한다
+     * (REQ-146/-150).
+     *
+     * <p>비트랜잭션 fetch 단계 전용(@Transactional 없음) — DB 미접촉, KIS HTTP 1회. {@code [from,
+     * below.minusDays(1)]}을 조회해 응답에 행이 1개 이상 있으면 {@code true}(하한 아래 데이터 잔존, MORE_DATA_EXISTS), 빈 정상
+     * 응답이면 {@code false}(소진 확정, CONFIRMED_EXHAUSTED)를 반환한다. 프로브 rows는 저장하지 않는다(검증 전용). API 오류는
+     * 호출자(executor)가 DEFERRED로 분류하도록 전파한다.
+     *
+     * @param from 윈도우 하단 조회 시작일(고정 플로어)
+     * @param below 도달 최과거일(oldest) — 이 날짜 아래를 조회한다
+     * @param stock 백필 대상 종목
+     * @param session per-run 헬스 스냅샷 세션
+     * @return 아래 구간에 데이터가 있으면 {@code true}, 빈 정상 응답이면 {@code false}
+     * @throws InterruptedException 게이트 호출 인터럽트 시 전파
+     */
+    // @MX:NOTE: [AUTO] confirmExhaustionProbe — 비tx 종료 확인 프로브. windows_total 미증가(검증 호출).
+    // @MX:SPEC: SPEC-COLLECTOR-BACKFILL-010
+    public boolean confirmExhaustionProbe(
+            LocalDate from, LocalDate below, Stock stock, LeaseSession session)
+            throws InterruptedException {
+        String symbol = stock.getSymbol();
+        KisDailyOhlcvResponse response = fetch(session, symbol, from, below.minusDays(1));
+        return !response.output2().isEmpty();
+    }
+
+    /**
      * KIS 원본 응답 행수를 산정한다 — 검증(volume/OHLC) 거부 전 전체 행수.
      *
      * <p>{@code modYn="Y"}(수정주가 마킹) 행도 포함한다 — 원주가({@code FID_ORG_ADJ_PRC=1}) 요청 시에도 액면분할 근처 구간에서
