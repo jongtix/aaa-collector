@@ -112,6 +112,10 @@ public class CoverageRefresher {
             return;
         }
         Set<Long> stockIds = universe.stream().map(Stock::getId).collect(Collectors.toSet());
+        // PMD.UseConcurrentHashMap: 메서드 로컬 스코프 — 단일 스레드(cron)에서 생성·소비되며 외부로 노출되지 않는다.
+        // ConcurrentHashMap은 null 키를 거부하나 stock_id는 도메인상 non-null이 보장되지 않는 테스트 픽스처와
+        // 충돌하므로 HashMap을 유지한다.
+        @SuppressWarnings("PMD.UseConcurrentHashMap")
         Map<Long, Object[]> minMaxCountByStockId = new HashMap<>();
         for (Object[] row : dailyOhlcvRepository.findMinMaxCountByStockIds(stockIds)) {
             minMaxCountByStockId.put((Long) row[0], row);

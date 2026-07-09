@@ -59,6 +59,10 @@ import org.springframework.web.client.RestClientException;
 // @MX:REASON: SPEC-COLLECTOR-OVERSEAS-OHLCV-001 REQ-OVOH-001~005,012,013,015,016,017,030,031,
 // SPEC-COLLECTOR-KISGATE-001 REQ-KISGATE-001,-020,-024 — 게이트 경유 멀티키 진입점으로 다수 협력자가 수렴하는 fan-in 경계
 // @MX:SPEC: SPEC-COLLECTOR-OVERSEAS-OHLCV-001, SPEC-COLLECTOR-KISGATE-001
+// PMD.GodClass: 당일 배치·백필 fetch/persist·레거시 collectWindow·확인 프로브(confirmExhaustionProbe,
+// SPEC-COLLECTOR-BACKFILL-010)가 공유하는 검증/파싱 파이프라인을 한 서비스가 소유해야 W-1 불변식(1회 파싱 재사용)이
+// 깨지지 않는다 — 분리 시 각 경로가 독립 파싱을 재도입할 위험(REQ-INSERT-005).
+@SuppressWarnings("PMD.GodClass")
 public class OverseasDailyOhlcvCollectionService {
 
     /** KIS dailyprice TR ID (명세22, 개별주식·ETF 공통). */

@@ -58,7 +58,15 @@ import org.springframework.transaction.support.TransactionTemplate;
 // @MX:ANCHOR: [AUTO] 백필 윈도우 실행 진입점 — INSERT IGNORE+status UPDATE 동일 트랜잭션 묶음 담당
 // @MX:REASON: [AUTO] AC-4.1/4.2 부분 커밋 방지. T7에서 fetchWindow(비tx)/persistWindow(tx)로 경계 분리.
 // @MX:SPEC: SPEC-COLLECTOR-TXBOUNDARY-001
-@SuppressWarnings("PMD.ExcessiveImports") // 다중 수집 서비스 라우팅 구조상 불가피한 import 수
+// PMD.GodClass/CouplingBetweenObjects: GROUP_A/B 전 데이터테이블(daily_ohlcv·investor_trend·
+// credit_balance·short_sale_domestic·corporate_events*)의 fetch/persist 라우팅 fan-in 허브 —
+// SPEC-COLLECTOR-BACKFILL-010 §4.1이 이 클래스에 GROUP_A 종료 확인 게이트를 명시적으로 배치(단일 진입점 유지가
+// probeOutcome 흐름의 정확성 보장에 필수, 분산 시 REQ-TXB-020 비tx 불변식 검증이 어려워짐).
+@SuppressWarnings({
+    "PMD.ExcessiveImports", // 다중 수집 서비스 라우팅 구조상 불가피한 import 수
+    "PMD.GodClass",
+    "PMD.CouplingBetweenObjects"
+})
 @Slf4j
 @Component
 @RequiredArgsConstructor
@@ -230,6 +238,7 @@ public class BackfillWindowExecutor {
     }
 
     /** 정상 경로 확인 프로브 1회 발행(비tx HTTP) — 오류는 DEFERRED로 분류한다. */
+    @SuppressWarnings("PMD.AvoidCatchingGenericException") // REQ-149: 프로브 오류 전 유형을 DEFERRED로 흡수
     private FetchEnvelope probeBelow(
             Object dto, LocalDate oldest, Stock stock, LeaseSession session, boolean overseas)
             throws InterruptedException {

@@ -1,5 +1,6 @@
 package com.aaa.collector.market.session;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyCollection;
 import static org.mockito.ArgumentMatchers.eq;
@@ -198,7 +199,7 @@ class CoverageRefresherTest {
             when(dailyOhlcvRepository.findDistinctTradeDatesByStockIds(anyCollection()))
                     .thenReturn(List.of(LocalDate.of(1990, 3, 5)));
             when(backfillStatusRepository.findVerifiedBaseline(any(), any(), any()))
-                    .thenReturn(java.util.Optional.empty()); // 검증 기준선 없음
+                    .thenReturn(Optional.empty()); // 검증 기준선 없음
 
             refresher.refreshKrxCoverage();
 
@@ -274,10 +275,9 @@ class CoverageRefresherTest {
             refresher.refreshUsCoverage();
 
             // managed 인스턴스가 실제로 하향 보정됨(영속 대상)
-            org.assertj.core.api.Assertions.assertThat(managedPltr.getListedDate())
-                    .isEqualTo(trueMin);
+            assertThat(managedPltr.getListedDate()).isEqualTo(trueMin);
             // 호출자 detached 인스턴스도 이번 cron 실행 내 즉시 갱신되어 게이지 계산에 반영됨
-            org.assertj.core.api.Assertions.assertThat(pltr.getListedDate()).isEqualTo(trueMin);
+            assertThat(pltr.getListedDate()).isEqualTo(trueMin);
         }
 
         @Test
@@ -338,8 +338,7 @@ class CoverageRefresherTest {
             verify(stockRepository, never()).findById(any());
             verify(backfillStatusRepository, never())
                     .findByTargetTypeAndTargetCodeAndDataTable(any(), any(), any());
-            org.assertj.core.api.Assertions.assertThat(stock.getListedDate())
-                    .isEqualTo(LocalDate.of(2015, 1, 1)); // 불변
+            assertThat(stock.getListedDate()).isEqualTo(LocalDate.of(2015, 1, 1)); // 불변
         }
     }
 }

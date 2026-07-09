@@ -71,13 +71,12 @@ class BackfillWindowExecutorGroupAGateTest {
     @Mock private LeaseSession session;
 
     private BackfillWindowExecutor executor;
-    private BackfillProperties properties;
 
     private static final LocalDate FLOOR_FROM = LocalDate.of(1950, 1, 1);
 
     @BeforeEach
     void setUp() {
-        properties = new BackfillProperties(); // staleWindowThreshold=3 기본
+        BackfillProperties properties = new BackfillProperties(); // staleWindowThreshold=3 기본
         executor =
                 new BackfillWindowExecutor(
                         backfillStatusRepository,
@@ -335,6 +334,9 @@ class BackfillWindowExecutorGroupAGateTest {
 
         @Test
         @DisplayName("사이클 1~2(N-1): IN_PROGRESS 유지, staleCount 누적, anomaly-FAILED 카운터 미증가")
+        // PMD.UnitTestContainsTooManyAsserts: staleCount 누적 시퀀스(사이클 1→2)는 연속된 두 사이클의 상태를
+        // 한 흐름으로 검증해야 의미가 있는 회귀 가드다 — 사이클별로 분리하면 각 테스트가 이전 사이클 상태를 재구성해야 한다.
+        @SuppressWarnings("PMD.UnitTestContainsTooManyAsserts")
         void beforeThreshold_staysInProgress() throws InterruptedException {
             Stock aapl = usStock("AAPL", null);
             BackfillStatus status = dailyOhlcvStatus("AAPL", LocalDate.of(2010, 1, 1));

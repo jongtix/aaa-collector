@@ -3,8 +3,8 @@ package com.aaa.collector.observability;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Tags;
 import jakarta.annotation.PostConstruct;
-import java.util.EnumMap;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicLong;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
@@ -37,10 +37,8 @@ public class BackfillDensityMetrics {
 
     private final MeterRegistry registry;
 
-    private final Map<WatermarkSeries, AtomicLong> belowFloorHolders =
-            new EnumMap<>(WatermarkSeries.class);
-    private final Map<WatermarkSeries, AtomicLong> internalGapHolders =
-            new EnumMap<>(WatermarkSeries.class);
+    private final Map<WatermarkSeries, AtomicLong> belowFloorHolders = new ConcurrentHashMap<>();
+    private final Map<WatermarkSeries, AtomicLong> internalGapHolders = new ConcurrentHashMap<>();
 
     /** 부팅 직후 KRX/US 두 시장 라벨을 0으로 pre-register한다(REQ-156, 스크랩 공백 방지). */
     @PostConstruct

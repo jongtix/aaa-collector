@@ -7,6 +7,7 @@ import com.aaa.collector.support.RootFixtureCleaner;
 import java.sql.SQLException;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.util.Optional;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -319,9 +320,9 @@ class BackfillStatusRepositoryTest {
                             .build());
 
             // Act
-            var verifiedBaseline =
+            Optional<LocalDate> verifiedBaseline =
                     backfillStatusRepository.findVerifiedBaseline("STOCK", "VER", "daily_ohlcv");
-            var unverifiedBaseline =
+            Optional<LocalDate> unverifiedBaseline =
                     backfillStatusRepository.findVerifiedBaseline("STOCK", "UNVER", "daily_ohlcv");
 
             // Assert
@@ -387,7 +388,7 @@ class BackfillStatusRepositoryTest {
             BackfillStatus seeded =
                     backfillStatusRepository.saveAndFlush(row("PLTR-STUB", "daily_ohlcv").build());
 
-            var found =
+            Optional<BackfillStatus> found =
                     backfillStatusRepository.findByTargetTypeAndTargetCodeAndDataTable(
                             "STOCK", "PLTR-STUB", "daily_ohlcv");
 
@@ -398,7 +399,7 @@ class BackfillStatusRepositoryTest {
         @Test
         @DisplayName("존재하지 않는 조합 조회 시 empty (아직 시딩되지 않은 종목)")
         void missingCombination_empty() {
-            var found =
+            Optional<BackfillStatus> found =
                     backfillStatusRepository.findByTargetTypeAndTargetCodeAndDataTable(
                             "STOCK", "NOSUCH", "daily_ohlcv");
 

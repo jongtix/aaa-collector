@@ -63,6 +63,7 @@ import com.aaa.collector.stock.shortsale.overseas.backfill.FinraCdnShortSaleBack
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import org.springframework.transaction.support.TransactionTemplate;
 
 /**
  * 풀컨텍스트 smoke 테스트 공통 모킹 베이스.
@@ -144,7 +145,11 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
             FinraCdnDailyFileClient.class,
             FinraCdnFileParser.class,
             FinraCdnShortSaleBackfillOrchestrator.class,
-            FinraCdnShortSaleBackfillScheduler.class
+            FinraCdnShortSaleBackfillScheduler.class,
+            // SPEC-COLLECTOR-BACKFILL-010: CoverageRefresher가 listed_date 하향 보정+표적 리셋(REQ-159/-160)
+            // 트랜잭션 경계용 TransactionTemplate을 신규 의존. smoke 프로파일은 DataSourceAutoConfiguration을
+            // exclude해 PlatformTransactionManager가 없어 TransactionTemplate 자동구성도 없음(smoke 회귀 방지)
+            TransactionTemplate.class
         })
 class SmokeMockitoBase {
 
