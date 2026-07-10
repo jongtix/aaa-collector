@@ -59,7 +59,9 @@ public class DividendScheduleCollectionService {
 
     /**
      * KIS 예탁원정보 배당일정 전체조회 응답당 최대 행 수(구조적 상한). 종목지정 백필에서 이 값에 도달하면 GROUP_A 종료 조건(100행 미만)이 미충족되어 그
-     * 종목이 다음 회차로 이월된다(REQ-BACKFILL-135, RD-2).
+     * 종목이 다음 회차로 이월된다(REQ-BACKFILL-135). [SPEC-COLLECTOR-BACKFILL-GROUPC-001 REQ-GC-011/REQ-GC-006]
+     * 옛 RD-2 주석("다음 회차 이월은 GROUP_A 종료 정책이 담당한다")은 실제로는 {@code T_DT=today} 고정 버그로 인해 이월이 작동하지
+     * 않았다(anchor 전진 없는 동일 쿼리 반복) — {@code T_DT}를 anchor로 전환해 실제로 이월이 동작하도록 복구했다.
      */
     private static final int MAX_ROWS_PER_PAGE = 100;
 
@@ -229,8 +231,11 @@ public class DividendScheduleCollectionService {
      * 않는다(REQ-BACKFILL-129~131).
      *
      * <p>[HARD] REQ-BACKFILL-135: 종료 판정 입력 {@code rawRowCount}는 KIS {@code output1} 원본 행수(defer/검증
-     * skip 전)로 고정한다. 원본 행수가 100행 캡에 도달하면(GROUP_A 종료 조건 미충족) 경고 로그를 남긴다 — 정교한 기간분할 재조회는 구현하지
-     * 않으며(RD-2, §3 Exclusions 8), 다음 회차 이월은 GROUP_A 종료 정책(rawRowCount≥100 → IN_PROGRESS 유지)이 담당한다.
+     * skip 전)로 고정한다. 원본 행수가 100행 캡에 도달하면(GROUP_A 종료 조건 미충족) 경고 로그를 남긴다 — 정교한 기간분할 재조회는 구현하지 않으며(§3
+     * Exclusions), 다음 회차 이월은 GROUP_A 종료 정책(rawRowCount≥100 → IN_PROGRESS 유지)이 담당한다. [
+     * SPEC-COLLECTOR-BACKFILL-GROUPC-001 REQ-GC-011] 이월이 실제로 성립하려면 다음 회차 호출의 {@code T_DT}가
+     * anchor(윈도우 진행점, {@code resolvedStatus.getLastCollectedDate()})여야 한다 — 호출자({@link
+     * com.aaa.collector.stock.backfill.BackfillWindowExecutor#routeFetch})가 이 계약을 지킨다.
      *
      * <p>정기 수집({@link #collect})과 달리 관심종목 필터·종목별 예외 격리를 이 메서드가 직접 수행하지 않는다 — 호출자(백필 오케스트레이터)가 종목을
      * 지정하고 status 단위로 예외를 격리한다(REQ-BACKFILL-138). 인터럽트 수신 시 플래그를 복원한 뒤 {@link
@@ -239,8 +244,9 @@ public class DividendScheduleCollectionService {
      * @param stock 백필 대상 종목 (시딩된 corporate_events_dividend status의 target)
      * @param session 호출자가 1회 고정한 per-run 헬스 스냅샷 세션
      * @param from 윈도우 하단 조회 시작일 (F_DT, 고정 플로어)
-     * @param to 윈도우 상단 조회 종료일 (T_DT, today)
-     * @return 적재 대상 엔티티 + 최소 record_date + 원본 응답 행수
+     * @param to 윈도우 상단 조회 종료일 (T_DT, anchor — SPEC-COLLECTOR-BACKFILL-GROUPC-001 REQ-GC-011, 옛
+     *     today 고정 아님)
+     * @return 적재 대상 엔티티 + 원본 응답 전체 최소 record_date(REQ-GC-012) + 원본 응답 행수
      */
     // @MX:NOTE: [AUTO] 종목지정 배당 백필 fetch — 비tx HTTP 단계. BackfillWindowExecutor가 @Transactional
     // persistWindowForBackfill과 교차 빈으로 순차 호출. 저장 정책은 DividendRowAccumulator 재사용(0/0 defer·rate-only
@@ -261,11 +267,13 @@ public class DividendScheduleCollectionService {
         // REQ-BACKFILL-135: 종료 판정 입력 = KIS output1 원본 행수 (defer/검증 skip 전, 결정적)
         int rawRowCount = rows.size();
 
-        // REQ-BACKFILL-135, RD-2: 100행 캡 도달 시 경고 로그 + 다음 회차 이월(GROUP_A 종료 정책이 담당).
-        // 정교한 기간분할 재조회는 미구현 — 실측상 100행 캡 도달 종목 전무(§3 Exclusions 8).
+        // REQ-BACKFILL-135: 100행 캡 도달 시 경고 로그 + 다음 회차 이월(GROUP_A 종료 정책이 담당).
+        // 정교한 기간분할 재조회는 미구현 — 실측상 100행 캡 도달 종목 전무(§3 Exclusions).
+        // REQ-GC-011: 이월은 다음 회차 T_DT=anchor 전환으로 실제 동작한다(옛 T_DT=today 고정 버그 수정).
         if (rawRowCount >= MAX_ROWS_PER_PAGE) {
             log.warn(
-                    "[dividend-backfill] {}행 캡 도달 (symbol={}, records={}) — 다음 회차 이월, 기간분할 미구현 (RD-2)",
+                    "[dividend-backfill] {}행 캡 도달 (symbol={}, records={}) — 다음 회차 이월(T_DT=anchor),"
+                            + " 기간분할 미구현",
                     MAX_ROWS_PER_PAGE,
                     stock.getSymbol(),
                     rawRowCount);
@@ -278,11 +286,9 @@ public class DividendScheduleCollectionService {
             accumulator.buildRow(row, stock, validRows);
         }
 
-        LocalDate oldest =
-                validRows.stream()
-                        .map(CorporateEvent::getEventDate)
-                        .min(LocalDate::compareTo)
-                        .orElse(null);
+        // SPEC-COLLECTOR-BACKFILL-GROUPC-001 REQ-GC-012: anchor 전진 입력 = 원본 응답 전체(defer 이전)의 최소
+        // record_date — 저장 대상(validRows)만 보면 최고(最古) 행이 0/0 defer됐을 때 무전진 오판이 발생한다.
+        LocalDate rawOldest = rawOldestRecordDate(rows);
 
         // REQ-BACKFILL-140: 침묵 드롭 없이 진행 관측 — 원본/저장/defer 행수를 남긴다(rt_cd만으로 판단 금지).
         log.info(
@@ -292,7 +298,35 @@ public class DividendScheduleCollectionService {
                 validRows.size(),
                 accumulator.skippedUnconfirmed());
 
-        return new DividendBackfillFetch(validRows, oldest, rawRowCount);
+        return new DividendBackfillFetch(validRows, rawOldest, rawRowCount);
+    }
+
+    /**
+     * 원본 응답 전체(defer/검증 skip 적용 전) 행들의 최소 {@code record_date}를 산정한다
+     * (SPEC-COLLECTOR-BACKFILL-GROUPC-001 REQ-GC-012). 파싱 실패(null/blank/형식 오류) 행은 제외한다 — 파싱 가능한 원본
+     * 행 중 최소값이다.
+     */
+    private static LocalDate rawOldestRecordDate(
+            List<KisDividendScheduleResponse.DividendRow> rows) {
+        LocalDate oldest = null;
+        for (KisDividendScheduleResponse.DividendRow row : rows) {
+            LocalDate parsed = parseRecordDateOrNull(row.recordDate());
+            if (parsed != null && (oldest == null || parsed.isBefore(oldest))) {
+                oldest = parsed;
+            }
+        }
+        return oldest;
+    }
+
+    private static LocalDate parseRecordDateOrNull(String recordDate) {
+        if (recordDate == null || recordDate.isBlank()) {
+            return null;
+        }
+        try {
+            return LocalDate.parse(recordDate, DATE_FMT);
+        } catch (java.time.format.DateTimeParseException e) {
+            return null;
+        }
     }
 
     /**
@@ -307,10 +341,12 @@ public class DividendScheduleCollectionService {
      *
      * <p>종료 판정 입력 {@link BackfillWindowResult#rawRowCount()}는 {@code rawRowCount}(KIS 원본 응답 행수,
      * skip 전, REQ-BACKFILL-135), 저장 행수 {@link BackfillWindowResult#rowCount()}는 적재 대상 {@code
-     * validRows.size()}로 분리한다. {@code oldestTradeDate}는 적재 대상 최소 record_date다.
+     * validRows.size()}로 분리한다. {@code oldestTradeDate}는 {@link
+     * DividendBackfillFetch#rawOldestRecordDate()}(원본 응답 전체 최소 record_date, defer 이전) —
+     * SPEC-COLLECTOR-BACKFILL-GROUPC-001 REQ-GC-012: anchor 전진이 0/0 defer 여부와 무관하게 일어나도록 한다.
      *
      * @param fetch {@link #fetchWindowForBackfill}가 반환한 DTO
-     * @return 종료 판정 입력 (oldestTradeDate=최소 record_date, rowCount=저장 행수, rawRowCount=원본 응답 행수)
+     * @return 종료 판정 입력 (oldestTradeDate=원본 최소 record_date, rowCount=저장 행수, rawRowCount=원본 응답 행수)
      */
     // @MX:NOTE: [AUTO] 종목지정 배당 백필 persist — BackfillWindowExecutor @Transactional 경계에서 호출.
     // INSERT IGNORE 적재 후 3-arg BackfillWindowResult(rowCount=validRows.size, rawRowCount=원본) 반환.
@@ -319,6 +355,6 @@ public class DividendScheduleCollectionService {
     public BackfillWindowResult persistWindowForBackfill(DividendBackfillFetch fetch) {
         corporateEventInserter.insertBatch(fetch.validRows());
         return new BackfillWindowResult(
-                fetch.oldestRecordDate(), fetch.validRows().size(), fetch.rawRowCount());
+                fetch.rawOldestRecordDate(), fetch.validRows().size(), fetch.rawRowCount());
     }
 }

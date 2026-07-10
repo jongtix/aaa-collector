@@ -1,5 +1,6 @@
 package com.aaa.collector.stock.backfill;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
@@ -16,7 +17,9 @@ import com.aaa.collector.backfill.BackfillWindowAdvancer;
 import com.aaa.collector.backfill.BackfillWindowResult;
 import com.aaa.collector.backfill.TerminationDecision;
 import com.aaa.collector.kis.gate.KeyLeaseRegistry.LeaseSession;
+import com.aaa.collector.stock.DividendBackfillFetch;
 import com.aaa.collector.stock.DividendScheduleCollectionService;
+import com.aaa.collector.stock.RevSplitBackfillCapSaturatedException;
 import com.aaa.collector.stock.RevSplitBackfillFetch;
 import com.aaa.collector.stock.RevSplitCollectionService;
 import com.aaa.collector.stock.Stock;
@@ -29,6 +32,7 @@ import com.aaa.collector.stock.rights.OverseasSplitCollectionService;
 import com.aaa.collector.stock.supply.CreditBalanceCollectionService;
 import com.aaa.collector.stock.supply.InvestorTrendCollectionService;
 import com.aaa.collector.stock.supply.ShortSaleCollectionService;
+import com.aaa.collector.stock.supply.ShortSaleFetch;
 import java.time.LocalDate;
 import java.util.List;
 import java.util.Optional;
@@ -149,6 +153,40 @@ class BackfillWindowExecutorTest {
     }
 
     @Nested
+    @DisplayName(
+            "fetchWindow — 배당 T_DT=anchor (SPEC-COLLECTOR-BACKFILL-GROUPC-001 REQ-GC-011, AC-5)")
+    class DividendAnchorFetch {
+
+        private BackfillStatus dividendStatus(String symbol, LocalDate lastCollectedDate) {
+            return BackfillStatus.builder()
+                    .targetType("STOCK")
+                    .targetCode(symbol)
+                    .dataTable("corporate_events_dividend")
+                    .status(BackfillStatusType.IN_PROGRESS)
+                    .lastCollectedDate(lastCollectedDate)
+                    .build();
+        }
+
+        @Test
+        @DisplayName("AC-5: T_DT=anchor(윈도우 진행점)로 조회 — today 고정 아님")
+        void dividendFetch_usesAnchorAsUpperBound() throws InterruptedException {
+            when(windowAdvancer.groupAFromDate()).thenReturn(floor);
+            LocalDate anchor = LocalDate.of(2025, 1, 1);
+            when(windowAdvancer.nextAnchor(any())).thenReturn(anchor);
+            Stock samsung = stock("005930", Market.KOSPI);
+            when(dividendService.fetchWindowForBackfill(
+                            eq(samsung), eq(session), eq(floor), eq(anchor)))
+                    .thenReturn(new DividendBackfillFetch(List.of(), null, 0));
+
+            executor.fetchWindow(
+                    dividendStatus("005930", LocalDate.of(2025, 3, 1)), samsung, session);
+
+            verify(dividendService)
+                    .fetchWindowForBackfill(eq(samsung), eq(session), eq(floor), eq(anchor));
+        }
+    }
+
+    @Nested
     @DisplayName("persistWindow — fetchDto 타입별 소스 분기 (AC-13)")
     class PersistDispatch {
 
@@ -197,6 +235,115 @@ class BackfillWindowExecutorTest {
 
             verify(revSplitService).persistWindowForBackfill(fetch);
             verify(overseasSplitService, never()).persistWindowForBackfill(any());
+        }
+    }
+
+    @Nested
+    @DisplayName("isRetryable — 캡 포화 예외 비재시도 분류 (REQ-GC-014, AC-7)")
+    class IsRetryableCapSaturated {
+
+        @Test
+        @DisplayName("REQ-GC-014: RevSplitBackfillCapSaturatedException → 비재시도(false)")
+        void capSaturatedException_notRetryable() {
+            boolean retryable =
+                    executor.isRetryable(
+                            new RevSplitBackfillCapSaturatedException("cap saturated"));
+
+            assertThat(retryable).isFalse();
+        }
+
+        @Test
+        @DisplayName("회귀: 일반 RuntimeException은 여전히 재시도 가능(true)")
+        void otherRuntimeException_stillRetryable() {
+            boolean retryable = executor.isRetryable(new RuntimeException("transient"));
+
+            assertThat(retryable).isTrue();
+        }
+    }
+
+    @Nested
+    @DisplayName(
+            "persistLegacy markVerified 게이트 (SPEC-COLLECTOR-BACKFILL-GROUPC-001 REQ-GC-007/010/021,"
+                    + " AC-4/AC-8)")
+    class MarkVerifiedGate {
+
+        private BackfillStatus mockedStatus(String symbol, String dataTable) {
+            BackfillStatus status = Mockito.mock(BackfillStatus.class);
+            when(status.getId()).thenReturn(1L);
+            when(status.getDataTable()).thenReturn(dataTable);
+            Mockito.lenient().when(status.getTargetCode()).thenReturn(symbol);
+            Mockito.lenient().when(status.getLastCollectedDate()).thenReturn(null);
+            Mockito.lenient().when(status.getLastRowCount()).thenReturn(null);
+            when(backfillStatusRepository.findById(1L)).thenReturn(Optional.of(status));
+            return status;
+        }
+
+        @Test
+        @DisplayName("AC-4: GROUP_C(corporate_events) 완료 시 markVerified 호출")
+        void groupC_completed_marksVerified() {
+            Stock samsung = stock("005930", Market.KOSPI);
+            BackfillStatus status = mockedStatus("005930", "corporate_events");
+            LocalDate oldest = LocalDate.of(2018, 5, 2);
+            RevSplitBackfillFetch fetch = new RevSplitBackfillFetch(List.of(), oldest, 1);
+            when(revSplitService.persistWindowForBackfill(fetch))
+                    .thenReturn(new BackfillWindowResult(oldest, 1, 1));
+            when(terminationPolicy.decide(any()))
+                    .thenReturn(TerminationDecision.completed(0, false));
+
+            executor.persistWindow(status, samsung, FetchEnvelope.notApplicable(fetch));
+
+            verify(status).markVerified(any());
+        }
+
+        @Test
+        @DisplayName("AC-8: GROUP_A corporate_events_dividend 절대 플로어 완료 시 markVerified 호출")
+        void dividendGroupA_completed_marksVerified() {
+            Stock samsung = stock("005930", Market.KOSPI);
+            BackfillStatus status = mockedStatus("005930", "corporate_events_dividend");
+            LocalDate oldest = LocalDate.of(2015, 3, 31);
+            DividendBackfillFetch fetch = new DividendBackfillFetch(List.of(), oldest, 1);
+            when(dividendService.persistWindowForBackfill(fetch))
+                    .thenReturn(new BackfillWindowResult(oldest, 1, 1));
+            when(terminationPolicy.decide(any()))
+                    .thenReturn(TerminationDecision.completed(0, false));
+
+            executor.persistWindow(status, samsung, FetchEnvelope.notApplicable(fetch));
+
+            verify(status).markVerified(any());
+        }
+
+        @Test
+        @DisplayName(
+                "AC-8 음성: GROUP_A corporate_events_dividend IN_PROGRESS(100행 캡)면 markVerified 미호출")
+        void dividendGroupA_inProgress_doesNotMarkVerified() {
+            Stock samsung = stock("005930", Market.KOSPI);
+            BackfillStatus status = mockedStatus("005930", "corporate_events_dividend");
+            LocalDate oldest = LocalDate.of(2015, 3, 31);
+            DividendBackfillFetch fetch = new DividendBackfillFetch(List.of(), oldest, 100);
+            when(dividendService.persistWindowForBackfill(fetch))
+                    .thenReturn(new BackfillWindowResult(oldest, 100, 100));
+            when(terminationPolicy.decide(any())).thenReturn(TerminationDecision.inProgress(0));
+
+            executor.persistWindow(status, samsung, FetchEnvelope.notApplicable(fetch));
+
+            verify(status, never()).markVerified(any());
+        }
+
+        @Test
+        @DisplayName("회귀: GROUP_B(short_sale_domestic) 완료여도 markVerified 미호출(대상 아님)")
+        void groupB_completed_doesNotMarkVerified() {
+            Stock samsung = stock("005930", Market.KOSPI);
+            BackfillStatus status = mockedStatus("005930", "short_sale_domestic");
+            Mockito.lenient().when(status.getStaleCount()).thenReturn(0);
+            ShortSaleFetch fetch = Mockito.mock(ShortSaleFetch.class);
+            when(shortSaleService.persistWindow(eq(status), eq(samsung), eq(fetch)))
+                    .thenReturn(BackfillWindowResult.EMPTY);
+            when(terminationPolicy.decide(any()))
+                    .thenReturn(TerminationDecision.completed(0, false));
+
+            executor.persistWindow(status, samsung, FetchEnvelope.notApplicable(fetch));
+
+            verify(status, never()).markVerified(any());
         }
     }
 }

@@ -213,6 +213,46 @@ class BackfillOrchestratorTest {
     }
 
     // -----------------------------------------------------------------------
+    // SPEC-COLLECTOR-BACKFILL-GROUPC-001 AC-9 — GROUP_C(corporate_events) anchor-stall 자동 이탈 회귀
+    // -----------------------------------------------------------------------
+
+    @Nested
+    @DisplayName(
+            "AC-9: GROUP_C(corporate_events) 첫 윈도우 즉시 종료·anchor-stall 미진입 (REQ-GC-004/032, 회귀)")
+    class GroupCAnchorStallRegression {
+
+        @Test
+        @DisplayName(
+                "AC-9: corporate_events(GROUP_C) — anchor 무전진(동일 lastCollectedDate)이어도 첫 윈도우에서 즉시"
+                        + " COMPLETED, isGroupAAnchorStalled 경로(오케스트레이터 무수정) 미진입")
+        void groupC_firstWindowCompletes_anchorStallGuardNotEntered() throws InterruptedException {
+            // Arrange — corporate_events는 T-002에서 GROUP_C로 재분류됨. anchor가 갱신되지 않아도
+            // (GROUP_A였다면 isGroupAAnchorStalled가 조기 중단시켰을 상황) GROUP_C는 무조건 첫 윈도우 완료.
+            Stock stock = buildDomesticStock("005930");
+            LocalDate anchorDate = LocalDate.of(2024, 1, 1);
+            BackfillStatus initial =
+                    buildInProgressStatus("005930", "corporate_events", anchorDate);
+            // GROUP_C decide는 무조건 completed이므로 status가 COMPLETED로 전이됨(anchor 값 자체는 무관)
+            BackfillStatus completed = buildCompletedStatus("005930", "corporate_events");
+
+            when(stockRepository.findAllActiveTradable()).thenReturn(List.of(stock));
+            when(stockRepository.findAllActiveOverseasTradable()).thenReturn(List.of());
+            when(backfillStatusRepository.findByStatusInAndTargetTypeOrderById(any(), anyString()))
+                    .thenReturn(List.of(initial));
+            when(backfillStatusRepository.findById(any())).thenReturn(Optional.of(completed));
+
+            // Act
+            orchestrator.run();
+
+            // Assert — 정확히 1회만 호출됨: GROUP_C 무조건 완료로 즉시 종료, GROUP_A 전용
+            // isGroupAAnchorStalled(오케스트레이터 무수정, corporate_events가 더 이상 GROUP_A가 아니므로
+            // 자동으로 이 가드 조건에 해당하지 않음) 경로에 진입하지 않는다.
+            verify(windowExecutor, times(1)).fetchWindow(any(), eq(stock), eq(session));
+            verify(windowExecutor, times(1)).persistWindow(any(), eq(stock), any());
+        }
+    }
+
+    // -----------------------------------------------------------------------
     // AC-2: 무한 루프 방지 안전장치 (REQ-BACKFILL-053a/-053b)
     // -----------------------------------------------------------------------
 
