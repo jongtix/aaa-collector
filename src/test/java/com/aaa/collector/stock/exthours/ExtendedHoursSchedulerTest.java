@@ -36,12 +36,12 @@ class ExtendedHoursSchedulerTest {
     class CollectPre {
 
         @Test
-        @DisplayName("collectPre 발화 → collect(PRE) 1회 호출 + extended-hours 배치 완료 계측")
+        @DisplayName("collectPre 발화 → collect(PRE) 1회 호출 + extended-hours-pre 배치 완료 계측")
         void collectPre_callsCollectWithPreSession() {
             scheduler.collectPre();
 
             verify(collectionService).collect(Session.PRE);
-            verify(batchMetrics).recordCompletion("extended-hours", 1, 1, 0, 0);
+            verify(batchMetrics).recordCompletion("extended-hours-pre", 1, 1, 0, 0);
         }
 
         @Test
@@ -60,12 +60,12 @@ class ExtendedHoursSchedulerTest {
     class CollectAfter {
 
         @Test
-        @DisplayName("collectAfter 발화 → collect(AFTER) 1회 호출 + extended-hours 배치 완료 계측")
+        @DisplayName("collectAfter 발화 → collect(AFTER) 1회 호출 + extended-hours-after 배치 완료 계측")
         void collectAfter_callsCollectWithAfterSession() {
             scheduler.collectAfter();
 
             verify(collectionService).collect(Session.AFTER);
-            verify(batchMetrics).recordCompletion("extended-hours", 1, 1, 0, 0);
+            verify(batchMetrics).recordCompletion("extended-hours-after", 1, 1, 0, 0);
         }
 
         @Test
