@@ -15,6 +15,15 @@ aaa:
   catchup:
     enabled: false
 
+# management.endpoint.health.group.readiness는 db/redis 컨트리뷰터 존재를 전제한다(application.yml).
+# smoke/db-integration 등 일부 테스트 프로파일은 DataSource/RedisAutoConfiguration을 의도적으로
+# exclude하므로, 그 컨텍스트에서는 group membership 검증(기본 true)이 NoSuchHealthContributorException으로
+# 실패한다. 프로덕션 검증(application.yml, 기본 true)은 그대로 두고 테스트 전용으로만 완화한다.
+management:
+  endpoint:
+    health:
+      validate-group-membership: false
+
 # 프로덕션은 환경변수 필수, 테스트는 아래 값으로 오버라이드
 spring:
   flyway:

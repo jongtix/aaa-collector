@@ -29,9 +29,10 @@ COPY --chown=collector:collector --from=build /collector/build/libs/aaa-collecto
 USER collector
 EXPOSE 8080
 
-# 헬스체크: Spring Actuator /actuator/health (Alpine BusyBox wget 사용)
+# 헬스체크: Spring Actuator /actuator/health/liveness (Alpine BusyBox wget 사용)
+# liveness 그룹은 livenessState만 포함 — Redis(소프트 의존성) 장애가 컨테이너 재시작을 유발하지 않도록 분리
 HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
-  CMD wget -qO- http://localhost:8080/actuator/health || exit 1
+  CMD wget -qO- http://localhost:8080/actuator/health/liveness || exit 1
 
 # JVM 옵션: TECHSPEC 10.3절 기준
 # AIA chasing: koreaexim.go.kr 등은 TLS 체인에 중간 CA를 미전송한다. 최신 JDK는
