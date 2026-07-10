@@ -24,12 +24,19 @@ import java.util.List;
  * <p>2026-07-05 실측(6종목 전부 71행 이하·{@code tr_cont: E})상 종목별 전기간 조회는 100행 미만으로 완결되어, 첫 윈도우 GROUP_A
  * COMPLETED가 두 값의 발산과 무관하게 성립한다(RD-2).
  *
+ * <p>[SPEC-COLLECTOR-BACKFILL-GROUPC-001 REQ-GC-012] {@code rawOldestRecordDate}는 검증 통과분({@code
+ * validRows})이 아니라 <b>원본 응답 전체</b>({@code output1}, defer 이전)의 최소 {@code record_date}다. 한 윈도우의
+ * 최고(最古) 행들이 전부 0/0 defer되어 {@code validRows}에서 사라져도, anchor 전진 입력은 defer 여부와 무관하게 원본 최소값을 사용해 무전진
+ * 오판(anchor stall)을 방지한다(BACKFILL-006 "종료 입력=원본 행수" 원칙의 전진판). 옛 {@code oldestRecordDate}(적재 대상 기준)
+ * 필드는 이 필드로 완전히 대체됐다.
+ *
  * @param validRows 적재 대상(0/0 defer·검증 skip 적용 후) 엔티티
- * @param oldestRecordDate 적재 대상 행들의 최소 {@code record_date}(event_date), 적재 대상 없으면 {@code null}
+ * @param rawOldestRecordDate 원본 응답 전체(defer 이전) 행들의 최소 {@code record_date}, 원본 응답이 비었으면 {@code
+ *     null}
  * @param rawRowCount KIS {@code output1} 원본 응답 행수(skip 전) — GROUP_A 종료 판정 입력(REQ-BACKFILL-135)
  */
 public record DividendBackfillFetch(
-        List<CorporateEvent> validRows, LocalDate oldestRecordDate, int rawRowCount) {
+        List<CorporateEvent> validRows, LocalDate rawOldestRecordDate, int rawRowCount) {
 
     public DividendBackfillFetch {
         validRows = List.copyOf(validRows);

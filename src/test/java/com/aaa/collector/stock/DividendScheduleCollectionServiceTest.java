@@ -860,6 +860,31 @@ class DividendScheduleCollectionServiceTest {
         }
 
         @Test
+        @DisplayName(
+                "AC-6 (REQ-GC-012): 최고(最古) 행이 0/0 defer돼도 rawOldestRecordDate는 원본 최소값 — 무전진 오판 없음")
+        void backfillFetch_oldestRowDeferred_rawOldestStillAdvances() throws Exception {
+            // Arrange — 최고(最古) 행(1999-12-31)이 0/0 defer, 더 최근 행(2015-03-31)만 validRows에 남음
+            Stock stock = watchlistStock("005930");
+            when(guardedKisExecutor.execute(
+                            eq(session), any(), eq(TR_ID), eq(KisDividendScheduleResponse.class)))
+                    .thenReturn(
+                            response(
+                                    List.of(
+                                            rateOnlyRow("005930", "20150331"),
+                                            zeroZeroRow("005930", "19991231"))));
+
+            // Act
+            DividendBackfillFetch fetch =
+                    service.fetchWindowForBackfill(stock, session, floor, today);
+            BackfillWindowResult result = service.persistWindowForBackfill(fetch);
+
+            // Assert — validRows의 최소는 2015-03-31이지만, anchor 전진 입력(oldestTradeDate)은
+            // 원본 전체 최소인 1999-12-31이어야 한다(저장 기준 oldest가 더 최근이어도 무전진 오판 없음).
+            assertThat(fetch.rawOldestRecordDate()).isEqualTo(LocalDate.of(1999, 12, 31));
+            assertThat(result.oldestTradeDate()).isEqualTo(LocalDate.of(1999, 12, 31));
+        }
+
+        @Test
         @SuppressWarnings("PMD.UnitTestContainsTooManyAsserts")
         @DisplayName(
                 "AC-4: 단일 rate-only 저장 → rowCount=1·rawRowCount=1·oldest=2015-03-31, insertBatch 1행")
