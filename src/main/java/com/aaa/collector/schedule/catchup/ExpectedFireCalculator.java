@@ -15,6 +15,11 @@ import org.springframework.stereotype.Component;
  *
  * <p>알고리즘: {@code now - 8일}부터 1분씩 순전진하며 {@code CronExpression.next(t)}가 {@code <= now}인 마지막 히트를
  * 수집한다. 주간 최대 ~11,520회(8×24×60) 반복으로 성능 문제 없음 — 부팅 시 1회 실행.
+ *
+ * <p><b>재용도 노트(SPEC-COLLECTOR-EXPECTED-RUN-001 REQ-XR-003)</b>: 위 부팅-1회 가정과 달리 {@link
+ * com.aaa.collector.schedule.ExpectedRunGaugeBinder}가 이 계산기를 편입 배치 ~20종의 {@code expected_run} 게이지
+ * 산출에 매 Prometheus scrape마다 호출한다. 20배치 합산 scrape당 비용은 sub-ms~low-ms 수준으로 추정되어 무시할 만하다(SPEC §14).
+ * 유의미한 비용이 실측되면 scrape-interval 캐싱을 검토한다.
  */
 @Component
 public class ExpectedFireCalculator {
