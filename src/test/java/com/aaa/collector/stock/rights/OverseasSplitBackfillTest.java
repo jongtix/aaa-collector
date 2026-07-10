@@ -207,7 +207,10 @@ class OverseasSplitBackfillTest {
         }
 
         @Test
-        @DisplayName("결함 수정: 프리페치 FAILED(재시도 소진) 도달 시 rawRowCount=0으로 조작하지 않고 예외를 전파해 백필 재시도를 유도한다")
+        @DisplayName(
+                "AC-13 회귀 (SPEC-COLLECTOR-BACKFILL-GROUPC-001 REQ-GC-020): corporate_events GROUP_C 재분류"
+                        + "·verified_at 신설은 이 프리페치 실패 경로에 영향 없음 — 결함 수정: 프리페치 FAILED(재시도 소진) 도달 시"
+                        + " rawRowCount=0으로 조작하지 않고 예외를 전파해 백필 재시도를 유도한다")
         void prefetchFailed_propagatesException_insteadOfFabricatingLowRawRowCount() {
             Stock aapl = stock("AAPL");
             OverseasSplitPrefetch failedSplit =
@@ -220,7 +223,8 @@ class OverseasSplitBackfillTest {
 
         @Test
         @DisplayName(
-                "결함 수정: 프리페치 TRUNCATED(MAX_PAGES 절단) 도달 시 rawRowCount=0으로 조작하지 않고 예외를 전파해 백필 재시도를 유도한다")
+                "AC-13 회귀: 결함 수정: 프리페치 TRUNCATED(MAX_PAGES 절단) 도달 시 rawRowCount=0으로 조작하지 않고 예외를 전파해"
+                        + " 백필 재시도를 유도한다")
         void prefetchTruncated_propagatesException_insteadOfFabricatingLowRawRowCount() {
             Stock aapl = stock("AAPL");
             OverseasSplitPrefetch truncatedMerge =
