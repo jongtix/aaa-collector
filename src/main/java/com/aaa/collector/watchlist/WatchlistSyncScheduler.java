@@ -67,9 +67,8 @@ public class WatchlistSyncScheduler {
             morningRunning.set(false);
         }
         // Pattern C: 단일 원자 배치 — sync+classify를 묶어 1회 계측, skip 없음.
-        if (hasError) {
-            batchMetrics.recordCompletion(BATCH_LABEL_KRX, 1, 0, 1, 0);
-        } else {
+        // 예외 시 미-stamp(REQ-XR-009/010): last_load가 실패에도 전진해 실행 신선도 룰이 침묵하는 위반 제거.
+        if (!hasError) {
             batchMetrics.recordCompletion(BATCH_LABEL_KRX, 1, 1, 0, 0);
         }
     }
@@ -100,9 +99,8 @@ public class WatchlistSyncScheduler {
             usRunning.set(false);
         }
         // Pattern C: 단일 원자 배치 — sync+classify를 묶어 1회 계측, skip 없음.
-        if (hasError) {
-            batchMetrics.recordCompletion(BATCH_LABEL_US, 1, 0, 1, 0);
-        } else {
+        // 예외 시 미-stamp(REQ-XR-009/010): last_load가 실패에도 전진해 실행 신선도 룰이 침묵하는 위반 제거.
+        if (!hasError) {
             batchMetrics.recordCompletion(BATCH_LABEL_US, 1, 1, 0, 0);
         }
     }

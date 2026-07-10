@@ -95,8 +95,8 @@ class EtfRepresentativeSchedulerTest {
         }
 
         @Test
-        @DisplayName("예외 발생 — batch=domestic-etf-representative, (1,0,1,0) 기록")
-        void recordsBatchMetricsOnException() {
+        @DisplayName("예외 발생 — recordCompletion 미호출 (예외 시 미-stamp, REQ-XR-009/010)")
+        void doesNotRecordWhenException() {
             // Arrange
             Mockito.doThrow(new RuntimeException("ETF 재계산 실패"))
                     .when(etfRepresentativeService)
@@ -105,8 +105,14 @@ class EtfRepresentativeSchedulerTest {
             // Act
             scheduler.recalculateWeekly();
 
-            // Assert
-            verify(batchMetrics).recordCompletion("domestic-etf-representative", 1, 0, 1, 0);
+            // Assert: 예외 종료 시 last_load stamp 금지 — 실행 신선도 룰 침묵 방지
+            verify(batchMetrics, never())
+                    .recordCompletion(
+                            Mockito.anyString(),
+                            Mockito.anyLong(),
+                            Mockito.anyLong(),
+                            Mockito.anyLong(),
+                            Mockito.anyLong());
         }
 
         @Test

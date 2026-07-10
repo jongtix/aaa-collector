@@ -43,8 +43,8 @@ public class EtfRepresentativeScheduler {
             // Pattern C: 단일 원자 배치(세부 단계 없음) — 성공/실패 이진 계측, skip 없음.
             batchMetrics.recordCompletion(BATCH_LABEL, 1, 1, 0, 0);
         } catch (Exception e) {
+            // 예외 시 미-stamp(REQ-XR-009/010): last_load가 실패에도 전진해 실행 신선도 룰이 침묵하는 위반 제거.
             log.error("ETF representative recalculation failed — will retry next Monday", e);
-            batchMetrics.recordCompletion(BATCH_LABEL, 1, 0, 1, 0);
         } finally {
             running.set(false);
         }

@@ -274,16 +274,22 @@ class WatchlistSyncSchedulerTest {
         }
 
         @Test
-        @DisplayName("syncMorning 예외 — batch=watchlist-sync-krx, (1,0,1,0) 기록")
-        void syncMorning_recordsFailureOnException() {
+        @DisplayName("syncMorning 예외 — recordCompletion 미호출 (예외 시 미-stamp, REQ-XR-009/010)")
+        void syncMorning_doesNotRecordOnException() {
             // Arrange
             doThrow(new RuntimeException("sync 실패")).when(watchlistSyncService).sync();
 
             // Act
             scheduler.syncMorning();
 
-            // Assert
-            verify(batchMetrics).recordCompletion("watchlist-sync-krx", 1, 0, 1, 0);
+            // Assert: 예외 종료 시 last_load stamp 금지 — 실행 신선도 룰 침묵 방지
+            verify(batchMetrics, never())
+                    .recordCompletion(
+                            org.mockito.ArgumentMatchers.anyString(),
+                            org.mockito.ArgumentMatchers.anyLong(),
+                            org.mockito.ArgumentMatchers.anyLong(),
+                            org.mockito.ArgumentMatchers.anyLong(),
+                            org.mockito.ArgumentMatchers.anyLong());
         }
 
         @Test
@@ -311,16 +317,22 @@ class WatchlistSyncSchedulerTest {
         }
 
         @Test
-        @DisplayName("syncUs 예외 — batch=watchlist-sync-us, (1,0,1,0) 기록")
-        void syncUs_recordsFailureOnException() {
+        @DisplayName("syncUs 예외 — recordCompletion 미호출 (예외 시 미-stamp, REQ-XR-009/010)")
+        void syncUs_doesNotRecordOnException() {
             // Arrange
             doThrow(new RuntimeException("US sync 실패")).when(watchlistSyncService).sync();
 
             // Act
             scheduler.syncUs();
 
-            // Assert
-            verify(batchMetrics).recordCompletion("watchlist-sync-us", 1, 0, 1, 0);
+            // Assert: 예외 종료 시 last_load stamp 금지 — 실행 신선도 룰 침묵 방지
+            verify(batchMetrics, never())
+                    .recordCompletion(
+                            org.mockito.ArgumentMatchers.anyString(),
+                            org.mockito.ArgumentMatchers.anyLong(),
+                            org.mockito.ArgumentMatchers.anyLong(),
+                            org.mockito.ArgumentMatchers.anyLong(),
+                            org.mockito.ArgumentMatchers.anyLong());
         }
 
         @Test
