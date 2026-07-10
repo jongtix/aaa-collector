@@ -1,6 +1,7 @@
 package com.aaa.collector.watchlist;
 
 import com.aaa.collector.observability.BatchMetrics;
+import com.aaa.collector.schedule.BatchCrons;
 import com.aaa.collector.stock.grade.GradeClassificationService;
 import java.util.concurrent.atomic.AtomicBoolean;
 import lombok.RequiredArgsConstructor;
@@ -46,7 +47,7 @@ public class WatchlistSyncScheduler {
      * <p>watchlist 전체 sync 후 classifyDomestic() 호출(REQ-WLSYNC-111 보존). sync 예외/classify 예외 모두 격리 —
      * 가드 finally reset으로 다음 실행 보장.
      */
-    @Scheduled(cron = "0 20 8 * * *", zone = "Asia/Seoul")
+    @Scheduled(cron = BatchCrons.WATCHLIST_SYNC_KRX_CRON, zone = BatchCrons.WATCHLIST_SYNC_KRX_ZONE)
     @SuppressWarnings("PMD.AvoidCatchingGenericException") // sync/classify 예외 격리 — 가드 reset 보장
     public void syncMorning() {
         if (!morningRunning.compareAndSet(false, true)) {
@@ -79,7 +80,7 @@ public class WatchlistSyncScheduler {
      * <p>watchlist 전체 sync(KRX+US 그룹) 후 classifyOverseas() 호출(REQ-GRADE-005/M2/M5). 예외 격리 — 가드
      * finally reset으로 다음 실행 보장.
      */
-    @Scheduled(cron = "0 50 8 * * *", zone = "America/New_York")
+    @Scheduled(cron = BatchCrons.WATCHLIST_SYNC_US_CRON, zone = BatchCrons.WATCHLIST_SYNC_US_ZONE)
     @SuppressWarnings("PMD.AvoidCatchingGenericException") // sync/classify 예외 격리 — 가드 reset 보장
     public void syncUs() {
         if (!usRunning.compareAndSet(false, true)) {

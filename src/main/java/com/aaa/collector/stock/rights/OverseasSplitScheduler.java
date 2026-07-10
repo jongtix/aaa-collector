@@ -1,5 +1,6 @@
 package com.aaa.collector.stock.rights;
 
+import com.aaa.collector.schedule.BatchCrons;
 import com.aaa.collector.stock.rights.OverseasSplitCollectionService.OverseasSplitCollectionResult;
 import java.time.Clock;
 import java.time.LocalDate;
@@ -37,7 +38,7 @@ public class OverseasSplitScheduler {
      * <p>예외 흡수: 수집 단계의 예외가 전파되어 스케줄러 스레드가 종료되는 것을 방지한다(다음 실행 때 재시도). 로그 기준일은 ET 거래일이다 — cron 17:00
      * ET(=서버 KST 익일) 발화 시각을 ET zone으로 환산한다. Clock은 테스트에서 {@code Clock.fixed(...)}로 대체된다.
      */
-    @Scheduled(cron = "0 0 17 * * MON-FRI", zone = "America/New_York")
+    @Scheduled(cron = BatchCrons.OVERSEAS_SPLIT_CRON, zone = BatchCrons.OVERSEAS_SPLIT_ZONE)
     @SuppressWarnings("PMD.AvoidCatchingGenericException") // 스케줄러 스레드 종료 방지 — 해외 배당 스케줄러와 동일 패턴
     public void collectSplits() {
         LocalDate today = LocalDate.ofInstant(clock.instant(), ET);

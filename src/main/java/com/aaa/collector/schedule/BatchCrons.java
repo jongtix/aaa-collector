@@ -67,5 +67,61 @@ public final class BatchCrons {
     /** ETF 대표 종목 재계산 배치 zone. */
     public static final String DOMESTIC_ETF_REPRESENTATIVE_ZONE = "Asia/Seoul";
 
+    // ─── overseas-split ──────────────────────────────────────────────────────
+    /** 해외 액면분할·병합 수집 배치 cron — 평일 17:00 ET. */
+    public static final String OVERSEAS_SPLIT_CRON = "0 0 17 * * MON-FRI";
+
+    /** 해외 액면분할·병합 수집 배치 zone. */
+    public static final String OVERSEAS_SPLIT_ZONE = "America/New_York";
+
+    // ─── overseas-rights ─────────────────────────────────────────────────────
+    /** 해외 현금배당 수집 배치 cron — 평일 17:00 ET. */
+    public static final String OVERSEAS_RIGHTS_CRON = "0 0 17 * * MON-FRI";
+
+    /** 해외 현금배당 수집 배치 zone. */
+    public static final String OVERSEAS_RIGHTS_ZONE = "America/New_York";
+
+    // ─── corp-code ───────────────────────────────────────────────────────────
+    /** DART corp_code 매핑 갱신 배치 cron — 매일 07:30 KST. */
+    public static final String CORP_CODE_CRON = "0 30 7 * * *";
+
+    /** DART corp_code 매핑 갱신 배치 zone. */
+    public static final String CORP_CODE_ZONE = "Asia/Seoul";
+
+    // ─── dart-backfill ───────────────────────────────────────────────────────
+    /** DART 공시 백필 배치 cron — 매일 04:30 KST. */
+    public static final String DART_BACKFILL_CRON = "0 30 4 * * *";
+
+    /** DART 공시 백필 배치 zone. */
+    public static final String DART_BACKFILL_ZONE = "Asia/Seoul";
+
+    // ─── domestic-news ───────────────────────────────────────────────────────
+    /** 국내 뉴스 제목 증분 수집 배치 cron — 평일 장중 10분 간격(09~15시 KST). */
+    public static final String DOMESTIC_NEWS_CRON = "0 0/10 9-15 * * MON-FRI";
+
+    /** 국내 뉴스 제목 증분 수집 배치 zone. */
+    public static final String DOMESTIC_NEWS_ZONE = "Asia/Seoul";
+
+    // ─── overseas-news ───────────────────────────────────────────────────────
+    /** 해외 뉴스 제목 수집 배치 cron — 미국 장중 10분 간격(09~16시 ET). */
+    public static final String OVERSEAS_NEWS_CRON = "0 0/10 9-16 * * MON-FRI";
+
+    /** 해외 뉴스 제목 수집 배치 zone. */
+    public static final String OVERSEAS_NEWS_ZONE = "America/New_York";
+
+    // ─── watchlist-sync-krx ──────────────────────────────────────────────────
+    /** KRX 관심종목 동기화+등급 분류 배치 cron — 매일 08:20 KST. */
+    public static final String WATCHLIST_SYNC_KRX_CRON = "0 20 8 * * *";
+
+    /** KRX 관심종목 동기화+등급 분류 배치 zone. */
+    public static final String WATCHLIST_SYNC_KRX_ZONE = "Asia/Seoul";
+
+    // ─── watchlist-sync-us ───────────────────────────────────────────────────
+    /** US 관심종목 동기화+등급 분류 배치 cron — 매일 08:50 ET. */
+    public static final String WATCHLIST_SYNC_US_CRON = "0 50 8 * * *";
+
+    /** US 관심종목 동기화+등급 분류 배치 zone. */
+    public static final String WATCHLIST_SYNC_US_ZONE = "America/New_York";
+
     private BatchCrons() {}
 }

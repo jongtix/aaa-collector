@@ -1,6 +1,7 @@
 package com.aaa.collector.news;
 
 import com.aaa.collector.observability.BatchMetrics;
+import com.aaa.collector.schedule.BatchCrons;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -32,7 +33,7 @@ public class NewsScheduler {
      *
      * <p>예외 흡수: 예외가 전파되어 스케줄러 스레드가 종료되는 것을 방지한다(REQ-BATCH3-004).
      */
-    @Scheduled(cron = "0 0/10 9-15 * * MON-FRI", zone = "Asia/Seoul")
+    @Scheduled(cron = BatchCrons.DOMESTIC_NEWS_CRON, zone = BatchCrons.DOMESTIC_NEWS_ZONE)
     @SuppressWarnings("PMD.AvoidCatchingGenericException") // 스케줄러 스레드 종료 방지
     public void collectNews() {
         log.debug("[news] 뉴스 증분 수집 시작");

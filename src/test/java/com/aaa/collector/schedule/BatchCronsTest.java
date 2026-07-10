@@ -4,6 +4,10 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatNoException;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
+import java.io.IOException;
+import java.io.UncheckedIOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.time.ZoneId;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -271,6 +275,179 @@ class BatchCronsTest {
         void etfConstants_areNotNull() {
             assertThat(BatchCrons.DOMESTIC_ETF_REPRESENTATIVE_CRON).isNotNull();
             assertThat(BatchCrons.DOMESTIC_ETF_REPRESENTATIVE_ZONE).isNotNull();
+        }
+    }
+
+    @Nested
+    @DisplayName("T-001 신규 상수 값 (REQ-XR-002) — 스케줄러 원본 리터럴과 일치해야 한다")
+    class NewConstantsValue {
+
+        @Test
+        @DisplayName("overseas-split cron/zone은 OverseasSplitScheduler 원본과 일치해야 한다")
+        void overseasSplit_matchesOriginal() {
+            assertEquals("0 0 17 * * MON-FRI", BatchCrons.OVERSEAS_SPLIT_CRON);
+            assertEquals("America/New_York", BatchCrons.OVERSEAS_SPLIT_ZONE);
+            assertThatNoException()
+                    .isThrownBy(() -> CronExpression.parse(BatchCrons.OVERSEAS_SPLIT_CRON));
+            assertThatNoException().isThrownBy(() -> ZoneId.of(BatchCrons.OVERSEAS_SPLIT_ZONE));
+        }
+
+        @Test
+        @DisplayName("overseas-rights cron/zone은 OverseasRightsScheduler 원본과 일치해야 한다")
+        void overseasRights_matchesOriginal() {
+            assertEquals("0 0 17 * * MON-FRI", BatchCrons.OVERSEAS_RIGHTS_CRON);
+            assertEquals("America/New_York", BatchCrons.OVERSEAS_RIGHTS_ZONE);
+            assertThatNoException()
+                    .isThrownBy(() -> CronExpression.parse(BatchCrons.OVERSEAS_RIGHTS_CRON));
+            assertThatNoException().isThrownBy(() -> ZoneId.of(BatchCrons.OVERSEAS_RIGHTS_ZONE));
+        }
+
+        @Test
+        @DisplayName("corp-code cron/zone은 CorpCodeUpdateScheduler 원본과 일치해야 한다")
+        void corpCode_matchesOriginal() {
+            assertEquals("0 30 7 * * *", BatchCrons.CORP_CODE_CRON);
+            assertEquals("Asia/Seoul", BatchCrons.CORP_CODE_ZONE);
+            assertThatNoException()
+                    .isThrownBy(() -> CronExpression.parse(BatchCrons.CORP_CODE_CRON));
+            assertThatNoException().isThrownBy(() -> ZoneId.of(BatchCrons.CORP_CODE_ZONE));
+        }
+
+        @Test
+        @DisplayName("dart-backfill cron/zone은 DartDisclosureBackfillScheduler 원본과 일치해야 한다")
+        void dartBackfill_matchesOriginal() {
+            assertEquals("0 30 4 * * *", BatchCrons.DART_BACKFILL_CRON);
+            assertEquals("Asia/Seoul", BatchCrons.DART_BACKFILL_ZONE);
+            assertThatNoException()
+                    .isThrownBy(() -> CronExpression.parse(BatchCrons.DART_BACKFILL_CRON));
+            assertThatNoException().isThrownBy(() -> ZoneId.of(BatchCrons.DART_BACKFILL_ZONE));
+        }
+
+        @Test
+        @DisplayName("domestic-news cron/zone은 NewsScheduler 원본과 일치해야 한다")
+        void domesticNews_matchesOriginal() {
+            assertEquals("0 0/10 9-15 * * MON-FRI", BatchCrons.DOMESTIC_NEWS_CRON);
+            assertEquals("Asia/Seoul", BatchCrons.DOMESTIC_NEWS_ZONE);
+            assertThatNoException()
+                    .isThrownBy(() -> CronExpression.parse(BatchCrons.DOMESTIC_NEWS_CRON));
+            assertThatNoException().isThrownBy(() -> ZoneId.of(BatchCrons.DOMESTIC_NEWS_ZONE));
+        }
+
+        @Test
+        @DisplayName("overseas-news cron/zone은 OverseasNewsScheduler 원본과 일치해야 한다")
+        void overseasNews_matchesOriginal() {
+            assertEquals("0 0/10 9-16 * * MON-FRI", BatchCrons.OVERSEAS_NEWS_CRON);
+            assertEquals("America/New_York", BatchCrons.OVERSEAS_NEWS_ZONE);
+            assertThatNoException()
+                    .isThrownBy(() -> CronExpression.parse(BatchCrons.OVERSEAS_NEWS_CRON));
+            assertThatNoException().isThrownBy(() -> ZoneId.of(BatchCrons.OVERSEAS_NEWS_ZONE));
+        }
+
+        @Test
+        @DisplayName("watchlist-sync-krx cron/zone은 WatchlistSyncScheduler.syncMorning 원본과 일치해야 한다")
+        void watchlistSyncKrx_matchesOriginal() {
+            assertEquals("0 20 8 * * *", BatchCrons.WATCHLIST_SYNC_KRX_CRON);
+            assertEquals("Asia/Seoul", BatchCrons.WATCHLIST_SYNC_KRX_ZONE);
+            assertThatNoException()
+                    .isThrownBy(() -> CronExpression.parse(BatchCrons.WATCHLIST_SYNC_KRX_CRON));
+            assertThatNoException().isThrownBy(() -> ZoneId.of(BatchCrons.WATCHLIST_SYNC_KRX_ZONE));
+        }
+
+        @Test
+        @DisplayName("watchlist-sync-us cron/zone은 WatchlistSyncScheduler.syncUs 원본과 일치해야 한다")
+        void watchlistSyncUs_matchesOriginal() {
+            assertEquals("0 50 8 * * *", BatchCrons.WATCHLIST_SYNC_US_CRON);
+            assertEquals("America/New_York", BatchCrons.WATCHLIST_SYNC_US_ZONE);
+            assertThatNoException()
+                    .isThrownBy(() -> CronExpression.parse(BatchCrons.WATCHLIST_SYNC_US_CRON));
+            assertThatNoException().isThrownBy(() -> ZoneId.of(BatchCrons.WATCHLIST_SYNC_US_ZONE));
+        }
+    }
+
+    @Nested
+    @DisplayName("T-001 스케줄러 배선 (REQ-XR-002) — @Scheduled가 리터럴이 아니라 BatchCrons 상수를 참조해야 한다")
+    class SchedulerBindsConstant {
+
+        // 소스 검사: 리플렉션은 컴파일 타임 상수 인라이닝 때문에 리터럴/상수를 구분하지 못하므로,
+        // 실제 상수 참조(드리프트 차단)를 강제하려면 스케줄러 소스가 BatchCrons.<CONST>를 담고 있는지 확인한다.
+        private static final String BASE = "src/main/java/com/aaa/collector/";
+
+        @Test
+        @DisplayName("OverseasSplitScheduler는 OVERSEAS_SPLIT_CRON/ZONE 상수를 참조해야 한다")
+        void overseasSplitScheduler_bindsConstant() {
+            assertBinds(
+                    "stock/rights/OverseasSplitScheduler.java",
+                    "OVERSEAS_SPLIT_CRON",
+                    "OVERSEAS_SPLIT_ZONE");
+        }
+
+        @Test
+        @DisplayName("OverseasRightsScheduler는 OVERSEAS_RIGHTS_CRON/ZONE 상수를 참조해야 한다")
+        void overseasRightsScheduler_bindsConstant() {
+            assertBinds(
+                    "stock/rights/OverseasRightsScheduler.java",
+                    "OVERSEAS_RIGHTS_CRON",
+                    "OVERSEAS_RIGHTS_ZONE");
+        }
+
+        @Test
+        @DisplayName("CorpCodeUpdateScheduler는 CORP_CODE_CRON/ZONE 상수를 참조해야 한다")
+        void corpCodeScheduler_bindsConstant() {
+            assertBinds(
+                    "dart/corpcode/CorpCodeUpdateScheduler.java",
+                    "CORP_CODE_CRON",
+                    "CORP_CODE_ZONE");
+        }
+
+        @Test
+        @DisplayName("DartDisclosureBackfillScheduler는 DART_BACKFILL_CRON/ZONE 상수를 참조해야 한다")
+        void dartBackfillScheduler_bindsConstant() {
+            assertBinds(
+                    "dart/backfill/DartDisclosureBackfillScheduler.java",
+                    "DART_BACKFILL_CRON",
+                    "DART_BACKFILL_ZONE");
+        }
+
+        @Test
+        @DisplayName("NewsScheduler는 DOMESTIC_NEWS_CRON/ZONE 상수를 참조해야 한다")
+        void newsScheduler_bindsConstant() {
+            assertBinds("news/NewsScheduler.java", "DOMESTIC_NEWS_CRON", "DOMESTIC_NEWS_ZONE");
+        }
+
+        @Test
+        @DisplayName("OverseasNewsScheduler는 OVERSEAS_NEWS_CRON/ZONE 상수를 참조해야 한다")
+        void overseasNewsScheduler_bindsConstant() {
+            assertBinds(
+                    "news/overseas/OverseasNewsScheduler.java",
+                    "OVERSEAS_NEWS_CRON",
+                    "OVERSEAS_NEWS_ZONE");
+        }
+
+        @Test
+        @DisplayName("WatchlistSyncScheduler는 KRX/US cron·zone 상수를 모두 참조해야 한다")
+        void watchlistSyncScheduler_bindsConstants() {
+            String content = read("watchlist/WatchlistSyncScheduler.java");
+            assertThat(content).contains("BatchCrons.WATCHLIST_SYNC_KRX_CRON");
+            assertThat(content).contains("BatchCrons.WATCHLIST_SYNC_KRX_ZONE");
+            assertThat(content).contains("BatchCrons.WATCHLIST_SYNC_US_CRON");
+            assertThat(content).contains("BatchCrons.WATCHLIST_SYNC_US_ZONE");
+        }
+
+        private void assertBinds(String relativePath, String cronConst, String zoneConst) {
+            String content = read(relativePath);
+            assertThat(content)
+                    .as("%s는 @Scheduled에서 BatchCrons.%s를 참조해야 한다", relativePath, cronConst)
+                    .contains("BatchCrons." + cronConst);
+            assertThat(content)
+                    .as("%s는 @Scheduled에서 BatchCrons.%s를 참조해야 한다", relativePath, zoneConst)
+                    .contains("BatchCrons." + zoneConst);
+        }
+
+        private String read(String relativePath) {
+            try {
+                return Files.readString(Path.of(BASE + relativePath));
+            } catch (IOException e) {
+                throw new UncheckedIOException(e);
+            }
         }
     }
 }

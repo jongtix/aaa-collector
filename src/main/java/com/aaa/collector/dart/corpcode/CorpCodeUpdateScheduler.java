@@ -1,6 +1,7 @@
 package com.aaa.collector.dart.corpcode;
 
 import com.aaa.collector.observability.BatchMetrics;
+import com.aaa.collector.schedule.BatchCrons;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -31,7 +32,7 @@ public class CorpCodeUpdateScheduler {
      *
      * <p>예외 흡수: 갱신 오류가 스케줄러 스레드를 중단시키지 않는다. 완료 시 {@code corp-code} 배치 라벨로 실행 신선도를 계측한다.
      */
-    @Scheduled(cron = "0 30 7 * * *", zone = "Asia/Seoul")
+    @Scheduled(cron = BatchCrons.CORP_CODE_CRON, zone = BatchCrons.CORP_CODE_ZONE)
     @SuppressWarnings("PMD.AvoidCatchingGenericException")
     public void update() {
         try {

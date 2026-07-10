@@ -1,6 +1,7 @@
 package com.aaa.collector.stock.rights;
 
 import com.aaa.collector.observability.BatchMetrics;
+import com.aaa.collector.schedule.BatchCrons;
 import java.time.Clock;
 import java.time.LocalDate;
 import java.time.ZoneId;
@@ -41,7 +42,7 @@ public class OverseasRightsScheduler {
      * ET(=서버 KST 익일) 발화 시각을 ET zone으로 환산한다. Clock은 테스트에서 {@code Clock.fixed(...)}로 대체된다. 완료 시
      * {@code overseas-rights} 배치 라벨로 실행 신선도를 계측한다(SPEC-OBSV-WATERMARK-001 REQ-WM-013).
      */
-    @Scheduled(cron = "0 0 17 * * MON-FRI", zone = "America/New_York")
+    @Scheduled(cron = BatchCrons.OVERSEAS_RIGHTS_CRON, zone = BatchCrons.OVERSEAS_RIGHTS_ZONE)
     @SuppressWarnings("PMD.AvoidCatchingGenericException") // 스케줄러 스레드 종료 방지 — 해외 일봉 스케줄러와 동일 패턴
     public void collectRights() {
         LocalDate today = LocalDate.ofInstant(clock.instant(), ET);

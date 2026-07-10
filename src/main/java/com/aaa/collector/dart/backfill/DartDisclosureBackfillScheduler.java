@@ -1,6 +1,7 @@
 package com.aaa.collector.dart.backfill;
 
 import com.aaa.collector.observability.BatchMetrics;
+import com.aaa.collector.schedule.BatchCrons;
 import java.util.concurrent.atomic.AtomicBoolean;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -33,7 +34,7 @@ public class DartDisclosureBackfillScheduler {
      *
      * <p>예외 흡수: 오케스트레이터 오류가 스케줄러 스레드를 중단시키지 않는다. 완료 시 {@code dart-backfill} 배치 라벨로 실행 신선도를 계측한다.
      */
-    @Scheduled(cron = "0 30 4 * * *", zone = "Asia/Seoul")
+    @Scheduled(cron = BatchCrons.DART_BACKFILL_CRON, zone = BatchCrons.DART_BACKFILL_ZONE)
     @SuppressWarnings("PMD.AvoidCatchingGenericException")
     public void run() {
         if (!running.compareAndSet(false, true)) {
