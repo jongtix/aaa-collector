@@ -85,7 +85,11 @@ class SharedContainerGuardTest {
                     "com.aaa.collector.Tier1ViolationMigrationIntegrationTest",
                     // SPEC-COLLECTOR-DBGRANT-003 M2-T2 — collector 계정의 SHOW GRANTS만 조회하고
                     // 비즈니스 데이터 행을 생성하지 않는다(읽기 전용 게이트, DatabaseMigrationIntegrationTest와 동일 사유).
-                    "com.aaa.collector.common.startup.Tier2GrantMigrationStrategyIT");
+                    "com.aaa.collector.common.startup.Tier2GrantMigrationStrategyIT",
+                    // aaa-infra#89 — RedisHealthConfig 자동 구성 순서 회귀 테스트. 전체 컨텍스트를 띄워
+                    // "redisHealthIndicator" 빈 등록 여부만 조회하고 비즈니스 데이터 행을 생성하지 않는다
+                    // (읽기 전용 게이트, DatabaseMigrationIntegrationTest와 동일 사유).
+                    "com.aaa.collector.common.health.RedisHealthAutoConfigurationIntegrationTest");
 
     @Test
     @DisplayName("규칙 A — 공유 컨테이너 참조 필드에 @Container를 붙이면 안 된다")
