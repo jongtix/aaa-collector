@@ -15,6 +15,7 @@ import com.aaa.collector.kis.gate.KeyLeaseRegistry.LeaseSession;
 import com.aaa.collector.kis.token.KisTokenIssueException;
 import com.aaa.collector.stock.DividendBackfillFetch;
 import com.aaa.collector.stock.DividendScheduleCollectionService;
+import com.aaa.collector.stock.RevSplitBackfillCapSaturatedException;
 import com.aaa.collector.stock.RevSplitBackfillFetch;
 import com.aaa.collector.stock.RevSplitCollectionService;
 import com.aaa.collector.stock.Stock;
@@ -91,8 +92,15 @@ public class BackfillWindowExecutor {
     // @MX:SPEC: SPEC-COLLECTOR-BACKFILL-010
     private static final LocalDate US_DATA_WALL = LocalDate.of(2007, 8, 20);
 
-    /** 게이트 대상 테이블 — corporate_events*는 GROUP_A이나 below-100 완료가 정상이라 제외(§Exclusions D4). */
+    /**
+     * daily_ohlcv 프로브 게이트(§4.1) 대상 테이블. corporate_events*는 이 게이트를 거치지 않는다 — BACKFILL-010 D4
+     * 제외(SPEC-COLLECTOR-BACKFILL-GROUPC-001 REQ-GC-007로 override, verified_at은 {@link
+     * #isVerifiedExhaustionEligible}이 담당하는 별도 경로).
+     */
     private static final String DAILY_OHLCV = "daily_ohlcv";
+
+    /** 배당 종목지정 백필 data_table 논리 키(SPEC-COLLECTOR-BACKFILL-009 W2). */
+    private static final String CORPORATE_EVENTS_DIVIDEND = "corporate_events_dividend";
 
     /** GROUP_A daily_ohlcv 단일 호출 잠정 종료 임계(거래일). decideGroupA 임계값 100·{@code <} 비교와 동일(불변). */
     private static final int SINGLE_CALL_ROW_CAP = 100;
@@ -179,11 +187,12 @@ public class BackfillWindowExecutor {
                 yield revSplitService.fetchWindowForBackfill(stock, session, floor, to);
             }
             // @MX:NOTE SPEC-COLLECTOR-BACKFILL-009 W2 — 종목지정 현금배당 백필(SPLIT과 별도 data_table 논리 키).
-            // from-date=고정 플로어(REQ-BACKFILL-126), to-date=today(KST). SPLIT(rev-split) 분기
-            // 불변(REQ-BACKFILL-144).
+            // from-date=고정 플로어(REQ-BACKFILL-126). SPLIT(rev-split) 분기 불변(REQ-BACKFILL-144).
+            // SPEC-COLLECTOR-BACKFILL-GROUPC-001 REQ-GC-011: to-date=today 고정 버그를 anchor(윈도우 진행점)로
+            // 교체 — GROUP_A 이월 워크가 실제로 전진하도록 복구.
             case "corporate_events_dividend" ->
                     dividendService.fetchWindowForBackfill(
-                            stock, session, windowAdvancer.groupAFromDate(), LocalDate.now(KST));
+                            stock, session, windowAdvancer.groupAFromDate(), anchor);
             default -> {
                 log.warn(
                         "[backfill] 알 수 없는 data_table — symbol={}, table={}",
@@ -378,6 +387,13 @@ public class BackfillWindowExecutor {
                 decision.nextStaleCount(),
                 resolveNewRowCount(result.rowCount(), status.getLastRowCount()));
 
+        // SPEC-COLLECTOR-BACKFILL-GROUPC-001 REQ-GC-007/010/021: BACKFILL-010 D4 제외를 override —
+        // GROUP_C(corporate_events, 커서완주/단일콜 소진)와 GROUP_A corporate_events_dividend(절대 플로어
+        // 자기증명)는 완료 시 검증된 소진으로 verified_at을 스탬프한다. GROUP_B는 대상 아님(불변).
+        if (decision.completed() && isVerifiedExhaustionEligible(group, dataTable)) {
+            managed.markVerified(LocalDateTime.now(KST));
+        }
+
         log.debug(
                 "[backfill] 윈도우 완료 — symbol={}, table={}, status={}, oldest={}",
                 symbol,
@@ -512,13 +528,15 @@ public class BackfillWindowExecutor {
     /**
      * 예외를 재시도 가능 여부로 분류한다.
      *
-     * <p>KisTokenIssueException만 영구 오류(false). 나머지는 모두 재시도(true) — 보수적 기본값.
+     * <p>KisTokenIssueException·{@link RevSplitBackfillCapSaturatedException}만 영구 오류(false,
+     * REQ-GC-014 — 후자를 기본값(재시도 가능)에 맡기면 IN_PROGRESS 무한 재시도가 재현된다). 나머지는 모두 재시도(true) — 보수적 기본값.
      *
      * @param e 분류할 예외
      * @return {@code true}=재시도 가능(IN_PROGRESS 유지), {@code false}=영구 오류(FAILED)
      */
     public boolean isRetryable(Exception e) {
-        return !(e instanceof KisTokenIssueException);
+        return !(e instanceof KisTokenIssueException)
+                && !(e instanceof RevSplitBackfillCapSaturatedException);
     }
 
     // -------------------------------------------------------------------------
@@ -589,6 +607,17 @@ public class BackfillWindowExecutor {
                 .build();
     }
 
+    /**
+     * {@code persistLegacy} 완료 시 {@code verified_at} 스탬프 대상 여부 — GROUP_C(커서완주/단일콜 소진) 또는 GROUP_A
+     * {@code corporate_events_dividend}(절대 플로어 자기증명)만 해당한다 (SPEC-COLLECTOR-BACKFILL-GROUPC-001
+     * REQ-GC-007/010/021). GROUP_B·{@code daily_ohlcv}(별도 게이트 경로 {@link #persistGatedCompletion}가
+     * 담당)는 대상 아님.
+     */
+    private static boolean isVerifiedExhaustionEligible(BackfillGroup group, String dataTable) {
+        return group == BackfillGroup.GROUP_C
+                || (group == BackfillGroup.GROUP_A && CORPORATE_EVENTS_DIVIDEND.equals(dataTable));
+    }
+
     private BackfillWindowOutcome buildOutcome(
             BackfillGroup group, BackfillWindowResult result, BackfillStatus status) {
         return switch (group) {
@@ -604,6 +633,8 @@ public class BackfillWindowExecutor {
                             status.getLastCollectedDate(),
                             status.getLastRowCount(),
                             status.getStaleCount());
+            // SPEC-COLLECTOR-BACKFILL-GROUPC-001 REQ-GC-001/004: decide()가 필드 미참조 — 무해값 팩토리
+            case GROUP_C -> BackfillWindowOutcome.groupC();
         };
     }
 

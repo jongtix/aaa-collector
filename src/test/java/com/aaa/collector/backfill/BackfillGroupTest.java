@@ -22,15 +22,34 @@ class BackfillGroupTest {
     }
 
     @Test
-    @DisplayName("corporate_events(SPLIT)·daily_ohlcv → GROUP_A (기존 분류 불변)")
+    @DisplayName("daily_ohlcv → GROUP_A (기존 분류 불변)")
     void existingGroupATables_unchanged() {
-        assertThat(BackfillGroup.ofDataTable("corporate_events")).isEqualTo(BackfillGroup.GROUP_A);
         assertThat(BackfillGroup.ofDataTable("daily_ohlcv")).isEqualTo(BackfillGroup.GROUP_A);
+    }
+
+    @Test
+    @DisplayName("REQ-GC-002: corporate_events(SPLIT) → GROUP_C (GROUP_A에서 이관, #82 접두어 노이즈 대응)")
+    void corporateEventsSplitTable_isGroupC() {
+        assertThat(BackfillGroup.ofDataTable("corporate_events")).isEqualTo(BackfillGroup.GROUP_C);
     }
 
     @Test
     @DisplayName("수급 3종은 GROUP_B (100건 미만 종료 규칙 미적용, 분류 불변)")
     void supplyTables_areGroupB() {
+        assertThat(BackfillGroup.ofDataTable("short_sale_domestic"))
+                .isEqualTo(BackfillGroup.GROUP_B);
+        assertThat(BackfillGroup.ofDataTable("investor_trend")).isEqualTo(BackfillGroup.GROUP_B);
+        assertThat(BackfillGroup.ofDataTable("credit_balance")).isEqualTo(BackfillGroup.GROUP_B);
+    }
+
+    @Test
+    @SuppressWarnings("PMD.UnitTestContainsTooManyAsserts")
+    @DisplayName("AC-1 (REQ-GC-001/002/005): 6종 data_table 분류 고정 매트릭스")
+    void ac1_sixTableClassificationMatrix() {
+        assertThat(BackfillGroup.ofDataTable("corporate_events")).isEqualTo(BackfillGroup.GROUP_C);
+        assertThat(BackfillGroup.ofDataTable("corporate_events_dividend"))
+                .isEqualTo(BackfillGroup.GROUP_A);
+        assertThat(BackfillGroup.ofDataTable("daily_ohlcv")).isEqualTo(BackfillGroup.GROUP_A);
         assertThat(BackfillGroup.ofDataTable("short_sale_domestic"))
                 .isEqualTo(BackfillGroup.GROUP_B);
         assertThat(BackfillGroup.ofDataTable("investor_trend")).isEqualTo(BackfillGroup.GROUP_B);

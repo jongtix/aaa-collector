@@ -53,6 +53,19 @@ public record BackfillWindowOutcome(
     }
 
     /**
+     * 그룹 C({@code corporate_events}, SPLIT) 윈도우 결과 — 커서완주·단일콜 소진(SPEC-COLLECTOR-BACKFILL-GROUPC-001
+     * REQ-GC-001/004).
+     *
+     * <p>{@link BackfillTerminationPolicy#decide}가 GROUP_C 결과의 필드를 일절 참조하지 않고 무조건 완료를 반환하므로, 최소
+     * 무해값(전부 0/null)으로 채운다.
+     *
+     * @return 그룹 C 결과 (필드 무의미 — decide가 미참조)
+     */
+    public static BackfillWindowOutcome groupC() {
+        return new BackfillWindowOutcome(BackfillGroup.GROUP_C, 0, 0, null, null, null, 0);
+    }
+
+    /**
      * 그룹 B(공매도·investor·credit) 윈도우 결과.
      *
      * @param rowCount 응답 행 수
