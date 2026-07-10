@@ -4,8 +4,10 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
+import com.aaa.collector.observability.BatchMetrics;
 import com.aaa.collector.stock.rights.OverseasSplitCollectionService.OverseasSplitCollectionResult;
 import java.lang.reflect.Method;
 import java.time.Clock;
@@ -35,12 +37,13 @@ class OverseasSplitSchedulerTest {
     private static final ZoneId KST = ZoneId.of("Asia/Seoul");
 
     @Mock private OverseasSplitCollectionService collectionService;
+    @Mock private BatchMetrics batchMetrics;
 
     private OverseasSplitScheduler scheduler;
 
     @BeforeEach
     void setUp() {
-        scheduler = new OverseasSplitScheduler(collectionService, Clock.system(KST));
+        scheduler = new OverseasSplitScheduler(collectionService, Clock.system(KST), batchMetrics);
     }
 
     private OverseasSplitCollectionResult result() {
@@ -90,11 +93,26 @@ class OverseasSplitSchedulerTest {
         }
 
         @Test
-        @DisplayName("collect 예외 — 흡수, 스케줄러 미종료")
+        @DisplayName("collect 성공 시 overseas-split 배치 라벨로 완료 계측한다 (REQ-XR-013)")
+        void collectSplits_recordsBatchCompletion() {
+            // succeeded=3, skippedUnconfirmed=1, skippedUntracked=1, skippedDbFailure=2
+            // → target=7, success=3, fail=2(DB 실패), skip=2(정상 필터)
+            OverseasSplitCollectionResult result =
+                    new OverseasSplitCollectionResult(3, 1, 1, 0, 0, 0, 2, 0, 0);
+            when(collectionService.collect()).thenReturn(result);
+
+            scheduler.collectSplits();
+
+            verify(batchMetrics).recordCompletion("overseas-split", 7, 3, 2, 2);
+        }
+
+        @Test
+        @DisplayName("collect 예외 — 흡수, 스케줄러 미종료, 미-stamp (REQ-XR-009)")
         void collectSplits_exceptionAbsorbed() {
             when(collectionService.collect()).thenThrow(new RuntimeException("수집 예외"));
 
             assertThatCode(scheduler::collectSplits).doesNotThrowAnyException();
+            verifyNoInteractions(batchMetrics);
         }
     }
 
@@ -112,7 +130,7 @@ class OverseasSplitSchedulerTest {
 
             Clock fixedClock = Clock.fixed(firingInstant, ET);
             OverseasSplitScheduler schedulerUnderTest =
-                    new OverseasSplitScheduler(collectionService, fixedClock);
+                    new OverseasSplitScheduler(collectionService, fixedClock, batchMetrics);
             when(collectionService.collect()).thenReturn(result());
 
             assertThatCode(schedulerUnderTest::collectSplits).doesNotThrowAnyException();

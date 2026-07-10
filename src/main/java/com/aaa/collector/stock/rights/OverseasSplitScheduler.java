@@ -1,5 +1,6 @@
 package com.aaa.collector.stock.rights;
 
+import com.aaa.collector.observability.BatchMetrics;
 import com.aaa.collector.schedule.BatchCrons;
 import com.aaa.collector.stock.rights.OverseasSplitCollectionService.OverseasSplitCollectionResult;
 import java.time.Clock;
@@ -29,14 +30,21 @@ public class OverseasSplitScheduler {
 
     private static final ZoneId ET = ZoneId.of("America/New_York");
 
+    /**
+     * BatchMetrics 배치 라벨 (SPEC-COLLECTOR-EXPECTED-RUN-001 REQ-XR-013). warm-start=O(REQ-XR-018).
+     */
+    private static final String BATCH_LABEL = "overseas-split";
+
     private final OverseasSplitCollectionService collectionService;
     private final Clock clock;
+    private final BatchMetrics batchMetrics;
 
     /**
      * 해외 분할·병합 수집 배치 진입점 (REQ-OSPLIT-002).
      *
      * <p>예외 흡수: 수집 단계의 예외가 전파되어 스케줄러 스레드가 종료되는 것을 방지한다(다음 실행 때 재시도). 로그 기준일은 ET 거래일이다 — cron 17:00
-     * ET(=서버 KST 익일) 발화 시각을 ET zone으로 환산한다. Clock은 테스트에서 {@code Clock.fixed(...)}로 대체된다.
+     * ET(=서버 KST 익일) 발화 시각을 ET zone으로 환산한다. Clock은 테스트에서 {@code Clock.fixed(...)}로 대체된다. 정상 완료 시
+     * {@code overseas-split} 배치 라벨로 실행 신선도를 계측한다 — 예외 종료 시에는 stamp하지 않는다(REQ-XR-013, REQ-XR-009).
      */
     @Scheduled(cron = BatchCrons.OVERSEAS_SPLIT_CRON, zone = BatchCrons.OVERSEAS_SPLIT_ZONE)
     @SuppressWarnings("PMD.AvoidCatchingGenericException") // 스케줄러 스레드 종료 방지 — 해외 배당 스케줄러와 동일 패턴
@@ -50,6 +58,20 @@ public class OverseasSplitScheduler {
                     result.succeededRows(),
                     result.prefetchTruncated(),
                     result.prefetchFailed());
+            // 정상 완료 시에만 stamp — 예외 종료 시 미-stamp 계약(REQ-XR-009). skip=정상 필터, fail=DB 적재 실패 행.
+            long skip =
+                    (long) result.skippedUnconfirmed()
+                            + result.skippedUntracked()
+                            + result.skippedUnparsableDate()
+                            + result.skippedNoWeekday()
+                            + result.skippedInvalidRate();
+            long fail = result.skippedDbFailure();
+            batchMetrics.recordCompletion(
+                    BATCH_LABEL,
+                    result.succeededRows() + skip + fail,
+                    result.succeededRows(),
+                    fail,
+                    skip);
         } catch (Exception e) {
             log.error("[overseas-split] 수집 배치 예외 — 다음 실행 때 재시도", e);
         }
