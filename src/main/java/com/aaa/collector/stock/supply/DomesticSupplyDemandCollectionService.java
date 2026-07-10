@@ -45,6 +45,10 @@ public class DomesticSupplyDemandCollectionService {
     public void collectAll(LocalDate today) {
         if (!marketSessionGate.isOpenDay(today)) {
             log.debug("[supply-demand] 비개장일 — 수급 3종 수집 skip. date={}", today);
+            // REQ-XR-008: 비개장일 skip은 예상된 no-op — 3종 라벨 전부 0-집계로 stamp해 실행 신선도 룰 오발 방지
+            batchMetrics.recordCompletion(BATCH_LABEL_PREFIX + "investor", 0L, 0L, 0L, 0L);
+            batchMetrics.recordCompletion(BATCH_LABEL_PREFIX + "short-sale", 0L, 0L, 0L, 0L);
+            batchMetrics.recordCompletion(BATCH_LABEL_PREFIX + "credit-balance", 0L, 0L, 0L, 0L);
             return;
         }
         // KIS 국내 수급 API는 미국 종목에 null-dated 빈 행을 반환 → 국내 시장(KOSPI/KOSDAQ/KRX)만 조회

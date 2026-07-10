@@ -61,6 +61,8 @@ public class ShortSaleOverseasDailyCollectionService {
         // REQ-USMKT-013: 미장 휴장일 → skip
         if (!usMarketOpenGate.isOpenDay(tradeReportDate)) {
             log.info("[overseas-shortsale-daily] {} 미장 휴장일 → skip", tradeReportDate);
+            // REQ-XR-011: 휴장일 skip은 실패가 아니라 예상된 no-op — 실행 신선도 룰이 오발하지 않도록 stamp
+            batchMetrics.recordCompletion(BATCH_DAILY, 0L, 0L, 0L, 0L);
             return new DailyResult(0, 0, 0);
         }
 

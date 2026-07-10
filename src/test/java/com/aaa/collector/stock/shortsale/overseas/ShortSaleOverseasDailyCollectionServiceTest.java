@@ -288,6 +288,22 @@ class ShortSaleOverseasDailyCollectionServiceTest {
         }
 
         @Test
+        @DisplayName("미장 휴장일 skip 시 last_load를 stamp한다(정상 no-op, REQ-XR-011)")
+        void holidaySkipStampsCompletion() {
+            // Arrange: 미장 휴장일 → collectDaily가 skip 경로로 단락
+            when(usMarketOpenGate.isOpenDay(TRADE_DATE)).thenReturn(false);
+
+            // Act
+            ShortSaleOverseasDailyCollectionService.DailyResult result =
+                    service.collectDaily(TRADE_DATE);
+
+            // Assert: FINRA 호출 없이 0-집계로 stamp(실패가 아니라 예상된 no-op)
+            verify(batchMetrics).recordCompletion("overseas-shortsale-daily", 0L, 0L, 0L, 0L);
+            verify(finraClient, never()).fetchRegShoDaily(any());
+            assertThat(result.attempted()).isZero();
+        }
+
+        @Test
         @DisplayName("빈 응답이면 적재 0건·정상 skip, 예외 없음 (AC-EMPTY-1, REQ-SSO-020)")
         void emptyResponseSkips() {
             // Arrange: 빈 응답이면 종목 조회 전에 단락되므로 stocks 스텁 불필요

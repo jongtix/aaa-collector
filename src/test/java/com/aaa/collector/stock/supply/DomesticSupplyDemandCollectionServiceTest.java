@@ -83,6 +83,19 @@ class DomesticSupplyDemandCollectionServiceTest {
                     .collect(eq(TODAY), org.mockito.ArgumentMatchers.any());
             verify(stockRepository, never()).findAllActiveDomesticTradable();
         }
+
+        @Test
+        @DisplayName("비개장일 skip 시 3종 라벨 모두 last_load를 stamp한다(정상 no-op, REQ-XR-008)")
+        void collectAll_비개장일_3종_stamp() {
+            when(marketSessionGate.isOpenDay(TODAY)).thenReturn(false);
+
+            service.collectAll(TODAY);
+
+            // 휴장일도 예정된 실행 슬롯이므로 3종 전부 0-집계로 stamp — 실행 신선도 룰 오발 방지
+            verify(batchMetrics).recordCompletion("domestic-supply-investor", 0L, 0L, 0L, 0L);
+            verify(batchMetrics).recordCompletion("domestic-supply-short-sale", 0L, 0L, 0L, 0L);
+            verify(batchMetrics).recordCompletion("domestic-supply-credit-balance", 0L, 0L, 0L, 0L);
+        }
     }
 
     @Nested
