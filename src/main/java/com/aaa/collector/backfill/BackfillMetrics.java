@@ -50,6 +50,13 @@ public class BackfillMetrics {
      */
     static final String ANOMALY_FAILED_NAME = "aaa_collector_backfill_anomaly_failed_total";
 
+    /**
+     * 국내 액면교체 백필 100행 캡 포화 안전밸브 카운터 (SPEC-COLLECTOR-BACKFILL-GROUPC-001 REQ-GC-013). {@link
+     * com.aaa.collector.stock.RevSplitBackfillCapSaturatedException}이 발생할 때만 증가한다 — 실무상 도달 불가능에 가까운
+     * 이벤트라 상시 0이 기대값이다.
+     */
+    static final String CAP_SATURATED_NAME = "aaa_collector_backfill_cap_saturated_total";
+
     private final MeterRegistry registry;
 
     /** 진행률(완료/전체) gauge가 지연 조회하는 가변 상태. */
@@ -66,6 +73,7 @@ public class BackfillMetrics {
         Counter.builder(WINDOWS_TOTAL_NAME).register(registry);
         Counter.builder(EARLY_COMPLETION_SUSPECT_NAME).register(registry);
         Counter.builder(ANOMALY_FAILED_NAME).register(registry);
+        Counter.builder(CAP_SATURATED_NAME).register(registry);
         registry.gauge(PROGRESS_NAME, progressHolder, DoubleAdder::doubleValue);
         registry.gauge(PENDING_SLOTS_NAME, pendingSlotsHolder, AtomicLong::doubleValue);
     }
@@ -112,6 +120,11 @@ public class BackfillMetrics {
      */
     public void recordAnomalyFailed() {
         Counter.builder(ANOMALY_FAILED_NAME).register(registry).increment();
+    }
+
+    /** 국내 액면교체 백필 100행 캡 포화 안전밸브 발동 시 호출한다 (SPEC-COLLECTOR-BACKFILL-GROUPC-001 REQ-GC-013). */
+    public void recordCapSaturated() {
+        Counter.builder(CAP_SATURATED_NAME).register(registry).increment();
     }
 
     /**

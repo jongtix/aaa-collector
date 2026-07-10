@@ -8,6 +8,7 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.aaa.collector.backfill.BackfillMetrics;
 import com.aaa.collector.backfill.BackfillWindowResult;
 import com.aaa.collector.kis.gate.GuardedKisExecutor;
 import com.aaa.collector.kis.gate.KeyLeaseRegistry;
@@ -52,6 +53,7 @@ class RevSplitCollectionServiceTest {
     @Mock private StockRepository stockRepository;
     @Mock private CorporateEventRepository corporateEventRepository;
     @Mock private CorporateEventInserter corporateEventInserter;
+    @Mock private BackfillMetrics backfillMetrics;
     @Mock private LeaseSession session;
 
     @Captor private ArgumentCaptor<List<CorporateEvent>> inserterCaptor;
@@ -66,7 +68,8 @@ class RevSplitCollectionServiceTest {
                         keyLeaseRegistry,
                         stockRepository,
                         corporateEventRepository,
-                        corporateEventInserter);
+                        corporateEventInserter,
+                        backfillMetrics);
         Mockito.lenient().when(keyLeaseRegistry.openSession()).thenReturn(session);
     }
 
@@ -938,6 +941,56 @@ class RevSplitCollectionServiceTest {
             assertThat(result.rawRowCount()).isZero();
             assertThat(result.oldestTradeDate()).isNull();
             verify(corporateEventInserter).insertBatch(List.of());
+        }
+    }
+
+    // ────────────────────────────────────────────────────────────────────
+    // SPEC-COLLECTOR-BACKFILL-GROUPC-001 REQ-GC-013/014/031 — 100행 캡 포화 안전밸브
+    // ────────────────────────────────────────────────────────────────────
+
+    @Nested
+    @DisplayName("AC-7: 백필 fetch 100행 캡 포화 — terminal 안전밸브 (REQ-GC-013/014/031)")
+    class BackfillCapSaturation {
+
+        private final LocalDate floor = LocalDate.of(1950, 1, 1);
+        private final LocalDate today = LocalDate.of(2026, 6, 28);
+
+        @Test
+        @DisplayName(
+                "AC-7: 원본 100행 → RevSplitBackfillCapSaturatedException 발생 + 캡 포화 카운터 1 증가, insertBatch 미호출")
+        void hundredRawRows_throwsCapSaturatedException_recordsCounter() throws Exception {
+            // Arrange — 100개 행(전부 splitRow, 매핑 성공 여부 무관 — rawRowCount만으로 판정)
+            Stock stock = watchlistStock("005930");
+            List<KisRevSplitResponse.RevSplitRow> rows =
+                    IntStream.range(0, 100).mapToObj(i -> splitRow("005930")).toList();
+            when(guardedKisExecutor.execute(
+                            eq(session), any(), eq(TR_ID), eq(KisRevSplitResponse.class)))
+                    .thenReturn(singlePageResponse(rows));
+
+            // Act & Assert
+            org.assertj.core.api.Assertions.assertThatThrownBy(
+                            () -> service.fetchWindowForBackfill(stock, session, floor, today))
+                    .isInstanceOf(RevSplitBackfillCapSaturatedException.class);
+
+            verify(backfillMetrics).recordCapSaturated();
+            verify(corporateEventInserter, never()).insertBatch(any());
+        }
+
+        @Test
+        @DisplayName("AC-7 음성: 원본 99행이면 캡 미도달 — 예외 없음, 카운터 미증가")
+        void ninetyNineRawRows_doesNotThrow() throws Exception {
+            Stock stock = watchlistStock("005930");
+            List<KisRevSplitResponse.RevSplitRow> rows =
+                    IntStream.range(0, 99).mapToObj(i -> splitRow("005930")).toList();
+            when(guardedKisExecutor.execute(
+                            eq(session), any(), eq(TR_ID), eq(KisRevSplitResponse.class)))
+                    .thenReturn(singlePageResponse(rows));
+
+            RevSplitBackfillFetch fetch =
+                    service.fetchWindowForBackfill(stock, session, floor, today);
+
+            assertThat(fetch.rawRowCount()).isEqualTo(99);
+            verify(backfillMetrics, never()).recordCapSaturated();
         }
     }
 }

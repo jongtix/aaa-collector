@@ -16,12 +16,14 @@ class BackfillMetricsTest {
     private static final String CLAMP_SUSPECTED = "aaa_collector_backfill_clamp_suspected_total";
     private static final String WINDOWS_TOTAL = "aaa_collector_backfill_windows_total";
     private static final String PENDING_SLOTS = "aaa_collector_backfill_pending_slots";
+    private static final String CAP_SATURATED = "aaa_collector_backfill_cap_saturated_total";
 
     @Nested
     @DisplayName("@PostConstruct 사전 등록")
     class PostConstruct {
 
         @Test
+        @SuppressWarnings("PMD.UnitTestContainsTooManyAsserts")
         @DisplayName("initCounters() 호출 후 카운터·gauge가 0으로 사전 등록된다")
         void postConstruct_registersCountersAtZero() {
             SimpleMeterRegistry registry = new SimpleMeterRegistry();
@@ -31,6 +33,7 @@ class BackfillMetricsTest {
             assertThat(registry.get(WINDOW_ROWS).counter().count()).isEqualTo(0.0);
             assertThat(registry.get(CLAMP_SUSPECTED).counter().count()).isEqualTo(0.0);
             assertThat(registry.get(WINDOWS_TOTAL).counter().count()).isEqualTo(0.0);
+            assertThat(registry.get(CAP_SATURATED).counter().count()).isEqualTo(0.0);
             Gauge gauge = registry.get(PROGRESS).gauge();
             assertThat(gauge.value()).isEqualTo(0.0);
             Gauge pendingGauge = registry.get(PENDING_SLOTS).gauge();
@@ -130,6 +133,24 @@ class BackfillMetricsTest {
             metrics.recordClampSuspected();
 
             assertThat(registry.get(CLAMP_SUSPECTED).counter().count()).isEqualTo(2.0);
+        }
+    }
+
+    @Nested
+    @DisplayName(
+            "캡 포화 카운터 (recordCapSaturated, SPEC-COLLECTOR-BACKFILL-GROUPC-001 REQ-GC-013, AC-7)")
+    class RecordCapSaturated {
+
+        @Test
+        @DisplayName("recordCapSaturated 호출마다 카운터가 1씩 누적된다")
+        void recordCapSaturated_incrementsCounter() {
+            SimpleMeterRegistry registry = new SimpleMeterRegistry();
+            BackfillMetrics metrics = new BackfillMetrics(registry);
+            metrics.initCounters();
+
+            metrics.recordCapSaturated();
+
+            assertThat(registry.get(CAP_SATURATED).counter().count()).isEqualTo(1.0);
         }
     }
 

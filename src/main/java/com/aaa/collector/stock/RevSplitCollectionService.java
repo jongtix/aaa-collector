@@ -1,5 +1,6 @@
 package com.aaa.collector.stock;
 
+import com.aaa.collector.backfill.BackfillMetrics;
 import com.aaa.collector.backfill.BackfillWindowResult;
 import com.aaa.collector.kis.gate.GuardedKisExecutor;
 import com.aaa.collector.kis.gate.KeyLeaseRegistry;
@@ -67,6 +68,13 @@ public class RevSplitCollectionService {
     private final StockRepository stockRepository;
     private final CorporateEventRepository corporateEventRepository;
     private final CorporateEventInserter corporateEventInserter;
+
+    /**
+     * 국내 액면교체 백필 100행 캡 포화 안전밸브 카운터 (SPEC-COLLECTOR-BACKFILL-GROUPC-001 REQ-GC-013). 6번째 생성자 필드로 주입
+     * — 카운터 증가는 여기서만(fetchWindowForBackfill throw 직전), 오케스트레이터/{@code isRetryable}은 무오염(카운트 1회
+     * 결정성).
+     */
+    private final BackfillMetrics backfillMetrics;
 
     /**
      * 액면교체 일정 수집을 실행하고 집계 결과를 반환한다.
@@ -179,11 +187,17 @@ public class RevSplitCollectionService {
      *
      * <p>정기 수집({@link #collect})과 달리 관심종목 필터를 적용하지 않는다 — 호출자가 이미 종목을 지정했다.
      *
+     * <p>[SPEC-COLLECTOR-BACKFILL-GROUPC-001 REQ-GC-013/014/031] 원본 응답 행수가 100행 캡({@link
+     * #MAX_ROWS_PER_PAGE})에 도달하면 정교한 기간분할 재조회(§3 Exclusions)를 시도하지 않고, {@link
+     * RevSplitBackfillCapSaturatedException}을 던져 재시도 없이 terminal FAILED로 종단시킨다(안전밸브). 카운터 {@code
+     * aaa_collector_backfill_cap_saturated_total}을 throw 직전 1회 증가시킨다.
+     *
      * @param stock 백필 대상 종목 (시딩된 corporate_events status의 target)
      * @param session 호출자가 1회 고정한 per-run 헬스 스냅샷 세션
      * @param from 윈도우 하단 조회 시작일 (F_DT, 고정 플로어)
      * @param to 윈도우 상단 조회 종료일 (T_DT, today)
      * @return 적재 대상 엔티티 + 최소 record_date + 원본 응답 행수
+     * @throws RevSplitBackfillCapSaturatedException 원본 응답 행수가 100행 캡에 도달한 경우(REQ-GC-013)
      */
     // @MX:NOTE: [AUTO] 종목지정 백필 fetch — 비tx HTTP 단계. BackfillWindowExecutor가 @Transactional
     // persistWindowForBackfill과 교차 빈으로 순차 호출. rawRowCount=원본 행수(REQ-BACKFILL-099a).
@@ -195,6 +209,17 @@ public class RevSplitCollectionService {
 
         // REQ-BACKFILL-099a: 종료 판정 입력 = KIS output1 원본 행수 (degenerate skip 전, 결정적)
         int rawRowCount = rows.size();
+
+        // REQ-GC-013/031: 100행 캡 포화 — 페이징 구조적 불가라 전 범위 미확보 의심, terminal FAILED 안전밸브
+        if (rawRowCount >= MAX_ROWS_PER_PAGE) {
+            backfillMetrics.recordCapSaturated();
+            throw new RevSplitBackfillCapSaturatedException(
+                    "단일콜 100행 캡 포화 — 페이징 구조적 불가·절단 의심 (symbol="
+                            + stock.getSymbol()
+                            + ", records="
+                            + rawRowCount
+                            + ")");
+        }
 
         // 매핑 재사용(REQ-BACKFILL-097): degenerate skip은 mapToEntity가 null 반환으로 수행
         List<CorporateEvent> validRows = new ArrayList<>();
