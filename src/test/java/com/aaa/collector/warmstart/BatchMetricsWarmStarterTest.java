@@ -3,6 +3,7 @@ package com.aaa.collector.warmstart;
 import static org.assertj.core.api.Assertions.assertThatNoException;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -11,6 +12,8 @@ import com.aaa.collector.dart.corpcode.CorpCodeMappingRepository;
 import com.aaa.collector.dart.disclosure.DisclosureRepository;
 import com.aaa.collector.macro.MacroIndicatorRepository;
 import com.aaa.collector.market.MarketIndicatorRepository;
+import com.aaa.collector.news.DomesticNewsHeadlineRepository;
+import com.aaa.collector.news.overseas.OverseasNewsHeadlineRepository;
 import com.aaa.collector.observability.BatchMetrics;
 import com.aaa.collector.stock.AnalystEstimateRepository;
 import com.aaa.collector.stock.CorporateEventRepository;
@@ -21,7 +24,6 @@ import com.aaa.collector.stock.InvestorTrendRepository;
 import com.aaa.collector.stock.ShortSaleDomesticRepository;
 import com.aaa.collector.stock.ShortSaleOverseasRepository;
 import com.aaa.collector.stock.etf.EtfRepresentativeHistoryRepository;
-import com.aaa.collector.stock.exthours.ExtendedHoursRepository;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
@@ -41,25 +43,38 @@ class BatchMetricsWarmStarterTest {
 
     private static final ZoneId KST = ZoneId.of("Asia/Seoul");
 
+    // 개별 테스트에서 per-test 동작(값 반환/예외/검증)을 제어하는 foreground 협력자만 @Mock으로 둔다(strict stubbing 유지).
     @Mock private BatchMetrics batchMetrics;
     @Mock private DailyOhlcvRepository dailyOhlcvRepository;
-    @Mock private InvestorTrendRepository investorTrendRepository;
-    @Mock private CreditBalanceRepository creditBalanceRepository;
-    @Mock private ShortSaleDomesticRepository shortSaleDomesticRepository;
     @Mock private ShortSaleOverseasRepository shortSaleOverseasRepository;
-    @Mock private AnalystEstimateRepository analystEstimateRepository;
-    @Mock private FinancialRepository financialRepository;
-    @Mock private MacroIndicatorRepository macroIndicatorRepository;
-    @Mock private MarketIndicatorRepository marketIndicatorRepository;
-    @Mock private EtfRepresentativeHistoryRepository etfRepresentativeHistoryRepository;
     @Mock private DisclosureRepository disclosureRepository;
     @Mock private CorporateEventRepository corporateEventRepository;
-    @Mock private ExtendedHoursRepository extendedHoursRepository;
     @Mock private CorpCodeMappingRepository corpCodeMappingRepository;
+    @Mock private DomesticNewsHeadlineRepository domesticNewsHeadlineRepository;
+    @Mock private OverseasNewsHeadlineRepository overseasNewsHeadlineRepository;
+    @Mock private ExtendedHoursWarmSource extendedHoursWarmSource;
+
+    // 이 8종은 개별 테스트에서 참조하지 않고 항상 empty(Mockito 기본값)만 반환한다. final 초기화 mock으로 두어
+    // PMD TooManyFields(비-final 필드만 계수)의 임계 아래로 유지한다 — @SuppressWarnings 미사용 root-cause 회피.
+    private final InvestorTrendRepository investorTrendRepository =
+            mock(InvestorTrendRepository.class);
+    private final CreditBalanceRepository creditBalanceRepository =
+            mock(CreditBalanceRepository.class);
+    private final ShortSaleDomesticRepository shortSaleDomesticRepository =
+            mock(ShortSaleDomesticRepository.class);
+    private final AnalystEstimateRepository analystEstimateRepository =
+            mock(AnalystEstimateRepository.class);
+    private final FinancialRepository financialRepository = mock(FinancialRepository.class);
+    private final MacroIndicatorRepository macroIndicatorRepository =
+            mock(MacroIndicatorRepository.class);
+    private final MarketIndicatorRepository marketIndicatorRepository =
+            mock(MarketIndicatorRepository.class);
+    private final EtfRepresentativeHistoryRepository etfRepresentativeHistoryRepository =
+            mock(EtfRepresentativeHistoryRepository.class);
 
     /**
-     * 매 호출마다 새 인스턴스를 생성한다 — {@code @InjectMocks} 필드를 두지 않아 PMD {@code TooManyFields} 임계를 넘지 않는다(15개
-     * {@code @Mock} 필드 유지).
+     * 매 호출마다 새 인스턴스를 생성한다 — {@code @InjectMocks} 필드를 두지 않아 mock 필드 수를 생성자 인자 수만큼만 유지한다. 필드 순서는
+     * {@link BatchMetricsWarmStarter} 생성자(@RequiredArgsConstructor) 필드 선언 순서와 일치해야 한다.
      */
     private BatchMetricsWarmStarter warmStarter() {
         return new BatchMetricsWarmStarter(
@@ -76,8 +91,10 @@ class BatchMetricsWarmStarterTest {
                 etfRepresentativeHistoryRepository,
                 disclosureRepository,
                 corporateEventRepository,
-                extendedHoursRepository,
-                corpCodeMappingRepository);
+                corpCodeMappingRepository,
+                domesticNewsHeadlineRepository,
+                overseasNewsHeadlineRepository,
+                extendedHoursWarmSource);
     }
 
     @Nested
@@ -163,16 +180,8 @@ class BatchMetricsWarmStarterTest {
     }
 
     @Nested
-    @DisplayName("제외 3종 미포함 — warm-start 후 domestic-news 등은 미호출")
+    @DisplayName("제외 2종 미포함 — watchlist-sync-krx/us는 warm-start 후에도 미호출 (§13 O-3)")
     class ExcludedBatches {
-
-        @Test
-        @DisplayName("domestic-news로 warmLastLoad가 호출된 적 없다")
-        void doesNotWarmDomesticNews() throws Exception {
-            stubAllEmpty();
-            warmStarter().run(null);
-            verify(batchMetrics, never()).warmLastLoad(eq("domestic-news"), any());
-        }
 
         @Test
         @DisplayName("watchlist-sync-krx로 warmLastLoad가 호출된 적 없다")
@@ -188,14 +197,6 @@ class BatchMetricsWarmStarterTest {
             stubAllEmpty();
             warmStarter().run(null);
             verify(batchMetrics, never()).warmLastLoad(eq("watchlist-sync-us"), any());
-        }
-
-        @Test
-        @DisplayName("overseas-news로 warmLastLoad가 호출된 적 없다 (MI-01, sub-daily 임계 부팅 오발 회피)")
-        void doesNotWarmOverseasNews() throws Exception {
-            stubAllEmpty();
-            warmStarter().run(null);
-            verify(batchMetrics, never()).warmLastLoad(eq("overseas-news"), any());
         }
     }
 
@@ -231,19 +232,6 @@ class BatchMetricsWarmStarterTest {
         }
 
         @Test
-        @DisplayName("extended-hours 조회 결과가 있으면 warmLastLoad('extended-hours', instant) 호출")
-        void warmsExtendedHours() throws Exception {
-            LocalDateTime kstTime = LocalDateTime.of(2026, 7, 3, 22, 0, 0);
-            Instant expected = kstTime.atZone(KST).toInstant();
-            stubAllEmpty();
-            when(extendedHoursRepository.findMaxCollectedAt()).thenReturn(Optional.of(kstTime));
-
-            warmStarter().run(null);
-
-            verify(batchMetrics).warmLastLoad(eq("extended-hours"), eq(expected));
-        }
-
-        @Test
         @DisplayName("corp-code 조회 결과가 있으면 warmLastLoad('corp-code', instant) 호출")
         void warmsCorpCode() throws Exception {
             LocalDateTime kstTime = LocalDateTime.of(2026, 7, 3, 22, 0, 0);
@@ -254,6 +242,98 @@ class BatchMetricsWarmStarterTest {
             warmStarter().run(null);
 
             verify(batchMetrics).warmLastLoad(eq("corp-code"), eq(expected));
+        }
+    }
+
+    @Nested
+    @DisplayName(
+            "REQ-XR-018 warm-start 범위 확장 — news 2종 + overseas-split + extended-hours pre/after")
+    class ExpectedRunWarmStart {
+
+        @Test
+        @DisplayName("(a) domestic-news 최신 게시 시각이 있으면 warmLastLoad('domestic-news', instant) 호출")
+        void warmsDomesticNews() throws Exception {
+            LocalDateTime kstTime = LocalDateTime.of(2026, 7, 10, 14, 30, 0);
+            Instant expected = kstTime.atZone(KST).toInstant();
+            stubAllEmpty();
+            when(domesticNewsHeadlineRepository.findMaxPublishedAt())
+                    .thenReturn(Optional.of(kstTime));
+
+            warmStarter().run(null);
+
+            verify(batchMetrics).warmLastLoad(eq("domestic-news"), eq(expected));
+        }
+
+        @Test
+        @DisplayName("(a) overseas-news 최신 게시 시각이 있으면 warmLastLoad('overseas-news', instant) 호출")
+        void warmsOverseasNews() throws Exception {
+            LocalDateTime kstTime = LocalDateTime.of(2026, 7, 10, 5, 0, 0);
+            Instant expected = kstTime.atZone(KST).toInstant();
+            stubAllEmpty();
+            when(overseasNewsHeadlineRepository.findMaxPublishedAt())
+                    .thenReturn(Optional.of(kstTime));
+
+            warmStarter().run(null);
+
+            verify(batchMetrics).warmLastLoad(eq("overseas-news"), eq(expected));
+        }
+
+        @Test
+        @DisplayName("(b) overseas-split은 corporate_events 해외 시장 최신 적재 시각으로 seed된다")
+        void warmsOverseasSplit() throws Exception {
+            LocalDateTime kstTime = LocalDateTime.of(2026, 7, 10, 6, 0, 0);
+            Instant expected = kstTime.atZone(KST).toInstant();
+            stubAllEmpty();
+            when(corporateEventRepository.findMaxCreatedAtByMarketsIn(any()))
+                    .thenReturn(Optional.of(kstTime));
+
+            warmStarter().run(null);
+
+            verify(batchMetrics).warmLastLoad(eq("overseas-split"), eq(expected));
+        }
+
+        @Test
+        @DisplayName("(b) extended-hours-pre는 PRE 세션 seed로 독립 warm된다")
+        void warmsExtendedHoursPre() throws Exception {
+            LocalDateTime kstTime = LocalDateTime.of(2026, 7, 3, 0, 0, 0);
+            Instant expected = kstTime.atZone(KST).toInstant();
+            stubAllEmpty();
+            when(extendedHoursWarmSource.preLastLoad()).thenReturn(Optional.of(kstTime));
+
+            warmStarter().run(null);
+
+            verify(batchMetrics).warmLastLoad(eq("extended-hours-pre"), eq(expected));
+        }
+
+        @Test
+        @DisplayName("(b) extended-hours-after는 AFTER 세션 seed로 독립 warm된다")
+        void warmsExtendedHoursAfter() throws Exception {
+            LocalDateTime kstTime = LocalDateTime.of(2026, 7, 3, 0, 0, 0);
+            Instant expected = kstTime.atZone(KST).toInstant();
+            stubAllEmpty();
+            when(extendedHoursWarmSource.afterLastLoad()).thenReturn(Optional.of(kstTime));
+
+            warmStarter().run(null);
+
+            verify(batchMetrics).warmLastLoad(eq("extended-hours-after"), eq(expected));
+        }
+
+        @Test
+        @DisplayName("pre/after 세션 seed가 다르면 각각 독립적으로 warm된다 (죽은 PRE가 AFTER에 가려지지 않음)")
+        void warmsPreAndAfterIndependently() throws Exception {
+            LocalDateTime preTime = LocalDateTime.of(2026, 7, 1, 0, 0, 0);
+            LocalDateTime afterTime = LocalDateTime.of(2026, 7, 3, 0, 0, 0);
+            stubAllEmpty();
+            when(extendedHoursWarmSource.preLastLoad()).thenReturn(Optional.of(preTime));
+            when(extendedHoursWarmSource.afterLastLoad()).thenReturn(Optional.of(afterTime));
+
+            warmStarter().run(null);
+
+            verify(batchMetrics)
+                    .warmLastLoad(eq("extended-hours-pre"), eq(preTime.atZone(KST).toInstant()));
+            verify(batchMetrics)
+                    .warmLastLoad(
+                            eq("extended-hours-after"), eq(afterTime.atZone(KST).toInstant()));
         }
     }
 
@@ -306,23 +386,20 @@ class BatchMetricsWarmStarterTest {
         stubNonDailyEmpty();
     }
 
-    /** DailyOhlcvRepository 제외 나머지 리포지토리를 Optional.empty()로 stub. */
+    /**
+     * DailyOhlcvRepository 제외 foreground 협력자를 Optional.empty()로 stub. 8종 background mock은 Mockito
+     * 기본값 (Optional.empty())을 그대로 쓰므로 명시 stub하지 않는다.
+     */
     private void stubNonDailyEmpty() {
-        when(investorTrendRepository.findMaxCreatedAt()).thenReturn(Optional.empty());
-        when(creditBalanceRepository.findMaxCreatedAt()).thenReturn(Optional.empty());
-        when(shortSaleDomesticRepository.findMaxCreatedAt()).thenReturn(Optional.empty());
         when(shortSaleOverseasRepository.findMaxDailyCollectedAt()).thenReturn(Optional.empty());
         when(shortSaleOverseasRepository.findMaxInterestCollectedAt()).thenReturn(Optional.empty());
-        when(analystEstimateRepository.findMaxCreatedAt()).thenReturn(Optional.empty());
-        when(financialRepository.findMaxCreatedAt()).thenReturn(Optional.empty());
-        when(macroIndicatorRepository.findMaxCreatedAt()).thenReturn(Optional.empty());
-        when(marketIndicatorRepository.findMaxCreatedAt()).thenReturn(Optional.empty());
-        when(etfRepresentativeHistoryRepository.findMaxEffectiveFrom())
-                .thenReturn(Optional.empty());
         when(disclosureRepository.findMaxCreatedAt()).thenReturn(Optional.empty());
         when(corporateEventRepository.findMaxCreatedAtByMarketsIn(any()))
                 .thenReturn(Optional.empty());
-        when(extendedHoursRepository.findMaxCollectedAt()).thenReturn(Optional.empty());
         when(corpCodeMappingRepository.findMaxCreatedAt()).thenReturn(Optional.empty());
+        when(domesticNewsHeadlineRepository.findMaxPublishedAt()).thenReturn(Optional.empty());
+        when(overseasNewsHeadlineRepository.findMaxPublishedAt()).thenReturn(Optional.empty());
+        when(extendedHoursWarmSource.preLastLoad()).thenReturn(Optional.empty());
+        when(extendedHoursWarmSource.afterLastLoad()).thenReturn(Optional.empty());
     }
 }

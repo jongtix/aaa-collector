@@ -4,6 +4,8 @@ import com.aaa.collector.dart.corpcode.CorpCodeMappingRepository;
 import com.aaa.collector.dart.disclosure.DisclosureRepository;
 import com.aaa.collector.macro.MacroIndicatorRepository;
 import com.aaa.collector.market.MarketIndicatorRepository;
+import com.aaa.collector.news.DomesticNewsHeadlineRepository;
+import com.aaa.collector.news.overseas.OverseasNewsHeadlineRepository;
 import com.aaa.collector.observability.BatchMetrics;
 import com.aaa.collector.stock.AnalystEstimateRepository;
 import com.aaa.collector.stock.CorporateEventRepository;
@@ -15,7 +17,6 @@ import com.aaa.collector.stock.ShortSaleDomesticRepository;
 import com.aaa.collector.stock.ShortSaleOverseasRepository;
 import com.aaa.collector.stock.enums.Market;
 import com.aaa.collector.stock.etf.EtfRepresentativeHistoryRepository;
-import com.aaa.collector.stock.exthours.ExtendedHoursRepository;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
@@ -35,8 +36,9 @@ import org.springframework.stereotype.Component;
  * <p>컨테이너 재시작 시 lazy 등록으로 인한 gauge absent 문제를 해소한다. 비차단(non-blocking) — 한 배치 조회 실패 시 warn 로깅 후 나머지를
  * 계속 처리한다.
  *
- * <p>warm-start 제외 3종: {@code domestic-news}(sub-daily 임계 오발), {@code watchlist-sync-krx}, {@code
- * watchlist-sync-us}(per-run 적재 ts 없음).
+ * <p>warm-start 제외 2종: {@code watchlist-sync-krx}, {@code watchlist-sync-us}(per-run 적재 ts 없음, §13
+ * O-3). {@code domestic-news}·{@code overseas-news}는 REQ-XR-018(a)로 편입됐다(실행-앵커 모델에서 sub-daily 오발
+ * 소멸).
  */
 // @MX:ANCHOR: [AUTO] 부팅 시 BatchMetrics last-load gauge warm-start 진입점
 // @MX:REASON: SPEC-OBSV-WARMSTART-001 — 12개 배치 리포지토리에서 fan_in >= 3; vmalert 룰 무력화 방지
@@ -65,8 +67,10 @@ public class BatchMetricsWarmStarter implements ApplicationRunner {
     private final EtfRepresentativeHistoryRepository etfRepresentativeHistoryRepository;
     private final DisclosureRepository disclosureRepository;
     private final CorporateEventRepository corporateEventRepository;
-    private final ExtendedHoursRepository extendedHoursRepository;
     private final CorpCodeMappingRepository corpCodeMappingRepository;
+    private final DomesticNewsHeadlineRepository domesticNewsHeadlineRepository;
+    private final OverseasNewsHeadlineRepository overseasNewsHeadlineRepository;
+    private final ExtendedHoursWarmSource extendedHoursWarmSource;
 
     @Override
     public void run(ApplicationArguments args) {
@@ -102,9 +106,28 @@ public class BatchMetricsWarmStarter implements ApplicationRunner {
         warm(
                 "overseas-rights",
                 () -> corporateEventRepository.findMaxCreatedAtByMarketsIn(OVERSEAS_MARKETS));
-        warm("extended-hours", extendedHoursRepository::findMaxCollectedAt);
         // corp-code: corp_code_mapping이 BaseEntity.createdAt(per-run 삽입 시각)을 보유하므로 편입(MI-06)
         warm("corp-code", corpCodeMappingRepository::findMaxCreatedAt);
+
+        // REQ-XR-018(a): news 2종 warm-start 편입. 기존 제외 근거(sub-daily 상수 임계 부팅 오발)는 새 실행-앵커 모델에서
+        // 무효 — 주말-복원 값이 expected_run 주말 무전진과 정합해 오발하지 않는다. 각 서비스가 이미 보유한 최신 게시 시각
+        // (findMaxPublishedAt, SPEC-OBSV-WATERMARK-001 REQ-WM-003 자산)을 재사용한다.
+        warm("domestic-news", domesticNewsHeadlineRepository::findMaxPublishedAt);
+        warm("overseas-news", overseasNewsHeadlineRepository::findMaxPublishedAt);
+
+        // REQ-XR-018(b): overseas-split warm-start 신규 배선(현행 전무). 전용 split-only 쿼리는 신설하지 않는다 —
+        // 분할은 희소해 split-only 조회가 대개 empty를 반환해 warm-start의 목적(부팅 후 absent-gauge 회피)을 무산시킨다.
+        // overseas-rights와 동일한 시장 필터 쿼리로 corporate_events 최신 적재 시각을 안정적으로 seed하고, 첫 실제 실행이
+        // recordCompletion으로 split 고유값을 덮어쓴다(실행-앵커 모델이라 seed 정밀도는 비임계).
+        warm(
+                "overseas-split",
+                () -> corporateEventRepository.findMaxCreatedAtByMarketsIn(OVERSEAS_MARKETS));
+
+        // REQ-XR-018(b): extended-hours 단일 라벨 warm을 pre/after 두 갈래로 분할(Module E 라벨 분리와 정합).
+        // session 컬럼 기준 최신 거래일로 PRE/AFTER를 물리적으로 구분한다 — 변환/세션 참조는 ExtendedHoursWarmSource가
+        // 캡슐화한다(warm-starter의 import 결합도 상한 회피 + findMaxTradeDateBySession 재사용).
+        warm("extended-hours-pre", extendedHoursWarmSource::preLastLoad);
+        warm("extended-hours-after", extendedHoursWarmSource::afterLastLoad);
 
         log.info("BatchMetrics warm-start 완료");
     }
