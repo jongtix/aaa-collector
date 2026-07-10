@@ -12,11 +12,13 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.core.env.StandardEnvironment;
 
-@DisplayName("ExpectedRunGaugeBinder — expected_run 게이지 (REQ-XR-001/003/005)")
+@DisplayName("ExpectedRunGaugeBinder — expected_run/run_margin/enrolled_total 게이지 + 부팅 eager 등록")
 class ExpectedRunGaugeBinderTest {
 
     private static final ZoneId KST = ZoneId.of("Asia/Seoul");
     private static final String EXPECTED_RUN = "aaa_collector_batch_expected_run_seconds";
+    private static final String RUN_MARGIN = "aaa_collector_batch_run_margin_seconds";
+    private static final String ENROLLED_TOTAL = "aaa_collector_batch_enrolled_total";
 
     @Test
     @DisplayName("레지스트리 전 엔트리에 대해 expected_run 게이지를 등록한다 (REQ-XR-001)")
@@ -117,6 +119,77 @@ class ExpectedRunGaugeBinderTest {
         assertThat(thursdayValue).isGreaterThan(wednesdayValue);
         assertThat(thursdayValue)
                 .isEqualTo((double) Instant.parse("2026-07-09T07:00:00Z").getEpochSecond());
+    }
+
+    @Test
+    @DisplayName("각 편입 배치에 run_margin 게이지를 레지스트리 마진 값(초)으로 노출한다 (REQ-XR-006)")
+    void registersRunMarginGaugeForEveryEntry() {
+        SimpleMeterRegistry registry = new SimpleMeterRegistry();
+        BatchRunRegistry runRegistry = defaultRunRegistry();
+        ExpectedRunGaugeBinder binder = newBinder(registry, Clock.systemDefaultZone(), runRegistry);
+
+        binder.registerGauges();
+
+        for (BatchRunEntry entry : runRegistry.entries()) {
+            Gauge gauge = registry.find(RUN_MARGIN).tags("batch", entry.label()).gauge();
+            assertThat(gauge).as("run_margin gauge for batch=%s", entry.label()).isNotNull();
+            assertThat(gauge.value())
+                    .as("run_margin value for batch=%s", entry.label())
+                    .isEqualTo((double) entry.marginSeconds());
+        }
+        long seriesCount = seriesCount(registry, RUN_MARGIN);
+        assertThat(seriesCount).isEqualTo(runRegistry.entries().size());
+    }
+
+    @Test
+    @DisplayName("enrolled_total(라벨 없음)을 레지스트리 엔트리 개수로 노출한다 (REQ-XR-007)")
+    void exposesEnrolledTotalAsRegistrySize() {
+        SimpleMeterRegistry registry = new SimpleMeterRegistry();
+        BatchRunRegistry runRegistry = defaultRunRegistry();
+        ExpectedRunGaugeBinder binder = newBinder(registry, Clock.systemDefaultZone(), runRegistry);
+
+        binder.registerGauges();
+
+        Gauge gauge = registry.find(ENROLLED_TOTAL).gauge();
+        assertThat(gauge).isNotNull();
+        assertThat(gauge.value()).isEqualTo((double) runRegistry.entries().size());
+        // 무라벨 단일 시계열 — batch 라벨이 붙지 않는다.
+        assertThat(gauge.getId().getTag("batch")).isNull();
+        assertThat(seriesCount(registry, ENROLLED_TOTAL)).isEqualTo(1L);
+    }
+
+    @Test
+    @DisplayName("부팅 직후(cron 발화 이전) 전 게이지 시계열이 이미 존재한다 — eager 전수 등록 (REQ-XR-031)")
+    void eagerlyRegistersAllSeriesAtBoot() {
+        // Arrange: 빈 레지스트리 — 어떤 cron도 발화하지 않았고 어떤 완료 이벤트도 없는 부팅 직후 상태.
+        SimpleMeterRegistry registry = new SimpleMeterRegistry();
+        BatchRunRegistry runRegistry = defaultRunRegistry();
+        ExpectedRunGaugeBinder binder = newBinder(registry, Clock.systemDefaultZone(), runRegistry);
+
+        // Act: @PostConstruct 진입점(빈 초기화 시점)만 호출 — scrape·완료 touch 없이.
+        binder.registerGauges();
+
+        // Assert: lazy였다면 발화 전 부재일 시계열이 전부 즉시 존재한다.
+        int enrolled = runRegistry.entries().size();
+        assertThat(seriesCount(registry, EXPECTED_RUN))
+                .as("expected_run 시계열 eager 전수 등록")
+                .isEqualTo(enrolled);
+        assertThat(seriesCount(registry, RUN_MARGIN))
+                .as("run_margin 시계열 eager 전수 등록")
+                .isEqualTo(enrolled);
+        assertThat(seriesCount(registry, ENROLLED_TOTAL))
+                .as("enrolled_total 시계열 eager 등록")
+                .isEqualTo(1L);
+    }
+
+    private static ExpectedRunGaugeBinder newBinder(
+            SimpleMeterRegistry registry, Clock clock, BatchRunRegistry runRegistry) {
+        return new ExpectedRunGaugeBinder(
+                registry, clock, runRegistry, new ExpectedFireCalculator());
+    }
+
+    private static long seriesCount(SimpleMeterRegistry registry, String name) {
+        return registry.getMeters().stream().filter(m -> name.equals(m.getId().getName())).count();
     }
 
     private static BatchRunRegistry defaultRunRegistry() {
