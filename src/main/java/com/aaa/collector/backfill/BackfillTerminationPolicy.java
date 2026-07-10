@@ -44,6 +44,9 @@ public final class BackfillTerminationPolicy {
         if (outcome.group() == BackfillGroup.GROUP_A) {
             return decideGroupA(outcome);
         }
+        if (outcome.group() == BackfillGroup.GROUP_C) {
+            return decideGroupC();
+        }
         return decideGroupB(outcome);
     }
 
@@ -59,6 +62,15 @@ public final class BackfillTerminationPolicy {
             return TerminationDecision.completed(0, false);
         }
         return TerminationDecision.inProgress(0);
+    }
+
+    /**
+     * 그룹 C({@code corporate_events}, SPLIT): {@code rawRowCount}·저장 행수·전진 여부·이전 상태를 일절 참조하지 않고 무조건
+     * 완료(SPEC-COLLECTOR-BACKFILL-GROUPC-001 REQ-GC-003/030). 소진 증거는 fetch 단계에서 이미 증명됐다(커서완주 또는 페이징
+     * 구조적 불가 단일콜) — {@code decide} 도달 자체가 완료 신호다.
+     */
+    private TerminationDecision decideGroupC() {
+        return TerminationDecision.completed(0, false);
     }
 
     /** 그룹 B: 0건 즉시 종료 / 전진 시 리셋 / 연속 N회 무전진 종료(동일 oldest+행수면 클램프 의심). */

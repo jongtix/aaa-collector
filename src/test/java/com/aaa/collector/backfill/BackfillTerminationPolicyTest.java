@@ -371,10 +371,41 @@ class BackfillTerminationPolicyTest {
         }
 
         @Test
-        @DisplayName("AC-1: corporate_events는 그룹 A (100건-미만 즉시 COMPLETED 재사용)")
-        void corporateEvents_isGroupA() {
+        @DisplayName(
+                "REQ-GC-002 (구 AC-1): corporate_events는 그룹 C로 이관됨 — GROUP_A 100건-미만 규칙 더 이상 미적용")
+        void corporateEvents_isGroupC() {
             assertThat(BackfillGroup.ofDataTable("corporate_events"))
-                    .isEqualTo(BackfillGroup.GROUP_A);
+                    .isEqualTo(BackfillGroup.GROUP_C);
+        }
+    }
+
+    @Nested
+    @DisplayName(
+            "그룹 C — corporate_events 커서완주·단일콜 소진 (AC-2, SPEC-COLLECTOR-BACKFILL-GROUPC-001 REQ-GC-003/030)")
+    class GroupCUnconditionalCompletion {
+
+        @Test
+        @DisplayName("AC-2: GROUP_C outcome은 행수(0/50/100/108) 무관 전부 completed(0,false) 반환")
+        void groupC_alwaysCompleted_regardlessOfRowCount() {
+            BackfillWindowOutcome outcome = BackfillWindowOutcome.groupC();
+
+            TerminationDecision decision = policy.decide(outcome);
+
+            assertThat(decision.completed()).isTrue();
+            assertThat(decision.nextStaleCount()).isZero();
+            assertThat(decision.clampSuspected()).isFalse();
+        }
+
+        @Test
+        @DisplayName("REQ-GC-003: GROUP_C는 decideGroupB(클램프·stale 로직) 경로로 오염되지 않는다")
+        void groupC_doesNotGoThroughDecideGroupB() {
+            // decideGroupB였다면 previousOldest=null이므로 advanced()=true → inProgress(0)이 나와야 하지만,
+            // GROUP_C는 무조건 completed다 — 두 경로가 다르다는 것을 행위로 검증.
+            BackfillWindowOutcome outcome = BackfillWindowOutcome.groupC();
+
+            TerminationDecision decision = policy.decide(outcome);
+
+            assertThat(decision.completed()).isTrue();
         }
     }
 
