@@ -106,6 +106,11 @@ public class ShortSaleOverseasInterestCollectionService {
                 succeeded,
                 Math.max(0L, (long) attempted - succeeded - skipped),
                 skipped);
+        // REQ-XR-016(DP-5): 실데이터(success>0) 도착 시에만 last_data 갱신 — 빈 응답/전량 skip은 미갱신하여
+        // "FINRA 미발표/파싱 파손"을 실행 stamp(last_load)와 분리해 탐지 가능하게 한다.
+        if (succeeded > 0) {
+            batchMetrics.recordDataArrival(BATCH_INTEREST);
+        }
         // SPEC-OBSV-WATERMARK-001 REQ-WM-001: 성공 upsert된 행들의 최대 settlementDate로 forward-only 갱신
         watermarkMetrics.advance(
                 WatermarkSeries.SHORT_SALE_OVERSEAS_INTEREST, acc.maxSettlementDate);

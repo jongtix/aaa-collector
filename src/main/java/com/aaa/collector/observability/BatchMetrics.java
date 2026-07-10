@@ -44,8 +44,12 @@ public class BatchMetrics {
     static final String SKIP_NAME = "aaa_collector_batch_skip_total";
     static final String COMPLETENESS_NAME = "aaa_collector_batch_completeness_ratio";
     static final String LAST_LOAD_NAME = "aaa_collector_batch_last_load_seconds";
+    static final String LAST_DATA_NAME = "aaa_collector_batch_last_data_seconds";
     static final String SILENT_DROP_NAME = "aaa_collector_batch_silent_drops_total";
     static final String PARSE_REJECT_NAME = "aaa_collector_batch_parse_rejections_total";
+
+    /** 모든 배치 시계열이 공유하는 라벨 키 (카디널리티: batch 값만 사용). */
+    private static final String BATCH_TAG = "batch";
 
     private final MeterRegistry registry;
     private final Clock clock;
@@ -55,6 +59,9 @@ public class BatchMetrics {
 
     /** batch → 마지막 성공 적재 epoch 초 gauge 상태. */
     private final Map<String, AtomicLong> lastLoad = new ConcurrentHashMap<>();
+
+    /** batch → 마지막 실데이터 도착 epoch 초 gauge 상태 (DP-5, 현재 interest 한 배치만). */
+    private final Map<String, AtomicLong> lastData = new ConcurrentHashMap<>();
 
     /** 침묵 드롭 카운터를 0으로 사전 등록한다 (드롭이 한 번도 없어도 0 시계열 노출). */
     @PostConstruct
@@ -100,6 +107,33 @@ public class BatchMetrics {
     }
 
     /**
+     * 실데이터 도착 시각을 {@code last_data} gauge에 stamp한다 (SPEC-COLLECTOR-EXPECTED-RUN-001 REQ-XR-016,
+     * DP-5).
+     *
+     * <p>실행/도착 분리: {@code last_load}(빈 응답도 stamp, "폴러가 돌았는가")와 달리, 이 gauge는 실제로 {@code success>0}
+     * 행이 도착한 경우에만 호출된다("실데이터가 도착했는가"). 현재 {@code overseas-shortsale-interest} 한 배치만 사용한다(DP-5,
+     * YAGNI). {@code last_load}·카운터는 건드리지 않는다.
+     *
+     * @param batch 배치 라벨(현재 {@code overseas-shortsale-interest})
+     */
+    public void recordDataArrival(String batch) {
+        lastDataHolder(batch).set(clock.instant().getEpochSecond());
+    }
+
+    /**
+     * 부팅 시 DB max 타임스탬프로 {@code last_data} gauge를 초기화한다 (REQ-XR-017, {@code warmLastLoad} 미러).
+     *
+     * <p>{@code BatchMetricsWarmStarter}가 기존 {@code findMaxInterestCollectedAt} 쿼리 결과로 seed한다. 멱등 —
+     * 재호출 시 새 값으로 덮어쓴다.
+     *
+     * @param batch 배치 라벨(현재 {@code overseas-shortsale-interest})
+     * @param lastData DB에서 조회한 마지막 실데이터 적재 시각 (UTC Instant)
+     */
+    public void warmDataArrival(String batch, Instant lastData) {
+        lastDataHolder(batch).set(lastData.getEpochSecond());
+    }
+
+    /**
      * 침묵 드롭(INSERT IGNORE 중복 외 사유) 건수를 단일 카운터로 누적한다 (REQ-OBSV-023, DP4 단일 카운터).
      *
      * @param drops 이번 배치에서 관측된 침묵 드롭 건수(0이면 증가하지 않음)
@@ -127,7 +161,7 @@ public class BatchMetrics {
     }
 
     private Counter counter(String name, String batch) {
-        return Counter.builder(name).tag("batch", batch).register(registry);
+        return Counter.builder(name).tag(BATCH_TAG, batch).register(registry);
     }
 
     private DoubleAdder completenessHolder(String batch) {
@@ -137,7 +171,7 @@ public class BatchMetrics {
                     DoubleAdder adder = new DoubleAdder();
                     registry.gauge(
                             COMPLETENESS_NAME,
-                            Tags.of("batch", b),
+                            Tags.of(BATCH_TAG, b),
                             adder,
                             DoubleAdder::doubleValue);
                     return adder;
@@ -150,7 +184,18 @@ public class BatchMetrics {
                 b ->
                         registry.gauge(
                                 LAST_LOAD_NAME,
-                                Tags.of("batch", b),
+                                Tags.of(BATCH_TAG, b),
+                                new AtomicLong(),
+                                AtomicLong::doubleValue));
+    }
+
+    private AtomicLong lastDataHolder(String batch) {
+        return lastData.computeIfAbsent(
+                batch,
+                b ->
+                        registry.gauge(
+                                LAST_DATA_NAME,
+                                Tags.of(BATCH_TAG, b),
                                 new AtomicLong(),
                                 AtomicLong::doubleValue));
     }

@@ -85,6 +85,10 @@ public class BatchMetricsWarmStarter implements ApplicationRunner {
         warm(
                 "overseas-shortsale-interest",
                 shortSaleOverseasRepository::findMaxInterestCollectedAt);
+        // REQ-XR-017(DP-5): 실행/도착 분리 — last_load seed는 위에서 그대로 유지하고, 동일 쿼리로 last_data도 seed한다.
+        warmData(
+                "overseas-shortsale-interest",
+                shortSaleOverseasRepository::findMaxInterestCollectedAt);
         warm("domestic-invest-opinion", analystEstimateRepository::findMaxCreatedAt);
         warm("domestic-financial-ratio", financialRepository::findMaxCreatedAt);
         warm("macro-external", macroIndicatorRepository::findMaxCreatedAt);
@@ -118,6 +122,30 @@ public class BatchMetricsWarmStarter implements ApplicationRunner {
         } catch (DataAccessException e) {
             log.warn(
                     "BatchMetrics warm-start 실패 — batch={}, 무시하고 계속 진행. error={}",
+                    batch,
+                    e.getMessage());
+        }
+    }
+
+    /**
+     * {@code last_data} gauge seed 전용 warm 헬퍼 (REQ-XR-017, DP-5).
+     *
+     * <p>{@link #warm(String, TimestampQuery)}가 {@code last_load}를 seed하는 것과 대칭이며, 도착-측 게이지만
+     * retarget한다 — 기존 {@code last_load} 배선은 불변.
+     */
+    private void warmData(String batch, TimestampQuery query) {
+        try {
+            Optional<LocalDateTime> result = query.findMax();
+            if (result.isEmpty()) {
+                log.debug("BatchMetrics last_data warm-start skip — {} 테이블 데이터 없음", batch);
+                return;
+            }
+            Instant instant = toInstant(result.get());
+            batchMetrics.warmDataArrival(batch, instant);
+            log.info("BatchMetrics last_data warm-start 완료 — batch={} lastData={}", batch, instant);
+        } catch (DataAccessException e) {
+            log.warn(
+                    "BatchMetrics last_data warm-start 실패 — batch={}, 무시하고 계속 진행. error={}",
                     batch,
                     e.getMessage());
         }

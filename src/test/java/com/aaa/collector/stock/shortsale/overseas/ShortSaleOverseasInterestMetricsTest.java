@@ -141,4 +141,72 @@ class ShortSaleOverseasInterestMetricsTest {
             verify(batchMetrics).recordCompletion("overseas-shortsale-interest", 0L, 0L, 0L, 0L);
         }
     }
+
+    @Nested
+    @DisplayName("실데이터 도착 last_data 갱신 (REQ-XR-016, DP-5)")
+    class DataArrival {
+
+        @Test
+        @DisplayName("success>0 실데이터가 도착하면 last_data 게이지를 갱신한다")
+        void recordsDataArrivalWhenSuccess() {
+            // Arrange: AAPL 신규 적재(success=1)
+            Stock aapl = stock(1L, "AAPL");
+            when(stockRepository.findAllActiveOverseasTradable()).thenReturn(List.of(aapl));
+            when(shortSaleOverseasRepository.findExistingInterestPairsByStockIds(
+                            any(), any(), any()))
+                    .thenReturn(Map.of());
+            when(finraClient.fetchConsolidatedShortInterest(any(), any()))
+                    .thenReturn(
+                            List.of(
+                                    new FinraConsolidatedShortInterestResponse(
+                                            "AAPL",
+                                            LocalDate.of(2026, 4, 15),
+                                            BigDecimal.valueOf(134_422_787L),
+                                            null)));
+
+            // Act
+            service.collectShortInterest(TODAY);
+
+            // Assert
+            verify(batchMetrics).recordDataArrival("overseas-shortsale-interest");
+        }
+
+        @Test
+        @DisplayName("빈 응답(폴만 발생)에는 last_data를 갱신하지 않는다 — FINRA 미발표 탐지")
+        void skipsDataArrivalOnEmpty() {
+            when(finraClient.fetchConsolidatedShortInterest(any(), any())).thenReturn(List.of());
+
+            // Act
+            service.collectShortInterest(TODAY);
+
+            // Assert
+            verify(batchMetrics, never()).recordDataArrival(any());
+        }
+
+        @Test
+        @DisplayName("응답은 있으나 전량 skip(success=0)이면 last_data를 갱신하지 않는다")
+        void skipsDataArrivalWhenNoSuccess() {
+            // Arrange: AAPL 이미 적재 + 비revision → 전량 skip(success=0)
+            Stock aapl = stock(1L, "AAPL");
+            LocalDate settlement = LocalDate.of(2026, 4, 15);
+            when(stockRepository.findAllActiveOverseasTradable()).thenReturn(List.of(aapl));
+            when(shortSaleOverseasRepository.findExistingInterestPairsByStockIds(
+                            any(), any(), any()))
+                    .thenReturn(Map.of(1L, java.util.Set.of(settlement)));
+            when(finraClient.fetchConsolidatedShortInterest(any(), any()))
+                    .thenReturn(
+                            List.of(
+                                    new FinraConsolidatedShortInterestResponse(
+                                            "AAPL",
+                                            settlement,
+                                            BigDecimal.valueOf(134_422_787L),
+                                            null)));
+
+            // Act
+            service.collectShortInterest(TODAY);
+
+            // Assert
+            verify(batchMetrics, never()).recordDataArrival(any());
+        }
+    }
 }

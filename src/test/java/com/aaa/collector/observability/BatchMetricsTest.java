@@ -22,6 +22,7 @@ class BatchMetricsTest {
     private static final String SKIP = "aaa_collector_batch_skip_total";
     private static final String COMPLETENESS = "aaa_collector_batch_completeness_ratio";
     private static final String LAST_LOAD = "aaa_collector_batch_last_load_seconds";
+    private static final String LAST_DATA = "aaa_collector_batch_last_data_seconds";
     private static final String SILENT_DROP = "aaa_collector_batch_silent_drops_total";
     private static final String PARSE_REJECT = "aaa_collector_batch_parse_rejections_total";
 
@@ -112,6 +113,54 @@ class BatchMetricsTest {
 
             Gauge gauge = registry.get(LAST_LOAD).tags("batch", "domestic-daily").gauge();
             assertThat(gauge.value()).isEqualTo((double) fixed.getEpochSecond());
+        }
+    }
+
+    @Nested
+    @DisplayName("실데이터 도착 시각 last_data (SPEC-COLLECTOR-EXPECTED-RUN-001 REQ-XR-016/017, DP-5)")
+    class LastData {
+
+        @Test
+        @DisplayName("recordDataArrival 호출 시 last_data gauge가 clock의 KST epoch 초로 갱신된다")
+        void recordsLastDataInKstEpochSeconds() {
+            Instant fixed = Instant.parse("2026-04-20T01:00:00Z"); // 10:00 KST
+            Clock clock = Clock.fixed(fixed, KST);
+            SimpleMeterRegistry registry = new SimpleMeterRegistry();
+            BatchMetrics metrics = new BatchMetrics(registry, clock);
+
+            metrics.recordDataArrival("overseas-shortsale-interest");
+
+            Gauge gauge =
+                    registry.get(LAST_DATA).tags("batch", "overseas-shortsale-interest").gauge();
+            assertThat(gauge.value()).isEqualTo((double) fixed.getEpochSecond());
+        }
+
+        @Test
+        @DisplayName("warmDataArrival 호출 시 last_data gauge가 instant의 epochSecond로 set된다 (부팅 seed)")
+        void warmSetsLastDataGaugeToEpochSecond() {
+            Instant instant = Instant.parse("2026-04-15T21:00:00Z");
+            SimpleMeterRegistry registry = new SimpleMeterRegistry();
+            BatchMetrics metrics = new BatchMetrics(registry, Clock.systemDefaultZone());
+
+            metrics.warmDataArrival("overseas-shortsale-interest", instant);
+
+            Gauge gauge =
+                    registry.get(LAST_DATA).tags("batch", "overseas-shortsale-interest").gauge();
+            assertThat(gauge.value()).isEqualTo((double) instant.getEpochSecond());
+        }
+
+        @Test
+        @DisplayName("recordDataArrival는 last_load gauge를 갱신하지 않는다 (실행/도착 분리)")
+        void doesNotTouchLastLoad() {
+            SimpleMeterRegistry registry = new SimpleMeterRegistry();
+            BatchMetrics metrics = new BatchMetrics(registry, Clock.systemDefaultZone());
+
+            metrics.recordDataArrival("overseas-shortsale-interest");
+
+            boolean noLastLoad =
+                    registry.getMeters().stream()
+                            .noneMatch(m -> LAST_LOAD.equals(m.getId().getName()));
+            assertThat(noLastLoad).isTrue();
         }
     }
 
@@ -260,6 +309,7 @@ class BatchMetricsTest {
                             SKIP,
                             COMPLETENESS,
                             LAST_LOAD,
+                            LAST_DATA,
                             SILENT_DROP,
                             PARSE_REJECT);
             boolean onlyKnownNames =

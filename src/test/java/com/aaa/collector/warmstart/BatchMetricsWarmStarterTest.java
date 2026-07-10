@@ -257,6 +257,49 @@ class BatchMetricsWarmStarterTest {
         }
     }
 
+    @Nested
+    @DisplayName("interest last_data seed (REQ-XR-017, DP-5)")
+    class InterestDataSeed {
+
+        @Test
+        @DisplayName("findMaxInterestCollectedAt 결과가 있으면 warmDataArrival(interest, instant) 호출")
+        void seedsInterestLastData() throws Exception {
+            LocalDateTime kstTime = LocalDateTime.of(2026, 4, 16, 6, 0, 0);
+            Instant expected = kstTime.atZone(KST).toInstant();
+            stubAllEmpty();
+            when(shortSaleOverseasRepository.findMaxInterestCollectedAt())
+                    .thenReturn(Optional.of(kstTime));
+
+            warmStarter().run(null);
+
+            verify(batchMetrics).warmDataArrival(eq("overseas-shortsale-interest"), eq(expected));
+        }
+
+        @Test
+        @DisplayName("interest last_data seed는 기존 last_load warm-start도 그대로 유지한다")
+        void keepsInterestLastLoadWarm() throws Exception {
+            LocalDateTime kstTime = LocalDateTime.of(2026, 4, 16, 6, 0, 0);
+            Instant expected = kstTime.atZone(KST).toInstant();
+            stubAllEmpty();
+            when(shortSaleOverseasRepository.findMaxInterestCollectedAt())
+                    .thenReturn(Optional.of(kstTime));
+
+            warmStarter().run(null);
+
+            verify(batchMetrics).warmLastLoad(eq("overseas-shortsale-interest"), eq(expected));
+        }
+
+        @Test
+        @DisplayName("interest 조회 결과가 없으면 warmDataArrival를 호출하지 않는다")
+        void skipsSeedWhenEmpty() throws Exception {
+            stubAllEmpty();
+
+            warmStarter().run(null);
+
+            verify(batchMetrics, never()).warmDataArrival(eq("overseas-shortsale-interest"), any());
+        }
+    }
+
     /** 모든 리포지토리를 Optional.empty() 반환으로 stub. */
     private void stubAllEmpty() {
         when(dailyOhlcvRepository.findMaxCreatedAtByMarketsIn(any())).thenReturn(Optional.empty());
