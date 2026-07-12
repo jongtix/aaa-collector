@@ -85,5 +85,29 @@ class StockGradeTest {
             // 다른 필드 보존 확인
             assertThat(stockGrade.getStock()).isSameAs(originalStock);
         }
+
+        @Test
+        @DisplayName(
+                "등급 불변이어도 gradedAt은 무조건 새 실행 시각으로 갱신된다"
+                        + " (SPEC-COLLECTOR-EXPECTED-RUN-001 §13 O-3 — watchlist-sync-krx/us warm-start seed 계약)")
+        void updateGrade_gradedAtAdvancesEvenWhenGradeUnchanged() {
+            // Arrange: 이 계약이 깨지면(예: 등급 불변 시 UPDATE 스킵 최적화)
+            // StockGradeRepository.findMaxGradedAtByMarketsIn을
+            // watchlist-sync-krx/us의 last_load seed로 쓰는 BatchMetricsWarmStarter 배선이 조용히 무효화된다.
+            Stock stock = buildStock();
+            ZonedDateTime originalGradedAt = ZonedDateTime.of(2025, 1, 1, 9, 0, 0, 0, KST);
+            StockGrade stockGrade =
+                    StockGrade.builder().stock(stock).grade("A").gradedAt(originalGradedAt).build();
+
+            ZonedDateTime newRunGradedAt = ZonedDateTime.of(2026, 6, 7, 9, 0, 0, 0, KST);
+
+            // Act: 등급값 자체는 "A" → "A"로 불변
+            stockGrade.updateGrade("A", newRunGradedAt);
+
+            // Assert: 그래도 gradedAt은 새 실행 시각으로 전진해야 한다
+            assertThat(stockGrade.getGrade()).isEqualTo("A");
+            assertThat(stockGrade.getGradedAt()).isEqualTo(newRunGradedAt);
+            assertThat(stockGrade.getGradedAt()).isNotEqualTo(originalGradedAt);
+        }
     }
 }

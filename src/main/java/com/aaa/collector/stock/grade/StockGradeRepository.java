@@ -3,6 +3,8 @@ package com.aaa.collector.stock.grade;
 import com.aaa.collector.stock.Stock;
 import com.aaa.collector.stock.StockGrade;
 import com.aaa.collector.stock.enums.Market;
+import java.time.ZonedDateTime;
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 import org.springframework.data.jpa.repository.JpaRepository;
@@ -58,4 +60,20 @@ public interface StockGradeRepository extends JpaRepository<StockGrade, Long> {
                     + "ORDER BY sg.grade ASC")
     List<SymbolWithMarket> findUsSymbolsWithMarketByGradeIn(
             @Param("markets") List<Market> markets, @Param("grades") List<String> grades);
+
+    /**
+     * 시장 필터로 최대 등급 산정 시각을 조회한다 (SPEC-COLLECTOR-EXPECTED-RUN-001 O-3, {@code
+     * watchlist-sync-krx}/{@code watchlist-sync-us} warm-start seed용).
+     *
+     * <p>{@link StockGrade#updateGrade}는 등급 불변 여부와 무관하게 매 classify 실행마다 {@code gradedAt}을 실행 시각으로
+     * 무조건 덮어쓴다(REQ-011) — 이 계약이 성립하는 한 {@code MAX(gradedAt)}은 해당 시장 watchlist-sync 배치의 마지막 성공 실행
+     * 시각의 신뢰 가능한 프록시다. 계약이 깨지면(예: 등급 불변 시 UPDATE 스킵) 이 seed도 함께 무효화된다 — {@code
+     * StockGradeTest#updateGrade는_등급_불변이어도_gradedAt을_갱신한다} 회귀 테스트가 계약을 고정한다.
+     *
+     * @param markets 조회할 시장 목록
+     * @return MAX(gradedAt) — 한 건도 없으면 {@link Optional#empty()}
+     */
+    @Query("SELECT MAX(sg.gradedAt) FROM StockGrade sg WHERE sg.stock.market IN :markets")
+    Optional<ZonedDateTime> findMaxGradedAtByMarketsIn(
+            @Param("markets") Collection<Market> markets);
 }

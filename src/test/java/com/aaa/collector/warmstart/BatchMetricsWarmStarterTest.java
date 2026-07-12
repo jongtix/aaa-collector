@@ -53,6 +53,7 @@ class BatchMetricsWarmStarterTest {
     @Mock private DomesticNewsHeadlineRepository domesticNewsHeadlineRepository;
     @Mock private OverseasNewsHeadlineRepository overseasNewsHeadlineRepository;
     @Mock private ExtendedHoursWarmSource extendedHoursWarmSource;
+    @Mock private WatchlistSyncWarmSource watchlistSyncWarmSource;
 
     // 이 8종은 개별 테스트에서 참조하지 않고 항상 empty(Mockito 기본값)만 반환한다. final 초기화 mock으로 두어
     // PMD TooManyFields(비-final 필드만 계수)의 임계 아래로 유지한다 — @SuppressWarnings 미사용 root-cause 회피.
@@ -94,7 +95,8 @@ class BatchMetricsWarmStarterTest {
                 corpCodeMappingRepository,
                 domesticNewsHeadlineRepository,
                 overseasNewsHeadlineRepository,
-                extendedHoursWarmSource);
+                extendedHoursWarmSource,
+                watchlistSyncWarmSource);
     }
 
     @Nested
@@ -180,22 +182,44 @@ class BatchMetricsWarmStarterTest {
     }
 
     @Nested
-    @DisplayName("제외 2종 미포함 — watchlist-sync-krx/us는 warm-start 후에도 미호출 (§13 O-3)")
-    class ExcludedBatches {
+    @DisplayName(
+            "watchlist-sync-krx/us — WatchlistSyncWarmSource seed (SPEC-COLLECTOR-EXPECTED-RUN-001 §13 O-3)")
+    class WatchlistSyncGradedAtSeed {
 
         @Test
-        @DisplayName("watchlist-sync-krx로 warmLastLoad가 호출된 적 없다")
-        void doesNotWarmWatchlistSyncKrx() throws Exception {
+        @DisplayName("krxLastLoad 조회 결과가 있으면 warmLastLoad('watchlist-sync-krx', instant) 호출")
+        void warmsWatchlistSyncKrx() throws Exception {
+            LocalDateTime kstTime = LocalDateTime.of(2026, 7, 12, 8, 20, 5);
+            Instant expected = kstTime.atZone(KST).toInstant();
             stubAllEmpty();
+            when(watchlistSyncWarmSource.krxLastLoad()).thenReturn(Optional.of(kstTime));
+
             warmStarter().run(null);
-            verify(batchMetrics, never()).warmLastLoad(eq("watchlist-sync-krx"), any());
+
+            verify(batchMetrics).warmLastLoad(eq("watchlist-sync-krx"), eq(expected));
         }
 
         @Test
-        @DisplayName("watchlist-sync-us로 warmLastLoad가 호출된 적 없다")
-        void doesNotWarmWatchlistSyncUs() throws Exception {
+        @DisplayName("usLastLoad 조회 결과가 있으면 warmLastLoad('watchlist-sync-us', instant) 호출")
+        void warmsWatchlistSyncUs() throws Exception {
+            LocalDateTime kstTime = LocalDateTime.of(2026, 7, 11, 21, 50, 4);
+            Instant expected = kstTime.atZone(KST).toInstant();
             stubAllEmpty();
+            when(watchlistSyncWarmSource.usLastLoad()).thenReturn(Optional.of(kstTime));
+
             warmStarter().run(null);
+
+            verify(batchMetrics).warmLastLoad(eq("watchlist-sync-us"), eq(expected));
+        }
+
+        @Test
+        @DisplayName("seed 소스가 empty를 반환하면(신규 배포 등) 두 라벨 모두 warmLastLoad 미호출")
+        void skipsWhenNoGradesYet() throws Exception {
+            stubAllEmpty();
+
+            warmStarter().run(null);
+
+            verify(batchMetrics, never()).warmLastLoad(eq("watchlist-sync-krx"), any());
             verify(batchMetrics, never()).warmLastLoad(eq("watchlist-sync-us"), any());
         }
     }
@@ -416,5 +440,7 @@ class BatchMetricsWarmStarterTest {
         when(overseasNewsHeadlineRepository.findMaxPublishedAt()).thenReturn(Optional.empty());
         when(extendedHoursWarmSource.preLastLoad()).thenReturn(Optional.empty());
         when(extendedHoursWarmSource.afterLastLoad()).thenReturn(Optional.empty());
+        when(watchlistSyncWarmSource.krxLastLoad()).thenReturn(Optional.empty());
+        when(watchlistSyncWarmSource.usLastLoad()).thenReturn(Optional.empty());
     }
 }

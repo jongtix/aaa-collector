@@ -315,6 +315,87 @@ class StockGradeRepositoryTest {
     }
 
     @Nested
+    @DisplayName(
+            "findMaxGradedAtByMarketsIn — 시장별 MAX(graded_at)"
+                    + " (SPEC-COLLECTOR-EXPECTED-RUN-001 §13 O-3 warm-start seed)")
+    class FindMaxGradedAtByMarketsIn {
+
+        @Test
+        @DisplayName("등급이 하나도 없으면 Optional.empty() 반환")
+        void noGradesExist_returnsEmpty() {
+            savedStock("005930"); // 등급 미부여
+
+            Optional<ZonedDateTime> result =
+                    stockGradeRepository.findMaxGradedAtByMarketsIn(List.of(Market.KOSPI));
+
+            assertThat(result).isEmpty();
+        }
+
+        @Test
+        @DisplayName("국내 시장 여러 건 중 가장 최신 gradedAt 반환")
+        void returnsLatestGradedAtAmongDomesticGrades() {
+            // Arrange
+            Stock older = savedStock("005930");
+            Stock newer = savedStock("000660");
+            ZonedDateTime olderRun = ZonedDateTime.of(2026, 7, 11, 8, 20, 0, 0, KST);
+            ZonedDateTime newerRun = ZonedDateTime.of(2026, 7, 12, 8, 20, 0, 0, KST);
+            stockGradeRepository.save(
+                    StockGrade.builder().stock(older).grade("A").gradedAt(olderRun).build());
+            stockGradeRepository.save(
+                    StockGrade.builder().stock(newer).grade("B").gradedAt(newerRun).build());
+
+            // Act
+            Optional<ZonedDateTime> result =
+                    stockGradeRepository.findMaxGradedAtByMarketsIn(
+                            List.of(Market.KOSPI, Market.KOSDAQ));
+
+            // Assert — NORMALIZE_UTC 왕복이므로 zone이 아닌 순간(Instant)으로 비교
+            assertThat(result).isPresent();
+            assertThat(result.get().toInstant()).isEqualTo(newerRun.toInstant());
+        }
+
+        @Test
+        @DisplayName("해외 종목의 graded_at은 국내 시장 조회에 혼입되지 않는다")
+        void excludesOverseasMarketFromDomesticQuery() {
+            // Arrange
+            Stock kospiStock = savedStock("005930");
+            Stock nasdaqStock =
+                    stockRepository.save(
+                            Stock.builder()
+                                    .symbol("AAPL")
+                                    .nameKo("테스트종목_AAPL")
+                                    .market(Market.NASDAQ)
+                                    .assetType(AssetType.STOCK)
+                                    .listedDate(LocalDate.of(2015, 1, 1))
+                                    .build());
+            ZonedDateTime domesticRun = ZonedDateTime.of(2026, 7, 12, 8, 20, 0, 0, KST);
+            ZonedDateTime overseasRun =
+                    ZonedDateTime.of(2026, 7, 13, 8, 20, 0, 0, KST); // 국내보다 더 최신
+            stockGradeRepository.save(
+                    StockGrade.builder()
+                            .stock(kospiStock)
+                            .grade("A")
+                            .gradedAt(domesticRun)
+                            .build());
+            stockGradeRepository.save(
+                    StockGrade.builder()
+                            .stock(nasdaqStock)
+                            .grade("A")
+                            .gradedAt(overseasRun)
+                            .build());
+
+            // Act — 국내 시장만 지정
+            Optional<ZonedDateTime> result =
+                    stockGradeRepository.findMaxGradedAtByMarketsIn(
+                            List.of(Market.KOSPI, Market.KOSDAQ));
+
+            // Assert — 해외(NASDAQ)의 더 최신 gradedAt이 혼입되지 않고 국내 값만 반환
+            assertThat(result).isPresent();
+            assertThat(result.get().toInstant()).isEqualTo(domesticRun.toInstant());
+        }
+    }
+
+    @Nested
     @DisplayName("save — 등급 저장")
     class SaveGrade {
 

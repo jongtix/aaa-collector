@@ -36,9 +36,9 @@ import org.springframework.stereotype.Component;
  * <p>컨테이너 재시작 시 lazy 등록으로 인한 gauge absent 문제를 해소한다. 비차단(non-blocking) — 한 배치 조회 실패 시 warn 로깅 후 나머지를
  * 계속 처리한다.
  *
- * <p>warm-start 제외 2종: {@code watchlist-sync-krx}, {@code watchlist-sync-us}(per-run 적재 ts 없음, §13
- * O-3). {@code domestic-news}·{@code overseas-news}는 REQ-XR-018(a)로 편입됐다(실행-앵커 모델에서 sub-daily 오발
- * 소멸).
+ * <p>{@code domestic-news}·{@code overseas-news}는 REQ-XR-018(a)로 편입됐다(실행-앵커 모델에서 sub-daily 오발 소멸).
+ * {@code watchlist-sync-krx}/{@code watchlist-sync-us}는 SPEC-COLLECTOR-EXPECTED-RUN-001 §13 O-3
+ * 결정으로 {@link WatchlistSyncWarmSource}가 seed를 해석한다.
  */
 // @MX:ANCHOR: [AUTO] 부팅 시 BatchMetrics last-load gauge warm-start 진입점
 // @MX:REASON: SPEC-OBSV-WARMSTART-001 — 12개 배치 리포지토리에서 fan_in >= 3; vmalert 룰 무력화 방지
@@ -71,6 +71,7 @@ public class BatchMetricsWarmStarter implements ApplicationRunner {
     private final DomesticNewsHeadlineRepository domesticNewsHeadlineRepository;
     private final OverseasNewsHeadlineRepository overseasNewsHeadlineRepository;
     private final ExtendedHoursWarmSource extendedHoursWarmSource;
+    private final WatchlistSyncWarmSource watchlistSyncWarmSource;
 
     @Override
     public void run(ApplicationArguments args) {
@@ -132,6 +133,11 @@ public class BatchMetricsWarmStarter implements ApplicationRunner {
         // 캡슐화한다(warm-starter의 import 결합도 상한 회피 + findMaxTradeDateBySession 재사용).
         warm("extended-hours-pre", extendedHoursWarmSource::preLastLoad);
         warm("extended-hours-after", extendedHoursWarmSource::afterLastLoad);
+
+        // SPEC-COLLECTOR-EXPECTED-RUN-001 §13 O-3: watchlist-sync-krx/us seed. 시장 필터·graded_at 해석은
+        // WatchlistSyncWarmSource로 추출(ExtendedHoursWarmSource와 동일 이유 — import/coupling 상한 회피).
+        warm("watchlist-sync-krx", watchlistSyncWarmSource::krxLastLoad);
+        warm("watchlist-sync-us", watchlistSyncWarmSource::usLastLoad);
 
         log.info("BatchMetrics warm-start 완료");
     }
