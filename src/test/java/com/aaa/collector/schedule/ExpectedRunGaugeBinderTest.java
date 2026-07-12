@@ -12,13 +12,13 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.core.env.StandardEnvironment;
 
-@DisplayName("ExpectedRunGaugeBinder — expected_run/run_margin/enrolled_total 게이지 + 부팅 eager 등록")
+@DisplayName("ExpectedRunGaugeBinder — expected_run/run_margin/enrolled 게이지 + 부팅 eager 등록")
 class ExpectedRunGaugeBinderTest {
 
     private static final ZoneId KST = ZoneId.of("Asia/Seoul");
     private static final String EXPECTED_RUN = "aaa_collector_batch_expected_run_seconds";
     private static final String RUN_MARGIN = "aaa_collector_batch_run_margin_seconds";
-    private static final String ENROLLED_TOTAL = "aaa_collector_batch_enrolled_total";
+    private static final String ENROLLED = "aaa_collector_batch_enrolled";
 
     @Test
     @DisplayName("레지스트리 전 엔트리에 대해 expected_run 게이지를 등록한다 (REQ-XR-001)")
@@ -142,20 +142,20 @@ class ExpectedRunGaugeBinderTest {
     }
 
     @Test
-    @DisplayName("enrolled_total(라벨 없음)을 레지스트리 엔트리 개수로 노출한다 (REQ-XR-007)")
-    void exposesEnrolledTotalAsRegistrySize() {
+    @DisplayName("enrolled(라벨 없음)을 레지스트리 엔트리 개수로 노출한다 (REQ-XR-007)")
+    void exposesEnrolledAsRegistrySize() {
         SimpleMeterRegistry registry = new SimpleMeterRegistry();
         BatchRunRegistry runRegistry = defaultRunRegistry();
         ExpectedRunGaugeBinder binder = newBinder(registry, Clock.systemDefaultZone(), runRegistry);
 
         binder.registerGauges();
 
-        Gauge gauge = registry.find(ENROLLED_TOTAL).gauge();
+        Gauge gauge = registry.find(ENROLLED).gauge();
         assertThat(gauge).isNotNull();
         assertThat(gauge.value()).isEqualTo((double) runRegistry.entries().size());
         // 무라벨 단일 시계열 — batch 라벨이 붙지 않는다.
         assertThat(gauge.getId().getTag("batch")).isNull();
-        assertThat(seriesCount(registry, ENROLLED_TOTAL)).isEqualTo(1L);
+        assertThat(seriesCount(registry, ENROLLED)).isEqualTo(1L);
     }
 
     @Test
@@ -177,9 +177,38 @@ class ExpectedRunGaugeBinderTest {
         assertThat(seriesCount(registry, RUN_MARGIN))
                 .as("run_margin 시계열 eager 전수 등록")
                 .isEqualTo(enrolled);
-        assertThat(seriesCount(registry, ENROLLED_TOTAL))
-                .as("enrolled_total 시계열 eager 등록")
-                .isEqualTo(1L);
+        assertThat(seriesCount(registry, ENROLLED)).as("enrolled 시계열 eager 등록").isEqualTo(1L);
+    }
+
+    @Test
+    @DisplayName(
+            "PrometheusMeterRegistry 노출명이 등록 상수와 정확히 일치한다 — _total 접미사 자동 제거 회귀 가드"
+                    + " (SPEC-COLLECTOR-EXPECTED-RUN-001 게이트/데드맨 이름 불일치 사고 재발 방지)")
+    void prometheusExposedNamesMatchRegisteredConstantsExactly() {
+        // Arrange: SimpleMeterRegistry는 PrometheusNamingConvention을 거치지 않아 _total 접미사 제거를
+        // 재현하지 못한다 — 실제 /actuator/prometheus 경로와 동일한 PrometheusMeterRegistry로 검증해야 한다.
+        io.micrometer.prometheusmetrics.PrometheusMeterRegistry registry =
+                new io.micrometer.prometheusmetrics.PrometheusMeterRegistry(
+                        io.micrometer.prometheusmetrics.PrometheusConfig.DEFAULT);
+        BatchRunRegistry runRegistry = defaultRunRegistry();
+        ExpectedRunGaugeBinder binder =
+                new ExpectedRunGaugeBinder(
+                        registry,
+                        Clock.systemDefaultZone(),
+                        runRegistry,
+                        new ExpectedFireCalculator());
+
+        // Act
+        binder.registerGauges();
+        String scraped = registry.scrape();
+
+        // Assert: 등록에 쓴 상수 이름 그대로가 스크레이프 출력에 나타나야 한다.
+        assertThat(scraped).as("expected_run 노출명 불변").contains(EXPECTED_RUN + "{");
+        assertThat(scraped).as("run_margin 노출명 불변").contains(RUN_MARGIN + "{");
+        assertThat(scraped)
+                .as("enrolled 노출명 불변 — _total 접미사가 있었다면 여기서 실패했어야 함")
+                .containsPattern(java.util.regex.Pattern.compile("(?m)^" + ENROLLED + " \\d"));
+        assertThat(scraped).as("_total 접미사 재도입 금지").doesNotContain(ENROLLED + "_total");
     }
 
     private static ExpectedRunGaugeBinder newBinder(

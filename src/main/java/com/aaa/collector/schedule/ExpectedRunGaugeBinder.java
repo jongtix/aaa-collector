@@ -10,14 +10,22 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
 /**
- * 편입 배치별 {@code expected_run}·{@code run_margin} 게이지와 무라벨 {@code enrolled_total} 게이지를 노출한다
+ * 편입 배치별 {@code expected_run}·{@code run_margin} 게이지와 무라벨 {@code enrolled} 게이지를 노출한다
  * (SPEC-COLLECTOR-EXPECTED-RUN-001 REQ-XR-001/003/005/006/007/031).
  *
  * <p>{@code expected_run}은 배치 cron·zone 기준 "현재 시각 이전 마지막 예상 발화 시각"(epoch 초)이며, 값-함수(value-function)
  * 게이지로 등록되어 저장 없이 매 scrape 시 {@link ExpectedFireCalculator}로 재계산된다(REQ-XR-001 stateless). {@code
  * MON-FRI} cron은 주말 동안 앵커가 전진하지 않아 금요일 슬롯이 잔류한다(REQ-XR-005) — 이는 계산기 계약(now 이전 마지막 발화 반환)에서 자동
- * 성립한다. {@code run_margin}은 엔트리의 고정 마진(초)을(REQ-XR-006), {@code enrolled_total}은 레지스트리 엔트리
- * 개수를(REQ-XR-007) 노출한다.
+ * 성립한다. {@code run_margin}은 엔트리의 고정 마진(초)을(REQ-XR-006), {@code enrolled}는 레지스트리 엔트리 개수를(REQ-XR-007)
+ * 노출한다.
+ *
+ * <p><b>메터 이름에 {@code _total} 접미사를 쓰지 않는 이유</b>: Micrometer의 {@code PrometheusNamingConvention}은
+ * {@code Counter}가 아닌 미터(예: {@code Gauge})의 이름이 {@code _total}로 끝나면 그 접미사를 자동으로 제거해 노출한다({@code
+ * _total}은 Prometheus 규약상 단조증가 카운터 전용 접미사이기 때문). 과거 이 클래스는 {@code
+ * aaa_collector_batch_enrolled_total}로 등록했으나 실제 {@code /actuator/prometheus} 노출명은 {@code
+ * aaa_collector_batch_enrolled}였다 — {@code PrometheusMeterRegistry}를 실제로 거쳐야만 이 변환이 드러나므로
+ * 단위테스트({@code SimpleMeterRegistry} 기반)로는 잡히지 않았다. 이 게이지가 소비하는 aaa-infra vmalert 룰(§8.1 확인
+ * 게이트·데드맨)이 이름 불일치로 절대 참이 될 수 없는 조건을 평가하게 만든 실사고였다.
  *
  * <p><b>등록 정책 — eager 전수(REQ-XR-031)</b>: 세 종류의 게이지 시계열을 모두 {@link #registerGauges()}
  * ({@code @PostConstruct})에서 부팅 시 전수 등록한다 — 어떤 배치 cron이 아직 한 번도 발화하지 않았더라도 metrics 엔드포인트가 ready가 되기
@@ -39,7 +47,7 @@ public class ExpectedRunGaugeBinder {
 
     static final String EXPECTED_RUN_NAME = "aaa_collector_batch_expected_run_seconds";
     static final String RUN_MARGIN_NAME = "aaa_collector_batch_run_margin_seconds";
-    static final String ENROLLED_TOTAL_NAME = "aaa_collector_batch_enrolled_total";
+    static final String ENROLLED_NAME = "aaa_collector_batch_enrolled";
 
     private final MeterRegistry registry;
     private final Clock clock;
@@ -49,14 +57,14 @@ public class ExpectedRunGaugeBinder {
     /**
      * 부팅 시 전 게이지 시계열을 eager 전수 등록한다 (REQ-XR-031).
      *
-     * <p>{@code expected_run}·{@code run_margin} 각 N개와 무라벨 {@code enrolled_total} 1개를 metrics 엔드포인트
-     * ready 이전에 등록한다 — cron 발화·완료 이벤트를 기다리는 lazy 패턴과 달리 부팅 직후부터 시계열이 존재한다.
+     * <p>{@code expected_run}·{@code run_margin} 각 N개와 무라벨 {@code enrolled} 1개를 metrics 엔드포인트 ready
+     * 이전에 등록한다 — cron 발화·완료 이벤트를 기다리는 lazy 패턴과 달리 부팅 직후부터 시계열이 존재한다.
      */
     @PostConstruct
     void registerGauges() {
         registerExpectedRunGauges();
         registerRunMarginGauges();
-        registerEnrolledTotalGauge();
+        registerEnrolledGauge();
     }
 
     /** 레지스트리 전 엔트리에 대해 expected_run 값-함수 게이지를 등록한다. */
@@ -85,13 +93,13 @@ public class ExpectedRunGaugeBinder {
     }
 
     /**
-     * 무라벨 enrolled_total 게이지를 레지스트리 크기로 등록한다 (REQ-XR-007).
+     * 무라벨 enrolled 게이지를 레지스트리 크기로 등록한다 (REQ-XR-007).
      *
      * <p>값을 레지스트리에서 읽어 하드코딩 상수 동기화를 없앤다 — 배치 편입/제거 시 aaa-infra 룰이 수동 개입 없이 부분-소실을 탐지할 수 있다(DP-6
      * REQ-XR-024 소비).
      */
-    void registerEnrolledTotalGauge() {
-        Gauge.builder(ENROLLED_TOTAL_NAME, runRegistry, r -> r.entries().size())
+    void registerEnrolledGauge() {
+        Gauge.builder(ENROLLED_NAME, runRegistry, r -> r.entries().size())
                 .strongReference(true)
                 .register(registry);
     }

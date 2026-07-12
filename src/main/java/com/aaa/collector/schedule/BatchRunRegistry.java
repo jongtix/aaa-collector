@@ -10,7 +10,7 @@ import org.springframework.stereotype.Component;
  *
  * <p>{@link com.aaa.collector.schedule.catchup.CatchUpRunner#buildRegistry()}의 "단일 소스" 조립 스타일을 미러한다
  * — 스케줄러 {@code @Scheduled}와 드리프트가 없도록 cron·zone 값은 공유 상수({@link BatchCrons})를 참조한다. 이 레지스트리는
- * {@code expected_run}·{@code run_margin}·{@code enrolled_total} 게이지 산출의 유일 원천이다({@link
+ * {@code expected_run}·{@code run_margin}·{@code enrolled} 게이지 산출의 유일 원천이다({@link
  * ExpectedRunGaugeBinder}가 소비).
  *
  * <p><b>Spring-managed 이유</b>: REQ-XR-002는 property-placeholder로 오버라이드 가능한 배치 ({@code
@@ -18,7 +18,7 @@ import org.springframework.stereotype.Component;
  * static-상수 홀더가 아니라 생성자로 {@link Environment}를 주입받는 빈으로 구성한다. Environment는 필드로 보관하지 않고 생성자에서
  * property를 읽어 불변 리스트를 조립한 뒤 폐기한다.
  */
-// @MX:ANCHOR: [AUTO] 예상-실행 편입 배치 20종의 단일 소스 — expected_run/run_margin/enrolled_total 게이지와
+// @MX:ANCHOR: [AUTO] 예상-실행 편입 배치 20종의 단일 소스 — expected_run/run_margin/enrolled 게이지와
 // aaa-infra 라벨-무관 룰(M2)이 이 레지스트리를 신뢰한다. 엔트리 추가/제거 시 BatchRunRegistryParityTest가
 // recordCompletion 호출자 집합과의 양방향 정합을 강제한다(REQ-XR-004).
 // @MX:SPEC: SPEC-COLLECTOR-EXPECTED-RUN-001
