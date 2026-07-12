@@ -78,6 +78,14 @@ public class BackfillWindowExecutor {
     /** KST 타임존 — to-date 계산 기준 (CLAUDE.md KST 통일, REQ-BACKFILL-095). */
     private static final ZoneId KST = ZoneId.of("Asia/Seoul");
 
+    /**
+     * 미국 동부 타임존 — 해외 종목 백필 시작 기준일(anchor) 초기화 전용 (aaa-infra#91).
+     *
+     * <p>KST "어제"는 평일 02:00 KST(= 전일 13:00 ET) 실행 시 아직 거래 중인 ET 당일을 가리켜 미완성 봉 영구 저장을 유발한다. ET "어제"는
+     * 실행 시각과 무관하게 항상 마감된 세션이다.
+     */
+    private static final ZoneId ET = ZoneId.of("America/New_York");
+
     /** 미국 시장 집합 — daily_ohlcv 수집 서비스 라우팅에 사용. */
     private static final Set<Market> OVERSEAS_MARKETS =
             Set.of(Market.NYSE, Market.NASDAQ, Market.AMEX);
@@ -146,7 +154,7 @@ public class BackfillWindowExecutor {
         if (status.getStatus() == BackfillStatusType.FAILED) {
             return FetchEnvelope.notApplicable(null);
         }
-        BackfillStatus resolved = resolvedStatus(status, resolveAnchor(status));
+        BackfillStatus resolved = resolvedStatus(status, resolveAnchor(status, stock));
         String dataTable = resolved.getDataTable();
         LocalDate anchor = resolved.getLastCollectedDate();
         Object dto = routeFetch(dataTable, resolved, anchor, stock, session);
@@ -579,8 +587,12 @@ public class BackfillWindowExecutor {
         };
     }
 
-    private LocalDate resolveAnchor(BackfillStatus status) {
+    private LocalDate resolveAnchor(BackfillStatus status, Stock stock) {
         if (status.getLastCollectedDate() == null) {
+            if (OVERSEAS_MARKETS.contains(stock.getMarket())) {
+                // ET 기준 어제 — KST 어제는 미국 장중을 가리킬 수 있음 (aaa-infra#91)
+                return LocalDate.now(ET).minusDays(1);
+            }
             // 오늘 날짜는 KIS API TIME LIMIT(00:00~15:40) 대상 — 어제(과거)로 초기화 (REQ-BACKFILL-060)
             return LocalDate.now().minusDays(1);
         }

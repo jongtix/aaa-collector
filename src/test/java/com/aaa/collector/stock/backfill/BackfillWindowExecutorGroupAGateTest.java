@@ -446,4 +446,50 @@ class BackfillWindowExecutorGroupAGateTest {
             assertThat(status.getVerifiedAt()).isNotNull();
         }
     }
+
+    @Nested
+    @DisplayName("resolveAnchor — 해외 종목 시작 기준일은 ET 시계 (aaa-infra#91)")
+    class ResolveAnchorEt {
+
+        @Test
+        @DisplayName("last_collected_date=null·해외 종목 → anchor = ET 어제(KST 어제 아님)")
+        void nullLastCollectedDate_overseasStock_usesEtYesterday() throws InterruptedException {
+            Stock aapl = usStock("AAPL", null);
+            BackfillStatus status = dailyOhlcvStatus("AAPL", null);
+            LocalDate etYesterday =
+                    LocalDate.now(java.time.ZoneId.of("America/New_York")).minusDays(1);
+            OverseasDailyOhlcvFetch fetch = new OverseasDailyOhlcvFetch(List.of(), null, 0, 0);
+            when(overseasOhlcvService.fetchWindow(eq(etYesterday), eq(aapl), eq(session)))
+                    .thenReturn(fetch);
+
+            executor.fetchWindow(status, aapl, session);
+
+            verify(overseasOhlcvService, times(1))
+                    .fetchWindow(eq(etYesterday), eq(aapl), eq(session));
+        }
+
+        @Test
+        @DisplayName("last_collected_date=null·국내 종목 → anchor 산정은 기존 동작(KST 어제) 그대로 유지")
+        void nullLastCollectedDate_domesticStock_unaffected() throws InterruptedException {
+            Stock samsung =
+                    Stock.builder()
+                            .symbol("005930")
+                            .market(Market.KOSPI)
+                            .assetType(AssetType.STOCK)
+                            .active(true)
+                            .build();
+            BackfillStatus status = dailyOhlcvStatus("005930", null);
+            LocalDate kstYesterday = LocalDate.now().minusDays(1);
+            when(windowAdvancer.groupAFromDate()).thenReturn(FLOOR_FROM);
+            DomesticDailyOhlcvFetch fetch = new DomesticDailyOhlcvFetch(List.of(), null, 0, 0);
+            when(domesticOhlcvService.fetchWindow(
+                            eq(FLOOR_FROM), eq(kstYesterday), eq(samsung), eq(session)))
+                    .thenReturn(fetch);
+
+            executor.fetchWindow(status, samsung, session);
+
+            verify(domesticOhlcvService, times(1))
+                    .fetchWindow(eq(FLOOR_FROM), eq(kstYesterday), eq(samsung), eq(session));
+        }
+    }
 }
