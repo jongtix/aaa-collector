@@ -57,6 +57,15 @@ public class UsMarketSessionGate implements UsMarketOpenGate {
     /** 데이터 워터마크 expected 게이지 이름 (SPEC-OBSV-WATERMARK-001 REQ-WM-006/009). */
     public static final String EXPECTED_WATERMARK_NAME = "aaa_collector_expected_watermark_seconds";
 
+    /**
+     * US 일봉 전용 후퇴 기대 게이지 이름 (SPEC-OBSV-WATERMARK-002 REQ-WM2-001). {@value
+     * #EXPECTED_WATERMARK_NAME}과 별도 메트릭명 — 같은 이름에 라벨만 추가하면 {@code on(market) group_right} 조인의
+     * "one"측 유일성이 깨져 다른 해외 신선도 룰이 many-to-one 위반으로 회귀한다(SPEC §3.1). {@code market="overseas"} 단일
+     * 시계열만 노출(국내 variant 없음).
+     */
+    public static final String EXPECTED_WATERMARK_DAILY_NAME =
+            "aaa_collector_expected_watermark_daily_seconds";
+
     /** US expected watermark 등록/노출 임계 — holiday_count가 이 값 미만이면 게이트 init 미완료로 간주(REQ-WM-009). */
     private static final int HOLIDAY_COUNT_READY_THRESHOLD = 20;
 
@@ -97,6 +106,15 @@ public class UsMarketSessionGate implements UsMarketOpenGate {
      * 등록/해제한다.
      */
     private final AtomicReference<Gauge> expectedWatermarkGaugeRef = new AtomicReference<>(null);
+
+    /**
+     * US 일봉 전용 기대 게이지 핸들(SPEC-OBSV-WATERMARK-002). null = 미등록(holiday_count 미준비, REQ-WM2-002 진성
+     * absent). {@link #syncExpectedWatermarkRegistration()}이 {@value
+     * #HOLIDAY_COUNT_READY_THRESHOLD} 도달 여부에 따라 {@link #expectedWatermarkGaugeRef}와 동일 게이트로
+     * 등록/해제한다.
+     */
+    private final AtomicReference<Gauge> expectedWatermarkDailyGaugeRef =
+            new AtomicReference<>(null);
 
     /**
      * 생성자. 두 게이지를 registry에 등록한다 — API 호출 없음(REQ-010). {@value #EXPECTED_WATERMARK_NAME}은
@@ -153,7 +171,8 @@ public class UsMarketSessionGate implements UsMarketOpenGate {
 
     /**
      * holiday_count가 {@value #HOLIDAY_COUNT_READY_THRESHOLD}에 도달했는지에 따라 {@value
-     * #EXPECTED_WATERMARK_NAME} 게이지를 등록하거나 해제한다(REQ-WM-009).
+     * #EXPECTED_WATERMARK_NAME}·{@value #EXPECTED_WATERMARK_DAILY_NAME} 게이지를 등록하거나 해제한다(REQ-WM-009,
+     * REQ-WM2-001/002). 신규 일봉 게이지는 기존 게이지와 동일 ready 게이트에 편승한다(SPEC §3.1).
      */
     private void syncExpectedWatermarkRegistration() {
         boolean ready = observedHolidaysRef.get().size() >= HOLIDAY_COUNT_READY_THRESHOLD;
@@ -175,6 +194,26 @@ public class UsMarketSessionGate implements UsMarketOpenGate {
         } else if (existing != null) {
             registry.remove(existing);
             expectedWatermarkGaugeRef.set(null);
+        }
+
+        Gauge existingDaily = expectedWatermarkDailyGaugeRef.get();
+        if (ready) {
+            if (existingDaily == null) {
+                Gauge dailyGauge =
+                        Gauge.builder(
+                                        EXPECTED_WATERMARK_DAILY_NAME,
+                                        this,
+                                        UsMarketSessionGate::computeExpectedWatermarkDailyEpoch)
+                                .tags(Tags.of("market", "overseas"))
+                                .description(
+                                        "US 일봉 전용 후퇴 기대 — 세션 마감이 지난 가장 최근 개장일의 직전 개장일 KST 자정 epoch 초;"
+                                                + " holiday_count 미준비 시 게이지 자체가 absent (REQ-WM2-001/002)")
+                                .register(registry);
+                expectedWatermarkDailyGaugeRef.set(dailyGauge);
+            }
+        } else if (existingDaily != null) {
+            registry.remove(existingDaily);
+            expectedWatermarkDailyGaugeRef.set(null);
         }
     }
 
@@ -297,6 +336,35 @@ public class UsMarketSessionGate implements UsMarketOpenGate {
                 now.toLocalTime().isBefore(US_SESSION_CLOSE)
                         ? now.toLocalDate().minusDays(1)
                         : now.toLocalDate();
+        for (int i = 0; i < MAX_LOOKBACK_DAYS && !isOpenDay(candidate); i++) {
+            candidate = candidate.minusDays(1);
+        }
+        return candidate;
+    }
+
+    /**
+     * US 일봉 전용 후퇴 기대 게이지 값을 KST 자정 epoch 초로 계산한다(SPEC-OBSV-WATERMARK-002 REQ-WM2-001, stateless).
+     */
+    private double computeExpectedWatermarkDailyEpoch() {
+        LocalDate candidate = computePriorTradeDate();
+        return candidate == null ? Double.NaN : candidate.atStartOfDay(KST).toEpochSecond();
+    }
+
+    /**
+     * {@link #computeExpectedTradeDate()}(세션 마감이 지난 가장 최근 개장일)의 직전 개장일을
+     * 계산한다(SPEC-OBSV-WATERMARK-002 §3.2, REQ-WM2-001/006). D+2 적재 지연을 반영해 US 일봉 전용 기대 게이지와 US 커버리지
+     * 분모 기준일이 공유하는 단일 소스다(Decision 3). 달력일이 아닌 {@link #isOpenDay(LocalDate)} 개장일 캘린더로 후방
+     * 탐색한다(REQ-WM2-006) — 기존 {@link #MAX_LOOKBACK_DAYS} 상한을 재사용한다.
+     *
+     * @return 직전 개장일. {@link #computeExpectedTradeDate()}가 {@code null}(holiday_count 미준비)이면 {@code
+     *     null} 전파(REQ-WM2-002)
+     */
+    public LocalDate computePriorTradeDate() {
+        LocalDate expected = computeExpectedTradeDate();
+        if (expected == null) {
+            return null;
+        }
+        LocalDate candidate = expected.minusDays(1);
         for (int i = 0; i < MAX_LOOKBACK_DAYS && !isOpenDay(candidate); i++) {
             candidate = candidate.minusDays(1);
         }

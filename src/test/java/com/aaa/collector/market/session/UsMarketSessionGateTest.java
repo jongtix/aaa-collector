@@ -500,4 +500,204 @@ class UsMarketSessionGateTest {
             assertThat(gauge.value()).isEqualTo((double) expected);
         }
     }
+
+    @Nested
+    @DisplayName(
+            "computePriorTradeDate — 직전 개장일 계산 (SPEC-OBSV-WATERMARK-002 REQ-WM2-001/006, T-001)")
+    class ComputePriorTradeDate {
+
+        /** 2026-07-08(수) 10:00 ET, 마감 전. UTC: 2026-07-08 14:00Z (EDT=UTC-4) */
+        private static final Instant WED_BEFORE_CLOSE_INSTANT =
+                Instant.parse("2026-07-08T14:00:00Z");
+
+        /** 2026-06-28(일) 21:00 ET = 10:00 KST 월요일. UTC: 2026-06-29 01:00Z */
+        private static final Instant SUN_NIGHT_INSTANT = Instant.parse("2026-06-29T01:00:00Z");
+
+        /** 2026-06-29(월) 21:00 ET = 10:00 KST 화요일. UTC: 2026-06-30 01:00Z */
+        private static final Instant MON_NIGHT_INSTANT = Instant.parse("2026-06-30T01:00:00Z");
+
+        /** 2026-07-06(월) 17:00 ET, 마감 후 — Independence Day(07-03 관측) 경계를 걸침. */
+        private static final Instant MON_AFTER_CLOSE_HOLIDAY_INSTANT =
+                Instant.parse("2026-07-06T21:00:00Z");
+
+        @Test
+        @DisplayName("평일 정상 — 수요일 마감 전, 직전 개장일=월요일(expected=화요일의 전날)")
+        void weekday_normal_returnsPriorOpenDay() {
+            UsMarketSessionGate gate = createGate(List.of(), WED_BEFORE_CLOSE_INSTANT);
+
+            // expectedTradeDate = 07-07(화, 마감전이므로 전날부터 역탐색 → 개장일)
+            assertThat(gate.computeExpectedTradeDate()).isEqualTo(LocalDate.of(2026, 7, 7));
+            assertThat(gate.computePriorTradeDate()).isEqualTo(LocalDate.of(2026, 7, 6));
+        }
+
+        @Test
+        @DisplayName("월요일 주말 경계(AC-4) — expected=금요일(06-26), 직전 개장일=목요일(06-25)")
+        void monday_weekendBoundary_returnsThursday() {
+            UsMarketSessionGate gate = createGate(List.of(), SUN_NIGHT_INSTANT);
+
+            assertThat(gate.computeExpectedTradeDate()).isEqualTo(LocalDate.of(2026, 6, 26));
+            assertThat(gate.computePriorTradeDate()).isEqualTo(LocalDate.of(2026, 6, 25));
+        }
+
+        @Test
+        @DisplayName("화요일 주말 건너뜀 경계(AC-5) — expected=월요일(06-29), 직전 개장일=금요일(06-26)")
+        void tuesday_weekendSkipBoundary_returnsFriday() {
+            UsMarketSessionGate gate = createGate(List.of(), MON_NIGHT_INSTANT);
+
+            assertThat(gate.computeExpectedTradeDate()).isEqualTo(LocalDate.of(2026, 6, 29));
+            assertThat(gate.computePriorTradeDate()).isEqualTo(LocalDate.of(2026, 6, 26));
+        }
+
+        @Test
+        @DisplayName("NYSE 휴장일 경계(AC-6) — expected=07-06, 직전 개장일=07-02(휴장일 07-03·주말 건너뜀)")
+        void nyseHolidayBoundary_skipsHolidayAndWeekend() {
+            UsMarketSessionGate gate = createGate(List.of(), MON_AFTER_CLOSE_HOLIDAY_INSTANT);
+
+            assertThat(gate.computeExpectedTradeDate()).isEqualTo(LocalDate.of(2026, 7, 6));
+            assertThat(gate.computePriorTradeDate()).isEqualTo(LocalDate.of(2026, 7, 2));
+        }
+
+        @Test
+        @DisplayName("게이트 미준비(holiday_count<20) — null 전파")
+        void gateNotReady_returnsNull() {
+            Clock clock = Clock.fixed(MON_TRADING_INSTANT, NEW_YORK);
+            KisMarketSchedule schedule = new KisMarketSchedule(clock);
+            UsMarketSessionGate gate =
+                    new UsMarketSessionGate(
+                            new SimpleMeterRegistry(), schedule, clock, new UsMarketProperties());
+            // init() 미호출 → holiday_count=0 → computeExpectedTradeDate()=null
+
+            assertThat(gate.computePriorTradeDate()).isNull();
+        }
+    }
+
+    @Nested
+    @DisplayName("일봉 전용 기대 게이지 (SPEC-OBSV-WATERMARK-002 REQ-WM2-001/002, T-002)")
+    class ExpectedWatermarkDaily {
+
+        private static final ZoneId KST = ZoneId.of("Asia/Seoul");
+
+        /** 2026-07-06(월) 17:00 ET, 마감 후 — Independence Day(07-03 관측) 경계를 걸침. */
+        private static final Instant MON_AFTER_CLOSE_HOLIDAY_INSTANT =
+                Instant.parse("2026-07-06T21:00:00Z");
+
+        @Test
+        @DisplayName("init() 호출 전(holiday_count=0)에는 신규 일봉 게이지도 absent이다 (REQ-WM2-002)")
+        void beforeInit_gaugeIsAbsent() {
+            Clock clock = Clock.fixed(MON_TRADING_INSTANT, NEW_YORK);
+            SimpleMeterRegistry registry = new SimpleMeterRegistry();
+            new UsMarketSessionGate(
+                    registry, new KisMarketSchedule(clock), clock, new UsMarketProperties());
+
+            Gauge gauge = registry.find(UsMarketSessionGate.EXPECTED_WATERMARK_DAILY_NAME).gauge();
+            assertThat(gauge).isNull();
+        }
+
+        @Test
+        @DisplayName("holiday_count>=20 도달 시 신규 일봉 기대 게이지가 등록된다 (REQ-WM2-001)")
+        void registersGaugeWhenHolidayCountReady() {
+            Clock clock = Clock.fixed(MON_TRADING_INSTANT, NEW_YORK);
+            SimpleMeterRegistry registry = new SimpleMeterRegistry();
+            UsMarketSessionGate gate =
+                    new UsMarketSessionGate(
+                            registry,
+                            new KisMarketSchedule(clock),
+                            clock,
+                            new UsMarketProperties());
+
+            gate.init();
+
+            Gauge gauge = registry.get(UsMarketSessionGate.EXPECTED_WATERMARK_DAILY_NAME).gauge();
+            assertThat(gauge).isNotNull();
+        }
+
+        @Test
+        @DisplayName("값 = 직전 개장일(computePriorTradeDate)의 KST 자정 epoch")
+        void gaugeValue_equalsPriorTradeDateEpoch() {
+            Clock clock = Clock.fixed(MON_AFTER_CLOSE_HOLIDAY_INSTANT, NEW_YORK);
+            SimpleMeterRegistry registry = new SimpleMeterRegistry();
+            UsMarketSessionGate gate =
+                    new UsMarketSessionGate(
+                            registry,
+                            new KisMarketSchedule(clock),
+                            clock,
+                            new UsMarketProperties());
+            gate.init();
+
+            Gauge gauge = registry.get(UsMarketSessionGate.EXPECTED_WATERMARK_DAILY_NAME).gauge();
+            long expected = LocalDate.of(2026, 7, 2).atStartOfDay(KST).toEpochSecond();
+            assertThat(gauge.value()).isEqualTo((double) expected);
+        }
+
+        @Test
+        @DisplayName("holiday_count<20(게이트 초기화 미완료) — absent 유지 (REQ-WM2-002)")
+        void holidayCountBelowThreshold_staysAbsent() {
+            Clock clock = Clock.fixed(MON_TRADING_INSTANT, NEW_YORK);
+            SimpleMeterRegistry registry = new SimpleMeterRegistry();
+            new UsMarketSessionGate(
+                    registry, new KisMarketSchedule(clock), clock, new UsMarketProperties());
+            // init() 미호출 → holiday_count=0 < 20
+
+            Gauge gauge = registry.find(UsMarketSessionGate.EXPECTED_WATERMARK_DAILY_NAME).gauge();
+            assertThat(gauge).isNull();
+        }
+    }
+
+    @Nested
+    @DisplayName("회귀 가드 — 기존 공유 해외 기대 게이지 불변 (SPEC-OBSV-WATERMARK-002 REQ-WM2-003/004, T-003)")
+    class SharedExpectedWatermarkRegression {
+
+        /** 2026-07-06(월) 17:00 ET, 마감 후. */
+        private static final Instant MON_AFTER_CLOSE_INSTANT =
+                Instant.parse("2026-07-06T21:00:00Z");
+
+        @Test
+        @DisplayName(
+                "신규 일봉 게이지 도입 후에도 기존 EXPECTED_WATERMARK_NAME은 단일 시계열로 유일하다 (on(market) group_right 안전)")
+        void sharedExpectedGauge_remainsSingleTimeSeries() {
+            Clock clock = Clock.fixed(MON_TRADING_INSTANT, NEW_YORK);
+            SimpleMeterRegistry registry = new SimpleMeterRegistry();
+            UsMarketSessionGate gate =
+                    new UsMarketSessionGate(
+                            registry,
+                            new KisMarketSchedule(clock),
+                            clock,
+                            new UsMarketProperties());
+            gate.init();
+
+            // 두 게이지 이름 모두 registry에서 각각 정확히 1개씩만 조회된다 — many-to-one 위반 없음
+            assertThat(registry.get(UsMarketSessionGate.EXPECTED_WATERMARK_NAME).gauge())
+                    .isNotNull();
+            assertThat(registry.get(UsMarketSessionGate.EXPECTED_WATERMARK_DAILY_NAME).gauge())
+                    .isNotNull();
+        }
+
+        @Test
+        @DisplayName(
+                "기존 EXPECTED_WATERMARK_NAME 값은 computeExpectedTradeDate() 기준으로 후퇴되지 않는다 (REQ-WM2-003)")
+        void sharedExpectedGauge_valueNotRegressed() {
+            Clock clock = Clock.fixed(MON_AFTER_CLOSE_INSTANT, NEW_YORK);
+            SimpleMeterRegistry registry = new SimpleMeterRegistry();
+            UsMarketSessionGate gate =
+                    new UsMarketSessionGate(
+                            registry,
+                            new KisMarketSchedule(clock),
+                            clock,
+                            new UsMarketProperties());
+            gate.init();
+
+            Gauge sharedGauge = registry.get(UsMarketSessionGate.EXPECTED_WATERMARK_NAME).gauge();
+            Gauge dailyGauge =
+                    registry.get(UsMarketSessionGate.EXPECTED_WATERMARK_DAILY_NAME).gauge();
+
+            // 공유 게이지는 computeExpectedTradeDate()=07-06 그대로, 신규 일봉 게이지만 후퇴(07-02)된다
+            long expectedShared =
+                    LocalDate.of(2026, 7, 6).atStartOfDay(ZoneId.of("Asia/Seoul")).toEpochSecond();
+            long expectedDaily =
+                    LocalDate.of(2026, 7, 2).atStartOfDay(ZoneId.of("Asia/Seoul")).toEpochSecond();
+            assertThat(sharedGauge.value()).isEqualTo((double) expectedShared);
+            assertThat(dailyGauge.value()).isEqualTo((double) expectedDaily);
+            assertThat(sharedGauge.value()).isNotEqualTo(dailyGauge.value());
+        }
+    }
 }
