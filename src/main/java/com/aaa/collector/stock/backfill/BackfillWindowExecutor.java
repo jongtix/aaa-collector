@@ -227,73 +227,117 @@ public class BackfillWindowExecutor {
         if (!DAILY_OHLCV.equals(dataTable)) {
             return FetchEnvelope.notApplicable(dto);
         }
-        int rawRowCount = dailyRawRowCount(dto);
-        LocalDate oldest = dailyOldest(dto);
-        if (rawRowCount >= SINGLE_CALL_ROW_CAP) {
+        DailyGateInputs inputs = extractDailyGateInputs(dto);
+        if (inputs.rawRowCount() >= SINGLE_CALL_ROW_CAP) {
             return FetchEnvelope.of(dto, ProbeOutcome.NOT_APPLICABLE); // 잠정 종료 미성립
         }
 
         boolean overseas = OVERSEAS_MARKETS.contains(stock.getMarket());
         Floor floor = computeFloor(stock, resolved, overseas);
 
-        if (oldest != null) {
-            if (floor.known() && floor.trusted() && !oldest.isAfter(floor.value())) {
+        if (inputs.oldest() != null) {
+            if (floor.known() && floor.trusted() && !inputs.oldest().isAfter(floor.value())) {
                 return FetchEnvelope.of(dto, ProbeOutcome.FLOOR_ALREADY_MET); // 프로브 0회 (REQ-150)
             }
-            return probeBelow(dto, oldest, stock, session, overseas);
+            return invokeExhaustionProbe(
+                    dto,
+                    inputs.oldest(),
+                    stock,
+                    session,
+                    overseas,
+                    ProbeOutcome.MORE_DATA_EXISTS,
+                    ProbeOutcome.CONFIRMED_EXHAUSTED);
         }
-        // oldest == null — rawRowCount로 케이스 분기
-        if (rawRowCount == 0) {
+        return buildEnvelopeForNullOldest(resolved, stock, session, dto, inputs, floor, overseas);
+    }
+
+    /**
+     * {@code oldest == null} 케이스(①·②③)를 rawRowCount로 분기한다.
+     *
+     * <p>케이스①({@code rawRowCount==0}, 진짜 빈 응답)은 교차검증만 수행한다. 케이스②③({@code rawRowCount>0}, zdiv 가드/전량
+     * 거부)은 아카이브 꼬리(상장일 이전 쓰레기 행)면 {@code rawOldestTradeDate}로 exhaustion probe를 트리거해 오탐 FAILED를
+     * 방지한다(aaa-infra#97). 원본 응답 날짜조차 파싱 불가하면 기존 무조건 EMPTY_ANOMALY 동작을 유지한다(회귀 없음).
+     */
+    private FetchEnvelope buildEnvelopeForNullOldest(
+            BackfillStatus resolved,
+            Stock stock,
+            LeaseSession session,
+            Object dto,
+            DailyGateInputs inputs,
+            Floor floor,
+            boolean overseas)
+            throws InterruptedException {
+        if (inputs.rawRowCount() == 0) {
             // 케이스 ① 진짜 빈 응답 — [R5-MA-01] 교차검증(anchor > floor면 허위 빈응답 → 강등)
             LocalDate anchor = resolved.getLastCollectedDate();
             boolean falseEmpty = floor.known() && anchor != null && anchor.isAfter(floor.value());
             return FetchEnvelope.of(
                     dto, falseEmpty ? ProbeOutcome.EMPTY_ANOMALY : ProbeOutcome.EMPTY_EXHAUSTED);
         }
-        // 케이스 ②③ zdiv 가드/전량 거부 (rawRowCount>0) — 이상
-        return FetchEnvelope.of(dto, ProbeOutcome.EMPTY_ANOMALY);
+        // 케이스 ②③ zdiv 가드/전량 거부 (rawRowCount>0)
+        if (inputs.rawOldest() == null) {
+            return FetchEnvelope.of(dto, ProbeOutcome.EMPTY_ANOMALY);
+        }
+        return invokeExhaustionProbe(
+                dto,
+                inputs.rawOldest(),
+                stock,
+                session,
+                overseas,
+                ProbeOutcome.EMPTY_ANOMALY,
+                ProbeOutcome.EMPTY_EXHAUSTED);
     }
 
-    /** 정상 경로 확인 프로브 1회 발행(비tx HTTP) — 오류는 DEFERRED로 분류한다. */
+    /**
+     * 정상 경로(케이스 oldest≠null)와 케이스②③(아카이브 꼬리) 양쪽이 공유하는 exhaustion probe 발행 로직(비tx HTTP) — outcome
+     * 매핑만 호출부별로 파라미터화한다. 오류는 DEFERRED로 분류한다 (REQ-149).
+     */
     @SuppressWarnings("PMD.AvoidCatchingGenericException") // REQ-149: 프로브 오류 전 유형을 DEFERRED로 흡수
-    private FetchEnvelope probeBelow(
-            Object dto, LocalDate oldest, Stock stock, LeaseSession session, boolean overseas)
+    private FetchEnvelope invokeExhaustionProbe(
+            Object dto,
+            LocalDate below,
+            Stock stock,
+            LeaseSession session,
+            boolean overseas,
+            ProbeOutcome hasDataOutcome,
+            ProbeOutcome exhaustedOutcome)
             throws InterruptedException {
         try {
             boolean hasData =
                     overseas
-                            ? overseasOhlcvService.confirmExhaustionProbe(oldest, stock, session)
+                            ? overseasOhlcvService.confirmExhaustionProbe(below, stock, session)
                             : domesticOhlcvService.confirmExhaustionProbe(
-                                    windowAdvancer.groupAFromDate(), oldest, stock, session);
-            return FetchEnvelope.of(
-                    dto,
-                    hasData ? ProbeOutcome.MORE_DATA_EXISTS : ProbeOutcome.CONFIRMED_EXHAUSTED);
+                                    windowAdvancer.groupAFromDate(), below, stock, session);
+            return FetchEnvelope.of(dto, hasData ? hasDataOutcome : exhaustedOutcome);
         } catch (RuntimeException e) {
             return FetchEnvelope.deferred(dto, e.getMessage(), isRetryable(e));
         }
     }
 
-    /** {@code daily_ohlcv} fetch DTO에서 GROUP_A 종료 판정 입력(rawRowCount)을 추출한다. */
-    private static int dailyRawRowCount(Object dto) {
+    /**
+     * {@code daily_ohlcv} fetch DTO에서 GROUP_A 종료 게이트 입력 3종(rawRowCount·oldest·rawOldest)을 한 번에
+     * 추출한다. 세 추출기를 하나로 묶어 관리한다(TooManyMethods 임계 준수) — 개별 필드 의미는 각 record 컴포넌트 문서를 참조.
+     */
+    private static DailyGateInputs extractDailyGateInputs(Object dto) {
         if (dto instanceof DomesticDailyOhlcvFetch f) {
-            return f.rawRowCount();
+            return new DailyGateInputs(
+                    f.rawRowCount(), f.oldestTradeDate(), f.rawOldestTradeDate());
         }
         if (dto instanceof OverseasDailyOhlcvFetch f) {
-            return f.rawRowCount();
+            return new DailyGateInputs(
+                    f.rawRowCount(), f.oldestTradeDate(), f.rawOldestTradeDate());
         }
-        return SINGLE_CALL_ROW_CAP; // 방어적 — 알 수 없는 DTO는 게이트 비대상
+        return new DailyGateInputs(SINGLE_CALL_ROW_CAP, null, null); // 방어적 — 알 수 없는 DTO는 게이트 비대상
     }
 
-    /** {@code daily_ohlcv} fetch DTO에서 도달 최과거일(oldest)을 추출한다(0 유효행이면 null). */
-    private static LocalDate dailyOldest(Object dto) {
-        if (dto instanceof DomesticDailyOhlcvFetch f) {
-            return f.oldestTradeDate();
-        }
-        if (dto instanceof OverseasDailyOhlcvFetch f) {
-            return f.oldestTradeDate();
-        }
-        return null;
-    }
+    /**
+     * GROUP_A {@code daily_ohlcv} 종료 게이트 입력 묶음.
+     *
+     * @param rawRowCount KIS 원본 응답 행수(검증 거부 전)
+     * @param oldest 검증 통과 행들의 최소 거래일(0 유효행이면 {@code null})
+     * @param rawOldest 원본 응답 전 행(검증 거부 전, aaa-infra#97)의 최소 거래일(미산정/파싱 불가면 {@code null})
+     */
+    private record DailyGateInputs(int rawRowCount, LocalDate oldest, LocalDate rawOldest) {}
 
     /**
      * 기대 최과거일(floor)과 신뢰 여부를 산정한다 (REQ-150/-154).

@@ -1056,6 +1056,35 @@ class OverseasDailyOhlcvCollectionServiceTest {
         }
 
         @Test
+        @DisplayName(
+                "aaa-infra#97: fetchWindow — 검증 거부(price=0) 행만 응답 → rawOldestTradeDate=거부 행 최소 거래일")
+        void fetchWindow_rawOldestTradeDate_includesRejectedRows() throws Exception {
+            // Arrange — 상장일 이전 쓰레기 행(price=0, 검증 거부) 2건만 응답, 저장 대상 0건
+            when(guardedKisExecutor.execute(
+                            any(LeaseSession.class),
+                            any(),
+                            anyString(),
+                            eq(KisOverseasDailyOhlcvResponse.class)))
+                    .thenReturn(
+                            response(
+                                    "4",
+                                    List.of(
+                                            row("20070819", "0", "0", "0"),
+                                            row("20070818", "0", "0", "0"))));
+
+            // Act
+            OverseasDailyOhlcvFetch fetch =
+                    service.fetchWindow(
+                            ANCHOR, stockOf("AAPL", Market.NASDAQ, AssetType.STOCK), openSession());
+
+            // Assert — 저장 대상 0건(oldestTradeDate=null)이나 원본 최소 거래일은 산정됨
+            assertThat(fetch.rowCount()).isZero();
+            assertThat(fetch.oldestTradeDate()).isNull();
+            assertThat(fetch.rawRowCount()).isEqualTo(2);
+            assertThat(fetch.rawOldestTradeDate()).isEqualTo(LocalDate.of(2007, 8, 18));
+        }
+
+        @Test
         @DisplayName("fetchWindow — 빈 응답(output null) → rows=빈목록, oldestTradeDate=null")
         void fetchWindow_emptyOutput_emptyFetch() throws Exception {
             when(guardedKisExecutor.execute(

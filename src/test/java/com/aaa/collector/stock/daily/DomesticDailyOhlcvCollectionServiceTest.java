@@ -905,6 +905,35 @@ class DomesticDailyOhlcvCollectionServiceTest {
             assertThat(fetch.rowCount()).isZero();
         }
 
+        @Test
+        @DisplayName(
+                "aaa-infra#97: fetchWindow — 검증 거부(close=0) 행만 응답 → rawOldestTradeDate=거부 행 최소 거래일")
+        void fetchWindow_rawOldestTradeDate_includesRejectedRows() throws Exception {
+            // Arrange — 상장일 이전 쓰레기 행(close=0, 검증 거부) 2건만 응답, 저장 대상 0건
+            KisDailyOhlcvResponse.DailyOhlcvRow rejected1 =
+                    new KisDailyOhlcvResponse.DailyOhlcvRow(
+                            "19890508", "0", "0", "0", "0", "0", "0", "N");
+            KisDailyOhlcvResponse.DailyOhlcvRow rejected2 =
+                    new KisDailyOhlcvResponse.DailyOhlcvRow(
+                            "19890509", "0", "0", "0", "0", "0", "0", "N");
+            when(guardedKisExecutor.execute(
+                            any(LeaseSession.class),
+                            any(),
+                            anyString(),
+                            eq(KisDailyOhlcvResponse.class)))
+                    .thenReturn(stubResponse(List.of(rejected1, rejected2)));
+
+            // Act
+            DomesticDailyOhlcvFetch fetch =
+                    service.fetchWindow(FROM, ANCHOR, stockOf("005930"), openSession());
+
+            // Assert — 저장 대상 0건(oldestTradeDate=null)이나 원본 최소 거래일은 산정됨
+            assertThat(fetch.rowCount()).isZero();
+            assertThat(fetch.oldestTradeDate()).isNull();
+            assertThat(fetch.rawRowCount()).isEqualTo(2);
+            assertThat(fetch.rawOldestTradeDate()).isEqualTo(LocalDate.of(1989, 5, 8));
+        }
+
         private KisDailyOhlcvResponse.DailyOhlcvRow haltRow(String date) {
             return new KisDailyOhlcvResponse.DailyOhlcvRow(
                     date, "75000", "74000", "76000", "73000", "0", "0", "N");

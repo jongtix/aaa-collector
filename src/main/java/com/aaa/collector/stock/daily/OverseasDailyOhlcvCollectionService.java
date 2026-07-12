@@ -15,6 +15,7 @@ import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
+import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.ExecutorService;
@@ -365,26 +366,28 @@ public class OverseasDailyOhlcvCollectionService {
         KisOverseasDailyOhlcvResponse response = fetch(session, excd, symbol, anchor);
 
         if (response.output1() == null || response.output2().isEmpty()) {
-            return new OverseasDailyOhlcvFetch(List.of(), null, 0, 0);
+            return new OverseasDailyOhlcvFetch(List.of(), null, 0, 0, null);
         }
+        LocalDate rawOldest = rawOldestTradeDate(response);
         // @MX:NOTE: [AUTO] zdiv 가드 조기반환 — 정직한 rawRowCount(response) 반환 (0 하드코딩 아님)
         // @MX:REASON: SPEC-COLLECTOR-BACKFILL-010 §Exclusions [MODIFY] — output2 비지 않음(≥1)이므로 케이스
         // ②(zdiv 이상, rawRowCount>0)가 케이스 ①(진짜 빈 응답, rawRowCount==0)과 판별되어 EMPTY_ANOMALY로 분기된다.
         if (parseZdiv(response.output1().zdiv()) > ZDIV_MAX) {
-            return new OverseasDailyOhlcvFetch(List.of(), null, 0, rawRowCount(response));
+            return new OverseasDailyOhlcvFetch(
+                    List.of(), null, 0, rawRowCount(response), rawOldest);
         }
 
         int rawRowCount = rawRowCount(response);
         List<ParsedOhlcvRow> kept = keepValidRows(symbol, response.output2());
         if (kept.isEmpty()) {
-            return new OverseasDailyOhlcvFetch(List.of(), null, 0, rawRowCount);
+            return new OverseasDailyOhlcvFetch(List.of(), null, 0, rawRowCount, rawOldest);
         }
         LocalDate oldest =
                 kept.stream()
                         .map(ParsedOhlcvRow::tradeDate)
                         .min(LocalDate::compareTo)
                         .orElseThrow();
-        return new OverseasDailyOhlcvFetch(kept, oldest, kept.size(), rawRowCount);
+        return new OverseasDailyOhlcvFetch(kept, oldest, kept.size(), rawRowCount, rawOldest);
     }
 
     /**
@@ -423,6 +426,31 @@ public class OverseasDailyOhlcvCollectionService {
      */
     private int rawRowCount(KisOverseasDailyOhlcvResponse response) {
         return response.output2().size();
+    }
+
+    /**
+     * KIS 원본 응답 전 행(검증 거부 전, 가격=0 등 포함)의 최소 거래일을 산정한다 (aaa-infra#97).
+     *
+     * <p>케이스②③(GROUP_A {@code oldest==null·rawRowCount>0}, 아카이브 꼬리 쓰레기 행) exhaustion probe 트리거 전용
+     * 입력이다. 날짜 필드 자체가 파싱 불가한 행은 무시한다(방어적) — 전 행이 파싱 불가하면 {@code null}을 반환한다.
+     */
+    private LocalDate rawOldestTradeDate(KisOverseasDailyOhlcvResponse response) {
+        LocalDate min = null;
+        for (KisOverseasDailyOhlcvResponse.OverseasDailyOhlcvRow row : response.output2()) {
+            LocalDate parsed = parseDateSafely(row.xymd());
+            if (parsed != null && (min == null || parsed.isBefore(min))) {
+                min = parsed;
+            }
+        }
+        return min;
+    }
+
+    private static LocalDate parseDateSafely(String raw) {
+        try {
+            return LocalDate.parse(raw, DATE_FMT);
+        } catch (DateTimeParseException e) {
+            return null;
+        }
     }
 
     /**

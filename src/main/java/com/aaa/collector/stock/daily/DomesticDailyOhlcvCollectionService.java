@@ -13,6 +13,7 @@ import com.aaa.collector.stock.StockRepository;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
+import java.time.format.DateTimeParseException;
 import java.util.List;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -299,16 +300,18 @@ public class DomesticDailyOhlcvCollectionService {
         String symbol = stock.getSymbol();
         KisDailyOhlcvResponse response = fetch(session, symbol, from, anchor);
         int rawRowCount = rawRowCount(response);
+        LocalDate rawOldest = rawOldestTradeDate(response);
         List<ParsedOhlcvRow> validRows = filterAndValidate(stock, symbol, response);
         if (validRows.isEmpty()) {
-            return new DomesticDailyOhlcvFetch(List.of(), null, 0, rawRowCount);
+            return new DomesticDailyOhlcvFetch(List.of(), null, 0, rawRowCount, rawOldest);
         }
         LocalDate oldest =
                 validRows.stream()
                         .map(ParsedOhlcvRow::tradeDate)
                         .min(LocalDate::compareTo)
                         .orElseThrow();
-        return new DomesticDailyOhlcvFetch(validRows, oldest, validRows.size(), rawRowCount);
+        return new DomesticDailyOhlcvFetch(
+                validRows, oldest, validRows.size(), rawRowCount, rawOldest);
     }
 
     /**
@@ -346,6 +349,31 @@ public class DomesticDailyOhlcvCollectionService {
      */
     private int rawRowCount(KisDailyOhlcvResponse response) {
         return response.output2().size();
+    }
+
+    /**
+     * KIS 원본 응답 전 행(검증 거부 전, 가격=0 등 포함)의 최소 거래일을 산정한다 (aaa-infra#97).
+     *
+     * <p>케이스②③(GROUP_A {@code oldest==null·rawRowCount>0}) exhaustion probe 트리거 전용 입력이다. 날짜 필드 자체가
+     * 파싱 불가한 행은 무시한다(방어적) — 전 행이 파싱 불가하면 {@code null}을 반환한다.
+     */
+    private LocalDate rawOldestTradeDate(KisDailyOhlcvResponse response) {
+        LocalDate min = null;
+        for (KisDailyOhlcvResponse.DailyOhlcvRow row : response.output2()) {
+            LocalDate parsed = parseDateSafely(row.stckBsopDate());
+            if (parsed != null && (min == null || parsed.isBefore(min))) {
+                min = parsed;
+            }
+        }
+        return min;
+    }
+
+    private static LocalDate parseDateSafely(String raw) {
+        try {
+            return LocalDate.parse(raw, DATE_FMT);
+        } catch (DateTimeParseException e) {
+            return null;
+        }
     }
 
     /**

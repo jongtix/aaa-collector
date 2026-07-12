@@ -409,6 +409,125 @@ class BackfillWindowExecutorGroupAGateTest {
     }
 
     @Nested
+    @DisplayName("aaa-infra#97: 케이스②③ 아카이브 꼬리 — rawOldestTradeDate exhaustion probe")
+    class ArchiveTailProbe {
+
+        @Test
+        @DisplayName("a) rawOldestTradeDate 확보 + 프로브 빈 응답 → COMPLETED+verified (010820 시나리오)")
+        void rawOldestPresent_probeEmpty_completesAndVerifies() throws InterruptedException {
+            Stock krx = usKrxStock("010820");
+            LocalDate rawOldest = LocalDate.of(1989, 5, 8); // 상장일(1989-05-11) 이전 쓰레기 행
+            BackfillStatus status = dailyOhlcvStatus("010820", LocalDate.of(1989, 5, 12));
+            stubManaged(status);
+            when(windowAdvancer.groupAFromDate()).thenReturn(FLOOR_FROM);
+            DomesticDailyOhlcvFetch fetch =
+                    new DomesticDailyOhlcvFetch(List.of(), null, 0, 2, rawOldest);
+            when(domesticOhlcvService.fetchWindow(eq(FLOOR_FROM), any(), eq(krx), eq(session)))
+                    .thenReturn(fetch);
+            when(domesticOhlcvService.confirmExhaustionProbe(
+                            eq(FLOOR_FROM), eq(rawOldest), eq(krx), eq(session)))
+                    .thenReturn(false); // 빈 정상 응답 — 소진 확정
+            when(domesticOhlcvService.persistWindow(eq(krx), eq(fetch)))
+                    .thenReturn(BackfillWindowResult.EMPTY);
+
+            FetchEnvelope envelope = executor.fetchWindow(status, krx, session);
+            assertThat(envelope.probeOutcome()).isEqualTo(ProbeOutcome.EMPTY_EXHAUSTED);
+            executor.persistWindow(status, krx, envelope);
+
+            verify(domesticOhlcvService, times(1))
+                    .confirmExhaustionProbe(eq(FLOOR_FROM), eq(rawOldest), eq(krx), eq(session));
+            assertThat(status.getStatus()).isEqualTo(BackfillStatusType.COMPLETED);
+            assertThat(status.getVerifiedAt()).isNotNull();
+        }
+
+        @Test
+        @DisplayName("b) rawOldestTradeDate 확보 + 프로브 1행 이상 → EMPTY_ANOMALY 유지(기존 동작 보존)")
+        void rawOldestPresent_probeHasData_keepsEmptyAnomaly() throws InterruptedException {
+            Stock krx = usKrxStock("010820");
+            LocalDate rawOldest = LocalDate.of(1989, 5, 8);
+            BackfillStatus status = dailyOhlcvStatus("010820", LocalDate.of(1989, 5, 12));
+            stubManaged(status);
+            when(windowAdvancer.groupAFromDate()).thenReturn(FLOOR_FROM);
+            DomesticDailyOhlcvFetch fetch =
+                    new DomesticDailyOhlcvFetch(List.of(), null, 0, 2, rawOldest);
+            when(domesticOhlcvService.fetchWindow(eq(FLOOR_FROM), any(), eq(krx), eq(session)))
+                    .thenReturn(fetch);
+            when(domesticOhlcvService.confirmExhaustionProbe(
+                            eq(FLOOR_FROM), eq(rawOldest), eq(krx), eq(session)))
+                    .thenReturn(true); // 아래에 진짜 데이터 잔존
+
+            FetchEnvelope envelope = executor.fetchWindow(status, krx, session);
+            assertThat(envelope.probeOutcome()).isEqualTo(ProbeOutcome.EMPTY_ANOMALY);
+            executor.persistWindow(status, krx, envelope);
+
+            verify(domesticOhlcvService, times(1))
+                    .confirmExhaustionProbe(eq(FLOOR_FROM), eq(rawOldest), eq(krx), eq(session));
+            assertThat(status.getStatus()).isNotEqualTo(BackfillStatusType.COMPLETED);
+            assertThat(status.getVerifiedAt()).isNull();
+            assertThat(status.getStaleCount()).isEqualTo(1);
+        }
+
+        @Test
+        @DisplayName("c) rawOldestTradeDate 확보 + 프로브 오류 → DEFERRED(재시도 가능=IN_PROGRESS, 무전진)")
+        void rawOldestPresent_probeErrors_deferred() throws InterruptedException {
+            Stock krx = usKrxStock("010820");
+            LocalDate rawOldest = LocalDate.of(1989, 5, 8);
+            LocalDate priorDate = LocalDate.of(1989, 5, 12);
+            BackfillStatus status = dailyOhlcvStatus("010820", priorDate);
+            stubManaged(status);
+            when(windowAdvancer.groupAFromDate()).thenReturn(FLOOR_FROM);
+            DomesticDailyOhlcvFetch fetch =
+                    new DomesticDailyOhlcvFetch(List.of(), null, 0, 2, rawOldest);
+            when(domesticOhlcvService.fetchWindow(eq(FLOOR_FROM), any(), eq(krx), eq(session)))
+                    .thenReturn(fetch);
+            when(domesticOhlcvService.confirmExhaustionProbe(
+                            eq(FLOOR_FROM), eq(rawOldest), eq(krx), eq(session)))
+                    .thenThrow(new RuntimeException("HTTP 500"));
+
+            FetchEnvelope envelope = executor.fetchWindow(status, krx, session);
+            assertThat(envelope.probeOutcome()).isEqualTo(ProbeOutcome.DEFERRED);
+            executor.persistWindow(status, krx, envelope);
+
+            assertThat(status.getStatus()).isEqualTo(BackfillStatusType.IN_PROGRESS);
+            assertThat(status.getLastCollectedDate()).isEqualTo(priorDate); // 무전진
+            assertThat(status.getVerifiedAt()).isNull();
+        }
+
+        @Test
+        @DisplayName("d) rawOldestTradeDate 미산정(파싱 불가) → 프로브 미발행, EMPTY_ANOMALY 무변경(회귀 가드)")
+        void rawOldestAbsent_noProbeInvoked_regressionGuard() throws InterruptedException {
+            Stock krx = usKrxStock("010820");
+            BackfillStatus status = dailyOhlcvStatus("010820", LocalDate.of(1989, 5, 12));
+            stubManaged(status);
+            when(windowAdvancer.groupAFromDate()).thenReturn(FLOOR_FROM);
+            // rawOldestTradeDate=null(4-인자 레거시 생성자) — 전 원본 행 날짜 파싱 실패 모사
+            DomesticDailyOhlcvFetch fetch = new DomesticDailyOhlcvFetch(List.of(), null, 0, 2);
+            when(domesticOhlcvService.fetchWindow(eq(FLOOR_FROM), any(), eq(krx), eq(session)))
+                    .thenReturn(fetch);
+
+            FetchEnvelope envelope = executor.fetchWindow(status, krx, session);
+            assertThat(envelope.probeOutcome()).isEqualTo(ProbeOutcome.EMPTY_ANOMALY);
+            executor.persistWindow(status, krx, envelope);
+
+            verify(domesticOhlcvService, never())
+                    .confirmExhaustionProbe(any(), any(), any(), any());
+            assertThat(status.getStatus()).isNotEqualTo(BackfillStatusType.COMPLETED);
+            assertThat(status.getVerifiedAt()).isNull();
+            assertThat(status.getStaleCount()).isEqualTo(1);
+        }
+
+        private Stock usKrxStock(String symbol) {
+            return Stock.builder()
+                    .symbol(symbol)
+                    .nameKo(symbol)
+                    .market(Market.KOSPI)
+                    .assetType(AssetType.STOCK)
+                    .active(true)
+                    .build();
+        }
+    }
+
+    @Nested
     @DisplayName("EC-8: 국내 대칭 — confirmExhaustionProbe(from, below, stock, session) 시그니처")
     class DomesticSymmetry {
 
