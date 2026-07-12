@@ -418,14 +418,15 @@ public class DomesticDailyOhlcvCollectionService {
 
             if (invalid) {
                 log.warn(
-                        "[domestic-daily] 검증 실패 (데이터 유실) — symbol={}, date={}, close={}, open={}, high={}, low={}, volume={}",
+                        "[domestic-daily] 검증 실패 (데이터 유실) — symbol={}, date={}, close={}, open={}, high={}, low={}, volume={}, tradingValue={}",
                         symbol,
                         row.stckBsopDate(),
                         row.stckClpr(),
                         row.stckOprc(),
                         row.stckHgpr(),
                         row.stckLwpr(),
-                        row.acmlVol());
+                        row.acmlVol(),
+                        row.acmlTrPbmn());
                 return null;
             }
             LocalDate tradeDate = LocalDate.parse(row.stckBsopDate(), DATE_FMT);
