@@ -66,12 +66,16 @@ class CoverageRefresherTest {
     }
 
     private static Stock stock(long id, Market market) {
+        return stock(id, market, LocalDate.of(2015, 1, 1));
+    }
+
+    private static Stock stock(long id, Market market, LocalDate listedDate) {
         return Stock.builder()
                 .symbol("SYM" + id)
                 .nameKo("종목" + id)
                 .market(market)
                 .assetType(AssetType.STOCK)
-                .listedDate(LocalDate.of(2015, 1, 1))
+                .listedDate(listedDate)
                 .build();
     }
 
@@ -233,6 +237,64 @@ class CoverageRefresherTest {
             refresher.refreshUsCoverage();
 
             verify(densityMetrics).setInternalGapCount(WatermarkSeries.DAILY_OHLCV_US, 1L);
+        }
+
+        @Test
+        @DisplayName("이슈#96 회귀: 검증 기준선이 wallFloor보다 나중이면 그 기준선을 채택 — 아카이브 소진 종목 오탐 차단")
+        void us_verifiedBaselineLaterThanWallFloor_raisesFloorAndClearsFalsePositive() {
+            // wall(2007-08-20)보다 이전인 listed_date를 부여해 보정 없이 wallFloor=wall이 되게 한다
+            Stock stock = stock(1, Market.NASDAQ, LocalDate.of(1990, 1, 1));
+            LocalDate verifiedBaseline = LocalDate.of(2010, 6, 29); // 실제 IPO — 검증된 아카이브 소진 지점
+            when(usMarketSessionGate.computeExpectedTradeDate()).thenReturn(null);
+            when(stockRepository.findAllActiveOverseasTradable()).thenReturn(List.of(stock));
+            // MIN(trade_date) == verifiedBaseline — 보유 최과거가 곧 검증된 실제 IPO
+            when(dailyOhlcvRepository.findMinMaxCountByStockIds(anyCollection()))
+                    .thenReturn(
+                            List.<Object[]>of(
+                                    new Object[] {
+                                        stock.getId(),
+                                        verifiedBaseline,
+                                        LocalDate.of(2020, 1, 1),
+                                        100
+                                    }));
+            when(dailyOhlcvRepository.findDistinctTradeDatesByStockIds(anyCollection()))
+                    .thenReturn(List.of(verifiedBaseline));
+            when(backfillStatusRepository.findVerifiedBaseline(any(), any(), any()))
+                    .thenReturn(Optional.of(verifiedBaseline));
+
+            refresher.refreshUsCoverage();
+
+            // 수정 전에는 wallFloor(2007-08-20) < MIN(trade_date)(2010-06-29)로 오탐 카운트(1)됨
+            verify(densityMetrics).setBelowFloorCount(WatermarkSeries.DAILY_OHLCV_US, 0L);
+        }
+
+        @Test
+        @DisplayName("검증 기준선이 wallFloor보다 이전이면 wallFloor를 유지 — 하향 회귀 금지")
+        void us_verifiedBaselineEarlierThanWallFloor_neverRegressesFloor() {
+            Stock stock = stock(1, Market.NASDAQ); // listed_date=2015-01-01 → wallFloor=2015-01-01
+            LocalDate verifiedBaseline = LocalDate.of(2010, 1, 1); // wallFloor보다 이전(오래된 값)
+            // MIN(trade_date) == listed_date로 두어 listed_date 하향 보정(REQ-159)이 별도로 트리거되지 않게 한다
+            // (하향 보정이 걸리면 listed_date 자체가 minTradeDate로 바뀌어 이 테스트가 검증하려는
+            // "verifiedBaseline < wallFloor일 때 wallFloor 유지" 시나리오와 뒤섞인다).
+            LocalDate minTradeDate = LocalDate.of(2015, 1, 1);
+            when(usMarketSessionGate.computeExpectedTradeDate()).thenReturn(null);
+            when(stockRepository.findAllActiveOverseasTradable()).thenReturn(List.of(stock));
+            when(dailyOhlcvRepository.findMinMaxCountByStockIds(anyCollection()))
+                    .thenReturn(
+                            List.<Object[]>of(
+                                    new Object[] {
+                                        stock.getId(), minTradeDate, LocalDate.of(2020, 1, 1), 100
+                                    }));
+            when(dailyOhlcvRepository.findDistinctTradeDatesByStockIds(anyCollection()))
+                    .thenReturn(List.of(minTradeDate));
+            when(backfillStatusRepository.findVerifiedBaseline(any(), any(), any()))
+                    .thenReturn(Optional.of(verifiedBaseline));
+
+            refresher.refreshUsCoverage();
+
+            // wallFloor(2015-01-01)를 유지하면 minTradeDate(2015-01-01)와 동일해 미달이 아니므로 0.
+            // 만약 버그처럼 verifiedBaseline(2010-01-01)으로 하향 회귀했다면 minTradeDate(2015)가 이를 초과해 1로 오카운트된다.
+            verify(densityMetrics).setBelowFloorCount(WatermarkSeries.DAILY_OHLCV_US, 0L);
         }
 
         @Test

@@ -203,14 +203,28 @@ public class CoverageRefresher {
     /**
      * 신뢰 가능한 기대 최과거일(trusted floor)을 산정한다.
      *
-     * <p>미국: {@code max(listed_date, 2007-08-20 벽)} — 벽 자체가 상시 신뢰 하한이므로 항상 값이 존재한다(REQ-154). 국내: 검증
-     * 기준선({@code verified_at IS NOT NULL} 완료의 {@code last_collected_date})만 신뢰 가능 — 없으면 {@code
-     * null}(모집단 제외, MA-01 레거시 무신호 오탐 차단, §7 DP-1 분기 B 기본).
+     * <p>미국: {@code max(listed_date, 2007-08-20 벽)}(wallFloor)이 항상 신뢰 하한의 기저이므로 값이 항상
+     * 존재한다(REQ-154). 여기에 더해 검증 기준선({@code verified_at IS NOT NULL} 완료의 {@code
+     * last_collected_date})이 존재하면 {@code max(wallFloor, verifiedBaseline)}으로 상향한다 — 백필 서브시스템이 KIS
+     * 아카이브 소진(더 이상 과거 데이터 없음)을 실측으로 검증한 종목은 그 실측 기준선이 벽/listed_date보다 신뢰도가 높으므로 게이지 A 오탐(#96)을 막는다.
+     * 검증 기준선이 없으면(레거시 미검증 완료 포함) 종전과 동일하게 wallFloor를 그대로 사용한다 — 검증 기준선이 wallFloor보다 과거일 수는 있으나 그 경우
+     * wallFloor보다 하향하지 않는다(REQ-154 "항상 신뢰 하한 존재" 불변 유지).
+     *
+     * <p>국내: 검증 기준선만 신뢰 가능 — 없으면 {@code null}(모집단 제외, MA-01 레거시 무신호 오탐 차단, §7 DP-1 분기 B 기본).
      */
     private LocalDate resolveTrustedFloor(Stock stock, boolean overseas) {
         if (overseas) {
             LocalDate listed = stock.getListedDate();
-            return listed == null || listed.isBefore(US_DATA_WALL) ? US_DATA_WALL : listed;
+            LocalDate wallFloor =
+                    listed == null || listed.isBefore(US_DATA_WALL) ? US_DATA_WALL : listed;
+            return backfillStatusRepository
+                    .findVerifiedBaseline(TARGET_TYPE_STOCK, stock.getSymbol(), DAILY_OHLCV)
+                    .map(
+                            verifiedBaseline ->
+                                    verifiedBaseline.isAfter(wallFloor)
+                                            ? verifiedBaseline
+                                            : wallFloor)
+                    .orElse(wallFloor);
         }
         return backfillStatusRepository
                 .findVerifiedBaseline(TARGET_TYPE_STOCK, stock.getSymbol(), DAILY_OHLCV)
