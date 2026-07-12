@@ -1,5 +1,6 @@
 package com.aaa.collector.observability;
 
+import java.time.DateTimeException;
 import java.time.Instant;
 import java.util.Optional;
 import lombok.RequiredArgsConstructor;
@@ -53,12 +54,13 @@ public class BatchLastLoadRepository {
      * <p>저장된 UTC epoch 초 문자열을 {@link Instant}로 환원해 반환한다 — 소비자({@code BatchMetricsWarmStarter})가 게이지
      * seed에 그대로 쓰는 형태다. epoch↔Instant 변환을 이 단일 파생 소스에 캡슐화한다.
      *
-     * <p>저장값이 손상되어(비숫자) 파싱에 실패하면 {@link NumberFormatException}을 전파하지 않고 {@code Optional.empty()}로
-     * 흡수한다 — 손상값은 "미가용"의 한 형태이므로 소비자({@code BatchMetricsWarmStarter})가 DB 프록시로 폴백하게 해야 부팅이 크래시하지
-     * 않는다(REQ-WSR-006, 비회귀).
+     * <p>저장값이 손상되면 예외를 전파하지 않고 {@code Optional.empty()}로 흡수한다 — (1) 비숫자라 파싱에 실패하는 경우 ({@link
+     * NumberFormatException}), (2) 파싱은 되나 {@link Instant}의 유효 epoch-second 범위를 벗어나는 경우 ({@link
+     * DateTimeException}) 둘 다 해당한다. 손상값은 "미가용"의 한 형태이므로 소비자({@code BatchMetricsWarmStarter})가 DB
+     * 프록시로 폴백하게 해야 부팅이 크래시하지 않는다(REQ-WSR-006, 비회귀).
      *
      * @param batch 배치 라벨(예: {@code corp-code})
-     * @return 저장된 마지막 성공 시각. 키가 없거나 값이 손상됐으면 {@code Optional.empty()}
+     * @return 저장된 마지막 성공 시각. 키가 없거나 값이 손상됐으면(비숫자 또는 범위 밖) {@code Optional.empty()}
      */
     public Optional<Instant> find(String batch) {
         String raw = redisTemplate.opsForValue().get(key(batch));
@@ -67,7 +69,7 @@ public class BatchLastLoadRepository {
         }
         try {
             return Optional.of(Instant.ofEpochSecond(Long.parseLong(raw)));
-        } catch (NumberFormatException e) {
+        } catch (NumberFormatException | DateTimeException e) {
             log.warn(
                     "BatchLastLoad 손상값 무시 — batch={}, raw={} (프록시 폴백). error={}",
                     batch,

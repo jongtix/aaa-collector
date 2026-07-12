@@ -78,6 +78,20 @@ class BatchLastLoadRepositoryTest {
     }
 
     @Test
+    @DisplayName(
+            "find — 숫자지만 Instant epoch-second 유효범위 밖이면 예외 없이 Optional.empty() 반환(부팅 폴백, REQ-WSR-006)")
+    void find_whenEpochOutOfRange_returnsEmpty() {
+        stubOpsForValue();
+        // 파싱은 되지만 Instant.ofEpochSecond의 유효 범위(약 ±3.15e16)를 초과 — DateTimeException 유발.
+        when(valueOps.get(KEY_PREFIX + "corp-code")).thenReturn("9000000000000000000");
+
+        // 범위 밖 값도 "미가용"의 한 형태 — 예외를 전파하지 않고 프록시 폴백 경로가 작동하도록 empty를 반환해야 한다.
+        Optional<Instant> result = repository().find("corp-code");
+
+        assertThat(result).isEmpty();
+    }
+
+    @Test
     @DisplayName("save/find 라운드트립 — write 키와 read 키가 동일 파생 소스 (REQ-WSR-008, AC-8)")
     void saveAndFind_useSameDerivedKey() {
         stubOpsForValue();
