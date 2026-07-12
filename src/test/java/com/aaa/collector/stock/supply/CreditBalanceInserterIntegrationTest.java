@@ -1,7 +1,9 @@
 package com.aaa.collector.stock.supply;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.Mockito.mock;
 
+import com.aaa.collector.observability.BatchLastLoadRepository;
 import com.aaa.collector.observability.BatchMetrics;
 import com.aaa.collector.observability.WatermarkMetrics;
 import com.aaa.collector.stock.CreditBalance;
@@ -47,6 +49,7 @@ class CreditBalanceInserterIntegrationTest {
     @SuppressWarnings("unused")
     private StringRedisTemplate redisTemplate;
 
+    @MockitoBean private BatchLastLoadRepository batchLastLoadRepository;
     @Autowired private DataSource dataSource;
     @Autowired private StockRepository stockRepository;
 
@@ -85,7 +88,9 @@ class CreditBalanceInserterIntegrationTest {
     }
 
     private CreditBalanceInserter buildInserter(SimpleMeterRegistry registry) {
-        BatchMetrics metrics = new BatchMetrics(registry, Clock.systemDefaultZone());
+        BatchMetrics metrics =
+                new BatchMetrics(
+                        registry, Clock.systemDefaultZone(), mock(BatchLastLoadRepository.class));
         WatermarkMetrics watermarkMetrics = new WatermarkMetrics(registry);
         return new CreditBalanceInserter(new JdbcTemplate(dataSource), metrics, watermarkMetrics);
     }

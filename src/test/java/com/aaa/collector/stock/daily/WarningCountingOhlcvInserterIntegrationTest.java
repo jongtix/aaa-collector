@@ -1,7 +1,9 @@
 package com.aaa.collector.stock.daily;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.Mockito.mock;
 
+import com.aaa.collector.observability.BatchLastLoadRepository;
 import com.aaa.collector.observability.BatchMetrics;
 import com.aaa.collector.observability.WatermarkMetrics;
 import com.aaa.collector.stock.Stock;
@@ -48,6 +50,7 @@ class WarningCountingOhlcvInserterIntegrationTest {
     @SuppressWarnings("unused")
     private StringRedisTemplate redisTemplate;
 
+    @MockitoBean private BatchLastLoadRepository batchLastLoadRepository;
     @Autowired private DataSource dataSource;
     @Autowired private StockRepository stockRepository;
 
@@ -75,7 +78,9 @@ class WarningCountingOhlcvInserterIntegrationTest {
     }
 
     private WarningCountingOhlcvInserter buildInserter(SimpleMeterRegistry registry) {
-        BatchMetrics metrics = new BatchMetrics(registry, Clock.systemDefaultZone());
+        BatchMetrics metrics =
+                new BatchMetrics(
+                        registry, Clock.systemDefaultZone(), mock(BatchLastLoadRepository.class));
         WatermarkMetrics watermarkMetrics = new WatermarkMetrics(registry);
         return new WarningCountingOhlcvInserter(
                 new JdbcTemplate(dataSource), metrics, watermarkMetrics);

@@ -1,6 +1,13 @@
 package com.aaa.collector.observability;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatNoException;
+import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
 
 import io.micrometer.core.instrument.Gauge;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
@@ -11,6 +18,7 @@ import java.util.Set;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
+import org.springframework.dao.QueryTimeoutException;
 
 @DisplayName("BatchMetrics — 배치 집계 계측 (REQ-OBSV-020/021/022/023)")
 class BatchMetricsTest {
@@ -34,7 +42,11 @@ class BatchMetricsTest {
         @DisplayName("대상/성공/실패/스킵 카운터가 배치 라벨별로 누적된다")
         void accumulatesCountersByBatchLabel() {
             SimpleMeterRegistry registry = new SimpleMeterRegistry();
-            BatchMetrics metrics = new BatchMetrics(registry, Clock.systemDefaultZone());
+            BatchMetrics metrics =
+                    new BatchMetrics(
+                            registry,
+                            Clock.systemDefaultZone(),
+                            mock(BatchLastLoadRepository.class));
 
             metrics.recordCompletion("domestic-daily", 100, 90, 5, 5);
 
@@ -48,7 +60,11 @@ class BatchMetricsTest {
         @DisplayName("충족률 gauge = 성공/대상 (REQ-OBSV-020)")
         void completenessRatioIsSuccessOverTarget() {
             SimpleMeterRegistry registry = new SimpleMeterRegistry();
-            BatchMetrics metrics = new BatchMetrics(registry, Clock.systemDefaultZone());
+            BatchMetrics metrics =
+                    new BatchMetrics(
+                            registry,
+                            Clock.systemDefaultZone(),
+                            mock(BatchLastLoadRepository.class));
 
             metrics.recordCompletion("domestic-daily", 200, 150, 30, 20);
 
@@ -60,7 +76,11 @@ class BatchMetricsTest {
         @DisplayName("대상 0건이면 충족률은 0으로 노출된다 (0 나눗셈 방지)")
         void completenessRatioIsZeroWhenNoTarget() {
             SimpleMeterRegistry registry = new SimpleMeterRegistry();
-            BatchMetrics metrics = new BatchMetrics(registry, Clock.systemDefaultZone());
+            BatchMetrics metrics =
+                    new BatchMetrics(
+                            registry,
+                            Clock.systemDefaultZone(),
+                            mock(BatchLastLoadRepository.class));
 
             metrics.recordCompletion("domestic-daily", 0, 0, 0, 0);
 
@@ -72,7 +92,11 @@ class BatchMetricsTest {
         @DisplayName("배치 라벨별로 시계열이 분리된다 (3종 수급 라벨 등)")
         void seriesSeparatedByBatchLabel() {
             SimpleMeterRegistry registry = new SimpleMeterRegistry();
-            BatchMetrics metrics = new BatchMetrics(registry, Clock.systemDefaultZone());
+            BatchMetrics metrics =
+                    new BatchMetrics(
+                            registry,
+                            Clock.systemDefaultZone(),
+                            mock(BatchLastLoadRepository.class));
 
             metrics.recordCompletion("domestic-supply-investor", 10, 10, 0, 0);
             metrics.recordCompletion("domestic-supply-short-sale", 10, 8, 1, 1);
@@ -85,7 +109,11 @@ class BatchMetricsTest {
         @DisplayName("per-stock 종목 라벨을 생성하지 않는다 (REQ-OBSV-022 — symbol 태그 부재)")
         void noPerStockSymbolLabel() {
             SimpleMeterRegistry registry = new SimpleMeterRegistry();
-            BatchMetrics metrics = new BatchMetrics(registry, Clock.systemDefaultZone());
+            BatchMetrics metrics =
+                    new BatchMetrics(
+                            registry,
+                            Clock.systemDefaultZone(),
+                            mock(BatchLastLoadRepository.class));
 
             metrics.recordCompletion("domestic-daily", 100, 100, 0, 0);
 
@@ -107,11 +135,61 @@ class BatchMetricsTest {
             Instant fixed = Instant.parse("2026-06-19T07:00:00Z"); // 16:00 KST
             Clock clock = Clock.fixed(fixed, KST);
             SimpleMeterRegistry registry = new SimpleMeterRegistry();
-            BatchMetrics metrics = new BatchMetrics(registry, clock);
+            BatchMetrics metrics =
+                    new BatchMetrics(registry, clock, mock(BatchLastLoadRepository.class));
 
             metrics.recordCompletion("domestic-daily", 100, 90, 5, 5);
 
             Gauge gauge = registry.get(LAST_LOAD).tags("batch", "domestic-daily").gauge();
+            assertThat(gauge.value()).isEqualTo((double) fixed.getEpochSecond());
+        }
+    }
+
+    @Nested
+    @DisplayName("Redis 성공 시각 영속화 (SPEC-COLLECTOR-WARMSTART-REDIS-001 REQ-WSR-001/003)")
+    class RedisPersistence {
+
+        @Test
+        @DisplayName(
+                "recordCompletion은 게이지에 stamp된 것과 동일한 epoch로 repo.save(batch, epoch)를 호출한다 (AC-1)")
+        void persistsSameEpochAsGauge() {
+            // Arrange
+            Instant fixed = Instant.parse("2026-07-12T07:30:00Z"); // corp-code 07:30 KST 성공 stamp
+            Clock clock = Clock.fixed(fixed, KST);
+            SimpleMeterRegistry registry = new SimpleMeterRegistry();
+            BatchLastLoadRepository repo = mock(BatchLastLoadRepository.class);
+            BatchMetrics metrics = new BatchMetrics(registry, clock, repo);
+
+            // Act
+            metrics.recordCompletion("corp-code", 3976, 3976, 0, 0);
+
+            // Assert — Redis에 기록된 epoch가 게이지 값과 동일해야 한다
+            verify(repo).save("corp-code", fixed.getEpochSecond());
+            Gauge gauge = registry.get(LAST_LOAD).tags("batch", "corp-code").gauge();
+            assertThat(gauge.value()).isEqualTo((double) fixed.getEpochSecond());
+        }
+
+        @Test
+        @DisplayName("Redis 기록이 실패해도 배치는 정상 완료되고 카운터/게이지는 갱신된다 (best-effort, AC-2)")
+        void redisFailureDoesNotAbortCompletion() {
+            // Arrange
+            Instant fixed = Instant.parse("2026-07-12T07:30:00Z");
+            Clock clock = Clock.fixed(fixed, KST);
+            SimpleMeterRegistry registry = new SimpleMeterRegistry();
+            BatchLastLoadRepository repo = mock(BatchLastLoadRepository.class);
+            doThrow(new QueryTimeoutException("Redis 연결 실패"))
+                    .when(repo)
+                    .save(anyString(), anyLong());
+            BatchMetrics metrics = new BatchMetrics(registry, clock, repo);
+
+            // Act & Assert — 예외가 배치 흐름을 중단시키지 않는다
+            assertThatNoException()
+                    .isThrownBy(() -> metrics.recordCompletion("corp-code", 100, 90, 5, 5));
+
+            // Assert — 카운터와 게이지는 정상 갱신
+            verify(repo).save(eq("corp-code"), anyLong());
+            assertThat(counter(registry, SUCCESS, "corp-code")).isEqualTo(90.0);
+            Gauge gauge = registry.get(LAST_LOAD).tags("batch", "corp-code").gauge();
             assertThat(gauge.value()).isEqualTo((double) fixed.getEpochSecond());
         }
     }
@@ -126,7 +204,8 @@ class BatchMetricsTest {
             Instant fixed = Instant.parse("2026-04-20T01:00:00Z"); // 10:00 KST
             Clock clock = Clock.fixed(fixed, KST);
             SimpleMeterRegistry registry = new SimpleMeterRegistry();
-            BatchMetrics metrics = new BatchMetrics(registry, clock);
+            BatchMetrics metrics =
+                    new BatchMetrics(registry, clock, mock(BatchLastLoadRepository.class));
 
             metrics.recordDataArrival("overseas-shortsale-interest");
 
@@ -140,7 +219,11 @@ class BatchMetricsTest {
         void warmSetsLastDataGaugeToEpochSecond() {
             Instant instant = Instant.parse("2026-04-15T21:00:00Z");
             SimpleMeterRegistry registry = new SimpleMeterRegistry();
-            BatchMetrics metrics = new BatchMetrics(registry, Clock.systemDefaultZone());
+            BatchMetrics metrics =
+                    new BatchMetrics(
+                            registry,
+                            Clock.systemDefaultZone(),
+                            mock(BatchLastLoadRepository.class));
 
             metrics.warmDataArrival("overseas-shortsale-interest", instant);
 
@@ -153,7 +236,11 @@ class BatchMetricsTest {
         @DisplayName("recordDataArrival는 last_load gauge를 갱신하지 않는다 (실행/도착 분리)")
         void doesNotTouchLastLoad() {
             SimpleMeterRegistry registry = new SimpleMeterRegistry();
-            BatchMetrics metrics = new BatchMetrics(registry, Clock.systemDefaultZone());
+            BatchMetrics metrics =
+                    new BatchMetrics(
+                            registry,
+                            Clock.systemDefaultZone(),
+                            mock(BatchLastLoadRepository.class));
 
             metrics.recordDataArrival("overseas-shortsale-interest");
 
@@ -172,7 +259,11 @@ class BatchMetricsTest {
         @DisplayName("단일 누적 카운터로 침묵 드롭 건수를 증가시킨다 (사유별 라벨 없음)")
         void incrementsSingleSilentDropCounter() {
             SimpleMeterRegistry registry = new SimpleMeterRegistry();
-            BatchMetrics metrics = new BatchMetrics(registry, Clock.systemDefaultZone());
+            BatchMetrics metrics =
+                    new BatchMetrics(
+                            registry,
+                            Clock.systemDefaultZone(),
+                            mock(BatchLastLoadRepository.class));
 
             metrics.recordSilentDrops(3);
             metrics.recordSilentDrops(2);
@@ -184,7 +275,11 @@ class BatchMetricsTest {
         @DisplayName("0건 드롭은 카운터를 증가시키지 않는다")
         void zeroDropsDoesNotIncrement() {
             SimpleMeterRegistry registry = new SimpleMeterRegistry();
-            BatchMetrics metrics = new BatchMetrics(registry, Clock.systemDefaultZone());
+            BatchMetrics metrics =
+                    new BatchMetrics(
+                            registry,
+                            Clock.systemDefaultZone(),
+                            mock(BatchLastLoadRepository.class));
 
             metrics.recordSilentDrops(0);
 
@@ -200,7 +295,11 @@ class BatchMetricsTest {
         @DisplayName("배치 라벨별로 파싱 거부 건수를 누적한다")
         void accumulatesByBatchLabel() {
             SimpleMeterRegistry registry = new SimpleMeterRegistry();
-            BatchMetrics metrics = new BatchMetrics(registry, Clock.systemDefaultZone());
+            BatchMetrics metrics =
+                    new BatchMetrics(
+                            registry,
+                            Clock.systemDefaultZone(),
+                            mock(BatchLastLoadRepository.class));
 
             metrics.recordParseRejections("overseas-shortsale-backfill", 3);
             metrics.recordParseRejections("overseas-shortsale-backfill", 2);
@@ -215,7 +314,11 @@ class BatchMetricsTest {
         @DisplayName("0건 호출도 시계열을 0으로 등록한다 (계측 연결 노출)")
         void zeroRegistersSeries() {
             SimpleMeterRegistry registry = new SimpleMeterRegistry();
-            BatchMetrics metrics = new BatchMetrics(registry, Clock.systemDefaultZone());
+            BatchMetrics metrics =
+                    new BatchMetrics(
+                            registry,
+                            Clock.systemDefaultZone(),
+                            mock(BatchLastLoadRepository.class));
 
             metrics.recordParseRejections("overseas-shortsale-backfill", 0);
 
@@ -227,7 +330,11 @@ class BatchMetricsTest {
         @DisplayName("파싱 거부 카운터는 last_load gauge를 갱신하지 않는다 (독립 시계열)")
         void doesNotTouchLastLoad() {
             SimpleMeterRegistry registry = new SimpleMeterRegistry();
-            BatchMetrics metrics = new BatchMetrics(registry, Clock.systemDefaultZone());
+            BatchMetrics metrics =
+                    new BatchMetrics(
+                            registry,
+                            Clock.systemDefaultZone(),
+                            mock(BatchLastLoadRepository.class));
 
             metrics.recordParseRejections("overseas-shortsale-backfill", 4);
 
@@ -247,7 +354,11 @@ class BatchMetricsTest {
         void setsLastLoadGaugeToEpochSecond() {
             Instant instant = Instant.parse("2026-06-24T01:00:00Z"); // 10:00 KST
             SimpleMeterRegistry registry = new SimpleMeterRegistry();
-            BatchMetrics metrics = new BatchMetrics(registry, Clock.systemDefaultZone());
+            BatchMetrics metrics =
+                    new BatchMetrics(
+                            registry,
+                            Clock.systemDefaultZone(),
+                            mock(BatchLastLoadRepository.class));
 
             metrics.warmLastLoad("domestic-daily", instant);
 
@@ -260,7 +371,11 @@ class BatchMetricsTest {
         void doesNotTouchCompletenessOrCounters() {
             Instant instant = Instant.parse("2026-06-24T01:00:00Z");
             SimpleMeterRegistry registry = new SimpleMeterRegistry();
-            BatchMetrics metrics = new BatchMetrics(registry, Clock.systemDefaultZone());
+            BatchMetrics metrics =
+                    new BatchMetrics(
+                            registry,
+                            Clock.systemDefaultZone(),
+                            mock(BatchLastLoadRepository.class));
 
             metrics.warmLastLoad("domestic-daily", instant);
 
@@ -283,7 +398,11 @@ class BatchMetricsTest {
             Instant first = Instant.parse("2026-06-24T01:00:00Z");
             Instant second = Instant.parse("2026-06-24T07:00:00Z");
             SimpleMeterRegistry registry = new SimpleMeterRegistry();
-            BatchMetrics metrics = new BatchMetrics(registry, Clock.systemDefaultZone());
+            BatchMetrics metrics =
+                    new BatchMetrics(
+                            registry,
+                            Clock.systemDefaultZone(),
+                            mock(BatchLastLoadRepository.class));
 
             metrics.warmLastLoad("domestic-daily", first);
             metrics.warmLastLoad("domestic-daily", second);
@@ -297,7 +416,11 @@ class BatchMetricsTest {
         void doesNotRegisterNewMetricNames() {
             Instant instant = Instant.parse("2026-06-24T01:00:00Z");
             SimpleMeterRegistry registry = new SimpleMeterRegistry();
-            BatchMetrics metrics = new BatchMetrics(registry, Clock.systemDefaultZone());
+            BatchMetrics metrics =
+                    new BatchMetrics(
+                            registry,
+                            Clock.systemDefaultZone(),
+                            mock(BatchLastLoadRepository.class));
 
             metrics.warmLastLoad("domestic-daily", instant);
 

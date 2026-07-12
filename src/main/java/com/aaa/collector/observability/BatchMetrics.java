@@ -11,6 +11,8 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.DoubleAdder;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.dao.DataAccessException;
 import org.springframework.stereotype.Component;
 
 /**
@@ -34,6 +36,7 @@ import org.springframework.stereotype.Component;
 // SPEC-COLLECTOR-SHORTSALE-DECIMAL-001
 // REQ-SSD-009 — 일봉 1 + 수급 3종 + 침묵 드롭 + 파싱 거부(Daily·Interest·CDN 백필)에서 fan_in >= 4
 // @MX:SPEC: SPEC-COLLECTOR-OBSV-001
+@Slf4j
 @Component
 @RequiredArgsConstructor
 public class BatchMetrics {
@@ -53,6 +56,7 @@ public class BatchMetrics {
 
     private final MeterRegistry registry;
     private final Clock clock;
+    private final BatchLastLoadRepository batchLastLoadRepository;
 
     /** batch → 충족률(성공/대상) gauge가 지연 조회하는 가변 상태. */
     private final Map<String, DoubleAdder> completeness = new ConcurrentHashMap<>();
@@ -90,7 +94,31 @@ public class BatchMetrics {
         completenessHolder(batch).reset();
         completenessHolder(batch).add(ratio);
 
-        lastLoadHolder(batch).set(clock.instant().getEpochSecond());
+        // 완료 epoch를 1회 캡처해 게이지와 Redis에 동일 값으로 stamp/기록한다(SPEC-COLLECTOR-WARMSTART-REDIS-001).
+        long epochSeconds = clock.instant().getEpochSecond();
+        lastLoadHolder(batch).set(epochSeconds);
+        persistLastLoad(batch, epochSeconds);
+    }
+
+    /**
+     * 배치의 마지막 성공 epoch를 Redis에 best-effort로 기록한다 (REQ-WSR-001/003).
+     *
+     * <p>기록 실패는 배치 흐름을 중단시키지 않는다 — {@link DataAccessException}(연결 오류·권한 거부 등)을 warn 로깅 후 흡수하고 계속
+     * 진행한다({@code BatchMetricsWarmStarter.warm}의 예외 흡수 패턴과 동일 철학). 관측 보조 상태의 기록 실패가 데이터 수집 본질 작업을
+     * 중단시켜서는 안 된다.
+     *
+     * @param batch 배치 라벨
+     * @param epochSeconds 게이지에 stamp된 것과 동일한 UTC epoch 초
+     */
+    private void persistLastLoad(String batch, long epochSeconds) {
+        try {
+            batchLastLoadRepository.save(batch, epochSeconds);
+        } catch (DataAccessException e) {
+            log.warn(
+                    "배치 마지막 성공 시각 Redis 기록 실패 — batch={}, 무시하고 계속 진행. error={}",
+                    batch,
+                    e.getMessage());
+        }
     }
 
     /**
