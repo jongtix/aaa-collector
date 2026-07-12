@@ -357,7 +357,7 @@ public class UsMarketSessionGate implements UsMarketOpenGate {
      * 탐색한다(REQ-WM2-006) — 기존 {@link #MAX_LOOKBACK_DAYS} 상한을 재사용한다.
      *
      * @return 직전 개장일. {@link #computeExpectedTradeDate()}가 {@code null}(holiday_count 미준비)이면 {@code
-     *     null} 전파(REQ-WM2-002)
+     *     null} 전파(REQ-WM2-002) @MX:NOTE 신규 메서드, 설계 Decision 3 구현체 — US 일봉 기대 게이지 및 커버리지 분모 단일 소스.
      */
     public LocalDate computePriorTradeDate() {
         LocalDate expected = computeExpectedTradeDate();
