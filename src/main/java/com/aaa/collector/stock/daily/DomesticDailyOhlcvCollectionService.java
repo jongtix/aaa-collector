@@ -390,7 +390,8 @@ public class DomesticDailyOhlcvCollectionService {
      * </ul>
      *
      * <p>SPEC-COLLECTOR-BACKFILL-006: 액면분할 거래정지일은 OHLC 유효 + {@code volume == 0}으로 반환되며 실제 거래가 정지된
-     * 사실이다(데이터 누락 아님). {@code trading_value}는 검증식에 미포함이라 {@code 0}도 그대로 저장된다.
+     * 사실이다(데이터 누락 아님). {@code trading_value}는 음수만 거부하고 {@code 0} 이상은 그대로 저장된다(aaa-infra#93 — 해외와 검증
+     * 정책 통일).
      */
     private ParsedOhlcvRow parseIfValid(String symbol, KisDailyOhlcvResponse.DailyOhlcvRow row) {
         try {
@@ -402,6 +403,7 @@ public class DomesticDailyOhlcvCollectionService {
             long tradingValue = Long.parseLong(row.acmlTrPbmn());
 
             // @MX:NOTE: [AUTO] 거래정지일(volume==0) 허용 — 데이터 누락이 아니라 실제 거래정지 사실. 음수만 거부.
+            // tradingValue도 음수(물리적 불가능값)만 거부하고 0은 허용(aaa-infra#93 — 해외 정책과 통일).
             // @MX:REASON: SPEC-COLLECTOR-BACKFILL-006 REQ-BACKFILL-080,-085 — 액면분할 변경상장일 직전
             // 거래정지 3거래일이 KIS 원주가로 close 고정·volume=0으로 반환됨(실측). volume<=0 거부 시 백필 오종료.
             boolean invalid =
@@ -411,7 +413,8 @@ public class DomesticDailyOhlcvCollectionService {
                             || low.compareTo(BigDecimal.ZERO) <= 0
                             || close.compareTo(PRICE_MAX) > 0
                             || volume < 0
-                            || volume > VOLUME_MAX;
+                            || volume > VOLUME_MAX
+                            || tradingValue < 0;
 
             if (invalid) {
                 log.warn(

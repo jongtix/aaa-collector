@@ -391,6 +391,62 @@ class DomesticDailyOhlcvCollectionServiceTest {
             // Assert
             verify(ohlcvInserter, never()).insertBatch(any(), any(), any(WatermarkSeries.class));
         }
+
+        @Test
+        @DisplayName("거래대금 음수(-1)인 행 — insertBatch 미호출 (aaa-infra#93, 국내/해외 검증 정책 통일)")
+        void collect_negativeTradingValueRow_notInserted() throws Exception {
+            // Arrange — volume>0(정상 행)인데 acmlTrPbmn(거래대금)이 음수(물리적 불가능값) → 거부
+            Stock stock = stockOf("005930");
+            when(stockRepository.findAllActiveTradable()).thenReturn(List.of(stock));
+            when(healthyKeySelector.selectHealthy()).thenReturn(List.of(ISA));
+
+            KisDailyOhlcvResponse.DailyOhlcvRow invalidRow =
+                    new KisDailyOhlcvResponse.DailyOhlcvRow(
+                            "20260605", "75000", "74000", "76000", "73000", "1000000", "-1", "N");
+            when(guardedKisExecutor.execute(
+                            any(LeaseSession.class),
+                            any(),
+                            anyString(),
+                            eq(KisDailyOhlcvResponse.class)))
+                    .thenReturn(stubResponse(List.of(invalidRow)));
+
+            // Act
+            service.collect(LocalDate.of(2026, 6, 5));
+
+            // Assert
+            verify(ohlcvInserter, never()).insertBatch(any(), any(), any(WatermarkSeries.class));
+        }
+
+        @Test
+        @DisplayName(
+                "정상 행(volume>0) + 거래대금==0 — insertBatch 1회 호출 (aaa-infra#93, KIS 아카이브 실데이터 결측 방지)")
+        void collect_normalRowZeroTradingValue_inserted() throws Exception {
+            // Arrange — volume>0(정상 행)인데 acmlTrPbmn(거래대금)==0(KIS 아카이브 실데이터 결측) → 이제 허용
+            Stock stock = stockOf("005930");
+            when(stockRepository.findAllActiveTradable()).thenReturn(List.of(stock));
+            when(healthyKeySelector.selectHealthy()).thenReturn(List.of(ISA));
+
+            KisDailyOhlcvResponse.DailyOhlcvRow row =
+                    new KisDailyOhlcvResponse.DailyOhlcvRow(
+                            "20260605", "75000", "74000", "76000", "73000", "1000000", "0", "N");
+            when(guardedKisExecutor.execute(
+                            any(LeaseSession.class),
+                            any(),
+                            anyString(),
+                            eq(KisDailyOhlcvResponse.class)))
+                    .thenReturn(stubResponse(List.of(row)));
+
+            // Act
+            service.collect(LocalDate.of(2026, 6, 5));
+
+            // Assert
+            @SuppressWarnings("unchecked")
+            ArgumentCaptor<List<ParsedOhlcvRow>> captor = ArgumentCaptor.forClass(List.class);
+            verify(ohlcvInserter, times(1))
+                    .insertBatch(any(), captor.capture(), any(WatermarkSeries.class));
+            assertThat(captor.getValue()).hasSize(1);
+            assertThat(captor.getValue().getFirst().tradingValue()).isZero();
+        }
     }
 
     @Nested
