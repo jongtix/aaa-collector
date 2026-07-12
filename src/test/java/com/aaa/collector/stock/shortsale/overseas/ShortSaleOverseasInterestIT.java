@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.when;
 
+import com.aaa.collector.observability.BatchLastLoadRepository;
 import com.aaa.collector.stock.ShortSaleOverseas;
 import com.aaa.collector.stock.ShortSaleOverseasRepository;
 import com.aaa.collector.stock.Stock;
@@ -46,6 +47,7 @@ class ShortSaleOverseasInterestIT {
     @SuppressWarnings("unused")
     private StringRedisTemplate redisTemplate;
 
+    @MockitoBean private BatchLastLoadRepository batchLastLoadRepository;
     @MockitoBean private FinraShortSaleClient finraClient;
 
     @Autowired private ShortSaleOverseasInterestCollectionService service;

@@ -2,6 +2,7 @@ package com.aaa.collector.stock.shortsale.overseas.backfill;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.aaa.collector.observability.BatchLastLoadRepository;
 import com.aaa.collector.stock.ShortSaleOverseas;
 import com.aaa.collector.stock.ShortSaleOverseasRepository;
 import com.aaa.collector.stock.Stock;
@@ -58,6 +59,7 @@ class FinraCdnShortSaleBackfillUpsertIT {
     @SuppressWarnings("unused")
     private StringRedisTemplate redisTemplate;
 
+    @MockitoBean private BatchLastLoadRepository batchLastLoadRepository;
     @Autowired private ShortSaleOverseasRepository repository;
     @Autowired private StockRepository stockRepository;
 

@@ -2,6 +2,7 @@ package com.aaa.collector.common.startup;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.aaa.collector.observability.BatchLastLoadRepository;
 import com.aaa.collector.support.SharedMySqlContainer;
 import java.sql.SQLException;
 import java.util.List;
@@ -36,6 +37,8 @@ class Tier2GrantMigrationStrategyIT {
     @MockitoBean
     @SuppressWarnings("unused")
     private StringRedisTemplate redisTemplate;
+
+    @MockitoBean private BatchLastLoadRepository batchLastLoadRepository;
 
     @Test
     @DisplayName("AC — SHOW GRANTS FOR 'collector'@'%'에 TIER2_TABLES 5개 UPDATE가 모두 존재한다")

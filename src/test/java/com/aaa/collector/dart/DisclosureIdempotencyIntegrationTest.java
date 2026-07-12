@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import com.aaa.collector.dart.disclosure.Disclosure;
 import com.aaa.collector.dart.disclosure.DisclosureRepository;
 import com.aaa.collector.dart.disclosure.DisclosureRow;
+import com.aaa.collector.observability.BatchLastLoadRepository;
 import com.aaa.collector.support.SharedMySqlContainer;
 import java.time.LocalDate;
 import java.util.List;
@@ -44,6 +45,7 @@ class DisclosureIdempotencyIntegrationTest {
     @SuppressWarnings("unused")
     private StringRedisTemplate redisTemplate;
 
+    @MockitoBean private BatchLastLoadRepository batchLastLoadRepository;
     @Autowired private DisclosureRepository disclosureRepository;
 
     private static final long STOCK_ID = 1L;

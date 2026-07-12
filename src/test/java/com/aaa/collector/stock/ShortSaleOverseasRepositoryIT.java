@@ -2,6 +2,7 @@ package com.aaa.collector.stock;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.aaa.collector.observability.BatchLastLoadRepository;
 import com.aaa.collector.stock.ShortSaleOverseasRepository.ShortInterestSnapshot;
 import com.aaa.collector.stock.enums.AssetType;
 import com.aaa.collector.stock.enums.Market;
@@ -44,6 +45,7 @@ class ShortSaleOverseasRepositoryIT {
     @SuppressWarnings("unused")
     private StringRedisTemplate redisTemplate;
 
+    @MockitoBean private BatchLastLoadRepository batchLastLoadRepository;
     private static final AtomicInteger SYMBOL_SEQ = new AtomicInteger();
 
     @Autowired private ShortSaleOverseasRepository repository;

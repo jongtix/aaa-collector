@@ -3,6 +3,7 @@ package com.aaa.collector.stock;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.aaa.collector.backfill.BackfillWindowResult;
+import com.aaa.collector.observability.BatchLastLoadRepository;
 import com.aaa.collector.stock.enums.AssetType;
 import com.aaa.collector.stock.enums.EventType;
 import com.aaa.collector.stock.enums.Market;
@@ -46,6 +47,7 @@ class RevSplitBackfillIdempotencyIT {
     @SuppressWarnings("unused")
     private StringRedisTemplate redisTemplate;
 
+    @MockitoBean private BatchLastLoadRepository batchLastLoadRepository;
     @Autowired private RevSplitCollectionService revSplitService;
     @Autowired private StockRepository stockRepository;
     @Autowired private CorporateEventRepository corporateEventRepository;

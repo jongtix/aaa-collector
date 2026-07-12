@@ -2,6 +2,7 @@ package com.aaa.collector.stock.rights;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.aaa.collector.observability.BatchLastLoadRepository;
 import com.aaa.collector.stock.CorporateEvent;
 import com.aaa.collector.stock.CorporateEventRepository;
 import com.aaa.collector.stock.Stock;
@@ -57,6 +58,7 @@ class OverseasRightsRepositoryIT {
     @SuppressWarnings("unused")
     private StringRedisTemplate redisTemplate;
 
+    @MockitoBean private BatchLastLoadRepository batchLastLoadRepository;
     private static final AtomicInteger SYMBOL_SEQ = new AtomicInteger();
 
     /** {@link OverseasRightsCollectionService}가 현금배당 행에 매핑하는 event_subtype 원본값(ca_title). */

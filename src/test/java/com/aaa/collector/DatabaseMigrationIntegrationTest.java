@@ -2,6 +2,7 @@ package com.aaa.collector;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.aaa.collector.observability.BatchLastLoadRepository;
 import com.aaa.collector.support.SharedMySqlContainer;
 import java.sql.SQLException;
 import java.util.List;
@@ -47,6 +48,7 @@ class DatabaseMigrationIntegrationTest {
     @SuppressWarnings("unused")
     private StringRedisTemplate redisTemplate;
 
+    @MockitoBean private BatchLastLoadRepository batchLastLoadRepository;
     @Autowired private Flyway flyway;
     @Autowired private JdbcTemplate jdbcTemplate;
 

@@ -2,6 +2,7 @@ package com.aaa.collector.backfill;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.aaa.collector.observability.BatchLastLoadRepository;
 import com.aaa.collector.stock.Stock;
 import com.aaa.collector.stock.StockRepository;
 import com.aaa.collector.stock.enums.AssetType;
@@ -63,6 +64,7 @@ class BackfillStatusSeederTest {
     @SuppressWarnings("unused")
     private StringRedisTemplate redisTemplate;
 
+    @MockitoBean private BatchLastLoadRepository batchLastLoadRepository;
     @Autowired private BackfillStatusSeeder seeder;
     @Autowired private BackfillStatusRepository backfillStatusRepository;
     @Autowired private StockRepository stockRepository;

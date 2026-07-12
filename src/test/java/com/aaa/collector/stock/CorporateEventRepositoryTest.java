@@ -2,6 +2,7 @@ package com.aaa.collector.stock;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.aaa.collector.observability.BatchLastLoadRepository;
 import com.aaa.collector.stock.enums.AssetType;
 import com.aaa.collector.stock.enums.EventType;
 import com.aaa.collector.stock.enums.Market;
@@ -39,6 +40,7 @@ class CorporateEventRepositoryTest {
     @SuppressWarnings("unused")
     private StringRedisTemplate redisTemplate;
 
+    @MockitoBean private BatchLastLoadRepository batchLastLoadRepository;
     @Autowired private CorporateEventRepository corporateEventRepository;
     @Autowired private StockRepository stockRepository;
 

@@ -3,6 +3,7 @@ package com.aaa.collector.macro;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.aaa.collector.macro.enums.MacroSource;
+import com.aaa.collector.observability.BatchLastLoadRepository;
 import com.aaa.collector.support.SharedMySqlContainer;
 import java.math.BigDecimal;
 import java.time.LocalDate;
@@ -44,6 +45,7 @@ class MacroExtIdempotencyIntegrationTest {
     @SuppressWarnings("unused")
     private StringRedisTemplate redisTemplate;
 
+    @MockitoBean private BatchLastLoadRepository batchLastLoadRepository;
     @Autowired private MacroIndicatorRepository macroIndicatorRepository;
 
     private MacroIndicator buildEcosIndicator(String code, LocalDate date, BigDecimal value) {

@@ -3,6 +3,7 @@ package com.aaa.collector.stock.grade;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
+import com.aaa.collector.observability.BatchLastLoadRepository;
 import com.aaa.collector.stock.Stock;
 import com.aaa.collector.stock.StockGrade;
 import com.aaa.collector.stock.StockRepository;
@@ -48,6 +49,7 @@ class StockGradeRepositoryTest {
     @SuppressWarnings("unused")
     private StringRedisTemplate redisTemplate;
 
+    @MockitoBean private BatchLastLoadRepository batchLastLoadRepository;
     @Autowired private StockGradeRepository stockGradeRepository;
     @Autowired private StockRepository stockRepository;
 

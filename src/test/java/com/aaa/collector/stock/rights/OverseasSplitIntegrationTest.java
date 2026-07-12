@@ -12,6 +12,7 @@ import com.aaa.collector.kis.gate.GuardedKisExecutor;
 import com.aaa.collector.kis.gate.KeyLeaseRegistry;
 import com.aaa.collector.kis.gate.KeyLeaseRegistry.LeaseSession;
 import com.aaa.collector.market.session.UsMarketSessionGate;
+import com.aaa.collector.observability.BatchLastLoadRepository;
 import com.aaa.collector.stock.CorporateEvent;
 import com.aaa.collector.stock.CorporateEventRepository;
 import com.aaa.collector.stock.Stock;
@@ -69,6 +70,7 @@ class OverseasSplitIntegrationTest {
     @SuppressWarnings("unused")
     private StringRedisTemplate redisTemplate;
 
+    @MockitoBean private BatchLastLoadRepository batchLastLoadRepository;
     @MockitoBean private GuardedKisExecutor guardedKisExecutor;
     @MockitoBean private KeyLeaseRegistry keyLeaseRegistry;
 

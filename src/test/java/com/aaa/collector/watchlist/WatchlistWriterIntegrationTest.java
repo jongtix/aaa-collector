@@ -5,6 +5,7 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 
+import com.aaa.collector.observability.BatchLastLoadRepository;
 import com.aaa.collector.stock.Stock;
 import com.aaa.collector.stock.StockListService;
 import com.aaa.collector.stock.StockRepository;
@@ -45,6 +46,7 @@ class WatchlistWriterIntegrationTest {
     @SuppressWarnings("unused")
     private StringRedisTemplate redisTemplate;
 
+    @MockitoBean private BatchLastLoadRepository batchLastLoadRepository;
     @MockitoBean private StockListService stockListService;
 
     @Autowired private WatchlistWriter watchlistWriter;

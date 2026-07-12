@@ -31,6 +31,7 @@ import com.aaa.collector.market.indicator.vix.VixCollectionService;
 import com.aaa.collector.market.session.UsMarketSessionGate;
 import com.aaa.collector.news.DomesticNewsHeadlineRepository;
 import com.aaa.collector.news.overseas.OverseasNewsHeadlineRepository;
+import com.aaa.collector.observability.BatchLastLoadRepository;
 import com.aaa.collector.stock.AnalystEstimateRepository;
 import com.aaa.collector.stock.CorporateEventRepository;
 import com.aaa.collector.stock.CreditBalanceRepository;
@@ -149,7 +150,12 @@ import org.springframework.transaction.support.TransactionTemplate;
             // SPEC-COLLECTOR-BACKFILL-010: CoverageRefresher가 listed_date 하향 보정+표적 리셋(REQ-159/-160)
             // 트랜잭션 경계용 TransactionTemplate을 신규 의존. smoke 프로파일은 DataSourceAutoConfiguration을
             // exclude해 PlatformTransactionManager가 없어 TransactionTemplate 자동구성도 없음(smoke 회귀 방지)
-            TransactionTemplate.class
+            TransactionTemplate.class,
+            // SPEC-COLLECTOR-WARMSTART-REDIS-001: 배치 last-load Redis 영속화 신규 빈 모킹.
+            // BatchMetricsWarmStarter가
+            // ApplicationRunner라 컨텍스트 기동 시 자동 실행되며 find()를 호출하므로, mock StringRedisTemplate의
+            // opsForValue() null 반환에 의한 NPE를 차단하려면 리포지토리 자체를 모킹해야 한다(smoke 회귀 방지)
+            BatchLastLoadRepository.class
         })
 class SmokeMockitoBase {
 

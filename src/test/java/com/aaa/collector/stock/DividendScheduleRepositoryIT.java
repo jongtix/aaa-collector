@@ -3,6 +3,7 @@ package com.aaa.collector.stock;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 
+import com.aaa.collector.observability.BatchLastLoadRepository;
 import com.aaa.collector.stock.enums.AssetType;
 import com.aaa.collector.stock.enums.EventType;
 import com.aaa.collector.stock.enums.Market;
@@ -56,6 +57,7 @@ class DividendScheduleRepositoryIT {
     @SuppressWarnings("unused")
     private StringRedisTemplate redisTemplate;
 
+    @MockitoBean private BatchLastLoadRepository batchLastLoadRepository;
     private static final AtomicInteger SYMBOL_SEQ = new AtomicInteger();
 
     /** 확정 국내 배당 event_subtype 원본값(divi_kind=결산배당). */

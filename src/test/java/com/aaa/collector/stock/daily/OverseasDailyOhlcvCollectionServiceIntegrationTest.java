@@ -10,6 +10,7 @@ import com.aaa.collector.kis.gate.GuardedKisExecutor;
 import com.aaa.collector.kis.gate.KeyLeaseRegistry.LeaseSession;
 import com.aaa.collector.kis.token.HealthyKeySelector;
 import com.aaa.collector.kis.token.KisAccountCredential;
+import com.aaa.collector.observability.BatchLastLoadRepository;
 import com.aaa.collector.stock.DailyOhlcv;
 import com.aaa.collector.stock.DailyOhlcvRepository;
 import com.aaa.collector.stock.Stock;
@@ -71,6 +72,7 @@ class OverseasDailyOhlcvCollectionServiceIntegrationTest {
     @SuppressWarnings("unused")
     private StringRedisTemplate redisTemplate;
 
+    @MockitoBean private BatchLastLoadRepository batchLastLoadRepository;
     @MockitoBean private GuardedKisExecutor guardedKisExecutor;
     @MockitoBean private HealthyKeySelector healthyKeySelector;
 

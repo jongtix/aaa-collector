@@ -2,6 +2,7 @@ package com.aaa.collector.stock.exthours;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.aaa.collector.observability.BatchLastLoadRepository;
 import com.aaa.collector.stock.Stock;
 import com.aaa.collector.stock.StockRepository;
 import com.aaa.collector.stock.enums.AssetType;
@@ -41,6 +42,7 @@ class ExtendedHoursRepositoryTest {
     @SuppressWarnings("unused")
     private StringRedisTemplate redisTemplate;
 
+    @MockitoBean private BatchLastLoadRepository batchLastLoadRepository;
     @Autowired private ExtendedHoursRepository extendedHoursRepository;
     @Autowired private StockRepository stockRepository;
 

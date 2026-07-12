@@ -7,6 +7,7 @@ import com.aaa.collector.backfill.BackfillStatus;
 import com.aaa.collector.backfill.BackfillStatusRepository;
 import com.aaa.collector.backfill.BackfillStatusType;
 import com.aaa.collector.backfill.BackfillWindowResult;
+import com.aaa.collector.observability.BatchLastLoadRepository;
 import com.aaa.collector.stock.CorporateEvent;
 import com.aaa.collector.stock.CorporateEventRepository;
 import com.aaa.collector.stock.DividendBackfillFetch;
@@ -55,6 +56,7 @@ class DividendBackfillIntegrationTest {
     @SuppressWarnings("unused")
     private StringRedisTemplate redisTemplate;
 
+    @MockitoBean private BatchLastLoadRepository batchLastLoadRepository;
     @Autowired private DividendScheduleCollectionService dividendService;
     @Autowired private StockRepository stockRepository;
     @Autowired private CorporateEventRepository corporateEventRepository;

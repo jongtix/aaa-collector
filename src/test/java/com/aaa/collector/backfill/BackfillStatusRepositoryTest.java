@@ -3,6 +3,7 @@ package com.aaa.collector.backfill;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import com.aaa.collector.observability.BatchLastLoadRepository;
 import com.aaa.collector.support.RootFixtureCleaner;
 import java.sql.SQLException;
 import java.time.LocalDate;
@@ -46,6 +47,7 @@ class BackfillStatusRepositoryTest {
     @SuppressWarnings("unused")
     private StringRedisTemplate redisTemplate;
 
+    @MockitoBean private BatchLastLoadRepository batchLastLoadRepository;
     @Autowired private BackfillStatusRepository backfillStatusRepository;
     @Autowired private JdbcTemplate jdbcTemplate;
     @Autowired private TransactionTemplate transactionTemplate;
