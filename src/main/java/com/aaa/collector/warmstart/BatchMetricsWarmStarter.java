@@ -103,6 +103,10 @@ public class BatchMetricsWarmStarter implements ApplicationRunner {
 
         // SPEC-OBSV-WATERMARK-001 REQ-WM-014: dart-disclosure(현행 암묵 누락) + 신규 라벨 중 warm-start=O 3종
         warm("dart-disclosure", disclosureRepository::findMaxCreatedAt);
+        // SPEC-COLLECTOR-EXPECTED-RUN-001: REQ-WM-013 표가 dart-backfill을 warm-start=O로 지정했으나 최초 구현
+        // (a82ef81)에서 배선이 누락됐다 — dart-disclosure와 동일 쿼리 재사용(REQ-XR-018(b)와 동일 근거: 이중 writer라도
+        // forward-only에 안전, 첫 실제 실행이 즉시 덮어써 seed 정밀도는 비임계).
+        warm("dart-backfill", disclosureRepository::findMaxCreatedAt);
         warm(
                 "overseas-rights",
                 () -> corporateEventRepository.findMaxCreatedAtByMarketsIn(OVERSEAS_MARKETS));

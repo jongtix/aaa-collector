@@ -218,6 +218,21 @@ class BatchMetricsWarmStarterTest {
         }
 
         @Test
+        @DisplayName(
+                "dart-backfill은 disclosures 최신 적재 시각으로 seed된다"
+                        + " (SPEC-COLLECTOR-EXPECTED-RUN-001, REQ-WM-013 배선 누락 교정)")
+        void warmsDartBackfill() throws Exception {
+            LocalDateTime kstTime = LocalDateTime.of(2026, 7, 3, 22, 0, 0);
+            Instant expected = kstTime.atZone(KST).toInstant();
+            stubAllEmpty();
+            when(disclosureRepository.findMaxCreatedAt()).thenReturn(Optional.of(kstTime));
+
+            warmStarter().run(null);
+
+            verify(batchMetrics).warmLastLoad(eq("dart-backfill"), eq(expected));
+        }
+
+        @Test
         @DisplayName("overseas-rights 조회 결과가 있으면 warmLastLoad('overseas-rights', instant) 호출")
         void warmsOverseasRights() throws Exception {
             LocalDateTime kstTime = LocalDateTime.of(2026, 7, 3, 22, 0, 0);
