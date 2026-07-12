@@ -81,18 +81,24 @@ public class CoverageRefresher {
         refresh(WatermarkSeries.DAILY_OHLCV_KRX, expected, universe);
     }
 
-    /** US 일봉 커버리지·밀도 게이지를 계산해 반영한다(REQ-WM-010, REQ-BACKFILL-154/-155). */
+    /**
+     * US 일봉 커버리지·밀도 게이지를 계산해 반영한다(REQ-WM-010, REQ-BACKFILL-154/-155).
+     *
+     * <p>커버리지 분모 기준일은 {@link UsMarketSessionGate#computePriorTradeDate()}(직전 개장일)를 사용한다 — D+2 적재
+     * 지연에 정합하도록 후퇴된 단일 소스를 신규 일봉 기대 게이지와 공유한다(SPEC-OBSV-WATERMARK-002 §3.2 Decision 3,
+     * REQ-WM2-005).
+     */
     @Scheduled(cron = US_CRON, zone = "Asia/Seoul")
     public void refreshUsCoverage() {
         List<Stock> universe = stockRepository.findAllActiveOverseasTradable();
         refreshDensity(WatermarkSeries.DAILY_OHLCV_US, universe, true);
 
-        LocalDate expected = usMarketSessionGate.computeExpectedTradeDate();
-        if (expected == null) {
-            log.warn("[coverage] US expected watermark 미산출 — 커버리지 계산 스킵");
+        LocalDate priorTradeDate = usMarketSessionGate.computePriorTradeDate();
+        if (priorTradeDate == null) {
+            log.warn("[coverage] US 직전 개장일 미산출 — 커버리지 계산 스킵");
             return;
         }
-        refresh(WatermarkSeries.DAILY_OHLCV_US, expected, universe);
+        refresh(WatermarkSeries.DAILY_OHLCV_US, priorTradeDate, universe);
     }
 
     /**

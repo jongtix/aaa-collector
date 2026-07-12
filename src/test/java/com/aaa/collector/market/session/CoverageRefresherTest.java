@@ -124,6 +124,19 @@ class CoverageRefresherTest {
 
             verify(coverageMetrics).setRatio(WatermarkSeries.DAILY_OHLCV_KRX, 0.0);
         }
+
+        @Test
+        @DisplayName(
+                "회귀 가드(T-003, REQ-WM2-004): KRX 경로는 usMarketSessionGate를 전혀 참조하지 않는다 — 국내 감시 불변")
+        void krxPath_neverTouchesUsMarketSessionGate() {
+            LocalDate expected = LocalDate.of(2026, 7, 3);
+            when(marketSessionGate.computeExpectedTradeDate()).thenReturn(expected);
+            when(stockRepository.findAllActiveDomesticTradable()).thenReturn(List.of());
+
+            refresher.refreshKrxCoverage();
+
+            Mockito.verifyNoInteractions(usMarketSessionGate);
+        }
     }
 
     @Nested
@@ -131,9 +144,9 @@ class CoverageRefresherTest {
     class UsCoverage {
 
         @Test
-        @DisplayName("expected watermark 없으면(null) 계산을 스킵한다")
+        @DisplayName("직전 개장일(priorTradeDate) 없으면(null) 계산을 스킵한다 (T-004, REQ-WM2-005)")
         void skipsWhenExpectedIsNull() {
-            when(usMarketSessionGate.computeExpectedTradeDate()).thenReturn(null);
+            when(usMarketSessionGate.computePriorTradeDate()).thenReturn(null);
 
             refresher.refreshUsCoverage();
 
@@ -141,19 +154,22 @@ class CoverageRefresherTest {
         }
 
         @Test
-        @DisplayName("유니버스 대비 커버리지 비율을 계산해 게이지에 반영한다")
+        @DisplayName(
+                "유니버스 대비 커버리지 비율을 직전 개장일(priorTradeDate) 기준으로 계산해 게이지에 반영한다 (T-004, REQ-WM2-005, Decision 3)")
         void computesRatioAndSetsGauge() {
-            LocalDate expected = LocalDate.of(2026, 7, 3);
+            LocalDate priorTradeDate = LocalDate.of(2026, 7, 2);
             List<Stock> universe = List.of(stock(1, Market.NASDAQ), stock(2, Market.NYSE));
-            when(usMarketSessionGate.computeExpectedTradeDate()).thenReturn(expected);
+            when(usMarketSessionGate.computePriorTradeDate()).thenReturn(priorTradeDate);
             when(stockRepository.findAllActiveOverseasTradable()).thenReturn(universe);
             when(dailyOhlcvRepository.countDistinctStockIdsByTradeDateAndStockIdIn(
-                            eq(expected), anyCollection()))
+                            eq(priorTradeDate), anyCollection()))
                     .thenReturn(2L);
 
             refresher.refreshUsCoverage();
 
             verify(coverageMetrics).setRatio(WatermarkSeries.DAILY_OHLCV_US, 1.0);
+            // computeExpectedTradeDate()는 더 이상 US 커버리지 분모로 사용되지 않는다(단일 소스 후퇴, Decision 3)
+            verify(usMarketSessionGate, never()).computeExpectedTradeDate();
         }
     }
 
@@ -165,7 +181,7 @@ class CoverageRefresherTest {
         @DisplayName("AC-7: 미국은 항상 신뢰 하한 존재(벽) — 하한 미달 종목만 게이지 A 카운트")
         void us_belowFloor_countsOnlyBelowFloorStocks() {
             Stock nvda = stock(1, Market.NASDAQ); // listed_date=2015-01-01 (테스트 fixture 고정값)
-            when(usMarketSessionGate.computeExpectedTradeDate()).thenReturn(null);
+            when(usMarketSessionGate.computePriorTradeDate()).thenReturn(null);
             when(stockRepository.findAllActiveOverseasTradable()).thenReturn(List.of(nvda));
             // MIN(trade_date) > floor(listed_date=2015-01-01) → 하한 미달
             when(dailyOhlcvRepository.findMinMaxCountByStockIds(anyCollection()))
@@ -216,7 +232,7 @@ class CoverageRefresherTest {
         @DisplayName("AC-8: 캘린더 합집합 대비 구간 내 부재 거래일 있는 종목 — 게이지 B 카운트")
         void internalGap_counted() {
             Stock nvda = stock(1, Market.NASDAQ);
-            when(usMarketSessionGate.computeExpectedTradeDate()).thenReturn(null);
+            when(usMarketSessionGate.computePriorTradeDate()).thenReturn(null);
             when(stockRepository.findAllActiveOverseasTradable()).thenReturn(List.of(nvda));
             // 구간 [1/1, 1/4] 캘린더 4일 존재, 보유 3행 → 구멍 1
             when(dailyOhlcvRepository.findMinMaxCountByStockIds(anyCollection()))
@@ -247,7 +263,7 @@ class CoverageRefresherTest {
             // wall(2007-08-20)보다 이전인 listed_date를 부여해 보정 없이 wallFloor=wall이 되게 한다
             Stock stock = stock(1, Market.NASDAQ, LocalDate.of(1990, 1, 1));
             LocalDate verifiedBaseline = LocalDate.of(2010, 6, 29); // 실제 IPO — 검증된 아카이브 소진 지점
-            when(usMarketSessionGate.computeExpectedTradeDate()).thenReturn(null);
+            when(usMarketSessionGate.computePriorTradeDate()).thenReturn(null);
             when(stockRepository.findAllActiveOverseasTradable()).thenReturn(List.of(stock));
             // MIN(trade_date) == verifiedBaseline — 보유 최과거가 곧 검증된 실제 IPO
             when(dailyOhlcvRepository.findMinMaxCountByStockIds(anyCollection()))
@@ -279,7 +295,7 @@ class CoverageRefresherTest {
             // (하향 보정이 걸리면 listed_date 자체가 minTradeDate로 바뀌어 이 테스트가 검증하려는
             // "verifiedBaseline < wallFloor일 때 wallFloor 유지" 시나리오와 뒤섞인다).
             LocalDate minTradeDate = LocalDate.of(2015, 1, 1);
-            when(usMarketSessionGate.computeExpectedTradeDate()).thenReturn(null);
+            when(usMarketSessionGate.computePriorTradeDate()).thenReturn(null);
             when(stockRepository.findAllActiveOverseasTradable()).thenReturn(List.of(stock));
             when(dailyOhlcvRepository.findMinMaxCountByStockIds(anyCollection()))
                     .thenReturn(
@@ -324,7 +340,7 @@ class CoverageRefresherTest {
             Stock pltr = stock(1, Market.NASDAQ); // listed_date=2015-01-01 fixture
             Stock managedPltr = stock(1, Market.NASDAQ);
             LocalDate trueMin = LocalDate.of(2010, 9, 30); // 과대평가 사례 — 진짜 IPO가 더 이름
-            when(usMarketSessionGate.computeExpectedTradeDate()).thenReturn(null);
+            when(usMarketSessionGate.computePriorTradeDate()).thenReturn(null);
             when(stockRepository.findAllActiveOverseasTradable()).thenReturn(List.of(pltr));
             when(dailyOhlcvRepository.findMinMaxCountByStockIds(anyCollection()))
                     .thenReturn(
@@ -358,7 +374,7 @@ class CoverageRefresherTest {
                             .status(BackfillStatusType.COMPLETED)
                             .build();
             BackfillStatus spyStatus = Mockito.spy(completedStatus);
-            when(usMarketSessionGate.computeExpectedTradeDate()).thenReturn(null);
+            when(usMarketSessionGate.computePriorTradeDate()).thenReturn(null);
             when(stockRepository.findAllActiveOverseasTradable()).thenReturn(List.of(pltr));
             when(dailyOhlcvRepository.findMinMaxCountByStockIds(anyCollection()))
                     .thenReturn(
@@ -382,7 +398,7 @@ class CoverageRefresherTest {
         @DisplayName("AC-16(c)/(d): 정상(MIN>listed_date) 또는 데이터 없음 — 상향 보정·표적 리셋 모두 미발생")
         void normalOrNoData_neverCorrectsOrResets() {
             Stock stock = stock(1, Market.NASDAQ); // listed_date=2015-01-01
-            when(usMarketSessionGate.computeExpectedTradeDate()).thenReturn(null);
+            when(usMarketSessionGate.computePriorTradeDate()).thenReturn(null);
             when(stockRepository.findAllActiveOverseasTradable()).thenReturn(List.of(stock));
             // MIN > listed_date(2015-01-01) — 정상 케이스, 상향 보정 없음
             when(dailyOhlcvRepository.findMinMaxCountByStockIds(anyCollection()))
