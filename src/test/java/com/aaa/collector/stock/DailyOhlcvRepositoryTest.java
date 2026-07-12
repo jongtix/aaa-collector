@@ -15,6 +15,7 @@ import java.sql.Statement;
 import java.time.LocalDate;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Tag;
@@ -487,6 +488,157 @@ class DailyOhlcvRepositoryTest {
 
             // Assert
             assertThat(result).isEmpty();
+        }
+    }
+
+    // @MX:SPEC: SPEC-COLLECTOR-BACKFILL-010
+    @Nested
+    @DisplayName("findDistinctTradeDatesByStockIds — 유니버스 전체 비거래일 제외 (게이지 B 데이터판별식)")
+    class FindDistinctTradeDatesByStockIds {
+
+        @Test
+        @DisplayName("유니버스 전체 volume=0인 날짜는 캘린더에서 제외되고, 개별 종목만 정지된 날짜는 포함된다")
+        void
+                findDistinctTradeDatesByStockIds_universeWideZeroVolumeDay_excludedButPartialStopIncluded() {
+            // Arrange — A, B 두 종목. D1은 A·B 둘 다 volume=0(유니버스 전체 비거래일).
+            // D2는 A만 거래(volume>0), B는 거래정지(volume=0) — 개별 종목 정지이므로 캘린더에 남아야 함.
+            Stock stockA = savedStock("100001");
+            Stock stockB = savedStock("100002");
+            LocalDate d1 = LocalDate.of(2026, 5, 31);
+            LocalDate d2 = LocalDate.of(2026, 6, 1);
+
+            dailyOhlcvRepository.insertIgnoreDuplicate(
+                    stockA.getId(),
+                    d1,
+                    new BigDecimal("74000.0000"),
+                    new BigDecimal("74000.0000"),
+                    new BigDecimal("74000.0000"),
+                    new BigDecimal("74000.0000"),
+                    0L,
+                    0L);
+            dailyOhlcvRepository.insertIgnoreDuplicate(
+                    stockB.getId(),
+                    d1,
+                    new BigDecimal("50000.0000"),
+                    new BigDecimal("50000.0000"),
+                    new BigDecimal("50000.0000"),
+                    new BigDecimal("50000.0000"),
+                    0L,
+                    0L);
+            dailyOhlcvRepository.insertIgnoreDuplicate(
+                    stockA.getId(),
+                    d2,
+                    new BigDecimal("75000.0000"),
+                    new BigDecimal("77000.0000"),
+                    new BigDecimal("74000.0000"),
+                    new BigDecimal("76000.0000"),
+                    1_000_000L,
+                    76_000_000_000L);
+            dailyOhlcvRepository.insertIgnoreDuplicate(
+                    stockB.getId(),
+                    d2,
+                    new BigDecimal("50000.0000"),
+                    new BigDecimal("50000.0000"),
+                    new BigDecimal("50000.0000"),
+                    new BigDecimal("50000.0000"),
+                    0L,
+                    0L);
+            dailyOhlcvRepository.flush();
+
+            // Act
+            List<LocalDate> result =
+                    dailyOhlcvRepository.findDistinctTradeDatesByStockIds(
+                            Set.of(stockA.getId(), stockB.getId()));
+
+            // Assert
+            assertThat(result).doesNotContain(d1).contains(d2);
+        }
+    }
+
+    // @MX:SPEC: SPEC-COLLECTOR-BACKFILL-010
+    @Nested
+    @DisplayName("findMinMaxCountByStockIds — 유니버스 전체 비거래일 제외 후 min/max/count 산정")
+    class FindMinMaxCountByStockIds {
+
+        @Test
+        @DisplayName("유니버스 전체 비거래일(D1)은 제외되어 min/max/count에 반영되지 않는다")
+        void findMinMaxCountByStockIds_universeWideZeroVolumeDay_excludedFromMinMaxCount() {
+            // Arrange — 종목 A: D1(전체 비거래일, volume=0) + D2, D3(거래) = 저장 3행, 실질 2행.
+            // 종목 B: D1(전체 비거래일, volume=0) + D2(거래) = 저장 2행, 실질 1행(D3 없음 — 구멍 아닌 짧은 종목).
+            Stock stockA = savedStock("100003");
+            Stock stockB = savedStock("100004");
+            LocalDate d1 = LocalDate.of(2026, 5, 31);
+            LocalDate d2 = LocalDate.of(2026, 6, 1);
+            LocalDate d3 = LocalDate.of(2026, 6, 2);
+
+            dailyOhlcvRepository.insertIgnoreDuplicate(
+                    stockA.getId(),
+                    d1,
+                    new BigDecimal("74000.0000"),
+                    new BigDecimal("74000.0000"),
+                    new BigDecimal("74000.0000"),
+                    new BigDecimal("74000.0000"),
+                    0L,
+                    0L);
+            dailyOhlcvRepository.insertIgnoreDuplicate(
+                    stockA.getId(),
+                    d2,
+                    new BigDecimal("75000.0000"),
+                    new BigDecimal("77000.0000"),
+                    new BigDecimal("74000.0000"),
+                    new BigDecimal("76000.0000"),
+                    1_000_000L,
+                    76_000_000_000L);
+            dailyOhlcvRepository.insertIgnoreDuplicate(
+                    stockA.getId(),
+                    d3,
+                    new BigDecimal("76000.0000"),
+                    new BigDecimal("78000.0000"),
+                    new BigDecimal("75000.0000"),
+                    new BigDecimal("77000.0000"),
+                    1_100_000L,
+                    84_700_000_000L);
+            dailyOhlcvRepository.insertIgnoreDuplicate(
+                    stockB.getId(),
+                    d1,
+                    new BigDecimal("50000.0000"),
+                    new BigDecimal("50000.0000"),
+                    new BigDecimal("50000.0000"),
+                    new BigDecimal("50000.0000"),
+                    0L,
+                    0L);
+            dailyOhlcvRepository.insertIgnoreDuplicate(
+                    stockB.getId(),
+                    d2,
+                    new BigDecimal("51000.0000"),
+                    new BigDecimal("53000.0000"),
+                    new BigDecimal("50000.0000"),
+                    new BigDecimal("52000.0000"),
+                    900_000L,
+                    46_800_000_000L);
+            dailyOhlcvRepository.flush();
+
+            // Act
+            List<Object[]> result =
+                    dailyOhlcvRepository.findMinMaxCountByStockIds(
+                            Set.of(stockA.getId(), stockB.getId()));
+
+            // Assert — [minTradeDate, maxTradeDate, rowCount] 튜플로 종목당 단일 assert
+            Object[] rowA =
+                    result.stream()
+                            .filter(row -> row[0].equals(stockA.getId()))
+                            .findFirst()
+                            .orElseThrow();
+            assertThat(List.of(rowA[1], rowA[2], ((Number) rowA[3]).longValue()))
+                    .containsExactly(d2, d3, 2L);
+
+            Object[] rowB =
+                    result.stream()
+                            .filter(row -> row[0].equals(stockB.getId()))
+                            .findFirst()
+                            .orElseThrow();
+            assertThat(List.of(rowB[1], rowB[2], ((Number) rowB[3]).longValue()))
+                    .containsExactly(d2, d2, 1L);
         }
     }
 

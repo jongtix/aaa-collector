@@ -184,28 +184,42 @@ public interface DailyOhlcvRepository extends JpaRepository<DailyOhlcv, Long> {
      * <p>결과 배열: {@code [stockId, minTradeDate, maxTradeDate, rowCount]}. {@code daily_ohlcv} 행이 0건인
      * 종목은 결과에 포함되지 않는다.
      *
+     * <p>MIN/MAX/COUNT는 유니버스 전체가 완전 비거래일로 취급되는 날짜(전 종목 부재 또는 전 종목 volume=0)를 제외한 실거래일 기준이다
+     * (aaa-infra#93 후속 — WDC/NEE 잔여 게이지 B 오탐). 부수 효과로 {@code
+     * CoverageRefresher#correctListedDateAndReset}의 {@code listed_date} 하향 보정이 KIS 공휴일 플레이스홀더 행(예:
+     * 미국 공휴일 volume=0)에 의해 왜곡되는 경로도 함께 차단된다.
+     *
      * @param stockIds 조회 대상 종목 PK 집합
      * @return 종목별 [stockId, min, max, count] 배열 목록
      */
     // @MX:SPEC: SPEC-COLLECTOR-BACKFILL-010
     @Query(
             "SELECT o.stock.id, MIN(o.tradeDate), MAX(o.tradeDate), COUNT(o) FROM DailyOhlcv o"
-                    + " WHERE o.stock.id IN :stockIds GROUP BY o.stock.id")
+                    + " WHERE o.stock.id IN :stockIds"
+                    + " AND o.tradeDate IN ("
+                    + "   SELECT o2.tradeDate FROM DailyOhlcv o2"
+                    + "   WHERE o2.stock.id IN :stockIds"
+                    + "   GROUP BY o2.tradeDate HAVING MAX(o2.volume) > 0"
+                    + " )"
+                    + " GROUP BY o.stock.id")
     List<Object[]> findMinMaxCountByStockIds(@Param("stockIds") Collection<Long> stockIds);
 
     /**
      * 종목 ID 목록의 합집합 거래일 캘린더(distinct trade_date)를 조회한다 (SPEC-COLLECTOR-BACKFILL-010
      * REQ-BACKFILL-155 — 게이지 B 내부 구멍 판정용, §A10).
      *
-     * <p>거래정지일은 v1.44.0+가 {@code volume=0} 행으로 저장하므로, 전 종목에서 완전히 부재한 날짜만 이 캘린더에서 빠진다(안전하게 구멍으로 취급
-     * 가능).
+     * <p>유니버스 전 종목이 완전히 부재한 날짜 <strong>또는</strong> 유니버스 전 종목이 {@code volume=0}인 날짜(= 실질적인 비거래일, 예:
+     * 미국 공휴일에 KIS가 반환하는 volume=0 플레이스홀더 행)만 캘린더에서 빠진다. 개별 종목만 거래정지({@code volume=0})이고 다른 종목은 거래한
+     * 날짜는 그대로 캘린더에 포함된다(§A10 의미론 유지). (aaa-infra#93 후속 — WDC/NEE 잔여 게이지 B 오탐)
      *
      * @param stockIds 조회 대상 종목 PK 집합(해당 시장 활성 유니버스)
      * @return 합집합 거래일 오름차순 목록
      */
     // @MX:SPEC: SPEC-COLLECTOR-BACKFILL-010
     @Query(
-            "SELECT DISTINCT o.tradeDate FROM DailyOhlcv o"
-                    + " WHERE o.stock.id IN :stockIds ORDER BY o.tradeDate")
+            "SELECT o.tradeDate FROM DailyOhlcv o"
+                    + " WHERE o.stock.id IN :stockIds"
+                    + " GROUP BY o.tradeDate HAVING MAX(o.volume) > 0"
+                    + " ORDER BY o.tradeDate")
     List<LocalDate> findDistinctTradeDatesByStockIds(@Param("stockIds") Collection<Long> stockIds);
 }
