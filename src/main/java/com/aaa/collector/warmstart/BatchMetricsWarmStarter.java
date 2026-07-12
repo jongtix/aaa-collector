@@ -6,21 +6,18 @@ import com.aaa.collector.macro.MacroIndicatorRepository;
 import com.aaa.collector.market.MarketIndicatorRepository;
 import com.aaa.collector.news.DomesticNewsHeadlineRepository;
 import com.aaa.collector.news.overseas.OverseasNewsHeadlineRepository;
+import com.aaa.collector.observability.BatchLastLoadRepository;
 import com.aaa.collector.observability.BatchMetrics;
 import com.aaa.collector.stock.AnalystEstimateRepository;
-import com.aaa.collector.stock.CorporateEventRepository;
 import com.aaa.collector.stock.CreditBalanceRepository;
-import com.aaa.collector.stock.DailyOhlcvRepository;
 import com.aaa.collector.stock.FinancialRepository;
 import com.aaa.collector.stock.InvestorTrendRepository;
 import com.aaa.collector.stock.ShortSaleDomesticRepository;
 import com.aaa.collector.stock.ShortSaleOverseasRepository;
-import com.aaa.collector.stock.enums.Market;
 import com.aaa.collector.stock.etf.EtfRepresentativeHistoryRepository;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
-import java.util.List;
 import java.util.Optional;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -49,13 +46,8 @@ public class BatchMetricsWarmStarter implements ApplicationRunner {
 
     private static final ZoneId KST = ZoneId.of("Asia/Seoul");
 
-    private static final List<Market> DOMESTIC_MARKETS =
-            List.of(Market.KOSPI, Market.KOSDAQ, Market.KRX);
-    private static final List<Market> OVERSEAS_MARKETS =
-            List.of(Market.NYSE, Market.NASDAQ, Market.AMEX, Market.US);
-
     private final BatchMetrics batchMetrics;
-    private final DailyOhlcvRepository dailyOhlcvRepository;
+    private final BatchLastLoadRepository batchLastLoadRepository;
     private final InvestorTrendRepository investorTrendRepository;
     private final CreditBalanceRepository creditBalanceRepository;
     private final ShortSaleDomesticRepository shortSaleDomesticRepository;
@@ -66,23 +58,19 @@ public class BatchMetricsWarmStarter implements ApplicationRunner {
     private final MarketIndicatorRepository marketIndicatorRepository;
     private final EtfRepresentativeHistoryRepository etfRepresentativeHistoryRepository;
     private final DisclosureRepository disclosureRepository;
-    private final CorporateEventRepository corporateEventRepository;
     private final CorpCodeMappingRepository corpCodeMappingRepository;
     private final DomesticNewsHeadlineRepository domesticNewsHeadlineRepository;
     private final OverseasNewsHeadlineRepository overseasNewsHeadlineRepository;
     private final ExtendedHoursWarmSource extendedHoursWarmSource;
     private final WatchlistSyncWarmSource watchlistSyncWarmSource;
+    private final MarketWarmSource marketWarmSource;
 
     @Override
     public void run(ApplicationArguments args) {
         log.info("BatchMetrics warm-start 시작 (SPEC-OBSV-WARMSTART-001)");
 
-        warm(
-                "domestic-daily",
-                () -> dailyOhlcvRepository.findMaxCreatedAtByMarketsIn(DOMESTIC_MARKETS));
-        warm(
-                "overseas-daily",
-                () -> dailyOhlcvRepository.findMaxCreatedAtByMarketsIn(OVERSEAS_MARKETS));
+        warm("domestic-daily", marketWarmSource::domesticDailyLastLoad);
+        warm("overseas-daily", marketWarmSource::overseasDailyLastLoad);
         warm("domestic-supply-investor", investorTrendRepository::findMaxCreatedAt);
         warm("domestic-supply-credit-balance", creditBalanceRepository::findMaxCreatedAt);
         warm("domestic-supply-short-sale", shortSaleDomesticRepository::findMaxCreatedAt);
@@ -108,9 +96,7 @@ public class BatchMetricsWarmStarter implements ApplicationRunner {
         // (a82ef81)에서 배선이 누락됐다 — dart-disclosure와 동일 쿼리 재사용(REQ-XR-018(b)와 동일 근거: 이중 writer라도
         // forward-only에 안전, 첫 실제 실행이 즉시 덮어써 seed 정밀도는 비임계).
         warm("dart-backfill", disclosureRepository::findMaxCreatedAt);
-        warm(
-                "overseas-rights",
-                () -> corporateEventRepository.findMaxCreatedAtByMarketsIn(OVERSEAS_MARKETS));
+        warm("overseas-rights", marketWarmSource::overseasCorporateEventLastLoad);
         // corp-code: corp_code_mapping이 BaseEntity.createdAt(per-run 삽입 시각)을 보유하므로 편입(MI-06)
         warm("corp-code", corpCodeMappingRepository::findMaxCreatedAt);
 
@@ -124,9 +110,7 @@ public class BatchMetricsWarmStarter implements ApplicationRunner {
         // 분할은 희소해 split-only 조회가 대개 empty를 반환해 warm-start의 목적(부팅 후 absent-gauge 회피)을 무산시킨다.
         // overseas-rights와 동일한 시장 필터 쿼리로 corporate_events 최신 적재 시각을 안정적으로 seed하고, 첫 실제 실행이
         // recordCompletion으로 split 고유값을 덮어쓴다(실행-앵커 모델이라 seed 정밀도는 비임계).
-        warm(
-                "overseas-split",
-                () -> corporateEventRepository.findMaxCreatedAtByMarketsIn(OVERSEAS_MARKETS));
+        warm("overseas-split", marketWarmSource::overseasCorporateEventLastLoad);
 
         // REQ-XR-018(b): extended-hours 단일 라벨 warm을 pre/after 두 갈래로 분할(Module E 라벨 분리와 정합).
         // session 컬럼 기준 최신 거래일로 PRE/AFTER를 물리적으로 구분한다 — 변환/세션 참조는 ExtendedHoursWarmSource가
@@ -143,6 +127,11 @@ public class BatchMetricsWarmStarter implements ApplicationRunner {
     }
 
     private void warm(String batch, TimestampQuery query) {
+        // Redis 우선(SPEC-COLLECTOR-WARMSTART-REDIS-001 REQ-WSR-005) — 실제 마지막 성공 시각이 있으면 그것으로 seed하고
+        // DB 프록시 조회를 건너뛴다. 값이 없거나 Redis 조회가 실패하면 기존 프록시 경로로 폴백한다(REQ-WSR-006, 비회귀).
+        if (warmFromRedis(batch)) {
+            return;
+        }
         try {
             Optional<LocalDateTime> result = query.findMax();
             if (result.isEmpty()) {
@@ -151,12 +140,37 @@ public class BatchMetricsWarmStarter implements ApplicationRunner {
             }
             Instant instant = toInstant(result.get());
             batchMetrics.warmLastLoad(batch, instant);
-            log.info("BatchMetrics warm-start 완료 — batch={} lastLoad={}", batch, instant);
+            log.info("BatchMetrics warm-start 완료(프록시) — batch={} lastLoad={}", batch, instant);
         } catch (DataAccessException e) {
             log.warn(
                     "BatchMetrics warm-start 실패 — batch={}, 무시하고 계속 진행. error={}",
                     batch,
                     e.getMessage());
+        }
+    }
+
+    /**
+     * Redis에 영속된 마지막 성공 epoch로 {@code last_load} gauge를 seed한다 (REQ-WSR-005/006).
+     *
+     * @param batch 배치 라벨
+     * @return Redis 값으로 seed했으면 {@code true}(프록시 스킵), 값 부재·조회 실패로 폴백해야 하면 {@code false}
+     */
+    private boolean warmFromRedis(String batch) {
+        try {
+            Optional<Instant> lastLoad = batchLastLoadRepository.find(batch);
+            if (lastLoad.isEmpty()) {
+                return false;
+            }
+            Instant instant = lastLoad.get();
+            batchMetrics.warmLastLoad(batch, instant);
+            log.info("BatchMetrics warm-start 완료(Redis) — batch={} lastLoad={}", batch, instant);
+            return true;
+        } catch (DataAccessException e) {
+            log.warn(
+                    "BatchMetrics warm-start Redis 조회 실패 — batch={}, 프록시 폴백. error={}",
+                    batch,
+                    e.getMessage());
+            return false;
         }
     }
 

@@ -3,6 +3,7 @@ package com.aaa.collector.warmstart;
 import static org.assertj.core.api.Assertions.assertThatNoException;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -14,11 +15,10 @@ import com.aaa.collector.macro.MacroIndicatorRepository;
 import com.aaa.collector.market.MarketIndicatorRepository;
 import com.aaa.collector.news.DomesticNewsHeadlineRepository;
 import com.aaa.collector.news.overseas.OverseasNewsHeadlineRepository;
+import com.aaa.collector.observability.BatchLastLoadRepository;
 import com.aaa.collector.observability.BatchMetrics;
 import com.aaa.collector.stock.AnalystEstimateRepository;
-import com.aaa.collector.stock.CorporateEventRepository;
 import com.aaa.collector.stock.CreditBalanceRepository;
-import com.aaa.collector.stock.DailyOhlcvRepository;
 import com.aaa.collector.stock.FinancialRepository;
 import com.aaa.collector.stock.InvestorTrendRepository;
 import com.aaa.collector.stock.ShortSaleDomesticRepository;
@@ -45,10 +45,10 @@ class BatchMetricsWarmStarterTest {
 
     // 개별 테스트에서 per-test 동작(값 반환/예외/검증)을 제어하는 foreground 협력자만 @Mock으로 둔다(strict stubbing 유지).
     @Mock private BatchMetrics batchMetrics;
-    @Mock private DailyOhlcvRepository dailyOhlcvRepository;
+    @Mock private BatchLastLoadRepository batchLastLoadRepository;
+    @Mock private MarketWarmSource marketWarmSource;
     @Mock private ShortSaleOverseasRepository shortSaleOverseasRepository;
     @Mock private DisclosureRepository disclosureRepository;
-    @Mock private CorporateEventRepository corporateEventRepository;
     @Mock private CorpCodeMappingRepository corpCodeMappingRepository;
     @Mock private DomesticNewsHeadlineRepository domesticNewsHeadlineRepository;
     @Mock private OverseasNewsHeadlineRepository overseasNewsHeadlineRepository;
@@ -80,7 +80,7 @@ class BatchMetricsWarmStarterTest {
     private BatchMetricsWarmStarter warmStarter() {
         return new BatchMetricsWarmStarter(
                 batchMetrics,
-                dailyOhlcvRepository,
+                batchLastLoadRepository,
                 investorTrendRepository,
                 creditBalanceRepository,
                 shortSaleDomesticRepository,
@@ -91,12 +91,12 @@ class BatchMetricsWarmStarterTest {
                 marketIndicatorRepository,
                 etfRepresentativeHistoryRepository,
                 disclosureRepository,
-                corporateEventRepository,
                 corpCodeMappingRepository,
                 domesticNewsHeadlineRepository,
                 overseasNewsHeadlineRepository,
                 extendedHoursWarmSource,
-                watchlistSyncWarmSource);
+                watchlistSyncWarmSource,
+                marketWarmSource);
     }
 
     @Nested
@@ -111,11 +111,7 @@ class BatchMetricsWarmStarterTest {
             Instant expected = kstTime.atZone(KST).toInstant();
 
             stubAllEmpty();
-            when(dailyOhlcvRepository.findMaxCreatedAtByMarketsIn(any()))
-                    .thenReturn(
-                            Optional.of(kstTime), // domestic-daily (KOSPI/KOSDAQ/KRX)
-                            Optional.empty() // overseas-daily (NYSE/NASDAQ/AMEX/US)
-                            );
+            when(marketWarmSource.domesticDailyLastLoad()).thenReturn(Optional.of(kstTime));
 
             // Act
             warmStarter().run(null);
@@ -154,8 +150,9 @@ class BatchMetricsWarmStarterTest {
         void continuesWhenOneBatchThrows() {
             // Arrange
             LocalDateTime kstTime = LocalDateTime.of(2026, 6, 24, 10, 0, 0);
-            when(dailyOhlcvRepository.findMaxCreatedAtByMarketsIn(any()))
-                    .thenThrow(new QueryTimeoutException("DB 연결 실패"))
+            when(marketWarmSource.domesticDailyLastLoad())
+                    .thenThrow(new QueryTimeoutException("DB 연결 실패"));
+            when(marketWarmSource.overseasDailyLastLoad())
                     .thenReturn(Optional.of(kstTime)); // overseas-daily는 정상
             stubNonDailyEmpty();
 
@@ -168,8 +165,9 @@ class BatchMetricsWarmStarterTest {
         void warmsContinuingBatchesAfterOneFailure() throws Exception {
             // Arrange
             LocalDateTime kstTime = LocalDateTime.of(2026, 6, 24, 10, 0, 0);
-            when(dailyOhlcvRepository.findMaxCreatedAtByMarketsIn(any()))
-                    .thenThrow(new QueryTimeoutException("DB 오류")) // domestic-daily 실패
+            when(marketWarmSource.domesticDailyLastLoad())
+                    .thenThrow(new QueryTimeoutException("DB 오류")); // domestic-daily 실패
+            when(marketWarmSource.overseasDailyLastLoad())
                     .thenReturn(Optional.of(kstTime)); // overseas-daily 성공
             stubNonDailyEmpty();
 
@@ -262,7 +260,7 @@ class BatchMetricsWarmStarterTest {
             LocalDateTime kstTime = LocalDateTime.of(2026, 7, 3, 22, 0, 0);
             Instant expected = kstTime.atZone(KST).toInstant();
             stubAllEmpty();
-            when(corporateEventRepository.findMaxCreatedAtByMarketsIn(any()))
+            when(marketWarmSource.overseasCorporateEventLastLoad())
                     .thenReturn(Optional.of(kstTime));
 
             warmStarter().run(null);
@@ -323,7 +321,7 @@ class BatchMetricsWarmStarterTest {
             LocalDateTime kstTime = LocalDateTime.of(2026, 7, 10, 6, 0, 0);
             Instant expected = kstTime.atZone(KST).toInstant();
             stubAllEmpty();
-            when(corporateEventRepository.findMaxCreatedAtByMarketsIn(any()))
+            when(marketWarmSource.overseasCorporateEventLastLoad())
                     .thenReturn(Optional.of(kstTime));
 
             warmStarter().run(null);
@@ -419,22 +417,98 @@ class BatchMetricsWarmStarterTest {
         }
     }
 
-    /** 모든 리포지토리를 Optional.empty() 반환으로 stub. */
+    @Nested
+    @DisplayName(
+            "Redis 우선·프록시 폴백 warm-start (SPEC-COLLECTOR-WARMSTART-REDIS-001 REQ-WSR-005/006/007)")
+    class RedisFirstWarmStart {
+
+        @Test
+        @DisplayName("Redis 값이 있으면 그 값으로 seed하고 DB 프록시 조회를 건너뛴다 (AC-3)")
+        void seedsFromRedisAndSkipsProxy() throws Exception {
+            // Arrange — corp-code Redis 성공 시각 존재(성공-0건-삽입 배치의 프록시 부동을 우회)
+            Instant redisInstant = Instant.ofEpochSecond(1_752_000_000L);
+            // find는 warm 대상 전 라벨에 대해 호출되므로(다른 라벨은 기본값 empty) 이 stub만 lenient로 둔다.
+            lenient()
+                    .when(batchLastLoadRepository.find("corp-code"))
+                    .thenReturn(Optional.of(redisInstant));
+
+            // Act
+            warmStarter().run(null);
+
+            // Assert — Redis 값으로 seed, 프록시(findMaxCreatedAt)는 호출되지 않는다
+            verify(batchMetrics).warmLastLoad("corp-code", redisInstant);
+            verify(corpCodeMappingRepository, never()).findMaxCreatedAt();
+        }
+
+        @Test
+        @DisplayName("Redis 값이 없으면 기존 DB 프록시로 폴백해 seed한다 (AC-4, 비회귀)")
+        void fallsBackToProxyWhenRedisAbsent() throws Exception {
+            // Arrange — find는 기본값(Optional.empty()), 프록시만 값 반환
+            LocalDateTime kstTime = LocalDateTime.of(2026, 7, 7, 7, 30, 0);
+            Instant expected = kstTime.atZone(KST).toInstant();
+            when(corpCodeMappingRepository.findMaxCreatedAt()).thenReturn(Optional.of(kstTime));
+
+            // Act
+            warmStarter().run(null);
+
+            // Assert — 프록시 값으로 seed(Redis 도입 이전과 동일)
+            verify(batchMetrics).warmLastLoad("corp-code", expected);
+        }
+
+        @Test
+        @DisplayName("Redis 조회가 예외를 던지면 프록시로 폴백하며 run()은 예외 없이 완료된다 (AC-4)")
+        void fallsBackToProxyWhenRedisThrows() throws Exception {
+            // Arrange
+            LocalDateTime kstTime = LocalDateTime.of(2026, 7, 7, 7, 30, 0);
+            Instant expected = kstTime.atZone(KST).toInstant();
+            lenient()
+                    .when(batchLastLoadRepository.find("corp-code"))
+                    .thenThrow(new QueryTimeoutException("Redis 조회 실패"));
+            when(corpCodeMappingRepository.findMaxCreatedAt()).thenReturn(Optional.of(kstTime));
+
+            // Act & Assert
+            assertThatNoException().isThrownBy(() -> warmStarter().run(null));
+            verify(batchMetrics).warmLastLoad("corp-code", expected);
+        }
+
+        @Test
+        @DisplayName("last_data 경로(warmData)는 Redis 우선 로직과 무관하게 프록시로 유지된다 (REQ-WSR-007, AC-7)")
+        void warmDataPathUnchanged() throws Exception {
+            // Arrange — interest last_load는 Redis에서, last_data는 여전히 DB 프록시에서 seed되어야 한다
+            Instant redisInstant = Instant.ofEpochSecond(1_752_600_000L);
+            LocalDateTime dataTime = LocalDateTime.of(2026, 4, 16, 6, 0, 0);
+            Instant dataInstant = dataTime.atZone(KST).toInstant();
+            lenient()
+                    .when(batchLastLoadRepository.find("overseas-shortsale-interest"))
+                    .thenReturn(Optional.of(redisInstant));
+            when(shortSaleOverseasRepository.findMaxInterestCollectedAt())
+                    .thenReturn(Optional.of(dataTime));
+
+            // Act
+            warmStarter().run(null);
+
+            // Assert — last_load는 Redis 값, last_data는 프록시 값(불변)
+            verify(batchMetrics).warmLastLoad("overseas-shortsale-interest", redisInstant);
+            verify(batchMetrics).warmDataArrival("overseas-shortsale-interest", dataInstant);
+        }
+    }
+
+    /**
+     * 모든 협력자를 Optional.empty() 반환으로 stub. 시장 필터 seed({@link MarketWarmSource})와 8종 background mock은
+     * Mockito 기본값(Optional.empty())을 그대로 쓰므로 명시 stub하지 않는다.
+     */
     private void stubAllEmpty() {
-        when(dailyOhlcvRepository.findMaxCreatedAtByMarketsIn(any())).thenReturn(Optional.empty());
         stubNonDailyEmpty();
     }
 
     /**
-     * DailyOhlcvRepository 제외 foreground 협력자를 Optional.empty()로 stub. 8종 background mock은 Mockito
-     * 기본값 (Optional.empty())을 그대로 쓰므로 명시 stub하지 않는다.
+     * foreground 협력자를 Optional.empty()로 stub. {@link MarketWarmSource}와 8종 background mock은 Mockito
+     * 기본값(Optional.empty())을 그대로 쓰므로 명시 stub하지 않는다.
      */
     private void stubNonDailyEmpty() {
         when(shortSaleOverseasRepository.findMaxDailyCollectedAt()).thenReturn(Optional.empty());
         when(shortSaleOverseasRepository.findMaxInterestCollectedAt()).thenReturn(Optional.empty());
         when(disclosureRepository.findMaxCreatedAt()).thenReturn(Optional.empty());
-        when(corporateEventRepository.findMaxCreatedAtByMarketsIn(any()))
-                .thenReturn(Optional.empty());
         when(corpCodeMappingRepository.findMaxCreatedAt()).thenReturn(Optional.empty());
         when(domesticNewsHeadlineRepository.findMaxPublishedAt()).thenReturn(Optional.empty());
         when(overseasNewsHeadlineRepository.findMaxPublishedAt()).thenReturn(Optional.empty());
