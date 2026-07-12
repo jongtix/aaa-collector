@@ -1137,6 +1137,123 @@ class OverseasDailyOhlcvCollectionServiceTest {
         }
     }
 
+    @Nested
+    @DisplayName("확정성 계측 로그 (SPEC-OBSV-WATERMARK-002 REQ-WM2-007/008, T-005)")
+    class ConfirmabilityLog {
+
+        private Logger serviceLogger;
+        private ListAppender<ILoggingEvent> listAppender;
+
+        @SuppressWarnings("unchecked")
+        private ArgumentCaptor<List<ParsedOhlcvRow>> captureInsert() {
+            return ArgumentCaptor.forClass(List.class);
+        }
+
+        @BeforeEach
+        void attachLogAppender() {
+            serviceLogger =
+                    (Logger) LoggerFactory.getLogger(OverseasDailyOhlcvCollectionService.class);
+            listAppender = new ListAppender<>();
+            listAppender.start();
+            serviceLogger.addAppender(listAppender);
+        }
+
+        @AfterEach
+        void detachLogAppender() {
+            serviceLogger.detachAppender(listAppender);
+            listAppender.stop();
+        }
+
+        @Test
+        @DisplayName(
+                "ET 당일 행 폐기 직전 INFO 로그 기록 — 프리픽스 [overseas-daily][confirmability], 필드 전부 포함"
+                        + " (REQ-WM2-007)")
+        void discardedEtTodayRow_logsConfirmabilitySnapshot() throws Exception {
+            KisOverseasDailyOhlcvResponse resp =
+                    response(
+                            "4",
+                            List.of(
+                                    rowOhlc(
+                                            TODAY_YMD,
+                                            "150",
+                                            "155",
+                                            "149",
+                                            "152",
+                                            "1000000",
+                                            "150000000"),
+                                    row(PREV_YMD, "100", "0", "0")));
+            stubSingle("AAPL", resp);
+
+            service.collect(TODAY);
+
+            List<ILoggingEvent> confirmabilityLogs =
+                    listAppender.list.stream()
+                            .filter(e -> e.getLevel() == Level.INFO)
+                            .filter(
+                                    e ->
+                                            e.getFormattedMessage()
+                                                    .startsWith("[overseas-daily][confirmability]"))
+                            .toList();
+            assertThat(confirmabilityLogs).hasSize(1);
+            String message = confirmabilityLogs.getFirst().getFormattedMessage();
+            assertThat(message)
+                    .contains("AAPL")
+                    .contains(TODAY_YMD)
+                    .contains("150") // open
+                    .contains("155") // high
+                    .contains("149") // low
+                    .contains("152") // clos
+                    .contains("1000000") // tvol
+                    .contains("150000000"); // tamt
+        }
+
+        @Test
+        @DisplayName("확정성 로그 추가는 저장 호출 인자·검증 통과 행 집합을 변경하지 않는다 (부수효과 없음, REQ-WM2-008)")
+        void confirmabilityLog_noSideEffectOnPersistedRows() throws Exception {
+            KisOverseasDailyOhlcvResponse resp =
+                    response(
+                            "4",
+                            List.of(
+                                    rowOhlc(
+                                            TODAY_YMD,
+                                            "150",
+                                            "155",
+                                            "149",
+                                            "152",
+                                            "1000000",
+                                            "150000000"),
+                                    row(PREV_YMD, "100", "0", "0")));
+            stubSingle("AAPL", resp);
+
+            service.collect(TODAY);
+
+            ArgumentCaptor<List<ParsedOhlcvRow>> captor = captureInsert();
+            verify(ohlcvInserter, times(1))
+                    .insertBatch(any(), captor.capture(), any(WatermarkSeries.class));
+            assertThat(captor.getValue()).hasSize(1);
+            assertThat(captor.getValue().getFirst().tradeDate())
+                    .isEqualTo(LocalDate.of(2026, 6, 17));
+            assertThat(captor.getValue().getFirst().volume()).isZero();
+        }
+
+        @Test
+        @DisplayName("폐기 행 없음(전부 확정 봉) — 확정성 로그 미기록")
+        void noDiscardedRows_noConfirmabilityLog() throws Exception {
+            stubSingle("AAPL", validResponse());
+
+            service.collect(TODAY);
+
+            boolean anyConfirmabilityLog =
+                    listAppender.list.stream()
+                            .anyMatch(
+                                    e ->
+                                            e.getFormattedMessage()
+                                                    .startsWith(
+                                                            "[overseas-daily][confirmability]"));
+            assertThat(anyConfirmabilityLog).isFalse();
+        }
+    }
+
     // ── helpers ──
 
     private void stubSingle(String symbol, KisOverseasDailyOhlcvResponse resp)

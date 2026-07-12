@@ -280,16 +280,45 @@ public class OverseasDailyOhlcvCollectionService {
             return false;
         }
 
-        // REQ-OVOH-015: ET 당일 행 제외 후 검증·적재
+        // REQ-OVOH-015: ET 당일 행 제외 후 검증·적재. 폐기 행은 REQ-WM2-007/008 확정성 계측 로그로 남긴다
+        // (SPEC-OBSV-WATERMARK-002 §3.4) — 필터링 자체(어느 행을 남기는지)는 변경하지 않는 관찰 전용 부가 동작이다.
         String todayYmd = today.format(DATE_FMT);
         List<KisOverseasDailyOhlcvResponse.OverseasDailyOhlcvRow> filteredRows =
-                response.output2().stream().filter(row -> !todayYmd.equals(row.xymd())).toList();
+                response.output2().stream()
+                        .filter(
+                                row -> {
+                                    boolean isEtToday = todayYmd.equals(row.xymd());
+                                    if (isEtToday) {
+                                        logDiscardedConfirmabilitySnapshot(symbol, row);
+                                    }
+                                    return !isEtToday;
+                                })
+                        .toList();
         List<ParsedOhlcvRow> kept = keepValidRows(symbol, filteredRows);
         if (!kept.isEmpty()) {
             // REQ-INSERT-005: 단일 커넥션 배치 INSERT IGNORE (W-2 불변식)
             ohlcvInserter.insertBatch(stock.getId(), kept, WatermarkSeries.DAILY_OHLCV_US);
         }
         return true;
+    }
+
+    /**
+     * REQ-OVOH-015 ET 당일 가드가 폐기하는 행을 폐기 직전 INFO 로그로 남긴다(REQ-WM2-007/008, SPEC-OBSV-WATERMARK-002
+     * §3.4). 저장·검증·멱등성 동작에는 영향 없는 관찰 전용 부수 로그다.
+     */
+    private void logDiscardedConfirmabilitySnapshot(
+            String symbol, KisOverseasDailyOhlcvResponse.OverseasDailyOhlcvRow row) {
+        log.info(
+                "[overseas-daily][confirmability] symbol={}, xymd={}, open={}, high={}, low={},"
+                        + " clos={}, tvol={}, tamt={}",
+                symbol,
+                row.xymd(),
+                row.open(),
+                row.high(),
+                row.low(),
+                row.clos(),
+                row.tvol(),
+                row.tamt());
     }
 
     /**
