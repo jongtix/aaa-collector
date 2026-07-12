@@ -440,8 +440,9 @@ public class OverseasDailyOhlcvCollectionService {
      * <ul>
      *   <li>가격(close/open/high/low) ≤ 0 또는 {@code > PRICE_MAX_USD} → empty
      *   <li>거래량 &lt; 0(음수) → empty; 거래정지일(OHLC 유효 + {@code volume == 0})은 허용(저장)
-     *   <li>정상 행({@code volume > 0})의 {@code tvol}/{@code tamt} ≤ 0 → empty(MA-01); 거래정지 행은 {@code
-     *       tamt == 0} 허용(DP-4)
+     *   <li>{@code tamt} &lt; 0(음수) → empty(물리적 불가능값 방어); {@code tamt == 0}은 거래정지 행·정상 행({@code
+     *       volume > 0}) 모두 허용(aaa-infra#93 — KIS 아카이브({@code HHDFS76240000})가 가격·거래량은 정상인데 {@code
+     *       tamt}만 0으로 반환하는 실데이터 행 존재)
      * </ul>
      *
      * <p>SPEC-COLLECTOR-BACKFILL-006: 미국 분할은 거래정지 {@code volume == 0}이 실측상 없으나(§1.5), 비분할 거래정지
@@ -463,15 +464,10 @@ public class OverseasDailyOhlcvCollectionService {
                             || isInvalidPrice(high)
                             || isInvalidPrice(low);
             // @MX:NOTE: [AUTO] 거래정지일(OHLC 유효 + volume==0) 허용 — 미국 분할은 거래정지 volume=0 미발생(실측),
-            // 비분할 사유(규제·변동성·정리매매) 방어. 거래정지 행은 tamt==0도 허용, 정상 행은 tvol/tamt 양수 검증 유지(MA-01).
+            // 비분할 사유(규제·변동성·정리매매) 방어. tamt는 음수(물리적 불가능값)만 거부하고 0은 거래정지 행·정상 행
+            // 모두 허용(aaa-infra#93 — KIS 아카이브의 실데이터 tamt=0 결측 방지, 국내 정책과 통일).
             // @MX:REASON: SPEC-COLLECTOR-BACKFILL-006 REQ-BACKFILL-090,-093 — 국내와 일관 + 종료 오판 사전 방어.
-            boolean tradingHalt = !invalidPrice && volume == 0;
-            boolean invalid =
-                    invalidPrice
-                            || volume < 0
-                            // 거래정지 행(volume==0)은 tamt==0 허용(DP-4); 정상 행(volume>0)은 tvol/tamt 양수
-                            // 검증(MA-01)
-                            || (!tradingHalt && tradingValue <= 0);
+            boolean invalid = invalidPrice || volume < 0 || tradingValue < 0;
 
             if (invalid) {
                 log.warn(

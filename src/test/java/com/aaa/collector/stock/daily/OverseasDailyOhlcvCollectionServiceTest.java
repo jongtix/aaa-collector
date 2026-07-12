@@ -391,14 +391,31 @@ class OverseasDailyOhlcvCollectionServiceTest {
         }
 
         @Test
-        @DisplayName("정상 행(volume>0) + tamt ≤ 0 — 저장 제외(MA-01 양수 검증 보존, EC-6)")
-        void collect_normalRowNonPositiveTamt_notInserted() throws Exception {
-            // volume>0(거래정지 아님)인데 tamt<=0 → 데이터 오류로 거부(MA-01 유지)
+        @DisplayName("정상 행(volume>0) + tamt < 0(음수) — 저장 제외(MA-01 음수 방어 유지)")
+        void collect_normalRowNegativeTamt_notInserted() throws Exception {
+            // volume>0(거래정지 아님)인데 tamt<0(음수, 물리적 불가능값) → 데이터 오류로 거부
             stubSingle("AAPL", response("4", List.of(row(PREV_YMD, "100", "1000", "-5"))));
 
             service.collect(TODAY);
 
             verifyNoInsert();
+        }
+
+        @Test
+        @DisplayName("정상 행(volume>0) + tamt==0 — 저장(aaa-infra#93, KIS 아카이브 실데이터 결측 방지)")
+        void collect_normalRowZeroTamt_inserted() throws Exception {
+            // volume>0(거래정지 아님)인데 tamt==0(KIS 아카이브 실데이터 결측) → 이제 허용(등호 제거)
+            stubSingle("AAPL", response("4", List.of(row(PREV_YMD, "100", "1000", "0"))));
+
+            service.collect(TODAY);
+
+            @SuppressWarnings("unchecked")
+            ArgumentCaptor<List<ParsedOhlcvRow>> captor = ArgumentCaptor.forClass(List.class);
+            verify(ohlcvInserter, times(1))
+                    .insertBatch(any(), captor.capture(), any(WatermarkSeries.class));
+            assertThat(captor.getValue()).hasSize(1);
+            ParsedOhlcvRow saved = captor.getValue().getFirst();
+            assertThat(saved.tradingValue()).isEqualTo(0L);
         }
 
         @Test
