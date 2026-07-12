@@ -212,6 +212,8 @@ public class CoverageRefresher {
      *
      * <p>국내: 검증 기준선만 신뢰 가능 — 없으면 {@code null}(모집단 제외, MA-01 레거시 무신호 오탐 차단, §7 DP-1 분기 B 기본).
      */
+    // @MX:NOTE: [AUTO] 해외는 max(wallFloor, verifiedBaseline), 국내는 검증 기준선 단독 — 신뢰 하한 산정 분기점
+    // @MX:SPEC: SPEC-COLLECTOR-BACKFILL-010
     private LocalDate resolveTrustedFloor(Stock stock, boolean overseas) {
         if (overseas) {
             LocalDate listed = stock.getListedDate();

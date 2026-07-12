@@ -179,6 +179,8 @@ class CoverageRefresherTest {
                                     }));
             when(dailyOhlcvRepository.findDistinctTradeDatesByStockIds(anyCollection()))
                     .thenReturn(List.of(LocalDate.of(2016, 1, 1), LocalDate.of(2020, 1, 1)));
+            when(backfillStatusRepository.findVerifiedBaseline(any(), any(), any()))
+                    .thenReturn(Optional.empty()); // 검증 기준선 없음 — wallFloor 단독 사용
 
             refresher.refreshUsCoverage();
 
