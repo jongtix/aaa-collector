@@ -64,6 +64,37 @@ public class KisWebSocketMessageHandler extends TextWebSocketHandler {
     // @MX:REASON: 구독 성공 응답(Type B rt_cd=0) 수신 전 Type A 도착 시 NPE 방지 처리 필요
     private final Map<String, AesKey> aesKeys = new ConcurrentHashMap<>();
 
+    /**
+     * 요청 방향 — 구독 등록(SUBSCRIBE) 또는 해제(UNSUBSCRIBE)(REQ-WSRES-005~010).
+     *
+     * <p>{@code pendingByKey}의 값 타입으로 사용되며, {@link #handleTypeB}가 응답을 정확히 어느 방향의 요청으로 상관시킬지 결정하는 데
+     * 쓰인다.
+     */
+    public enum Direction {
+        SUBSCRIBE,
+        UNSUBSCRIBE
+    }
+
+    /**
+     * {@code trId:trKey} 복합키 → 요청 방향 매핑(REQ-WSRES-005, exact-key 상관, v0.2.0 재설계).
+     *
+     * <p>{@link KisWebSocketSession#subscribe}/{@link KisWebSocketSession#unsubscribe}(및 재구독 리플레이)가
+     * 전송 직전 {@link #recordPending}으로 기록하고, {@link #handleTypeB}가 {@code header.tr_key} 기반으로 정확히
+     * 조회·제거하여 방향을 확정한다. 동일 키에 대한 신규 기록은 이전 기록을 덮어쓴다(가장 최근 요청의 방향이 다음 응답의 방향이라는 자연스러운 의미론 — 순서 보존이
+     * 불필요하므로 FIFO 큐보다 단순하다).
+     *
+     * <p><b>[알려진 한계, 명시적 수용 — acceptance.md 엣지 케이스 D2]</b> 동일 {@code trId:trKey}에 대해 두 응답 모두 도착하기
+     * 전에 방향이 바뀌는 요청(등록 직후 즉시 해제 등)이 겹치면, 먼저 도착한 응답이 실제로는 다른 요청의 응답일 수 있다. 이 한계를 nonce 등으로 완전히 제거하지
+     * 않는 이유: (1) {@code addSymbol}/{@code removeSymbol}(증분 구독 변경 API)이 현재 호출자 0건(미사용 경로), (2) 원
+     * 장애(장 종료 UNSUBSCRIBE 스톰)는 이 경합과 무관, (3) 실패 모드가 침묵적이나 비파괴적(AES 키 미갱신 정도). 증분 구독 변경에 실제 호출자가 생기는
+     * 후속 SPEC에서 재평가한다.
+     */
+    // @MX:WARN: [AUTO] 동일 trId:trKey에 대해 응답 도착 전 방향이 바뀌면(등록 직후 즉시 해제 등) 나중 요청이 덮어써 먼저
+    // 도착한 응답이 잘못 상관될 수 있음
+    // @MX:REASON: addSymbol/removeSymbol 호출자가 현재 0건(미사용 경로) — 증분 구독 변경 후속 SPEC에서 재평가
+    // (acceptance.md 엣지 케이스 D2)
+    private final Map<String, Direction> pendingByKey = new ConcurrentHashMap<>();
+
     /** 연속 구독 실패 횟수 (REQ-WS-016). */
     private final AtomicInteger subscriptionFailureCount = new AtomicInteger(0);
 
@@ -131,6 +162,21 @@ public class KisWebSocketMessageHandler extends TextWebSocketHandler {
      */
     public AesKey getAesKey(String trId) {
         return aesKeys.get(trId);
+    }
+
+    /**
+     * 구독 등록/해제 요청의 방향을 전송 직전에 기록한다(REQ-WSRES-005, REQ-WSRES-010).
+     *
+     * <p>{@link KisWebSocketSession#subscribe}/{@link KisWebSocketSession#unsubscribe}(및 재구독 리플레이
+     * {@code resubscribeAll})가 {@code sendMessage} 직전에 호출한다. 동일 {@code trId:trKey} 키에 대한 신규 기록은 이전
+     * 기록을 덮어쓴다.
+     *
+     * @param trId 트랜잭션 ID
+     * @param trKey 종목 코드
+     * @param direction 요청 방향(SUBSCRIBE/UNSUBSCRIBE)
+     */
+    public void recordPending(String trId, String trKey, Direction direction) {
+        pendingByKey.put(trId + ":" + trKey, direction);
     }
 
     // ──────────────────────────────────────────────────────────────────
@@ -235,7 +281,9 @@ public class KisWebSocketMessageHandler extends TextWebSocketHandler {
     /**
      * Type B 메시지 처리.
      *
-     * <p>PINGPONG, 구독 성공(rt_cd=0), 구독 실패(rt_cd≠0), UNSUB 응답을 처리한다.
+     * <p>PINGPONG, 구독 등록 응답(성공/실패), 구독 해제 응답을 처리한다. PINGPONG이 아닌 응답은 {@code header.tr_id} + {@code
+     * header.tr_key} 복합키로 {@code pendingByKey}를 조회해 방향(등록/해제)을 확정한다(REQ-WSRES-006, exact-key 상관).
+     * 키가 없으면 기존 {@code msg1} 접두어 휴리스틱으로 폴백한다(REQ-WSRES-009).
      */
     @SuppressWarnings("PMD.AvoidCatchingGenericException")
     private void handleTypeB(WebSocketSession session, String raw) {
@@ -244,31 +292,40 @@ public class KisWebSocketMessageHandler extends TextWebSocketHandler {
             JsonNode header = root.path("header");
             JsonNode body = root.path("body");
 
-            // PINGPONG: header.tr_id = "PINGPONG", body 없음
+            // PINGPONG: header.tr_id = "PINGPONG" — 방향 조회 이전에 조기 반환(REQ-WSRES-006)
             String trId = header.path("tr_id").asText();
-            if (TR_ID_PINGPONG.equals(trId) && body.isMissingNode()) {
-                handlePingPong(session, raw, alias);
-                return;
-            }
-
-            // body가 없는 PINGPONG 변형 처리
             if (TR_ID_PINGPONG.equals(trId)) {
                 handlePingPong(session, raw, alias);
                 return;
             }
 
+            String trKey = header.path("tr_key").asText();
             String rtCd = body.path("rt_cd").asText();
             String msg1 = body.path("msg1").asText();
 
-            if (RT_CD_SUCCESS.equals(rtCd)) {
-                // 구독 성공 또는 UNSUB 확인
-                if (msg1.startsWith(UNSUB_PREFIX)) {
+            Direction direction = pendingByKey.remove(trId + ":" + trKey);
+            if (direction == null) {
+                // 상관 정보 소실 — 기존 문자열 휴리스틱으로 폴백(REQ-WSRES-009, AC-8)
+                direction =
+                        msg1.startsWith(UNSUB_PREFIX) ? Direction.UNSUBSCRIBE : Direction.SUBSCRIBE;
+                log.warn("[{}] 요청 상관 실패 — 문자열 폴백 사용", alias);
+            }
+
+            if (direction == Direction.UNSUBSCRIBE) {
+                // 해제 요청 응답 — 성공/실패 무관하게 구독 실패 카운트 미증가(REQ-WSRES-007)
+                if (RT_CD_SUCCESS.equals(rtCd)) {
                     log.info("[{}] 구독 해제 확인: trId={}, msg={}", alias, trId, msg1);
                 } else {
-                    handleSubscriptionSuccess(trId, body);
+                    log.warn("[{}] 구독 해제 오류(무해) — 카운트 미반영: trId={}, msg={}", alias, trId, msg1);
                 }
+                return;
+            }
+
+            // direction == SUBSCRIBE
+            if (RT_CD_SUCCESS.equals(rtCd)) {
+                handleSubscriptionSuccess(trId, body);
             } else {
-                // 구독 실패
+                // 구독 실패(REQ-WSRES-008)
                 log.warn("[{}] 구독 실패: trId={}, rt_cd={}, msg={}", alias, trId, rtCd, msg1);
                 int count = subscriptionFailureCount.incrementAndGet();
                 if (count >= SAFE_MODE_FAILURE_THRESHOLD) {

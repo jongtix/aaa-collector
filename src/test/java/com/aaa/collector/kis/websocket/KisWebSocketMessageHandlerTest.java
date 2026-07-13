@@ -7,12 +7,17 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 
+import ch.qos.logback.classic.Level;
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
 import com.aaa.collector.common.safemode.SafeModeManager;
 import java.nio.charset.StandardCharsets;
 import java.util.Base64;
 import javax.crypto.Cipher;
 import javax.crypto.spec.IvParameterSpec;
 import javax.crypto.spec.SecretKeySpec;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -21,6 +26,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.slf4j.LoggerFactory;
 import org.springframework.web.socket.CloseStatus;
 import org.springframework.web.socket.PongMessage;
 import org.springframework.web.socket.TextMessage;
@@ -336,6 +342,164 @@ class KisWebSocketMessageHandlerTest {
             handler.handleTextMessage(session, new TextMessage(json));
             // 예외가 발생하지 않으면 성공
             verify(tickPublisher, never()).publish(any());
+        }
+    }
+
+    // ──────────────────────────────────────────────────────────────────
+    // Type B — exact-key 상관 (REQ-WSRES-005~010, AC-5~AC-9)
+    // ──────────────────────────────────────────────────────────────────
+
+    @Nested
+    @DisplayName("Type B — exact-key 요청-응답 상관")
+    class ExactKeyCorrelation {
+
+        private Logger handlerLogger;
+        private ListAppender<ILoggingEvent> listAppender;
+
+        @BeforeEach
+        void attachLogAppender() {
+            handlerLogger = (Logger) LoggerFactory.getLogger(KisWebSocketMessageHandler.class);
+            listAppender = new ListAppender<>();
+            listAppender.start();
+            handlerLogger.addAppender(listAppender);
+        }
+
+        @AfterEach
+        void detachLogAppender() {
+            handlerLogger.detachAppender(listAppender);
+            listAppender.stop();
+        }
+
+        private static final String UNSUB_ERROR_JSON =
+                """
+                {
+                  "header": {"tr_id": "H0STCNT0", "tr_key": "005930"},
+                  "body": {
+                    "rt_cd": "1",
+                    "msg1": "UNSUBSCRIBE ERROR(not found!)"
+                  }
+                }
+                """;
+
+        @Test
+        @DisplayName("AC-5: 방향이 UNSUBSCRIBE로 기록된 키에 오류 응답 5회 연속 수신해도 세이프모드 미진입(실측 재현)")
+        void unsubscribeDirection_fiveConsecutiveErrorResponses_doesNotEnterSafeMode() {
+            for (int i = 0; i < 5; i++) {
+                handler.recordPending(
+                        "H0STCNT0", "005930", KisWebSocketMessageHandler.Direction.UNSUBSCRIBE);
+                handler.handleTextMessage(session, new TextMessage(UNSUB_ERROR_JSON));
+            }
+
+            verify(webSocketSafeModeManager, never()).enter(any(), any());
+        }
+
+        @Test
+        @DisplayName("AC-6: 방향이 SUBSCRIBE로 기록된 키에 실패 응답 5회 연속 수신 → 세이프모드 진입(회귀 방지)")
+        void subscribeDirection_fiveConsecutiveFailures_entersSafeMode() {
+            String subscribeFailureJson =
+                    """
+                    {
+                      "header": {"tr_id": "H0STCNT0", "tr_key": "005930"},
+                      "body": {
+                        "rt_cd": "1",
+                        "msg1": "SUBSCRIBE FAIL"
+                      }
+                    }
+                    """;
+
+            for (int i = 0; i < 5; i++) {
+                handler.recordPending(
+                        "H0STCNT0", "005930", KisWebSocketMessageHandler.Direction.SUBSCRIBE);
+                handler.handleTextMessage(session, new TextMessage(subscribeFailureJson));
+            }
+
+            verify(webSocketSafeModeManager, times(1)).enter(any(), any());
+        }
+
+        @Test
+        @DisplayName("AC-7: 서로 다른 trKey 응답이 순서 역전되어도 exact-key로 각자 정확히 상관된다")
+        void crossKeyOrderReversal_correlatesEachResponseIndependently() {
+            // Arrange — 005930은 SUBSCRIBE, 000660은 UNSUBSCRIBE로 기록
+            handler.recordPending(
+                    "H0STCNT0", "005930", KisWebSocketMessageHandler.Direction.SUBSCRIBE);
+            handler.recordPending(
+                    "H0STCNT0", "000660", KisWebSocketMessageHandler.Direction.UNSUBSCRIBE);
+
+            String unsubscribeErrorFor000660 =
+                    """
+                    {
+                      "header": {"tr_id": "H0STCNT0", "tr_key": "000660"},
+                      "body": {
+                        "rt_cd": "1",
+                        "msg1": "UNSUBSCRIBE ERROR(not found!)"
+                      }
+                    }
+                    """;
+            String subscribeSuccessFor005930 =
+                    """
+                    {
+                      "header": {"tr_id": "H0STCNT0", "tr_key": "005930"},
+                      "body": {
+                        "rt_cd": "0",
+                        "msg1": "SUBSCRIBE SUCCESS",
+                        "output": {"iv": "testiv1234567890", "key": "testkey1234567890123456789012345"}
+                      }
+                    }
+                    """;
+
+            // Act — 000660의 UNSUBSCRIBE 오류가 005930의 SUBSCRIBE 성공보다 먼저 도착(순서 역전)
+            handler.handleTextMessage(session, new TextMessage(unsubscribeErrorFor000660));
+            handler.handleTextMessage(session, new TextMessage(subscribeSuccessFor005930));
+
+            // Assert — 세이프모드 미진입(UNSUBSCRIBE 오류가 SUBSCRIBE 실패로 오상관되지 않음) + AES 키 정상 저장
+            verify(webSocketSafeModeManager, never()).enter(any(), any());
+            assertThat(handler.getAesKey("H0STCNT0")).isNotNull();
+        }
+
+        @Test
+        @DisplayName("AC-8: 상관 키 미발견 시 문자열 폴백 사용 + WARN 로그")
+        void keyNotFound_fallsBackToStringHeuristicWithWarnLog() {
+            // Arrange — recordPending 미호출(상관 정보 소실 시뮬레이션)
+
+            // Act
+            handler.handleTextMessage(session, new TextMessage(UNSUB_ERROR_JSON));
+
+            // Assert — 문자열 휴리스틱으로 UNSUBSCRIBE 분류(카운트 미증가) + 폴백 WARN 로그
+            verify(webSocketSafeModeManager, never()).enter(any(), any());
+            boolean hasFallbackWarnLog =
+                    listAppender.list.stream()
+                            .anyMatch(
+                                    event ->
+                                            event.getLevel() == Level.WARN
+                                                    && event.getFormattedMessage()
+                                                            .contains("문자열 폴백"));
+            assertThat(hasFallbackWarnLog).isTrue();
+        }
+
+        @Test
+        @DisplayName("AC-9: 재구독 리플레이 경로(recordPending)로 기록된 SUBSCRIBE 성공 응답도 정상 처리된다")
+        void resubscribeReplayDirection_subscribeSuccess_registersAesKeyAndResetsCount() {
+            // Arrange — resubscribeAll()이 사용할 것과 동일한 경로: 전송 직전 SUBSCRIBE 방향 기록
+            handler.recordPending(
+                    "H0STCNT0", "005930", KisWebSocketMessageHandler.Direction.SUBSCRIBE);
+            String subscribeSuccessJson =
+                    """
+                    {
+                      "header": {"tr_id": "H0STCNT0", "tr_key": "005930"},
+                      "body": {
+                        "rt_cd": "0",
+                        "msg1": "SUBSCRIBE SUCCESS",
+                        "output": {"iv": "testiv1234567890", "key": "testkey1234567890123456789012345"}
+                      }
+                    }
+                    """;
+
+            // Act
+            handler.handleTextMessage(session, new TextMessage(subscribeSuccessJson));
+
+            // Assert
+            assertThat(handler.getAesKey("H0STCNT0")).isNotNull();
+            verify(webSocketSafeModeManager, never()).enter(any(), any());
         }
     }
 }

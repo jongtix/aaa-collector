@@ -142,6 +142,8 @@ public class KisWebSocketSession {
      */
     public boolean subscribe(String trId, String trKey) {
         String json = buildSubscribeJson(trId, trKey, "1");
+        // 전송 직전 방향 기록 — 응답 exact-key 상관의 기준(REQ-WSRES-005, REQ-WSRES-010)
+        messageHandler.recordPending(trId, trKey, KisWebSocketMessageHandler.Direction.SUBSCRIBE);
         boolean sent = sendMessage(json);
         if (sent) {
             activeSubscriptions.add(trId + "|" + trKey);
@@ -159,6 +161,8 @@ public class KisWebSocketSession {
      */
     public boolean unsubscribe(String trId, String trKey) {
         String json = buildSubscribeJson(trId, trKey, "2");
+        // 전송 직전 방향 기록 — 응답 exact-key 상관의 기준(REQ-WSRES-005)
+        messageHandler.recordPending(trId, trKey, KisWebSocketMessageHandler.Direction.UNSUBSCRIBE);
         boolean sent = sendMessage(json);
         activeSubscriptions.remove(trId + "|" + trKey);
         log.debug("[{}] 구독 해제: trId={}, trKey={}", alias, trId, trKey);
@@ -169,7 +173,8 @@ public class KisWebSocketSession {
      * 모든 활성 구독을 해제한다.
      *
      * <p>각 구독에 대해 unsubscribe 메시지를 전송하고 activeSubscriptions를 비운다. 전송 실패 건수는 WARN 로그로만 남기고(동작 변경
-     * 최소), 개별 실패로 전체 해제를 중단하지 않는다.
+     * 최소), 개별 실패로 전체 해제를 중단하지 않는다. 각 요청도 방향 기록을 거쳐 응답이 exact-key로 상관되도록 한다(REQ-WSRES-005) — 장 종료
+     * UNSUBSCRIBE 스톰에 대한 오류 응답이 세이프모드를 오염시키지 않는 실제 장애 시나리오의 핵심 경로다(acceptance.md AC-5).
      */
     public void unsubscribeAll() {
         int failureCount = 0;
@@ -177,6 +182,8 @@ public class KisWebSocketSession {
             String[] parts = key.split("\\|", 2);
             if (parts.length == SUBSCRIPTION_KEY_PARTS) {
                 String json = buildSubscribeJson(parts[0], parts[1], "2");
+                messageHandler.recordPending(
+                        parts[0], parts[1], KisWebSocketMessageHandler.Direction.UNSUBSCRIBE);
                 if (!sendMessage(json)) {
                     failureCount++;
                 }
