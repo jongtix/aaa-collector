@@ -351,7 +351,9 @@ public class KisWebSocketMessageHandler extends TextWebSocketHandler {
      */
     private void handleSubscriptionSuccess(String trId, JsonNode body) {
         JsonNode output = body.path("output");
-        if (!output.isMissingNode()) {
+        if (output.isMissingNode()) {
+            log.warn("[{}] 구독 성공 응답에 AES 키(output) 누락 — trId={} (비표준 KIS 응답)", alias, trId);
+        } else {
             String iv = output.path("iv").asText();
             String key = output.path("key").asText();
             registerAesKey(trId, new AesKey(iv, key));

@@ -205,6 +205,47 @@ class KisWebSocketMessageHandlerTest {
             // Assert
             verify(webSocketSafeModeManager).resetBackoff(ALIAS);
         }
+
+        @Test
+        @DisplayName("구독 성공 응답에 output(AES 키) 누락 시 WARN 로그 기록")
+        void subscriptionSuccess_missingOutput_logsWarn() {
+            // Arrange — 비표준 KIS 응답: rt_cd=0이나 output 필드 자체가 없음
+            Logger handlerLogger =
+                    (Logger) LoggerFactory.getLogger(KisWebSocketMessageHandler.class);
+            ListAppender<ILoggingEvent> listAppender = new ListAppender<>();
+            listAppender.start();
+            handlerLogger.addAppender(listAppender);
+
+            String json =
+                    """
+                    {
+                      "header": {"tr_id": "H0STCNT0", "tr_key": "005930"},
+                      "body": {
+                        "rt_cd": "0",
+                        "msg1": "SUBSCRIBE SUCCESS"
+                      }
+                    }
+                    """;
+
+            try {
+                // Act
+                handler.handleTextMessage(session, new TextMessage(json));
+
+                // Assert — output 누락 WARN 로그에 trId 포함
+                boolean hasMissingOutputWarnLog =
+                        listAppender.list.stream()
+                                .anyMatch(
+                                        event ->
+                                                event.getLevel() == Level.WARN
+                                                        && event.getFormattedMessage()
+                                                                .contains("H0STCNT0"));
+                assertThat(hasMissingOutputWarnLog).isTrue();
+                assertThat(handler.getAesKey("H0STCNT0")).isNull();
+            } finally {
+                handlerLogger.detachAppender(listAppender);
+                listAppender.stop();
+            }
+        }
     }
 
     // ──────────────────────────────────────────────────────────────────
