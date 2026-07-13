@@ -272,14 +272,29 @@ class KisWebSocketSessionTest {
     class Subscribe {
 
         @Test
-        @DisplayName("subscribe → activeSubscriptions에 추가, TextMessage 전송")
+        @DisplayName("subscribe → activeSubscriptions에 추가, TextMessage 전송, true 반환")
         void shouldAddToActiveSubscriptionsAndSendMessage() throws Exception {
             // Act
-            session.subscribe("H0STCNT0", "005930");
+            boolean result = session.subscribe("H0STCNT0", "005930");
 
             // Assert
+            assertThat(result).isTrue();
             assertThat(session.getSubscriptionCount()).isEqualTo(1);
             verify(rawSession, atLeastOnce()).sendMessage(any(TextMessage.class));
+        }
+
+        @Test
+        @DisplayName("전송 실패(세션 닫힘) → subscribe가 false 반환, activeSubscriptions 미추가 (AC-16)")
+        void shouldReturnFalseAndNotTrackWhenSendFails() {
+            // Arrange — 세션이 열려 있지 않아 전송이 생략되는 상황을 시뮬레이션
+            when(rawSession.isOpen()).thenReturn(false);
+
+            // Act
+            boolean result = session.subscribe("H0STCNT0", "005930");
+
+            // Assert — 현재 코드는 전송 실패와 무관하게 무조건 추가하여 실패를 성공으로 오계수함(회귀 차단)
+            assertThat(result).isFalse();
+            assertThat(session.getSubscriptionCount()).isEqualTo(0);
         }
 
         @Test

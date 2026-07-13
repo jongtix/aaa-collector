@@ -71,6 +71,8 @@ class KisWebSocketSessionManagerTest {
             when(mockSession.getAlias()).thenReturn(account.alias());
             when(mockSession.isInSafeMode()).thenReturn(false);
             when(mockSession.getSubscriptionCount()).thenReturn(0);
+            // 기본값: 전송 성공(true) — 개별 테스트에서 실패 시나리오는 재스텁으로 오버라이드(REQ-WSRES-015)
+            when(mockSession.subscribe(anyString(), anyString())).thenReturn(true);
             mockSessions.add(mockSession);
             mockSessionMap.put(account.alias(), mockSession);
         }
@@ -121,7 +123,7 @@ class KisWebSocketSessionManagerTest {
                     doAnswer(
                                     inv -> {
                                         counts[idx]++;
-                                        return null;
+                                        return true;
                                     })
                             .when(s)
                             .subscribe(anyString(), anyString());
@@ -237,6 +239,37 @@ class KisWebSocketSessionManagerTest {
             // Act & Assert
             boolean result = manager.assignSubscription("H0STCNT0", "005930");
             assertThat(result).isFalse();
+        }
+    }
+
+    // ──────────────────────────────────────────────────────────────────
+    // 전송 실패 boolean 전파 (REQ-WSRES-015, AC-16)
+    // ──────────────────────────────────────────────────────────────────
+
+    @Nested
+    @DisplayName("구독 전송 실패 시 오계수 방지 (AC-16)")
+    class SubscribeSendFailure {
+
+        @Test
+        @DisplayName(
+                "session.subscribe()가 false 반환 → assignSubscription도 false, subscriptionOwner 미기록")
+        void shouldReturnFalseAndNotTrackOwnerWhenSendFails() throws Exception {
+            // Arrange — 모든 세션의 전송이 실패하도록 설정
+            for (KisWebSocketSession s : mockSessions) {
+                when(s.getSubscriptionCount()).thenReturn(0);
+                when(s.isInSafeMode()).thenReturn(false);
+                when(s.subscribe(anyString(), anyString())).thenReturn(false);
+            }
+
+            // Act
+            boolean result = manager.assignSubscription("H0STCNT0", "005930");
+
+            // Assert — 실패 전파 + subscriptionOwner 미기록(뒤이은 unassign이 아무 세션도 건드리지 않음)
+            assertThat(result).isFalse();
+            manager.unassignSubscription("H0STCNT0", "005930");
+            for (KisWebSocketSession s : mockSessions) {
+                verify(s, never()).unsubscribe(anyString(), anyString());
+            }
         }
     }
 
@@ -475,7 +508,7 @@ class KisWebSocketSessionManagerTest {
                                 inv -> {
                                     usedTrIds.add(inv.getArgument(0));
                                     counts[idx]++;
-                                    return null;
+                                    return true;
                                 })
                         .when(s)
                         .subscribe(anyString(), anyString());

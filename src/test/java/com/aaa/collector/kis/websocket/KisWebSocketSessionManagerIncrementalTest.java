@@ -62,6 +62,8 @@ class KisWebSocketSessionManagerIncrementalTest {
             when(mockSession.getAlias()).thenReturn(account.alias());
             when(mockSession.isInSafeMode()).thenReturn(false);
             when(mockSession.getSubscriptionCount()).thenReturn(0);
+            // 기본값: 전송 성공(true) — Task1(REQ-WSRES-015) boolean 전파 이후 필요한 기본 스텁
+            when(mockSession.subscribe(anyString(), anyString())).thenReturn(true);
             mockSessions.add(mockSession);
             mockSessionMap.put(account.alias(), mockSession);
         }
@@ -174,7 +176,7 @@ class KisWebSocketSessionManagerIncrementalTest {
                 doAnswer(
                                 inv -> {
                                     counts[idx]++;
-                                    return null;
+                                    return true;
                                 })
                         .when(s)
                         .subscribe(anyString(), anyString());

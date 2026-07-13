@@ -312,7 +312,12 @@ public class KisWebSocketSessionManager implements SmartLifecycle {
         KisWebSocketSession target = available.get(idx);
 
         try {
-            target.subscribe(trId, trKey);
+            boolean sent = target.subscribe(trId, trKey);
+            if (!sent) {
+                // 전송 실패 — subscriptionOwner 미기록(REQ-WSRES-015, AC-16) — 실패를 성공으로 오계수 방지
+                log.error("구독 전송 실패: trId={}, trKey={} → alias={}", trId, trKey, target.getAlias());
+                return false;
+            }
             // trId:trKey 복합 키로 저장 — 동일 종목의 체결·호가 구독을 독립적으로 추적
             subscriptionOwner.put(trId + ":" + trKey, target.getAlias());
             if (log.isDebugEnabled()) {

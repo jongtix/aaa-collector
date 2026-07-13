@@ -133,16 +133,21 @@ public class KisWebSocketSession {
     /**
      * 종목을 구독한다.
      *
-     * <p>KIS SUBSCRIBE 메시지 바디에 approval_key, tr_id, tr_key를 포함하여 전송한다.
+     * <p>KIS SUBSCRIBE 메시지 바디에 approval_key, tr_id, tr_key를 포함하여 전송한다. 전송 성공 시에만 {@code
+     * activeSubscriptions}에 추가한다(REQ-WSRES-015, AC-16) — 전송 실패를 구독 성공으로 오계수하지 않기 위함이다.
      *
      * @param trId 트랜잭션 ID (예: H0STCNT0)
      * @param trKey 종목 코드 (예: 005930)
+     * @return 전송 성공 시 {@code true}, 실패 시 {@code false}
      */
-    public void subscribe(String trId, String trKey) {
+    public boolean subscribe(String trId, String trKey) {
         String json = buildSubscribeJson(trId, trKey, "1");
-        sendMessage(json);
-        activeSubscriptions.add(trId + "|" + trKey);
-        log.debug("[{}] 구독 추가: trId={}, trKey={}", alias, trId, trKey);
+        boolean sent = sendMessage(json);
+        if (sent) {
+            activeSubscriptions.add(trId + "|" + trKey);
+            log.debug("[{}] 구독 추가: trId={}, trKey={}", alias, trId, trKey);
+        }
+        return sent;
     }
 
     /**
@@ -150,29 +155,38 @@ public class KisWebSocketSession {
      *
      * @param trId 트랜잭션 ID
      * @param trKey 종목 코드
+     * @return 전송 성공 시 {@code true}, 실패 시 {@code false}
      */
-    public void unsubscribe(String trId, String trKey) {
+    public boolean unsubscribe(String trId, String trKey) {
         String json = buildSubscribeJson(trId, trKey, "2");
-        sendMessage(json);
+        boolean sent = sendMessage(json);
         activeSubscriptions.remove(trId + "|" + trKey);
         log.debug("[{}] 구독 해제: trId={}, trKey={}", alias, trId, trKey);
+        return sent;
     }
 
     /**
      * 모든 활성 구독을 해제한다.
      *
-     * <p>각 구독에 대해 unsubscribe 메시지를 전송하고 activeSubscriptions를 비운다.
+     * <p>각 구독에 대해 unsubscribe 메시지를 전송하고 activeSubscriptions를 비운다. 전송 실패 건수는 WARN 로그로만 남기고(동작 변경
+     * 최소), 개별 실패로 전체 해제를 중단하지 않는다.
      */
     public void unsubscribeAll() {
+        int failureCount = 0;
         for (String key : activeSubscriptions) {
             String[] parts = key.split("\\|", 2);
             if (parts.length == SUBSCRIPTION_KEY_PARTS) {
                 String json = buildSubscribeJson(parts[0], parts[1], "2");
-                sendMessage(json);
+                if (!sendMessage(json)) {
+                    failureCount++;
+                }
                 log.debug("[{}] 전체 해제 — trId={}, trKey={}", alias, parts[0], parts[1]);
             }
         }
         activeSubscriptions.clear();
+        if (failureCount > 0) {
+            log.warn("[{}] 전체 구독 해제 중 {}건 전송 실패", alias, failureCount);
+        }
     }
 
     /**
@@ -346,19 +360,27 @@ public class KisWebSocketSession {
         }
     }
 
-    /** 세션에 TextMessage를 전송한다. */
+    /**
+     * 세션에 TextMessage를 전송한다.
+     *
+     * @param json 전송할 JSON 페이로드
+     * @return 전송 성공 시 {@code true}, 세션 미개방 또는 예외 발생 시 {@code false}(REQ-WSRES-015)
+     */
     // target은 외부에서 주입된 세션 참조이므로 여기서 close하지 않는다.
     @SuppressWarnings({"PMD.AvoidCatchingGenericException", "PMD.CloseResource"})
-    private void sendMessage(String json) {
+    private boolean sendMessage(String json) {
         try {
             WebSocketSession target = (session != null) ? session : rawSession;
             if (target != null && target.isOpen()) {
                 target.sendMessage(new TextMessage(json));
+                return true;
             } else {
                 log.warn("[{}] 세션이 열려 있지 않아 메시지 전송 생략", alias);
+                return false;
             }
         } catch (Exception e) {
             log.error("[{}] WebSocket 메시지 전송 실패", alias, e);
+            return false;
         }
     }
 }

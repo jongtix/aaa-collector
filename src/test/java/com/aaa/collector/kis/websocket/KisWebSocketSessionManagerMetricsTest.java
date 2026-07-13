@@ -59,6 +59,8 @@ class KisWebSocketSessionManagerMetricsTest {
             when(session.isInSafeMode()).thenReturn(false);
             when(session.getSubscriptionCount()).thenReturn(0);
             when(session.isConnected()).thenReturn(true);
+            // 기본값: 전송 성공(true) — Task1(REQ-WSRES-015) boolean 전파 이후 필요한 기본 스텁
+            when(session.subscribe(anyString(), anyString())).thenReturn(true);
             mockSessionMap.put(account.alias(), session);
         }
 
