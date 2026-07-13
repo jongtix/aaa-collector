@@ -111,8 +111,8 @@ public class KisWebSocketScheduler {
             log.info("국내 WebSocket 장 개시 시작");
             sessionManager.openAll();
             List<String> symbols = subscriptionTargetResolver.resolveDomesticSymbols();
-            sessionManager.subscribeSymbols(symbols);
-            log.info("국내 WebSocket 장 개시 완료 — 구독 종목: {}개", symbols.size());
+            SubscriptionResult result = sessionManager.subscribeSymbols(symbols);
+            logSubscriptionResult("국내", result);
         } catch (Exception e) {
             log.error("국내 WebSocket 장 개시 중 오류", e);
         } finally {
@@ -143,8 +143,8 @@ public class KisWebSocketScheduler {
             log.info("해외 WebSocket 장 개시 시작");
             sessionManager.openAll();
             List<String> trKeys = subscriptionTargetResolver.resolveOverseasSymbols();
-            sessionManager.subscribeOverseasSymbols(trKeys);
-            log.info("해외 WebSocket 장 개시 완료 — 구독 대상: {}개", trKeys.size());
+            SubscriptionResult result = sessionManager.subscribeOverseasSymbols(trKeys);
+            logSubscriptionResult("해외", result);
         } catch (Exception e) {
             log.error("해외 WebSocket 장 개시 중 오류", e);
         } finally {
@@ -161,6 +161,31 @@ public class KisWebSocketScheduler {
             log.info("해외 WebSocket 장 종료 완료");
         } catch (Exception e) {
             log.error("해외 WebSocket 장 종료 중 오류", e);
+        }
+    }
+
+    /**
+     * 구독 결과를 로그로 남긴다(REQ-WSRES-017, REQ-WSRES-018).
+     *
+     * <p>전량 성공(succeeded == attempted)이면 INFO, 그렇지 않으면 ERROR로 승격한다. 국내·해외 개장 경로 양쪽에 동일하게 적용된다(기존
+     * 해외판에만 있던 부분 완료 WARN 로그의 국내판 비대칭을 해소).
+     *
+     * @param marketLabel 로그에 표기할 시장 구분("국내"/"해외")
+     * @param result 구독 시도/성공 결과
+     */
+    private void logSubscriptionResult(String marketLabel, SubscriptionResult result) {
+        if (result.succeeded() == result.attempted()) {
+            log.info(
+                    "{} WebSocket 장 개시 완료 — 구독 성공: {}/{}개",
+                    marketLabel,
+                    result.succeeded(),
+                    result.attempted());
+        } else {
+            log.error(
+                    "{} WebSocket 장 개시 완료 — 구독 성공: {}/{}개",
+                    marketLabel,
+                    result.succeeded(),
+                    result.attempted());
         }
     }
 }

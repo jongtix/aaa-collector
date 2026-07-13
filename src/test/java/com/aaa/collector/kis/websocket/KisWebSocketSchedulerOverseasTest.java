@@ -7,6 +7,10 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import ch.qos.logback.classic.Level;
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
 import com.aaa.collector.common.gate.UsMarketOpenGate;
 import java.util.List;
 import org.junit.jupiter.api.DisplayName;
@@ -16,6 +20,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.slf4j.LoggerFactory;
 
 @ExtendWith(MockitoExtension.class)
 @DisplayName("KisWebSocketScheduler — 해외")
@@ -41,6 +46,8 @@ class KisWebSocketSchedulerOverseasTest {
             // Arrange
             List<String> trKeys = List.of("DNASAAPL", "DNYSSPY");
             when(subscriptionTargetResolver.resolveOverseasSymbols()).thenReturn(trKeys);
+            when(sessionManager.subscribeOverseasSymbols(trKeys))
+                    .thenReturn(new SubscriptionResult(2, 2));
 
             // Act
             scheduler.openOverseasSession();
@@ -83,6 +90,8 @@ class KisWebSocketSchedulerOverseasTest {
         void emptyTrKeys_completesNormally() {
             // Arrange
             when(subscriptionTargetResolver.resolveOverseasSymbols()).thenReturn(List.of());
+            when(sessionManager.subscribeOverseasSymbols(List.of()))
+                    .thenReturn(new SubscriptionResult(0, 0));
 
             // Act
             scheduler.openOverseasSession();
@@ -90,6 +99,38 @@ class KisWebSocketSchedulerOverseasTest {
             // Assert
             verify(sessionManager).subscribeOverseasSymbols(List.of());
             assertThat(scheduler.overseasRunning.get()).isFalse();
+        }
+
+        @Test
+        @DisplayName("AC-14: 전량 성공(N/N) → INFO 레벨로 \"구독 성공: N/N개\" 기록(해외)")
+        void fullSuccess_logsInfoWithSucceededOverAttempted() {
+            // Arrange
+            Logger schedulerLogger = (Logger) LoggerFactory.getLogger(KisWebSocketScheduler.class);
+            ListAppender<ILoggingEvent> listAppender = new ListAppender<>();
+            listAppender.start();
+            schedulerLogger.addAppender(listAppender);
+            try {
+                List<String> trKeys = List.of("DNASAAPL", "DNYSSPY");
+                when(subscriptionTargetResolver.resolveOverseasSymbols()).thenReturn(trKeys);
+                when(sessionManager.subscribeOverseasSymbols(trKeys))
+                        .thenReturn(new SubscriptionResult(2, 2));
+
+                // Act
+                scheduler.openOverseasSession();
+
+                // Assert
+                boolean hasInfoLog =
+                        listAppender.list.stream()
+                                .anyMatch(
+                                        event ->
+                                                event.getLevel() == Level.INFO
+                                                        && event.getFormattedMessage()
+                                                                .contains("구독 성공: 2/2개"));
+                assertThat(hasInfoLog).isTrue();
+            } finally {
+                schedulerLogger.detachAppender(listAppender);
+                listAppender.stop();
+            }
         }
     }
 

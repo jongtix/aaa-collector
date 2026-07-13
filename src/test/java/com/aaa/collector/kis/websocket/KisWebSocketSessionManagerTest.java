@@ -11,6 +11,10 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import ch.qos.logback.classic.Level;
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
 import com.aaa.collector.common.retry.Sleeper;
 import com.aaa.collector.common.safemode.SafeModeManager;
 import com.aaa.collector.kis.token.KisAccountCredential;
@@ -22,6 +26,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -31,6 +36,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
+import org.slf4j.LoggerFactory;
 
 @ExtendWith(MockitoExtension.class)
 @MockitoSettings(strictness = Strictness.LENIENT)
@@ -187,6 +193,56 @@ class KisWebSocketSessionManagerTest {
     }
 
     // ──────────────────────────────────────────────────────────────────
+    // subscribeSymbols 시도/성공 건수 반환 (REQ-WSRES-016, AC-12)
+    // ──────────────────────────────────────────────────────────────────
+
+    @Nested
+    @DisplayName("subscribeSymbols — 시도/성공 건수 반환")
+    class SubscribeSymbolsResult {
+
+        @Test
+        @DisplayName("AC-12: 10개 중 9번째 세션 포화로 조기 break → attempted=10(전체 크기 고정), succeeded=8")
+        void partialFailure_attemptedFixedAtRequestSizeSucceededAtBreakPoint() {
+            // Arrange — 모든 세션은 항상 가용(세이프모드 아님·용량 미달)하지만, subscribe() 자체가
+            // 16번째 호출(8개 심볼 × 2 trId)부터 실패하도록 설정해 9번째 심볼에서 포화가 발생한 상황을 재현한다.
+            for (KisWebSocketSession s : mockSessions) {
+                when(s.isInSafeMode()).thenReturn(false);
+                when(s.getSubscriptionCount()).thenReturn(0);
+            }
+            AtomicInteger totalSubscribeCalls = new AtomicInteger(0);
+            for (KisWebSocketSession s : mockSessions) {
+                doAnswer(inv -> totalSubscribeCalls.getAndIncrement() < 16)
+                        .when(s)
+                        .subscribe(anyString(), anyString());
+            }
+            List<String> symbols = new ArrayList<>();
+            for (int i = 0; i < 10; i++) {
+                symbols.add(String.format("SYM%03d", i));
+            }
+
+            // Act
+            SubscriptionResult result = manager.subscribeSymbols(symbols);
+
+            // Assert — attempted는 요청 목록 전체 크기(10) 고정, succeeded는 8(break 이전 완료분)
+            assertThat(result).isEqualTo(new SubscriptionResult(10, 8));
+        }
+
+        @Test
+        @DisplayName("AC-14: 전량 성공 → attempted == succeeded == N(국내)")
+        void fullSuccess_attemptedEqualsSucceeded() {
+            for (KisWebSocketSession s : mockSessions) {
+                when(s.getSubscriptionCount()).thenReturn(0);
+                when(s.isInSafeMode()).thenReturn(false);
+            }
+            List<String> symbols = List.of("005930", "000660");
+
+            SubscriptionResult result = manager.subscribeSymbols(symbols);
+
+            assertThat(result).isEqualTo(new SubscriptionResult(2, 2));
+        }
+    }
+
+    // ──────────────────────────────────────────────────────────────────
     // 안전 모드 세션 스킵 (REQ-WS-008, AC-21)
     // ──────────────────────────────────────────────────────────────────
 
@@ -239,6 +295,43 @@ class KisWebSocketSessionManagerTest {
             // Act & Assert
             boolean result = manager.assignSubscription("H0STCNT0", "005930");
             assertThat(result).isFalse();
+        }
+
+        @Test
+        @DisplayName("AC-15: 세이프모드 3개, 포화 2개(비-세이프모드) → ERROR 로그에 (총 5, 세이프모드 3, 포화 2) 원인 분해 포함")
+        void noAvailableSession_logsBreakdownOfTotalSafeModeAndSaturated() {
+            // Arrange — 5개 세션 전부 사용 불가: 3개 세이프모드 + 2개 포화(비-세이프모드) = available 완전 소진
+            for (int i = 0; i < 3; i++) {
+                when(mockSessions.get(i).isInSafeMode()).thenReturn(true);
+            }
+            for (int i = 3; i < SESSION_COUNT; i++) {
+                when(mockSessions.get(i).isInSafeMode()).thenReturn(false);
+                when(mockSessions.get(i).getSubscriptionCount())
+                        .thenReturn(MAX_SUBSCRIPTIONS_PER_SESSION);
+            }
+            Logger managerLogger =
+                    (Logger) LoggerFactory.getLogger(KisWebSocketSessionManager.class);
+            ListAppender<ILoggingEvent> listAppender = new ListAppender<>();
+            listAppender.start();
+            managerLogger.addAppender(listAppender);
+            try {
+                // Act
+                boolean result = manager.assignSubscription("H0STCNT0", "005930");
+
+                // Assert
+                assertThat(result).isFalse();
+                boolean hasBreakdownLog =
+                        listAppender.list.stream()
+                                .anyMatch(
+                                        event ->
+                                                event.getLevel() == Level.ERROR
+                                                        && event.getFormattedMessage()
+                                                                .contains("(총 5, 세이프모드 3, 포화 2)"));
+                assertThat(hasBreakdownLog).isTrue();
+            } finally {
+                managerLogger.detachAppender(listAppender);
+                listAppender.stop();
+            }
         }
     }
 
@@ -458,7 +551,7 @@ class KisWebSocketSessionManagerTest {
             List<String> trKeys = List.of("DNASAAPL", "DNYSSPY");
 
             // Act
-            manager.subscribeOverseasSymbols(trKeys);
+            SubscriptionResult result = manager.subscribeOverseasSymbols(trKeys);
 
             // Assert — assignSubscription은 내부에서 session.subscribe를 호출
             // 2 trKey × (HDFSCNT0 + HDFSASP0) = 4번 subscribe 호출 (어느 세션에든)
@@ -472,6 +565,8 @@ class KisWebSocketSessionManagerTest {
                 totalSubscribeCalls += invocations.length;
             }
             assertThat(totalSubscribeCalls).isEqualTo(4);
+            // AC-14/REQ-WSRES-016 — 전량 성공 시 attempted == succeeded == 2
+            assertThat(result).isEqualTo(new SubscriptionResult(2, 2));
         }
 
         @Test
@@ -485,12 +580,14 @@ class KisWebSocketSessionManagerTest {
             List<String> trKeys = List.of("DNASAAPL", "DNYSSPY", "DAMSXYZ");
 
             // Act
-            manager.subscribeOverseasSymbols(trKeys);
+            SubscriptionResult result = manager.subscribeOverseasSymbols(trKeys);
 
             // Assert — 어느 세션에도 subscribe 호출 없음 (전체 포화)
             for (KisWebSocketSession s : mockSessions) {
                 verify(s, never()).subscribe(anyString(), anyString());
             }
+            // AC-12/REQ-WSRES-016 — attempted는 요청 목록 전체 크기(3) 고정, succeeded=0
+            assertThat(result).isEqualTo(new SubscriptionResult(3, 0));
         }
 
         @Test

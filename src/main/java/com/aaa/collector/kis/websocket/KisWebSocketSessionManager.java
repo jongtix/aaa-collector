@@ -304,7 +304,22 @@ public class KisWebSocketSessionManager implements SmartLifecycle {
                         .collect(Collectors.toList());
 
         if (available.isEmpty()) {
-            log.error("사용 가능한 WebSocket 세션 없음 — 구독 할당 실패: trId={}, trKey={}", trId, trKey);
+            long inSafeMode =
+                    sessions.values().stream().filter(KisWebSocketSession::isInSafeMode).count();
+            long saturated =
+                    sessions.values().stream()
+                            .filter(s -> !s.isInSafeMode())
+                            .filter(s -> s.getSubscriptionCount() >= MAX_SUBSCRIPTIONS_PER_SESSION)
+                            .count();
+            // 세션 가용성 원인 분해(REQ-WSRES-019, AC-15) — 총/세이프모드/포화 세션 수를 함께 기록
+            log.error(
+                    "사용 가능한 WebSocket 세션 없음 — 구독 할당 실패: trId={}, trKey={} (총 {}, 세이프모드"
+                            + " {}, 포화 {})",
+                    trId,
+                    trKey,
+                    sessions.size(),
+                    inSafeMode,
+                    saturated);
             return false;
         }
 
@@ -368,8 +383,10 @@ public class KisWebSocketSessionManager implements SmartLifecycle {
      * 중단한다. 부분 구독(CNT 성공 + ASP 실패)은 동일 세션 풀을 공유하므로 실제로 발생하지 않는다.
      *
      * @param domesticSymbols 구독할 국내 종목 코드 목록
+     * @return 시도 건수(요청 목록 전체 크기) 대비 성공 건수(REQ-WSRES-016)
      */
-    public void subscribeSymbols(List<String> domesticSymbols) {
+    public SubscriptionResult subscribeSymbols(List<String> domesticSymbols) {
+        int succeeded = 0;
         for (String symbol : domesticSymbols) {
             boolean cnt = assignSubscription("H0STCNT0", symbol);
             boolean asp = assignSubscription("H0STASP0", symbol);
@@ -381,7 +398,9 @@ public class KisWebSocketSessionManager implements SmartLifecycle {
                         symbol);
                 break;
             }
+            succeeded++;
         }
+        return new SubscriptionResult(domesticSymbols.size(), succeeded);
     }
 
     /**
@@ -391,9 +410,10 @@ public class KisWebSocketSessionManager implements SmartLifecycle {
      * (REQ-WSOV-031).
      *
      * @param overseasTrKeys 구독할 해외 tr_key 목록 (예: {@code "DNASAAPL"})
+     * @return 시도 건수(요청 목록 전체 크기) 대비 성공 건수(REQ-WSRES-016)
      */
-    public void subscribeOverseasSymbols(List<String> overseasTrKeys) {
-        int subscribed = 0;
+    public SubscriptionResult subscribeOverseasSymbols(List<String> overseasTrKeys) {
+        int succeeded = 0;
         for (String trKey : overseasTrKeys) {
             boolean cnt = assignSubscription("HDFSCNT0", trKey);
             boolean asp = assignSubscription("HDFSASP0", trKey);
@@ -405,14 +425,9 @@ public class KisWebSocketSessionManager implements SmartLifecycle {
                         trKey);
                 break;
             }
-            subscribed++;
+            succeeded++;
         }
-        if (subscribed < overseasTrKeys.size()) {
-            log.warn(
-                    "해외 구독 부분 완료: {}/{}개 종목 구독 — 세션 용량 부족으로 일부 스킵",
-                    subscribed,
-                    overseasTrKeys.size());
-        }
+        return new SubscriptionResult(overseasTrKeys.size(), succeeded);
     }
 
     /**

@@ -6,10 +6,16 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import ch.qos.logback.classic.Level;
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
 import com.aaa.collector.common.gate.MarketOpenGate;
 import com.aaa.collector.common.gate.UsMarketOpenGate;
 import java.lang.reflect.Method;
 import java.util.List;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
@@ -17,6 +23,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.slf4j.LoggerFactory;
 import org.springframework.scheduling.annotation.Scheduled;
 
 @ExtendWith(MockitoExtension.class)
@@ -45,6 +52,7 @@ class KisWebSocketSchedulerTest {
             // Arrange
             List<String> symbols = List.of("005930", "000660");
             when(subscriptionTargetResolver.resolveDomesticSymbols()).thenReturn(symbols);
+            when(sessionManager.subscribeSymbols(symbols)).thenReturn(new SubscriptionResult(2, 2));
 
             // Act
             scheduler.openDomesticSession();
@@ -107,6 +115,7 @@ class KisWebSocketSchedulerTest {
             when(sessionManager.isRunning()).thenReturn(false);
             when(marketOpenGate.isMarketOpenNow()).thenReturn(true);
             when(subscriptionTargetResolver.resolveDomesticSymbols()).thenReturn(symbols);
+            when(sessionManager.subscribeSymbols(symbols)).thenReturn(new SubscriptionResult(2, 2));
 
             // Act
             scheduler.recoverDomesticSessionOnStartup();
@@ -216,6 +225,8 @@ class KisWebSocketSchedulerTest {
             when(sessionManager.isRunning()).thenReturn(false);
             when(marketOpenGate.isMarketOpenNow()).thenReturn(true);
             when(subscriptionTargetResolver.resolveDomesticSymbols()).thenReturn(List.of());
+            when(sessionManager.subscribeSymbols(List.of()))
+                    .thenReturn(new SubscriptionResult(0, 0));
 
             // Act
             scheduler.recoverDomesticSessionOnStartup();
@@ -240,6 +251,78 @@ class KisWebSocketSchedulerTest {
 
             // Assert — isOpenDay(날짜 기반 캘린더 직접 조회) 미호출
             verify(marketOpenGate, never()).isOpenDay(any());
+        }
+    }
+
+    // ──────────────────────────────────────────────────────────────────
+    // 구독 성공/시도 건수 로깅 (REQ-WSRES-016~018)
+    // ──────────────────────────────────────────────────────────────────
+
+    @Nested
+    @DisplayName("구독 결과 로깅 — 국내")
+    class SubscriptionResultLogging {
+
+        private Logger schedulerLogger;
+        private ListAppender<ILoggingEvent> listAppender;
+
+        @BeforeEach
+        void attachLogAppender() {
+            schedulerLogger = (Logger) LoggerFactory.getLogger(KisWebSocketScheduler.class);
+            listAppender = new ListAppender<>();
+            listAppender.start();
+            schedulerLogger.addAppender(listAppender);
+        }
+
+        @AfterEach
+        void detachLogAppender() {
+            schedulerLogger.detachAppender(listAppender);
+            listAppender.stop();
+        }
+
+        @Test
+        @DisplayName("AC-12: 부분 실패(8/10) → ERROR 레벨로 \"구독 성공: 8/10개\" 기록")
+        void partialFailure_logsErrorWithSucceededOverAttempted() {
+            // Arrange — 10개 요청 중 8개만 성공(attempted는 요청 목록 전체 크기로 고정)
+            List<String> symbols =
+                    List.of("S1", "S2", "S3", "S4", "S5", "S6", "S7", "S8", "S9", "S10");
+            when(subscriptionTargetResolver.resolveDomesticSymbols()).thenReturn(symbols);
+            when(sessionManager.subscribeSymbols(symbols))
+                    .thenReturn(new SubscriptionResult(10, 8));
+
+            // Act
+            scheduler.openDomesticSession();
+
+            // Assert
+            boolean hasErrorLog =
+                    listAppender.list.stream()
+                            .anyMatch(
+                                    event ->
+                                            event.getLevel() == Level.ERROR
+                                                    && event.getFormattedMessage()
+                                                            .contains("구독 성공: 8/10개"));
+            assertThat(hasErrorLog).isTrue();
+        }
+
+        @Test
+        @DisplayName("AC-14: 전량 성공(N/N) → INFO 레벨로 \"구독 성공: N/N개\" 기록(국내)")
+        void fullSuccess_logsInfoWithSucceededOverAttempted() {
+            // Arrange
+            List<String> symbols = List.of("005930", "000660");
+            when(subscriptionTargetResolver.resolveDomesticSymbols()).thenReturn(symbols);
+            when(sessionManager.subscribeSymbols(symbols)).thenReturn(new SubscriptionResult(2, 2));
+
+            // Act
+            scheduler.openDomesticSession();
+
+            // Assert
+            boolean hasInfoLog =
+                    listAppender.list.stream()
+                            .anyMatch(
+                                    event ->
+                                            event.getLevel() == Level.INFO
+                                                    && event.getFormattedMessage()
+                                                            .contains("구독 성공: 2/2개"));
+            assertThat(hasInfoLog).isTrue();
         }
     }
 
