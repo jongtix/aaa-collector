@@ -377,6 +377,17 @@ class KisWebSocketMessageHandlerTest {
     @DisplayName("Type B — exact-key 요청-응답 상관")
     class ExactKeyCorrelation {
 
+        private static final String UNSUB_ERROR_JSON =
+                """
+                {
+                  "header": {"tr_id": "H0STCNT0", "tr_key": "005930"},
+                  "body": {
+                    "rt_cd": "1",
+                    "msg1": "UNSUBSCRIBE ERROR(not found!)"
+                  }
+                }
+                """;
+
         private Logger handlerLogger;
         private ListAppender<ILoggingEvent> listAppender;
 
@@ -394,24 +405,14 @@ class KisWebSocketMessageHandlerTest {
             listAppender.stop();
         }
 
-        private static final String UNSUB_ERROR_JSON =
-                """
-                {
-                  "header": {"tr_id": "H0STCNT0", "tr_key": "005930"},
-                  "body": {
-                    "rt_cd": "1",
-                    "msg1": "UNSUBSCRIBE ERROR(not found!)"
-                  }
-                }
-                """;
-
         @Test
         @DisplayName("AC-5: 방향이 UNSUBSCRIBE로 기록된 키에 오류 응답 5회 연속 수신해도 세이프모드 미진입(실측 재현)")
         void unsubscribeDirection_fiveConsecutiveErrorResponses_doesNotEnterSafeMode() {
+            TextMessage unsubErrorMessage = new TextMessage(UNSUB_ERROR_JSON);
             for (int i = 0; i < 5; i++) {
                 handler.recordPending(
                         "H0STCNT0", "005930", KisWebSocketMessageHandler.Direction.UNSUBSCRIBE);
-                handler.handleTextMessage(session, new TextMessage(UNSUB_ERROR_JSON));
+                handler.handleTextMessage(session, unsubErrorMessage);
             }
 
             verify(webSocketSafeModeManager, never()).enter(any(), any());
@@ -431,10 +432,11 @@ class KisWebSocketMessageHandlerTest {
                     }
                     """;
 
+            TextMessage subscribeFailureMessage = new TextMessage(subscribeFailureJson);
             for (int i = 0; i < 5; i++) {
                 handler.recordPending(
                         "H0STCNT0", "005930", KisWebSocketMessageHandler.Direction.SUBSCRIBE);
-                handler.handleTextMessage(session, new TextMessage(subscribeFailureJson));
+                handler.handleTextMessage(session, subscribeFailureMessage);
             }
 
             verify(webSocketSafeModeManager, times(1)).enter(any(), any());

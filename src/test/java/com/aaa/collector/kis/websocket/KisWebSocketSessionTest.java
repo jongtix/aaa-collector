@@ -22,6 +22,7 @@ import java.time.Clock;
 import java.time.ZoneId;
 import java.time.ZonedDateTime;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutionException;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -398,7 +399,7 @@ class KisWebSocketSessionTest {
     @DisplayName("재구독 리플레이 (재연결 성공 시)")
     class ResubscribeReplay {
 
-        private void arrangeReconnectSuccess() throws Exception {
+        private void arrangeReconnectSuccess() throws InterruptedException, ExecutionException {
             when(marketSchedule.isDomesticOpen(any())).thenReturn(true);
             when(marketSchedule.isOverseasOpen(any())).thenReturn(false);
             when(webSocketClient.execute(any(), any(WebSocketHttpHeaders.class), any(URI.class)))
