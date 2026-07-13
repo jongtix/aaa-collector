@@ -3,11 +3,17 @@ package com.aaa.collector.kis.websocket;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.atLeastOnce;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
+import ch.qos.logback.classic.Level;
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
 import com.aaa.collector.common.retry.ExponentialBackoff;
 import com.aaa.collector.common.retry.Sleeper;
 import com.aaa.collector.common.safemode.SafeModeManager;
@@ -26,6 +32,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
+import org.slf4j.LoggerFactory;
 import org.springframework.web.socket.TextMessage;
 import org.springframework.web.socket.WebSocketHttpHeaders;
 import org.springframework.web.socket.WebSocketSession;
@@ -354,6 +361,146 @@ class KisWebSocketSessionTest {
                     captor.getAllValues().stream()
                             .anyMatch(msg -> msg.getPayload().contains("\"tr_type\":\"2\""));
             assertThat(hasUnsubscribeMsg).isTrue();
+        }
+    }
+
+    // ──────────────────────────────────────────────────────────────────
+    // 재연결 성공 시 재구독 리플레이 (REQ-WSRES-001~004)
+    // ──────────────────────────────────────────────────────────────────
+
+    @Nested
+    @DisplayName("재구독 리플레이 (재연결 성공 시)")
+    class ResubscribeReplay {
+
+        private void arrangeReconnectSuccess() throws Exception {
+            when(marketSchedule.isDomesticOpen(any())).thenReturn(true);
+            when(marketSchedule.isOverseasOpen(any())).thenReturn(false);
+            when(webSocketClient.execute(any(), any(WebSocketHttpHeaders.class), any(URI.class)))
+                    .thenReturn(handshakeFuture);
+            when(handshakeFuture.get()).thenReturn(rawSession);
+        }
+
+        @Test
+        @DisplayName("AC-1: 재연결 성공 → 끊김 전 활성 구독 전체가 SUBSCRIBE로 재전송된다")
+        void reconnectSuccess_resendsSubscribeForAllActiveSubscriptions() throws Exception {
+            // Arrange — 2건 구독 중(H0STCNT0, H0STASP0)
+            session.subscribe("H0STCNT0", "005930");
+            session.subscribe("H0STASP0", "005930");
+            arrangeReconnectSuccess();
+            ZonedDateTime marketOpen =
+                    ZonedDateTime.of(2025, 1, 6, 10, 0, 0, 0, ZoneId.of("Asia/Seoul"));
+
+            // Act
+            session.handleDisconnect(marketOpen);
+
+            // Assert — SUBSCRIBE(tr_type=1) 총 4건(초기 2건 + 재구독 2건)
+            ArgumentCaptor<TextMessage> captor = ArgumentCaptor.forClass(TextMessage.class);
+            verify(rawSession, atLeastOnce()).sendMessage(captor.capture());
+            long subscribeCount =
+                    captor.getAllValues().stream()
+                            .filter(msg -> msg.getPayload().contains("\"tr_type\":\"1\""))
+                            .count();
+            assertThat(subscribeCount).isEqualTo(4);
+        }
+
+        @Test
+        @DisplayName("AC-2: 재구독 리플레이는 종목 선정 로직(SubscriptionTargetResolver)을 전혀 참조하지 않는다")
+        void resubscribeReplay_neverInteractsWithSubscriptionTargetResolver() throws Exception {
+            // Arrange — KisWebSocketSession은 애초에 SubscriptionTargetResolver에 대한 참조를 갖지 않는다.
+            // 이 스파이는 재구독 리플레이가 매니저 레벨 재분배를 재사용하지 않음(REQ-WSRES-002)을 문서화하기 위한 것이다.
+            SubscriptionTargetResolver resolverSpy = mock(SubscriptionTargetResolver.class);
+            session.subscribe("H0STCNT0", "005930");
+            arrangeReconnectSuccess();
+            ZonedDateTime marketOpen =
+                    ZonedDateTime.of(2025, 1, 6, 10, 0, 0, 0, ZoneId.of("Asia/Seoul"));
+
+            // Act
+            session.handleDisconnect(marketOpen);
+
+            // Assert
+            verifyNoInteractions(resolverSpy);
+        }
+
+        @Test
+        @DisplayName("AC-3: 재연결 실패 시 재구독을 시도하지 않는다")
+        void reconnectFailure_doesNotResubscribe() throws Exception {
+            // Arrange
+            session.subscribe("H0STCNT0", "005930");
+            when(marketSchedule.isDomesticOpen(any())).thenReturn(true);
+            when(marketSchedule.isOverseasOpen(any())).thenReturn(false);
+            when(webSocketClient.execute(any(), any(WebSocketHttpHeaders.class), any(URI.class)))
+                    .thenThrow(new RuntimeException("연결 실패"));
+            ZonedDateTime marketOpen =
+                    ZonedDateTime.of(2025, 1, 6, 10, 0, 0, 0, ZoneId.of("Asia/Seoul"));
+
+            // Act
+            session.handleDisconnect(marketOpen);
+
+            // Assert — 초기 구독 1건만 전송, 재구독 없음
+            ArgumentCaptor<TextMessage> captor = ArgumentCaptor.forClass(TextMessage.class);
+            verify(rawSession, atLeastOnce()).sendMessage(captor.capture());
+            long subscribeCount =
+                    captor.getAllValues().stream()
+                            .filter(msg -> msg.getPayload().contains("\"tr_type\":\"1\""))
+                            .count();
+            assertThat(subscribeCount).isEqualTo(1);
+        }
+
+        @Test
+        @DisplayName("AC-4: 재구독 완료 시 건수 포함 + \"데이터 갭 발생 가능\" WARN 로그")
+        void reconnectSuccess_logsResubscribeCountWithDataGapWarning() throws Exception {
+            // Arrange — 로그 캡처
+            Logger sessionLogger = (Logger) LoggerFactory.getLogger(KisWebSocketSession.class);
+            ListAppender<ILoggingEvent> listAppender = new ListAppender<>();
+            listAppender.start();
+            sessionLogger.addAppender(listAppender);
+            try {
+                session.subscribe("H0STCNT0", "005930");
+                session.subscribe("H0STASP0", "005930");
+                arrangeReconnectSuccess();
+                ZonedDateTime marketOpen =
+                        ZonedDateTime.of(2025, 1, 6, 10, 0, 0, 0, ZoneId.of("Asia/Seoul"));
+
+                // Act
+                session.handleDisconnect(marketOpen);
+
+                // Assert — 건수(2건) + "데이터 갭 발생 가능" 문구를 포함한 WARN 로그
+                boolean hasExpectedLog =
+                        listAppender.list.stream()
+                                .anyMatch(
+                                        event ->
+                                                event.getLevel() == Level.WARN
+                                                        && event.getFormattedMessage()
+                                                                .contains("데이터 갭 발생 가능")
+                                                        && event.getFormattedMessage()
+                                                                .contains("2건"));
+                assertThat(hasExpectedLog).isTrue();
+            } finally {
+                sessionLogger.detachAppender(listAppender);
+                listAppender.stop();
+            }
+        }
+
+        @Test
+        @DisplayName("AC-9: 재구독 리플레이도 방향 기록(recordPending)을 거쳐 신규 구독과 동일한 상관 경로에 편입된다")
+        void resubscribeReplay_recordsSubscribeDirectionForEachKey() throws Exception {
+            // Arrange
+            session.subscribe("H0STCNT0", "005930");
+            session.subscribe("H0STASP0", "005930");
+            arrangeReconnectSuccess();
+            ZonedDateTime marketOpen =
+                    ZonedDateTime.of(2025, 1, 6, 10, 0, 0, 0, ZoneId.of("Asia/Seoul"));
+
+            // Act
+            session.handleDisconnect(marketOpen);
+
+            // Assert — 초기 구독 2건 + 재구독 2건 = recordPending(SUBSCRIBE) 총 4회
+            verify(messageHandler, times(4))
+                    .recordPending(
+                            any(String.class),
+                            any(String.class),
+                            org.mockito.ArgumentMatchers.eq(
+                                    KisWebSocketMessageHandler.Direction.SUBSCRIBE));
         }
     }
 }

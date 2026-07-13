@@ -320,7 +320,13 @@ public class KisWebSocketSession {
     private void reconnectInternal(int attempt) {
         try {
             connect(wsUrl);
-            log.warn("[{}] 재연결 성공 (attempt={}) — 데이터 갭 발생 가능 (REQ-WS-026)", alias, attempt);
+            int resubscribed = resubscribeAll();
+            log.warn(
+                    "[{}] 재연결 성공 (attempt={}) — 재구독 {}건 재전송, 데이터 갭 발생 가능 (REQ-WS-026,"
+                            + " REQ-WSRES-004)",
+                    alias,
+                    attempt,
+                    resubscribed);
             reconnectAttempt.set(0);
         } catch (Exception e) {
             int currentAttempt = reconnectAttempt.get();
@@ -337,6 +343,29 @@ public class KisWebSocketSession {
                 webSocketSafeModeManager.enter(alias, e);
             }
         }
+    }
+
+    /**
+     * 재연결 성공 직후 끊김 전 활성 구독 전체를 재구독한다(REQ-WSRES-001, REQ-WSRES-002, REQ-WSRES-010).
+     *
+     * <p>매니저 레벨 재분배(종목 선정 로직, {@code SubscriptionTargetResolver})를 재사용하지 않고, 세션이 이미 보유한 {@code
+     * activeSubscriptions}만으로 SUBSCRIBE를 재전송한다(REQ-WSRES-002) — 세션 1개의 재연결 사건이 전체 세션 분배를 흔들지 않도록
+     * 한다. {@link #subscribe} 메서드를 그대로 재사용하여 방향 기록({@code recordPending}) 경로에 편입시킨다(REQ-WSRES-010) —
+     * 재구독 성공 응답도 신규 구독과 동일하게 exact-key로 상관되어 AES 키가 재등록된다(acceptance.md AC-9).
+     *
+     * @return 재구독을 시도한 건수
+     */
+    private int resubscribeAll() {
+        Set<String> snapshot = Set.copyOf(activeSubscriptions);
+        int count = 0;
+        for (String key : snapshot) {
+            String[] parts = key.split("\\|", 2);
+            if (parts.length == SUBSCRIPTION_KEY_PARTS) {
+                subscribe(parts[0], parts[1]);
+                count++;
+            }
+        }
+        return count;
     }
 
     /** KIS SUBSCRIBE/UNSUBSCRIBE JSON 메시지를 생성한다. */
