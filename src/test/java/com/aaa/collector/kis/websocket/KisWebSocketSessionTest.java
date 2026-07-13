@@ -322,6 +322,32 @@ class KisWebSocketSessionTest {
     }
 
     // ──────────────────────────────────────────────────────────────────
+    // 구독 해제(단건)
+    // ──────────────────────────────────────────────────────────────────
+
+    @Nested
+    @DisplayName("구독 해제(unsubscribe)")
+    class Unsubscribe {
+
+        @Test
+        @DisplayName("전송 실패 → unsubscribe가 false 반환, activeSubscriptions에서 미제거")
+        void shouldReturnFalseAndKeepTrackingWhenSendFails() throws Exception {
+            // Arrange — 정상 전송으로 먼저 구독을 등록한 뒤, 해제 시 전송 실패를 시뮬레이션
+            session.subscribe("H0STCNT0", "005930");
+            assertThat(session.getSubscriptionCount()).isEqualTo(1);
+            when(rawSession.isOpen()).thenReturn(false);
+
+            // Act
+            boolean result = session.unsubscribe("H0STCNT0", "005930");
+
+            // Assert — 전송 실패와 무관하게 무조건 제거하면 activeSubscriptions가 실제 KIS측 구독 상태와
+            // 어긋나 재연결 시 resubscribeAll이 해당 종목을 재구독하지 못함(회귀 차단)
+            assertThat(result).isFalse();
+            assertThat(session.getSubscriptionCount()).isEqualTo(1);
+        }
+    }
+
+    // ──────────────────────────────────────────────────────────────────
     // 전체 구독 해제
     // ──────────────────────────────────────────────────────────────────
 

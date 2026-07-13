@@ -155,6 +155,9 @@ public class KisWebSocketSession {
     /**
      * 종목 구독을 해제한다.
      *
+     * <p>전송 성공 시에만 {@code activeSubscriptions}에서 제거한다 — 전송 실패에도 무조건 제거하면 KIS측 실제 구독 상태와 로컬 상태가 어긋나,
+     * 재연결 시 resubscribeAll이 해당 종목을 누락시키는 상태 발산이 발생한다.
+     *
      * @param trId 트랜잭션 ID
      * @param trKey 종목 코드
      * @return 전송 성공 시 {@code true}, 실패 시 {@code false}
@@ -164,7 +167,9 @@ public class KisWebSocketSession {
         // 전송 직전 방향 기록 — 응답 exact-key 상관의 기준(REQ-WSRES-005)
         messageHandler.recordPending(trId, trKey, KisWebSocketMessageHandler.Direction.UNSUBSCRIBE);
         boolean sent = sendMessage(json);
-        activeSubscriptions.remove(trId + "|" + trKey);
+        if (sent) {
+            activeSubscriptions.remove(trId + "|" + trKey);
+        }
         log.debug("[{}] 구독 해제: trId={}, trKey={}", alias, trId, trKey);
         return sent;
     }
