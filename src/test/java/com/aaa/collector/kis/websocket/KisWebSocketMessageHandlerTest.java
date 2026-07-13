@@ -181,6 +181,30 @@ class KisWebSocketMessageHandlerTest {
             assertThat(stored.iv()).isEqualTo("testiv1234567890");
             assertThat(stored.key()).isEqualTo("testkey1234567890123456789012345");
         }
+
+        @Test
+        @DisplayName(
+                "AC-13: 구독 성공 시 webSocketSafeModeManager.resetBackoff(alias) 호출(REQ-WSRES-014)")
+        void subscriptionSuccess_resetsWebSocketSafeModeBackoff() {
+            // Arrange
+            String json =
+                    """
+                    {
+                      "header": {"tr_id": "H0STCNT0", "tr_key": "005930"},
+                      "body": {
+                        "rt_cd": "0",
+                        "msg1": "SUBSCRIBE SUCCESS",
+                        "output": {"iv": "testiv1234567890", "key": "testkey1234567890123456789012345"}
+                      }
+                    }
+                    """;
+
+            // Act
+            handler.handleTextMessage(session, new TextMessage(json));
+
+            // Assert
+            verify(webSocketSafeModeManager).resetBackoff(ALIAS);
+        }
     }
 
     // ──────────────────────────────────────────────────────────────────

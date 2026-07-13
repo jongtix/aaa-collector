@@ -343,7 +343,12 @@ public class KisWebSocketMessageHandler extends TextWebSocketHandler {
         }
     }
 
-    /** 구독 성공(UNSUB 제외) 처리 — AES 키 저장 및 연속 실패 카운터 초기화. */
+    /**
+     * 구독 성공(UNSUB 제외) 처리 — AES 키 저장, 연속 실패 카운터 초기화, WS 세이프모드 백오프 리셋(REQ-WSRES-014).
+     *
+     * <p>{@code webSocketSafeModeManager.resetBackoff(alias)}는 세이프모드 활성 여부와 무관하게 항상 호출된다 — TTL 자연
+     * 만료 후 재성공하는 가장 흔한 회복 경로에서도 stale 백오프 레벨을 리셋하기 위함이다(SafeModeManager D-F 패턴 미러링).
+     */
     private void handleSubscriptionSuccess(String trId, JsonNode body) {
         JsonNode output = body.path("output");
         if (!output.isMissingNode()) {
@@ -353,6 +358,7 @@ public class KisWebSocketMessageHandler extends TextWebSocketHandler {
             log.info("[{}] AES 키 저장: trId={}", alias, trId);
         }
         subscriptionFailureCount.set(0);
+        webSocketSafeModeManager.resetBackoff(alias);
     }
 
     /** PINGPONG 메시지에 PongMessage로 응답. */
