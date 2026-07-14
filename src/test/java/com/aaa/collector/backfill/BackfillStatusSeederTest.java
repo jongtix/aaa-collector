@@ -2,6 +2,7 @@ package com.aaa.collector.backfill;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.aaa.collector.market.indicator.MarketIndicatorLastSuccessRepository;
 import com.aaa.collector.observability.BatchLastLoadRepository;
 import com.aaa.collector.stock.Stock;
 import com.aaa.collector.stock.StockRepository;
@@ -65,6 +66,7 @@ class BackfillStatusSeederTest {
     private StringRedisTemplate redisTemplate;
 
     @MockitoBean private BatchLastLoadRepository batchLastLoadRepository;
+    @MockitoBean private MarketIndicatorLastSuccessRepository marketIndicatorLastSuccessRepository;
     @Autowired private BackfillStatusSeeder seeder;
     @Autowired private BackfillStatusRepository backfillStatusRepository;
     @Autowired private StockRepository stockRepository;

@@ -2,6 +2,7 @@ package com.aaa.collector.stock;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.aaa.collector.market.indicator.MarketIndicatorLastSuccessRepository;
 import com.aaa.collector.observability.BatchLastLoadRepository;
 import com.aaa.collector.stock.enums.AssetType;
 import com.aaa.collector.stock.enums.Market;
@@ -41,6 +42,7 @@ class CreditBalanceRepositoryTest {
     private StringRedisTemplate redisTemplate;
 
     @MockitoBean private BatchLastLoadRepository batchLastLoadRepository;
+    @MockitoBean private MarketIndicatorLastSuccessRepository marketIndicatorLastSuccessRepository;
     @Autowired private CreditBalanceRepository creditBalanceRepository;
     @Autowired private StockRepository stockRepository;
 

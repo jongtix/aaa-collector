@@ -3,6 +3,7 @@ package com.aaa.collector;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import com.aaa.collector.market.indicator.MarketIndicatorLastSuccessRepository;
 import com.aaa.collector.observability.BatchLastLoadRepository;
 import com.aaa.collector.support.SharedMySqlContainer;
 import com.zaxxer.hikari.HikariConfig;
@@ -68,6 +69,8 @@ class HikariPoolQueueingTest {
     private StringRedisTemplate redisTemplate;
 
     @MockitoBean private BatchLastLoadRepository batchLastLoadRepository;
+
+    @MockitoBean private MarketIndicatorLastSuccessRepository marketIndicatorLastSuccessRepository;
 
     @Nested
     @DisplayName("구성된 풀 설정값 (AC-1, AC-4 / REQ-DBPOOL-001~003, -013)")

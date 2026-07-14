@@ -3,6 +3,7 @@ package com.aaa.collector.stock.shortsale.overseas;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.when;
 
+import com.aaa.collector.market.indicator.MarketIndicatorLastSuccessRepository;
 import com.aaa.collector.observability.BatchLastLoadRepository;
 import com.aaa.collector.stock.ShortSaleOverseas;
 import com.aaa.collector.stock.ShortSaleOverseasRepository;
@@ -50,6 +51,7 @@ class ShortSaleOverseasLocfIT {
     private StringRedisTemplate redisTemplate;
 
     @MockitoBean private BatchLastLoadRepository batchLastLoadRepository;
+    @MockitoBean private MarketIndicatorLastSuccessRepository marketIndicatorLastSuccessRepository;
     @MockitoBean private FinraShortSaleClient finraClient;
 
     @Autowired private ShortSaleOverseasDailyCollectionService service;

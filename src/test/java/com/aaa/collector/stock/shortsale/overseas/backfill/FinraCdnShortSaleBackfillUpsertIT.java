@@ -2,6 +2,7 @@ package com.aaa.collector.stock.shortsale.overseas.backfill;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.aaa.collector.market.indicator.MarketIndicatorLastSuccessRepository;
 import com.aaa.collector.observability.BatchLastLoadRepository;
 import com.aaa.collector.stock.ShortSaleOverseas;
 import com.aaa.collector.stock.ShortSaleOverseasRepository;
@@ -60,6 +61,7 @@ class FinraCdnShortSaleBackfillUpsertIT {
     private StringRedisTemplate redisTemplate;
 
     @MockitoBean private BatchLastLoadRepository batchLastLoadRepository;
+    @MockitoBean private MarketIndicatorLastSuccessRepository marketIndicatorLastSuccessRepository;
     @Autowired private ShortSaleOverseasRepository repository;
     @Autowired private StockRepository stockRepository;
 

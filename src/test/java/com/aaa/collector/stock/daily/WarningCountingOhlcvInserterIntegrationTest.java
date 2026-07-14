@@ -3,6 +3,7 @@ package com.aaa.collector.stock.daily;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
 
+import com.aaa.collector.market.indicator.MarketIndicatorLastSuccessRepository;
 import com.aaa.collector.observability.BatchLastLoadRepository;
 import com.aaa.collector.observability.BatchMetrics;
 import com.aaa.collector.observability.WatermarkMetrics;
@@ -51,6 +52,7 @@ class WarningCountingOhlcvInserterIntegrationTest {
     private StringRedisTemplate redisTemplate;
 
     @MockitoBean private BatchLastLoadRepository batchLastLoadRepository;
+    @MockitoBean private MarketIndicatorLastSuccessRepository marketIndicatorLastSuccessRepository;
     @Autowired private DataSource dataSource;
     @Autowired private StockRepository stockRepository;
 

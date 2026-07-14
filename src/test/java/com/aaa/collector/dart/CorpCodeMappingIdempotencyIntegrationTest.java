@@ -3,6 +3,7 @@ package com.aaa.collector.dart;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.aaa.collector.dart.corpcode.CorpCodeMappingRepository;
+import com.aaa.collector.market.indicator.MarketIndicatorLastSuccessRepository;
 import com.aaa.collector.observability.BatchLastLoadRepository;
 import com.aaa.collector.support.SharedMySqlContainer;
 import java.time.LocalDate;
@@ -43,6 +44,7 @@ class CorpCodeMappingIdempotencyIntegrationTest {
     private StringRedisTemplate redisTemplate;
 
     @MockitoBean private BatchLastLoadRepository batchLastLoadRepository;
+    @MockitoBean private MarketIndicatorLastSuccessRepository marketIndicatorLastSuccessRepository;
     @Autowired private CorpCodeMappingRepository corpCodeMappingRepository;
 
     @Nested

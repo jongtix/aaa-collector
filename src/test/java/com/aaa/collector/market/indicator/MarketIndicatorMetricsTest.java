@@ -2,6 +2,8 @@ package com.aaa.collector.market.indicator;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
+import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.verify;
 
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.Gauge;
@@ -10,11 +12,18 @@ import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneOffset;
+import java.util.List;
+import java.util.Map;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.dao.QueryTimeoutException;
 
+@ExtendWith(MockitoExtension.class)
 @DisplayName("MarketIndicatorMetrics 단위 테스트")
 class MarketIndicatorMetricsTest {
 
@@ -22,12 +31,15 @@ class MarketIndicatorMetricsTest {
     private static final Clock FIXED_CLOCK = Clock.fixed(FIXED_INSTANT, ZoneOffset.UTC);
 
     private MeterRegistry registry;
+
+    @Mock private MarketIndicatorLastSuccessRepository lastSuccessRepository;
+
     private MarketIndicatorMetrics metrics;
 
     @BeforeEach
     void setUp() {
         registry = new SimpleMeterRegistry();
-        metrics = new MarketIndicatorMetrics(registry, FIXED_CLOCK);
+        metrics = new MarketIndicatorMetrics(registry, FIXED_CLOCK, lastSuccessRepository);
         metrics.init();
     }
 
@@ -147,6 +159,73 @@ class MarketIndicatorMetricsTest {
 
             // Assert: USDKRW active_source는 변경 없음
             assertGaugeValue(MarketIndicatorMetrics.ACTIVE_SOURCE, "USDKRW", "KOREAEXIM", 1.0);
+        }
+
+        @Test
+        @DisplayName("게이지와 Redis에 동일 epoch를 기록한다 (REQ-WSR-017/018, AC-1)")
+        void recordSuccess_persistsSameEpochToRedis() {
+            metrics.recordSuccess("VIX", "CBOE");
+
+            verify(lastSuccessRepository).save("VIX", "CBOE", FIXED_INSTANT.getEpochSecond());
+        }
+
+        @Test
+        @DisplayName("Redis 기록이 DataAccessException으로 실패해도 게이지 기록은 완료된다 (REQ-WSR-019, AC-2)")
+        void recordSuccess_absorbsRedisWriteFailure() {
+            // Arrange
+            doThrow(new QueryTimeoutException("Redis 연결 실패"))
+                    .when(lastSuccessRepository)
+                    .save("VIX", "CBOE", FIXED_INSTANT.getEpochSecond());
+
+            // Act & Assert — 예외가 전파되지 않고 게이지는 정상 갱신된다
+            assertThatCode(() -> metrics.recordSuccess("VIX", "CBOE")).doesNotThrowAnyException();
+            assertGaugeValue(
+                    MarketIndicatorMetrics.LAST_SUCCESS,
+                    "VIX",
+                    "CBOE",
+                    (double) FIXED_INSTANT.getEpochSecond());
+            assertGaugeValue(MarketIndicatorMetrics.ACTIVE_SOURCE, "VIX", "CBOE", 1.0);
+        }
+    }
+
+    @Nested
+    @DisplayName("warmLastSuccess — 부팅 시 게이지 seed (REQ-WSR-021)")
+    class WarmLastSuccess {
+
+        @Test
+        @DisplayName("주어진 Instant로 last_success 게이지를 seed한다")
+        void warmLastSuccess_seedsGauge() {
+            Instant seedInstant = Instant.ofEpochSecond(1_690_000_000L);
+
+            metrics.warmLastSuccess("VIX", "CBOE", seedInstant);
+
+            assertGaugeValue(
+                    MarketIndicatorMetrics.LAST_SUCCESS,
+                    "VIX",
+                    "CBOE",
+                    (double) seedInstant.getEpochSecond());
+        }
+
+        @Test
+        @DisplayName("active_source는 건드리지 않는다 (REQ-WSR-023)")
+        void warmLastSuccess_doesNotTouchActiveSource() {
+            metrics.warmLastSuccess("VIX", "CBOE", Instant.ofEpochSecond(1_690_000_000L));
+
+            assertGaugeValue(MarketIndicatorMetrics.ACTIVE_SOURCE, "VIX", "CBOE", 0.0);
+        }
+    }
+
+    @Nested
+    @DisplayName("knownSources — warm-start 반복 대상 단일 정본 열거 노출 (REQ-WSR-025)")
+    class KnownSources {
+
+        @Test
+        @DisplayName("VIX 3종 + USDKRW 2종 조합을 노출한다")
+        void knownSources_exposesFiveCombinations() {
+            Map<String, List<String>> known = MarketIndicatorMetrics.knownSources();
+
+            assertThat(known.get("VIX")).containsExactly("CBOE", "FRED", "YAHOO_VIX");
+            assertThat(known.get("USDKRW")).containsExactly("KOREAEXIM", "YAHOO_USDKRW");
         }
     }
 

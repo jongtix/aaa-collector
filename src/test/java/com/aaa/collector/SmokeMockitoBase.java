@@ -21,6 +21,7 @@ import com.aaa.collector.macro.fred.FredCollectionService;
 import com.aaa.collector.market.MarketIndicatorRepository;
 import com.aaa.collector.market.backfill.MarketIndicatorBackfillOrchestrator;
 import com.aaa.collector.market.backfill.MarketIndicatorBackfillScheduler;
+import com.aaa.collector.market.indicator.MarketIndicatorLastSuccessRepository;
 import com.aaa.collector.market.indicator.MarketIndicatorMetrics;
 import com.aaa.collector.market.indicator.YahooFinanceClient;
 import com.aaa.collector.market.indicator.usdkrw.KoreaeximExchangeRateClient;
@@ -155,7 +156,11 @@ import org.springframework.transaction.support.TransactionTemplate;
             // BatchMetricsWarmStarter가
             // ApplicationRunner라 컨텍스트 기동 시 자동 실행되며 find()를 호출하므로, mock StringRedisTemplate의
             // opsForValue() null 반환에 의한 NPE를 차단하려면 리포지토리 자체를 모킹해야 한다(smoke 회귀 방지)
-            BatchLastLoadRepository.class
+            BatchLastLoadRepository.class,
+            // SPEC-COLLECTOR-WARMSTART-REDIS-003: 시장지표 source_last_success Redis 영속화 신규 빈 모킹.
+            // MarketIndicatorMetricsWarmStarter가 ApplicationRunner라 컨텍스트 기동 시 자동 실행되며 find()를
+            // 호출하므로, 위 BatchLastLoadRepository와 동일 이유로 리포지토리 자체를 모킹해야 한다(smoke 회귀 방지)
+            MarketIndicatorLastSuccessRepository.class
         })
 class SmokeMockitoBase {
 

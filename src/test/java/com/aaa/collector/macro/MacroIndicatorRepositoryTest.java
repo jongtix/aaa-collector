@@ -3,6 +3,7 @@ package com.aaa.collector.macro;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.aaa.collector.macro.enums.MacroSource;
+import com.aaa.collector.market.indicator.MarketIndicatorLastSuccessRepository;
 import com.aaa.collector.observability.BatchLastLoadRepository;
 import com.aaa.collector.support.SharedMySqlContainer;
 import java.math.BigDecimal;
@@ -39,6 +40,7 @@ class MacroIndicatorRepositoryTest {
     private StringRedisTemplate redisTemplate;
 
     @MockitoBean private BatchLastLoadRepository batchLastLoadRepository;
+    @MockitoBean private MarketIndicatorLastSuccessRepository marketIndicatorLastSuccessRepository;
     @Autowired private MacroIndicatorRepository macroIndicatorRepository;
 
     private MacroIndicator buildIndicator(String code, LocalDate date, BigDecimal value) {

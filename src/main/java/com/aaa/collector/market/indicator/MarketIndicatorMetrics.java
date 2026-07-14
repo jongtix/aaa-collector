@@ -5,12 +5,14 @@ import io.micrometer.core.instrument.Gauge;
 import io.micrometer.core.instrument.MeterRegistry;
 import jakarta.annotation.PostConstruct;
 import java.time.Clock;
+import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicLong;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.dao.DataAccessException;
 import org.springframework.stereotype.Component;
 
 /**
@@ -49,6 +51,7 @@ public class MarketIndicatorMetrics {
 
     private final MeterRegistry registry;
     private final Clock clock;
+    private final MarketIndicatorLastSuccessRepository lastSuccessRepository;
 
     /** indicator → (source → 마지막 성공 epoch 초). */
     private final Map<String, Map<String, AtomicLong>> lastSuccessMap = new ConcurrentHashMap<>();
@@ -119,15 +122,65 @@ public class MarketIndicatorMetrics {
     @SuppressWarnings("PMD.AvoidCatchingGenericException") // 메트릭 실패 격리 — REQ-012
     public void recordSuccess(String indicator, String source) {
         try {
-            getOrCreateLastSuccess(indicator, source).set(clock.instant().getEpochSecond());
+            // 성공 epoch를 1회 캡처해 게이지 stamp와 Redis 기록에 동일 값을 사용한다(REQ-WSR-018).
+            long epochSeconds = clock.instant().getEpochSecond();
+            getOrCreateLastSuccess(indicator, source).set(epochSeconds);
             activeSourceMap
                     .computeIfAbsent(indicator, k -> new ConcurrentHashMap<>())
                     .values()
                     .forEach(v -> v.set(0L));
             getOrCreateActive(indicator, source).set(1L);
+            persistLastSuccess(indicator, source, epochSeconds);
         } catch (Exception e) {
             log.warn("[market-ind-metrics] Success 메트릭 기록 실패 — 무시", e);
         }
+    }
+
+    /**
+     * 지표×소스 성공 epoch를 Redis에 best-effort로 기록한다 (REQ-WSR-018/019).
+     *
+     * <p>기록 실패는 게이지 기록·수집 흐름을 중단시키지 않는다 — {@link DataAccessException}을 warn 로깅 후 흡수하고 계속
+     * 진행한다(SPEC-COLLECTOR-MARKETIND-002 REQ-012 격리 철학 계승).
+     *
+     * @param indicator 지표 식별자
+     * @param source 성공한 소스 이름
+     * @param epochSeconds 게이지에 stamp된 것과 동일한 UTC epoch 초
+     */
+    private void persistLastSuccess(String indicator, String source, long epochSeconds) {
+        try {
+            lastSuccessRepository.save(indicator, source, epochSeconds);
+        } catch (DataAccessException e) {
+            log.warn(
+                    "[market-ind-metrics] 성공 시각 Redis 기록 실패 — indicator={}, source={}, 무시하고 계속 진행."
+                            + " error={}",
+                    indicator,
+                    source,
+                    e.getMessage());
+        }
+    }
+
+    /**
+     * 부팅 시 Redis에 영속된 마지막 성공 시각으로 {@code source_last_success} gauge를 초기화한다 (REQ-WSR-021, {@code
+     * BatchMetrics#warmLastLoad} 미러).
+     *
+     * <p>{@code active_source}는 건드리지 않는다(REQ-WSR-023, 다음 수집 사이클이 즉시 재설정).
+     *
+     * @param indicator 지표 식별자
+     * @param source 소스 이름
+     * @param instant Redis에서 조회한 마지막 성공 시각 (UTC Instant)
+     */
+    public void warmLastSuccess(String indicator, String source, Instant instant) {
+        getOrCreateLastSuccess(indicator, source).set(instant.getEpochSecond());
+    }
+
+    /**
+     * warm-start 반복 대상 정본 열거를 노출한다 (REQ-WSR-025) — {@code MarketIndicatorMetricsWarmStarter}가 이 단일
+     * 소스에서만 (indicator, source) 조합을 유래시켜야 하며 목록을 복제하지 않는다.
+     *
+     * @return indicator → source 목록의 불변 맵({@link #init()}과 동일한 정본 열거)
+     */
+    public static Map<String, List<String>> knownSources() {
+        return KNOWN_SOURCES;
     }
 
     /**

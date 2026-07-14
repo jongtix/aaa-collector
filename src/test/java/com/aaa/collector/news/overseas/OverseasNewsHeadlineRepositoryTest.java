@@ -2,6 +2,7 @@ package com.aaa.collector.news.overseas;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.aaa.collector.market.indicator.MarketIndicatorLastSuccessRepository;
 import com.aaa.collector.observability.BatchLastLoadRepository;
 import com.aaa.collector.support.SharedMySqlContainer;
 import java.time.LocalDateTime;
@@ -37,6 +38,7 @@ class OverseasNewsHeadlineRepositoryTest {
     private StringRedisTemplate redisTemplate;
 
     @MockitoBean private BatchLastLoadRepository batchLastLoadRepository;
+    @MockitoBean private MarketIndicatorLastSuccessRepository marketIndicatorLastSuccessRepository;
     @Autowired private OverseasNewsHeadlineRepository repository;
 
     private OverseasNewsHeadline buildHeadline(String newsKey, String title) {

@@ -15,6 +15,7 @@ import com.aaa.collector.backfill.BackfillStatusType;
 import com.aaa.collector.backfill.BackfillWindowResult;
 import com.aaa.collector.kis.gate.KeyLeaseRegistry.LeaseSession;
 import com.aaa.collector.kis.token.KisTokenIssueException;
+import com.aaa.collector.market.indicator.MarketIndicatorLastSuccessRepository;
 import com.aaa.collector.observability.BatchLastLoadRepository;
 import com.aaa.collector.stock.DividendBackfillFetch;
 import com.aaa.collector.stock.DividendScheduleCollectionService;
@@ -74,6 +75,7 @@ class BackfillWindowExecutorTransactionTest {
     private StringRedisTemplate redisTemplate;
 
     @MockitoBean private BatchLastLoadRepository batchLastLoadRepository;
+    @MockitoBean private MarketIndicatorLastSuccessRepository marketIndicatorLastSuccessRepository;
     // 수집 서비스 전체 모킹 — KIS 미호출
     @MockitoBean private DomesticDailyOhlcvCollectionService domesticOhlcvService;
     @MockitoBean private OverseasDailyOhlcvCollectionService overseasOhlcvService;

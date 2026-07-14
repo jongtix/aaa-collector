@@ -2,6 +2,7 @@ package com.aaa.collector.market.indicator;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
+import static org.mockito.Mockito.mock;
 
 import com.aaa.collector.market.enums.IndicatorCode;
 import io.micrometer.core.instrument.Counter;
@@ -31,7 +32,11 @@ class MarketIndicatorSourceChainTest {
     @BeforeEach
     void setUp() {
         registry = new SimpleMeterRegistry();
-        metrics = new MarketIndicatorMetrics(registry, Clock.fixed(FIXED_INSTANT, ZoneOffset.UTC));
+        metrics =
+                new MarketIndicatorMetrics(
+                        registry,
+                        Clock.fixed(FIXED_INSTANT, ZoneOffset.UTC),
+                        mock(MarketIndicatorLastSuccessRepository.class));
         metrics.init();
     }
 

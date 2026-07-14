@@ -3,6 +3,7 @@ package com.aaa.collector.market;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.aaa.collector.market.enums.IndicatorCode;
+import com.aaa.collector.market.indicator.MarketIndicatorLastSuccessRepository;
 import com.aaa.collector.observability.BatchLastLoadRepository;
 import com.aaa.collector.support.SharedMySqlContainer;
 import java.math.BigDecimal;
@@ -40,6 +41,7 @@ class MarketIndicatorRepositoryTest {
     private StringRedisTemplate redisTemplate;
 
     @MockitoBean private BatchLastLoadRepository batchLastLoadRepository;
+    @MockitoBean private MarketIndicatorLastSuccessRepository marketIndicatorLastSuccessRepository;
     @Autowired private MarketIndicatorRepository marketIndicatorRepository;
 
     private MarketIndicator buildVix(LocalDate date, BigDecimal close) {
