@@ -15,6 +15,7 @@ import static org.mockito.Mockito.when;
 import com.aaa.collector.backfill.BackfillStatus;
 import com.aaa.collector.backfill.BackfillStatusRepository;
 import com.aaa.collector.backfill.BackfillStatusType;
+import com.aaa.collector.backfill.CoveredRangeService;
 import com.aaa.collector.market.MarketIndicatorRepository;
 import com.aaa.collector.market.enums.IndicatorCode;
 import com.aaa.collector.market.indicator.usdkrw.UsdkrwCollectionService;
@@ -28,6 +29,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.Mockito;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -48,6 +50,7 @@ class MarketIndicatorBackfillOrchestratorTest {
     @Mock private VixCollectionService vixCollectionService;
     @Mock private UsdkrwCollectionService usdkrwCollectionService;
     @Mock private TransactionTemplate transactionTemplate;
+    @Mock private CoveredRangeService coveredRangeService;
 
     private MarketIndicatorBackfillOrchestrator orchestrator;
 
@@ -63,7 +66,8 @@ class MarketIndicatorBackfillOrchestratorTest {
                         marketIndicatorRepository,
                         vixCollectionService,
                         usdkrwCollectionService,
-                        transactionTemplate);
+                        transactionTemplate,
+                        coveredRangeService);
         // @Value 필드는 DI가 없으므로 테스트용 값 직접 주입
         ReflectionTestUtils.setField(orchestrator, "staleWeekdayThreshold", 3);
 
@@ -250,6 +254,114 @@ class MarketIndicatorBackfillOrchestratorTest {
 
             verify(vixCollectionService, never()).collectHistory();
             verify(usdkrwCollectionService, never()).collectHistory();
+        }
+    }
+
+    @Nested
+    @DisplayName("runBackfill — USDKRW 커버-추적 배선 (SPEC-COLLECTOR-BACKFILL-011 AC-12, AC-15)")
+    class UsdkrwCoveredGapWalk {
+
+        @Test
+        @DisplayName("①②③ 기존 USDKRW 행 재사용 — walkGapForward가 그 행으로 호출됨(신규 행 생성 없음, REQ-CVR-070)")
+        void reusesExistingUsdkrwRow_walksGapForward() {
+            BackfillStatus existingUsdkrw = buildStatus(2L, "USDKRW", BackfillStatusType.COMPLETED);
+            when(backfillStatusRepository.findByStatusInAndTargetTypeOrderById(any(), anyString()))
+                    .thenReturn(List.of()); // backward walk 대상 없음(이미 COMPLETED)
+            when(backfillStatusRepository.findByTargetTypeAndTargetCodeAndDataTable(
+                            "MARKET_INDICATOR", "USDKRW", "market_indicators"))
+                    .thenReturn(Optional.of(existingUsdkrw));
+
+            orchestrator.runBackfill();
+
+            // 기존 행을 그대로 조회·재사용했을 뿐, 신규 backfill_status 행을 생성하는 호출은 없다(insertIgnoreSeed는
+            // seed()에서만 발생 — runBackfill 경로에서 호출되지 않음이 곧 "신규 행 미생성"의 증거).
+            verify(backfillStatusRepository, never()).insertIgnoreSeed(any(), any(), any());
+            verify(coveredRangeService)
+                    .walkGapForward(
+                            eq(existingUsdkrw),
+                            any(UsdkrwCoveredGapFiller.class),
+                            any(LocalDate.class));
+        }
+
+        @Test
+        @DisplayName("④ 갭 채우기는 collectDailyForBackfill 재사용 — UsdkrwCoveredGapFiller가 이를 감싸 전달됨")
+        void gapFillerWrapsExistingBackfillPath() {
+            BackfillStatus existingUsdkrw = buildStatus(2L, "USDKRW", BackfillStatusType.COMPLETED);
+            when(backfillStatusRepository.findByStatusInAndTargetTypeOrderById(any(), anyString()))
+                    .thenReturn(List.of());
+            when(backfillStatusRepository.findByTargetTypeAndTargetCodeAndDataTable(
+                            "MARKET_INDICATOR", "USDKRW", "market_indicators"))
+                    .thenReturn(Optional.of(existingUsdkrw));
+            LocalDate cursor = LocalDate.of(2026, 7, 1);
+            when(usdkrwCollectionService.collectDailyForBackfillWithRaw(cursor))
+                    .thenReturn(new UsdkrwCollectionService.SaveOutcome(1, 1));
+
+            orchestrator.runBackfill();
+
+            ArgumentCaptor<UsdkrwCoveredGapFiller> fillerCaptor =
+                    ArgumentCaptor.forClass(UsdkrwCoveredGapFiller.class);
+            verify(coveredRangeService)
+                    .walkGapForward(
+                            eq(existingUsdkrw), fillerCaptor.capture(), any(LocalDate.class));
+            fillerCaptor.getValue().persistStep(cursor);
+            // filler가 결국 usdkrwCollectionService의 기존 백필 경로를 호출함을 확인 — 신규 fetch 메서드가 아니다.
+            verify(usdkrwCollectionService).collectDailyForBackfillWithRaw(cursor);
+        }
+
+        @Test
+        @DisplayName("⑤ VIX는 여전히 커버-추적에서 제외 — walkGapForward는 USDKRW 행에만 호출된다")
+        void vixExcluded_walkGapForwardOnlyForUsdkrw() {
+            BackfillStatus vixStatus = buildStatus(1L, "VIX", BackfillStatusType.PENDING);
+            BackfillStatus existingUsdkrw = buildStatus(2L, "USDKRW", BackfillStatusType.COMPLETED);
+            when(backfillStatusRepository.findByStatusInAndTargetTypeOrderById(any(), anyString()))
+                    .thenReturn(List.of(vixStatus));
+            when(vixCollectionService.collectHistory()).thenReturn(0);
+            when(marketIndicatorRepository.findMinTradeDateByIndicatorCode(IndicatorCode.VIX))
+                    .thenReturn(Optional.empty());
+            when(backfillStatusRepository.findById(1L)).thenReturn(Optional.of(mockManaged));
+            when(backfillStatusRepository.findByTargetTypeAndTargetCodeAndDataTable(
+                            "MARKET_INDICATOR", "USDKRW", "market_indicators"))
+                    .thenReturn(Optional.of(existingUsdkrw));
+
+            orchestrator.runBackfill();
+
+            verify(coveredRangeService, times(1))
+                    .walkGapForward(any(), any(), any(LocalDate.class));
+            verify(coveredRangeService)
+                    .walkGapForward(
+                            eq(existingUsdkrw),
+                            any(UsdkrwCoveredGapFiller.class),
+                            any(LocalDate.class));
+        }
+
+        @Test
+        @DisplayName("USDKRW 행 미시딩 상태(seed 이전) — walkGapForward 미호출, 예외 없음")
+        void usdkrwRowNotSeeded_walkGapForwardSkipped() {
+            when(backfillStatusRepository.findByStatusInAndTargetTypeOrderById(any(), anyString()))
+                    .thenReturn(List.of());
+            when(backfillStatusRepository.findByTargetTypeAndTargetCodeAndDataTable(
+                            "MARKET_INDICATOR", "USDKRW", "market_indicators"))
+                    .thenReturn(Optional.empty());
+
+            assertThatCode(orchestrator::runBackfill).doesNotThrowAnyException();
+
+            verify(coveredRangeService, never()).walkGapForward(any(), any(), any());
+        }
+
+        @Test
+        @DisplayName("갭 walk 예외 — runBackfill 전체를 중단시키지 않는다(REQ-045 예외 격리 정신 재사용)")
+        void gapWalkException_doesNotPropagate() {
+            BackfillStatus existingUsdkrw = buildStatus(2L, "USDKRW", BackfillStatusType.COMPLETED);
+            when(backfillStatusRepository.findByStatusInAndTargetTypeOrderById(any(), anyString()))
+                    .thenReturn(List.of());
+            when(backfillStatusRepository.findByTargetTypeAndTargetCodeAndDataTable(
+                            "MARKET_INDICATOR", "USDKRW", "market_indicators"))
+                    .thenReturn(Optional.of(existingUsdkrw));
+            Mockito.doThrow(new RuntimeException("gap walk 실패"))
+                    .when(coveredRangeService)
+                    .walkGapForward(any(), any(), any());
+
+            assertThatCode(orchestrator::runBackfill).doesNotThrowAnyException();
         }
     }
 }

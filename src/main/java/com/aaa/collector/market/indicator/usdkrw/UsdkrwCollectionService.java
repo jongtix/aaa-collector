@@ -71,11 +71,31 @@ public class UsdkrwCollectionService {
      * @return 저장된 행 수
      */
     public int collectDailyForBackfill(LocalDate date) {
+        return collectDailyForBackfillWithRaw(date).kept();
+    }
+
+    /**
+     * 백필용 단일 날짜 수집 — kept/raw 노출판 (SPEC-COLLECTOR-BACKFILL-011 REQ-CVR-051, TASK-006a/-006).
+     *
+     * <p>{@link #collectDailyForBackfill(LocalDate)}의 기존 시그니처·호출처는 그대로 두고(기존 backward walk 무회귀),
+     * 정방향 갭 walk({@code UsdkrwCoveredGapFiller})가 필요로 하는 raw(검증 전 원본 행수)까지 함께 노출하는 신규 메서드를 추가했다 —
+     * 신규 fetch 메서드는 아니며 동일한 {@code usdkrwChain.fetchDaily} 경로를 재사용한다. {@code kept}는 기존 반환값과 동일하게
+     * {@code batch.size()}(검증 통과·저장 시도 행수)이며, §2.6 kept 정의(중복 삽입 시도 포함, 순 신규 삽입 무관)와 이미 일치함을
+     * TASK-006a에서 실측 확인했다 — 별도 변환 없이 그대로 노출한다.
+     *
+     * @param date 수집 대상 날짜
+     * @return kept(검증 통과·저장 시도 행수)/raw(검증 전 원본 응답 행수)
+     */
+    public SaveOutcome collectDailyForBackfillWithRaw(LocalDate date) {
         List<MarketIndicatorRow> rows = usdkrwChain.fetchDaily(date);
-        return saveRows(rows);
+        return saveRowsWithRaw(rows);
     }
 
     private int saveRows(List<MarketIndicatorRow> rows) {
+        return saveRowsWithRaw(rows).kept();
+    }
+
+    private SaveOutcome saveRowsWithRaw(List<MarketIndicatorRow> rows) {
         // REQ-INSERT-009: 유효 행 누적 후 단일 배치 INSERT IGNORE (소용량 — 분할 불필요)
         List<MarketIndicator> batch = new ArrayList<>();
         for (MarketIndicatorRow row : rows) {
@@ -88,8 +108,16 @@ public class UsdkrwCollectionService {
         if (!batch.isEmpty()) {
             marketIndicatorInserter.insertBatch(batch);
         }
-        return batch.size();
+        return new SaveOutcome(batch.size(), rows.size());
     }
+
+    /**
+     * {@link #saveRowsWithRaw} 저장 결과 (SPEC-COLLECTOR-BACKFILL-011 §2.6).
+     *
+     * @param kept 검증 통과·저장 시도 행수(§2.6 kept, 중복 삽입 시도 포함)
+     * @param raw 검증 전 원본 응답 행수(§2.6 raw)
+     */
+    public record SaveOutcome(int kept, int raw) {}
 
     private boolean isValid(MarketIndicatorRow row) {
         return row.closeValue() != null && row.closeValue().signum() > 0;

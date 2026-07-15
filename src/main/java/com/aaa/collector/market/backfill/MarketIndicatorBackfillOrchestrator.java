@@ -3,6 +3,7 @@ package com.aaa.collector.market.backfill;
 import com.aaa.collector.backfill.BackfillStatus;
 import com.aaa.collector.backfill.BackfillStatusRepository;
 import com.aaa.collector.backfill.BackfillStatusType;
+import com.aaa.collector.backfill.CoveredRangeService;
 import com.aaa.collector.market.MarketIndicatorRepository;
 import com.aaa.collector.market.enums.IndicatorCode;
 import com.aaa.collector.market.indicator.usdkrw.UsdkrwCollectionService;
@@ -11,6 +12,7 @@ import java.time.DayOfWeek;
 import java.time.LocalDate;
 import java.time.ZoneId;
 import java.util.List;
+import java.util.Optional;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -44,6 +46,7 @@ public class MarketIndicatorBackfillOrchestrator {
     private final VixCollectionService vixCollectionService;
     private final UsdkrwCollectionService usdkrwCollectionService;
     private final TransactionTemplate transactionTemplate;
+    private final CoveredRangeService coveredRangeService;
 
     /**
      * 백필 시딩: USDKRW, VIX 2행 {@code insertIgnoreSeed} (REQ-050~052).
@@ -57,9 +60,12 @@ public class MarketIndicatorBackfillOrchestrator {
     }
 
     /**
-     * 백필 실행: 미완료 항목 처리 (REQ-040~047).
+     * 백필 실행: 미완료 항목 처리 (REQ-040~047) + USDKRW 정방향 갭 walk (SPEC-COLLECTOR-BACKFILL-011 REQ-CVR-011,
+     * -070).
      *
-     * <p>{@code STOCK} 타입은 미처리(REQ-047). 지표 단위 예외 격리(REQ-045).
+     * <p>{@code STOCK} 타입은 미처리(REQ-047). 지표 단위 예외 격리(REQ-045). 갭 walk는 backward walk의
+     * PENDING/IN_PROGRESS 필터와 무관하게(REQ-CVR-011 — 커버-추적 대상인 모든 항목) 매 회차 항상 시도한다 — backward walk가
+     * COMPLETED에 도달해 {@code targets}에서 빠진 뒤에도 상단 라이브 갭은 이 회차가 계속 책임진다(§1.1 근본원인).
      */
     @SuppressWarnings("PMD.AvoidCatchingGenericException") // 지표 단위 예외 격리 (REQ-045)
     public void runBackfill() {
@@ -70,25 +76,53 @@ public class MarketIndicatorBackfillOrchestrator {
 
         if (targets.isEmpty()) {
             log.info("[market-ind-backfill] 처리 대상 없음");
-            return;
+        } else {
+            for (BackfillStatus target : targets) {
+                try {
+                    processTarget(target);
+                } catch (Exception e) {
+                    log.error(
+                            "[market-ind-backfill] 지표 예외 — code={}, 다음 회차 재개",
+                            target.getTargetCode(),
+                            e);
+                    final String errMsg = truncate(e.getMessage(), 512);
+                    transactionTemplate.executeWithoutResult(
+                            tx -> {
+                                BackfillStatus managed =
+                                        backfillStatusRepository
+                                                .findById(target.getId())
+                                                .orElseThrow();
+                                managed.fail(BackfillStatusType.IN_PROGRESS, errMsg);
+                            });
+                }
+            }
         }
 
-        for (BackfillStatus target : targets) {
-            try {
-                processTarget(target);
-            } catch (Exception e) {
-                log.error(
-                        "[market-ind-backfill] 지표 예외 — code={}, 다음 회차 재개",
-                        target.getTargetCode(),
-                        e);
-                final String errMsg = truncate(e.getMessage(), 512);
-                transactionTemplate.executeWithoutResult(
-                        tx -> {
-                            BackfillStatus managed =
-                                    backfillStatusRepository.findById(target.getId()).orElseThrow();
-                            managed.fail(BackfillStatusType.IN_PROGRESS, errMsg);
-                        });
+        runUsdkrwCoveredGapWalk();
+    }
+
+    /**
+     * USDKRW 기존 행을 재사용해 정방향 갭 walk를 수행한다 (REQ-CVR-070 — 신규 행 생성 금지, VIX는 {@link
+     * com.aaa.collector.backfill.CoveredTrackingEligibility}에서 이미 제외되므로 이 메서드는 애초에 VIX를 조회하지 않는다).
+     *
+     * <p>행이 아직 시딩 전({@code seed()} 미실행)이면 조용히 skip한다 — 다음 회차에 재시도(seed는 매 회차 {@code seed()}가 별도로
+     * 보장). 갭 walk 예외는 이 메서드 안에서 격리해(REQ-045 정신 재사용) 백필 다른 처리에 영향을 주지 않는다.
+     */
+    @SuppressWarnings("PMD.AvoidCatchingGenericException") // 갭 walk 예외 격리 — 백필 사이클 전체를 막지 않음
+    private void runUsdkrwCoveredGapWalk() {
+        try {
+            Optional<BackfillStatus> maybeUsdkrw =
+                    backfillStatusRepository.findByTargetTypeAndTargetCodeAndDataTable(
+                            TARGET_TYPE, "USDKRW", DATA_TABLE);
+            if (maybeUsdkrw.isEmpty()) {
+                log.debug("[market-ind-backfill] USDKRW 행 미시딩 — 갭 walk skip");
+                return;
             }
+            BackfillStatus status = maybeUsdkrw.get();
+            UsdkrwCoveredGapFiller filler = new UsdkrwCoveredGapFiller(usdkrwCollectionService);
+            coveredRangeService.walkGapForward(status, filler, LocalDate.now(KST));
+        } catch (Exception e) {
+            log.error("[market-ind-backfill] USDKRW 갭 walk 예외 — 다음 회차 재개", e);
         }
     }
 
