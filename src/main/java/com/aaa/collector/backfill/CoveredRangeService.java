@@ -1,5 +1,7 @@
 package com.aaa.collector.backfill;
 
+import com.aaa.collector.common.gate.MarketOpenGate;
+import com.aaa.collector.common.gate.UsMarketOpenGate;
 import java.time.LocalDate;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -27,6 +29,8 @@ public class CoveredRangeService {
     private final TransactionTemplate transactionTemplate;
     private final BackfillStatusRepository backfillStatusRepository;
     private final BackfillMetrics backfillMetrics;
+    private final MarketOpenGate marketOpenGate;
+    private final UsMarketOpenGate usMarketOpenGate;
 
     /**
      * 정방향 갭 walk 1스텝을 원자적으로 실행한다 (REQ-CVR-012, -030, -031).
@@ -103,5 +107,76 @@ public class CoveredRangeService {
                             backfillStatusRepository.findById(status.getId()).orElseThrow();
                     managed.advanceCoveredUntil(today);
                 });
+    }
+
+    /**
+     * 정방향 갭 walk를 오늘에 도달하거나 이번 회차 진행이 멈출 때까지 수행한다 (REQ-CVR-011, -012, -013, -041, -060).
+     *
+     * <p>추적 대상이 아니면(REQ-CVR-052/060, {@link CoveredTrackingEligibility}) 즉시 반환한다(AC-14) — {@code
+     * filler}는 호출되지 않고 {@code covered_until_date}도 갱신되지 않는다.
+     *
+     * <p>시작 지점은 이 메서드가 매번 fresh 재조회하는 {@code covered_until_date}+1(NULL이면 {@code
+     * last_collected_date}+1, REQ-CVR-041)이다 — 호출자가 넘긴 {@code status} 인자의 값을 신뢰하지 않는다. 별도 진행 커서 컬럼을
+     * 두지 않고 {@code covered_until_date} 자체를 커서로 사용하므로(REQ-CVR-012), 중단 후 다음 호출은 항상 마지막 커밋 지점부터
+     * 재개한다(REQ-CVR-013, 재-walk 낭비 없음).
+     *
+     * <p>{@link CoveredTrackingEligibility.Mode#SINGLE_DATE}(USDKRW/FINRA Daily)는 하루씩 {@link
+     * #executeStep}을 호출하되, 호출 전 기존 시장 캘린더 게이트({@link MarketOpenGate}/{@link UsMarketOpenGate})로
+     * 비거래일을 사전 skip한다(신규 캘린더 로직 없음) — skip은 인메모리 커서 전진일 뿐 커밋을 유발하지 않는다. {@link
+     * CoveredTrackingEligibility.Mode#RANGE}(STOCK 4종)는 캘린더 게이트를 거치지 않는다 — 기존 윈도우 메커니즘이 비거래일을 내재적으로
+     * 처리하므로(REQ-CVR-050), 게이트로 윈도우 시작일을 선판정하면 윈도우 내부의 유효 거래일까지 오판 skip될 수 있다.
+     *
+     * <p>{@code kept == 0}(정상 빈 응답 또는 anomaly, TASK-003 {@link #executeStep} 게이트)이면 이번 회차 진행을 멈춘다 —
+     * 캡이나 프로세스 종료로 이번 회차가 끝나도, 이미 커밋된 만큼 다음 회차가 이어받으므로 라이브락이 없다(REQ-CVR-013, -042).
+     *
+     * @param status 처리 대상 {@code backfill_status} 행(추적 대상 판별·id 조회에만 사용, 최신 커서는 내부에서 재조회한다)
+     * @param filler 소스별 저장 실행체(TASK-005~008)
+     * @param today 갭 walk 목표 상한(오늘)
+     */
+    public void walkGapForward(BackfillStatus status, CoveredGapFiller filler, LocalDate today) {
+        if (!CoveredTrackingEligibility.isTracked(
+                status.getTargetType(), status.getTargetCode(), status.getDataTable())) {
+            if (log.isDebugEnabled()) {
+                log.debug(
+                        "[covered-range] 추적 대상 아님 — walk skip. targetType={}, targetCode={},"
+                                + " dataTable={}",
+                        status.getTargetType(),
+                        status.getTargetCode(),
+                        status.getDataTable());
+            }
+            return;
+        }
+
+        CoveredTrackingEligibility.Mode mode =
+                CoveredTrackingEligibility.modeOf(
+                        status.getTargetType(), status.getTargetCode(), status.getDataTable());
+        BackfillStatus fresh = backfillStatusRepository.findById(status.getId()).orElseThrow();
+        LocalDate cursor = startCursor(fresh);
+
+        while (!cursor.isAfter(today)) {
+            if (mode == CoveredTrackingEligibility.Mode.SINGLE_DATE
+                    && !isOpenDay(status.getTargetType(), cursor)) {
+                cursor = cursor.plusDays(1);
+                continue;
+            }
+            CoveredFillResult result = executeStep(fresh, filler, cursor);
+            if (result.kept() == 0) {
+                break; // 이번 회차 종료 — 다음 회차가 covered_until_date+1부터 재개(REQ-CVR-013, 라이브락 없음)
+            }
+            cursor = result.filledUntil().plusDays(1);
+        }
+    }
+
+    /** {@code covered_until_date}+1(NULL이면 {@code last_collected_date}+1) — REQ-CVR-041. */
+    private LocalDate startCursor(BackfillStatus fresh) {
+        LocalDate coveredUntil = fresh.getCoveredUntilDate();
+        return (coveredUntil != null ? coveredUntil : fresh.getLastCollectedDate()).plusDays(1);
+    }
+
+    /** 단일 날짜형 대상의 기존 시장 캘린더 게이트를 소스별로 선택한다(신규 캘린더 로직 없음). */
+    private boolean isOpenDay(String targetType, LocalDate date) {
+        return "OVERSEAS_SHORTSALE".equals(targetType)
+                ? usMarketOpenGate.isOpenDay(date)
+                : marketOpenGate.isOpenDay(date);
     }
 }
