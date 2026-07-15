@@ -27,7 +27,6 @@ import com.aaa.collector.market.indicator.YahooFinanceClient;
 import com.aaa.collector.market.indicator.usdkrw.KoreaeximExchangeRateClient;
 import com.aaa.collector.market.indicator.usdkrw.UsdkrwCollectionService;
 import com.aaa.collector.market.indicator.vix.CboeVixClient;
-import com.aaa.collector.market.indicator.vix.FredVixClient;
 import com.aaa.collector.market.indicator.vix.VixCollectionService;
 import com.aaa.collector.market.session.UsMarketSessionGate;
 import com.aaa.collector.news.DomesticNewsHeadlineRepository;
@@ -112,7 +111,6 @@ import org.springframework.transaction.support.TransactionTemplate;
             MarketIndicatorBackfillOrchestrator.class,
             MarketIndicatorBackfillScheduler.class,
             CboeVixClient.class,
-            FredVixClient.class,
             YahooFinanceClient.class,
             KoreaeximExchangeRateClient.class,
             // SPEC-COLLECTOR-MACRO-EXT-001: 외부 거시경제 지표 신규 빈 모킹 (smoke 회귀 방지)

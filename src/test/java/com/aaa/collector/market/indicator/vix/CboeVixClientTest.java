@@ -140,6 +140,63 @@ class CboeVixClientTest {
     }
 
     @Nested
+    @DisplayName("fetchRange — 범위 조회 (SPEC-COLLECTOR-MARKETIND-003, AC-1)")
+    class FetchRange {
+
+        @Test
+        @DisplayName("경계 날짜(from·to 당일 포함) — 범위 내 행만 반환")
+        void returnsRowsWithinInclusiveRange() {
+            mockServer
+                    .expect(
+                            requestTo(
+                                    "https://cdn.cboe.com/api/global/us_indices/daily_prices/VIX_History.csv"))
+                    .andExpect(method(HttpMethod.GET))
+                    .andRespond(withSuccess(SAMPLE_CSV, MediaType.TEXT_PLAIN));
+
+            List<MarketIndicatorRow> rows =
+                    client.fetchRange(LocalDate.of(2026, 1, 2), LocalDate.of(2026, 1, 5));
+
+            assertThat(rows).hasSize(2);
+            assertThat(rows)
+                    .extracting(MarketIndicatorRow::tradeDate)
+                    .containsExactlyInAnyOrder(LocalDate.of(2026, 1, 2), LocalDate.of(2026, 1, 5));
+        }
+
+        @Test
+        @DisplayName("범위 밖 날짜 — 제외")
+        void excludesRowsOutsideRange() {
+            mockServer
+                    .expect(
+                            requestTo(
+                                    "https://cdn.cboe.com/api/global/us_indices/daily_prices/VIX_History.csv"))
+                    .andExpect(method(HttpMethod.GET))
+                    .andRespond(withSuccess(SAMPLE_CSV, MediaType.TEXT_PLAIN));
+
+            List<MarketIndicatorRow> rows =
+                    client.fetchRange(LocalDate.of(2026, 1, 3), LocalDate.of(2026, 1, 4));
+
+            assertThat(rows).isEmpty();
+        }
+
+        @Test
+        @DisplayName("단일 날짜 범위(from == to) — 해당 날짜 행만 반환")
+        void singleDayRange_returnsOnlyThatDate() {
+            mockServer
+                    .expect(
+                            requestTo(
+                                    "https://cdn.cboe.com/api/global/us_indices/daily_prices/VIX_History.csv"))
+                    .andExpect(method(HttpMethod.GET))
+                    .andRespond(withSuccess(SAMPLE_CSV, MediaType.TEXT_PLAIN));
+
+            List<MarketIndicatorRow> rows =
+                    client.fetchRange(LocalDate.of(2026, 1, 2), LocalDate.of(2026, 1, 2));
+
+            assertThat(rows).hasSize(1);
+            assertThat(rows.getFirst().tradeDate()).isEqualTo(LocalDate.of(2026, 1, 2));
+        }
+    }
+
+    @Nested
     @DisplayName("행 검증 — REQ-034 skip 규칙")
     class RowValidation {
 

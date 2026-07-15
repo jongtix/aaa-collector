@@ -114,7 +114,6 @@ aaa:
         # KOREAEXIM 백필 연속 평일 빈 결과 종료 임계 (REQ-044)
         stale-weekday-threshold: 7
     koreaexim-api-key: ${KOREAEXIM_API_KEY:}
-    fred-api-key: ${FRED_API_KEY:}
   backfill:
     # cron 표현식 (기본: 02:00 KST 매일). fixedDelay 금지 — Virtual Threads 버그(CLAUDE.md)
     cron: "0 0 2 * * *"

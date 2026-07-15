@@ -178,6 +178,149 @@ class MarketIndicatorSourceChainTest {
     }
 
     @Nested
+    @DisplayName("fetchRange — fallback 체인 (SPEC-COLLECTOR-MARKETIND-003, AC-3, AC-4)")
+    class FetchRangeChain {
+
+        private static final LocalDate FROM = LocalDate.of(2026, 6, 1);
+        private static final LocalDate TO = LocalDate.of(2026, 6, 14);
+
+        /** 범위 조회를 지원하는 소스(고정 결과 반환). */
+        private MarketIndicatorSource rangeSuccessSource(String name, MarketIndicatorRow row) {
+            return new MarketIndicatorSource() {
+                @Override
+                public List<MarketIndicatorRow> fetchDaily(LocalDate date) {
+                    return List.of();
+                }
+
+                @Override
+                public List<MarketIndicatorRow> fetchRange(LocalDate from, LocalDate to) {
+                    return List.of(row);
+                }
+
+                @Override
+                public String sourceName() {
+                    return name;
+                }
+            };
+        }
+
+        private MarketIndicatorSource rangeEmptySource(String name) {
+            return new MarketIndicatorSource() {
+                @Override
+                public List<MarketIndicatorRow> fetchDaily(LocalDate date) {
+                    return List.of();
+                }
+
+                @Override
+                public List<MarketIndicatorRow> fetchRange(LocalDate from, LocalDate to) {
+                    return List.of();
+                }
+
+                @Override
+                public String sourceName() {
+                    return name;
+                }
+            };
+        }
+
+        private MarketIndicatorSource rangeFailingSource(String name) {
+            return new MarketIndicatorSource() {
+                @Override
+                public List<MarketIndicatorRow> fetchDaily(LocalDate date) {
+                    return List.of();
+                }
+
+                @Override
+                public List<MarketIndicatorRow> fetchRange(LocalDate from, LocalDate to) {
+                    throw new IllegalStateException(name + " 범위 조회 실패");
+                }
+
+                @Override
+                public String sourceName() {
+                    return name;
+                }
+            };
+        }
+
+        @Test
+        @DisplayName("CBOE 빈 결과 — YAHOO_VIX로 전환하여 결과 반환 + fallback(empty_result) 기록 (AC-3)")
+        void primaryEmpty_fallsBackAndRecords() {
+            MarketIndicatorRow row = vixRow("YAHOO_VIX");
+            MarketIndicatorSourceChain c =
+                    chain(rangeEmptySource("CBOE"), rangeSuccessSource("YAHOO_VIX", row));
+
+            List<MarketIndicatorRow> result = c.fetchRange(FROM, TO);
+
+            assertThat(result).containsExactly(row);
+            Counter fallback =
+                    registry.find(MarketIndicatorMetrics.FALLBACK_TOTAL)
+                            .tag("indicator", "VIX")
+                            .tag("from_source", "CBOE")
+                            .tag("to_source", "YAHOO_VIX")
+                            .tag("reason", "empty_result")
+                            .counter();
+            assertThat(fallback).isNotNull();
+            assertThat(fallback.count()).isEqualTo(1.0);
+        }
+
+        @Test
+        @DisplayName("CBOE 예외 — YAHOO_VIX로 전환 + fallback(error) 기록")
+        void primaryError_fallsBackAndRecordsError() {
+            MarketIndicatorRow row = vixRow("YAHOO_VIX");
+            MarketIndicatorSourceChain c =
+                    chain(rangeFailingSource("CBOE"), rangeSuccessSource("YAHOO_VIX", row));
+
+            List<MarketIndicatorRow> result = c.fetchRange(FROM, TO);
+
+            assertThat(result).containsExactly(row);
+            Counter fallback =
+                    registry.find(MarketIndicatorMetrics.FALLBACK_TOTAL)
+                            .tag("indicator", "VIX")
+                            .tag("from_source", "CBOE")
+                            .tag("to_source", "YAHOO_VIX")
+                            .tag("reason", "error")
+                            .counter();
+            assertThat(fallback).isNotNull();
+            assertThat(fallback.count()).isEqualTo(1.0);
+        }
+
+        @Test
+        @DisplayName("모든 소스 탈진 — 빈 리스트 반환 + recordExhausted(method=daily) (AC-4)")
+        void allSourcesExhausted_returnsEmptyAndRecordsExhausted() {
+            MarketIndicatorSourceChain c =
+                    chain(rangeEmptySource("CBOE"), rangeEmptySource("YAHOO_VIX"));
+
+            List<MarketIndicatorRow> result = c.fetchRange(FROM, TO);
+
+            assertThat(result).isEmpty();
+            Counter exhausted =
+                    registry.find(MarketIndicatorMetrics.EXHAUSTED_TOTAL)
+                            .tag("indicator", "VIX")
+                            .tag("method", "daily")
+                            .counter();
+            assertThat(exhausted).isNotNull();
+            assertThat(exhausted.count()).isEqualTo(1.0);
+        }
+
+        @Test
+        @DisplayName("Primary 성공 — success 기록, 예외 전파 없음")
+        void primarySuccess_recordsSuccess() {
+            MarketIndicatorRow row = vixRow("CBOE");
+            MarketIndicatorSourceChain c = chain(rangeSuccessSource("CBOE", row));
+
+            assertThatCode(() -> c.fetchRange(FROM, TO)).doesNotThrowAnyException();
+
+            Gauge lastSuccess =
+                    registry.find(MarketIndicatorMetrics.LAST_SUCCESS)
+                            .tag("indicator", "VIX")
+                            .tag("source", "CBOE")
+                            .gauge();
+            assertThat(lastSuccess).isNotNull();
+            assertThat(lastSuccess.value()).isEqualTo((double) FIXED_INSTANT.getEpochSecond());
+        }
+    }
+
+    @Nested
     @DisplayName("fetchHistory — fallback 체인")
     class FetchHistoryChain {
 
@@ -255,28 +398,28 @@ class MarketIndicatorSourceChainTest {
         }
 
         @Test
-        @DisplayName("Primary 빈 결과 → FRED 성공 — fallback(empty_result) + success(FRED) 기록")
+        @DisplayName("Primary 빈 결과 → YAHOO_VIX 성공 — fallback(empty_result) + success(YAHOO_VIX) 기록")
         void primaryEmpty_recordsFallbackAndSuccess() {
             // Arrange
-            MarketIndicatorRow row = vixRow("FRED");
-            chain(emptySource("CBOE"), successSource("FRED", row)).fetchDaily(DATE);
+            MarketIndicatorRow row = vixRow("YAHOO_VIX");
+            chain(emptySource("CBOE"), successSource("YAHOO_VIX", row)).fetchDaily(DATE);
 
             // Assert: fallback 기록
             Counter fallback =
                     registry.find(MarketIndicatorMetrics.FALLBACK_TOTAL)
                             .tag("indicator", "VIX")
                             .tag("from_source", "CBOE")
-                            .tag("to_source", "FRED")
+                            .tag("to_source", "YAHOO_VIX")
                             .tag("reason", "empty_result")
                             .counter();
             assertThat(fallback).isNotNull();
             assertThat(fallback.count()).isEqualTo(1.0);
 
-            // Assert: FRED success 기록
+            // Assert: YAHOO_VIX success 기록
             Gauge lastSuccess =
                     registry.find(MarketIndicatorMetrics.LAST_SUCCESS)
                             .tag("indicator", "VIX")
-                            .tag("source", "FRED")
+                            .tag("source", "YAHOO_VIX")
                             .gauge();
             assertThat(lastSuccess).isNotNull();
             assertThat(lastSuccess.value()).isEqualTo((double) FIXED_INSTANT.getEpochSecond());
@@ -285,14 +428,14 @@ class MarketIndicatorSourceChainTest {
         @Test
         @DisplayName("Primary 예외 → Fallback 성공 — fallback(error) 기록")
         void primaryError_recordsFallbackError() {
-            MarketIndicatorRow row = vixRow("FRED");
-            chain(failingSource("CBOE"), successSource("FRED", row)).fetchDaily(DATE);
+            MarketIndicatorRow row = vixRow("YAHOO_VIX");
+            chain(failingSource("CBOE"), successSource("YAHOO_VIX", row)).fetchDaily(DATE);
 
             Counter fallback =
                     registry.find(MarketIndicatorMetrics.FALLBACK_TOTAL)
                             .tag("indicator", "VIX")
                             .tag("from_source", "CBOE")
-                            .tag("to_source", "FRED")
+                            .tag("to_source", "YAHOO_VIX")
                             .tag("reason", "error")
                             .counter();
             assertThat(fallback).isNotNull();

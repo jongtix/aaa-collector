@@ -175,6 +175,85 @@ class YahooFinanceClientTest {
     }
 
     @Nested
+    @DisplayName("fetchRange — period1/period2 범위 조회 (SPEC-COLLECTOR-MARKETIND-003, AC-2)")
+    class FetchRangeVix {
+
+        @Test
+        @DisplayName("period1 = from 00:00 UTC epoch, period2 = (to+1) 00:00 UTC epoch")
+        void computesPeriod1AndPeriod2FromRange() {
+            LocalDate from = LocalDate.of(2026, 1, 2);
+            LocalDate to = LocalDate.of(2026, 1, 5);
+            long period1 = from.atStartOfDay(ZoneOffset.UTC).toEpochSecond();
+            long period2 = to.plusDays(1).atStartOfDay(ZoneOffset.UTC).toEpochSecond();
+
+            mockServer
+                    .expect(method(HttpMethod.GET))
+                    .andExpect(
+                            requestToUriTemplate(
+                                    "https://query1.finance.yahoo.com/v8/finance/chart/{symbol}"
+                                            + "?period1={p1}&period2={p2}&interval=1d",
+                                    "^VIX",
+                                    period1,
+                                    period2))
+                    .andRespond(withSuccess(SAMPLE_VIX_JSON, MediaType.APPLICATION_JSON));
+
+            List<MarketIndicatorRow> rows = client.fetchRange(IndicatorCode.VIX, from, to);
+
+            assertThat(rows).isNotEmpty();
+            mockServer.verify();
+        }
+
+        @Test
+        @DisplayName("월 경계 — period2가 다음 달로 정확히 넘어간다")
+        void handlesMonthBoundary() {
+            LocalDate from = LocalDate.of(2026, 1, 30);
+            LocalDate to = LocalDate.of(2026, 1, 31);
+            long period1 = from.atStartOfDay(ZoneOffset.UTC).toEpochSecond();
+            long period2 = to.plusDays(1).atStartOfDay(ZoneOffset.UTC).toEpochSecond();
+
+            mockServer
+                    .expect(method(HttpMethod.GET))
+                    .andExpect(
+                            requestToUriTemplate(
+                                    "https://query1.finance.yahoo.com/v8/finance/chart/{symbol}"
+                                            + "?period1={p1}&period2={p2}&interval=1d",
+                                    "^VIX",
+                                    period1,
+                                    period2))
+                    .andRespond(withSuccess(SAMPLE_VIX_JSON, MediaType.APPLICATION_JSON));
+
+            List<MarketIndicatorRow> rows = client.fetchRange(IndicatorCode.VIX, from, to);
+
+            assertThat(rows).isNotEmpty();
+            mockServer.verify();
+        }
+
+        @Test
+        @DisplayName("fetchDaily(code, date)는 fetchRange(code, date, date)로 위임한다 — 단일일 요청 동일")
+        void fetchDaily_delegatesToFetchRangeSameDay() {
+            LocalDate date = LocalDate.of(2026, 1, 2);
+            long period1 = date.atStartOfDay(ZoneOffset.UTC).toEpochSecond();
+            long period2 = date.plusDays(1).atStartOfDay(ZoneOffset.UTC).toEpochSecond();
+
+            mockServer
+                    .expect(method(HttpMethod.GET))
+                    .andExpect(
+                            requestToUriTemplate(
+                                    "https://query1.finance.yahoo.com/v8/finance/chart/{symbol}"
+                                            + "?period1={p1}&period2={p2}&interval=1d",
+                                    "^VIX",
+                                    period1,
+                                    period2))
+                    .andRespond(withSuccess(SAMPLE_VIX_JSON, MediaType.APPLICATION_JSON));
+
+            List<MarketIndicatorRow> rows = client.fetchDaily(IndicatorCode.VIX, date);
+
+            assertThat(rows).isNotEmpty();
+            mockServer.verify();
+        }
+    }
+
+    @Nested
     @DisplayName("빈 result — 빈 리스트")
     class EmptyResult {
 

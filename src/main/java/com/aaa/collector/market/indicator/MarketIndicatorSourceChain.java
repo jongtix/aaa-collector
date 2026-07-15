@@ -69,6 +69,47 @@ public class MarketIndicatorSourceChain {
     }
 
     /**
+     * 범위 수집: 소스를 순서대로 시도하여 첫 성공 결과를 반환한다 (SPEC-COLLECTOR-MARKETIND-003, REQ-020~024).
+     *
+     * <p>{@link #fetchDaily(LocalDate)}의 Fallback/계측 의미와 동형이다. 탈진 시 기존 2값 라벨 계약({@code method ∈
+     * {daily, history}})의 {@code "daily"}를 재사용한다(REQ-023 — {@code method="daily"} exhausted 시계열의
+     * 연속성 보존).
+     *
+     * @param from 시작 날짜 (포함)
+     * @param to 종료 날짜 (포함)
+     * @return 행 목록 (전부 실패 시 빈 리스트)
+     */
+    @SuppressWarnings("PMD.AvoidCatchingGenericException") // Fallback 체인 — 소스별 예외 격리 필요
+    public List<MarketIndicatorRow> fetchRange(LocalDate from, LocalDate to) {
+        for (int i = 0; i < sources.size(); i++) {
+            MarketIndicatorSource source = sources.get(i);
+            String nextSourceName = nextName(i);
+            try {
+                List<MarketIndicatorRow> rows = source.fetchRange(from, to);
+                if (!rows.isEmpty()) {
+                    metrics.recordSuccess(indicator, source.sourceName());
+                    return rows;
+                }
+                log.warn("[market-ind-chain] {} fetchRange 빈 결과 — 다음 소스로", source.sourceName());
+                if (nextSourceName != null) {
+                    metrics.recordFallback(
+                            indicator, source.sourceName(), nextSourceName, "empty_result");
+                }
+            } catch (Exception e) {
+                log.warn(
+                        "[market-ind-chain] {} fetchRange 예외 — 다음 소스로: {}",
+                        source.sourceName(),
+                        sanitize(e.getMessage()));
+                if (nextSourceName != null) {
+                    metrics.recordFallback(indicator, source.sourceName(), nextSourceName, "error");
+                }
+            }
+        }
+        metrics.recordExhausted(indicator, "daily");
+        return List.of();
+    }
+
+    /**
      * 전체 이력 수집: 소스를 순서대로 시도하여 첫 성공 결과를 반환한다.
      *
      * @return 행 목록 (전부 실패 시 빈 리스트)

@@ -48,10 +48,10 @@ class MarketIndicatorMetricsTest {
     class PostConstructPhase {
 
         @Test
-        @DisplayName("VIX 3종 + USDKRW 2종 last_success Gauge 0.0으로 사전 등록")
+        @DisplayName(
+                "VIX 2종 + USDKRW 2종 last_success Gauge 0.0으로 사전 등록 (SPEC-COLLECTOR-MARKETIND-003 FRED 제거)")
         void init_preRegistersLastSuccess() {
             assertGaugeValue(MarketIndicatorMetrics.LAST_SUCCESS, "VIX", "CBOE", 0.0);
-            assertGaugeValue(MarketIndicatorMetrics.LAST_SUCCESS, "VIX", "FRED", 0.0);
             assertGaugeValue(MarketIndicatorMetrics.LAST_SUCCESS, "VIX", "YAHOO_VIX", 0.0);
             assertGaugeValue(MarketIndicatorMetrics.LAST_SUCCESS, "USDKRW", "KOREAEXIM", 0.0);
             assertGaugeValue(MarketIndicatorMetrics.LAST_SUCCESS, "USDKRW", "YAHOO_USDKRW", 0.0);
@@ -61,7 +61,6 @@ class MarketIndicatorMetricsTest {
         @DisplayName("active_source Gauge 0.0으로 사전 등록")
         void init_preRegistersActiveSource() {
             assertGaugeValue(MarketIndicatorMetrics.ACTIVE_SOURCE, "VIX", "CBOE", 0.0);
-            assertGaugeValue(MarketIndicatorMetrics.ACTIVE_SOURCE, "VIX", "FRED", 0.0);
             assertGaugeValue(MarketIndicatorMetrics.ACTIVE_SOURCE, "VIX", "YAHOO_VIX", 0.0);
             assertGaugeValue(MarketIndicatorMetrics.ACTIVE_SOURCE, "USDKRW", "KOREAEXIM", 0.0);
             assertGaugeValue(MarketIndicatorMetrics.ACTIVE_SOURCE, "USDKRW", "YAHOO_USDKRW", 0.0);
@@ -141,11 +140,10 @@ class MarketIndicatorMetricsTest {
         @Test
         @DisplayName("성공 소스 active=1, 같은 indicator의 다른 소스 active=0으로 리셋")
         void recordSuccess_resetsOtherActiveSources() {
-            metrics.recordSuccess("VIX", "FRED");
+            metrics.recordSuccess("VIX", "YAHOO_VIX");
 
             assertGaugeValue(MarketIndicatorMetrics.ACTIVE_SOURCE, "VIX", "CBOE", 0.0);
-            assertGaugeValue(MarketIndicatorMetrics.ACTIVE_SOURCE, "VIX", "FRED", 1.0);
-            assertGaugeValue(MarketIndicatorMetrics.ACTIVE_SOURCE, "VIX", "YAHOO_VIX", 0.0);
+            assertGaugeValue(MarketIndicatorMetrics.ACTIVE_SOURCE, "VIX", "YAHOO_VIX", 1.0);
         }
 
         @Test
@@ -220,11 +218,11 @@ class MarketIndicatorMetricsTest {
     class KnownSources {
 
         @Test
-        @DisplayName("VIX 3종 + USDKRW 2종 조합을 노출한다")
-        void knownSources_exposesFiveCombinations() {
+        @DisplayName("VIX 2종 + USDKRW 2종 조합을 노출한다 (SPEC-COLLECTOR-MARKETIND-003 FRED 제거)")
+        void knownSources_exposesFourCombinations() {
             Map<String, List<String>> known = MarketIndicatorMetrics.knownSources();
 
-            assertThat(known.get("VIX")).containsExactly("CBOE", "FRED", "YAHOO_VIX");
+            assertThat(known.get("VIX")).containsExactly("CBOE", "YAHOO_VIX");
             assertThat(known.get("USDKRW")).containsExactly("KOREAEXIM", "YAHOO_USDKRW");
         }
     }

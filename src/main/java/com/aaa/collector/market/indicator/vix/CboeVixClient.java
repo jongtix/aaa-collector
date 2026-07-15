@@ -56,6 +56,20 @@ public class CboeVixClient implements MarketIndicatorSource {
         return all.stream().filter(r -> r.tradeDate().equals(date)).toList();
     }
 
+    /**
+     * 범위 수집 — 전체 CSV 1회 다운로드 후 {@code [from, to]}(양끝 포함) 필터 (SPEC-COLLECTOR-MARKETIND-003,
+     * REQ-011).
+     *
+     * <p>다운로드 비용은 현행 {@link #fetchDaily(LocalDate)}와 동일하다(증가 없음).
+     */
+    @Override
+    public List<MarketIndicatorRow> fetchRange(LocalDate from, LocalDate to) {
+        List<MarketIndicatorRow> all = fetchHistory();
+        return all.stream()
+                .filter(r -> !r.tradeDate().isBefore(from) && !r.tradeDate().isAfter(to))
+                .toList();
+    }
+
     private List<MarketIndicatorRow> parseCsv(String csv) {
         if (csv == null || csv.isBlank()) {
             return List.of();

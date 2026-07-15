@@ -17,7 +17,6 @@ import org.springframework.web.client.RestClient;
 public class MarketIndicatorClientConfig {
 
     static final String CBOE_BASE_URL = "https://cdn.cboe.com";
-    static final String FRED_BASE_URL = "https://api.stlouisfed.org";
     static final String YAHOO_BASE_URL = "https://query1.finance.yahoo.com";
     static final String KOREAEXIM_BASE_URL = "https://oapi.koreaexim.go.kr";
 
@@ -38,12 +37,6 @@ public class MarketIndicatorClientConfig {
     @Bean
     RestClient cboeRestClient(RestClient.Builder builder) {
         return build(builder, CBOE_BASE_URL);
-    }
-
-    /** FRED API 전용 RestClient. */
-    @Bean
-    RestClient fredRestClient(RestClient.Builder builder) {
-        return build(builder, FRED_BASE_URL);
     }
 
     /** Yahoo Finance v8 전용 RestClient. */

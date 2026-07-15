@@ -75,9 +75,26 @@ public class YahooFinanceClient {
      * @return 해당 날짜 행 목록
      */
     public List<MarketIndicatorRow> fetchDaily(IndicatorCode indicatorCode, LocalDate date) {
+        return fetchRange(indicatorCode, date, date);
+    }
+
+    /**
+     * 범위 수집 — period1/period2 date-range 쿼리로 지정 범위(양끝 포함)만 요청 (SPEC-COLLECTOR-MARKETIND-003,
+     * REQ-012).
+     *
+     * <p>period1 = {@code from} 00:00:00 UTC epoch(초), period2 = {@code to + 1일} 00:00:00 UTC
+     * epoch(초). {@link #fetchDaily(IndicatorCode, LocalDate)}의 1일 범위 메커니즘을 일반화한 것이다.
+     *
+     * @param indicatorCode 수집 대상 지표 코드
+     * @param from 시작 날짜 (포함)
+     * @param to 종료 날짜 (포함)
+     * @return 범위 내 행 목록
+     */
+    public List<MarketIndicatorRow> fetchRange(
+            IndicatorCode indicatorCode, LocalDate from, LocalDate to) {
         String symbol = toSymbol(indicatorCode);
-        long period1 = date.atStartOfDay(ZoneOffset.UTC).toEpochSecond();
-        long period2 = date.plusDays(1).atStartOfDay(ZoneOffset.UTC).toEpochSecond();
+        long period1 = from.atStartOfDay(ZoneOffset.UTC).toEpochSecond();
+        long period2 = to.plusDays(1).atStartOfDay(ZoneOffset.UTC).toEpochSecond();
         Map<String, Object> body =
                 yahooRestClient
                         .get()

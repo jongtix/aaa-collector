@@ -68,14 +68,14 @@ class MarketIndicatorMetricsWarmStarterTest {
         }
 
         @Test
-        @DisplayName("5조합 전부 조회된다(KNOWN_SOURCES 단일 소스 순회, REQ-WSR-025)")
-        void queriesAllFiveCombinations() {
+        @DisplayName(
+                "4조합 전부 조회된다(KNOWN_SOURCES 단일 소스 순회, REQ-WSR-025; SPEC-COLLECTOR-MARKETIND-003 FRED 제거)")
+        void queriesAllFourCombinations() {
             when(lastSuccessRepository.find(any(), any())).thenReturn(Optional.empty());
 
             warmStarter().run(null);
 
             verify(lastSuccessRepository).find("VIX", "CBOE");
-            verify(lastSuccessRepository).find("VIX", "FRED");
             verify(lastSuccessRepository).find("VIX", "YAHOO_VIX");
             verify(lastSuccessRepository).find("USDKRW", "KOREAEXIM");
             verify(lastSuccessRepository).find("USDKRW", "YAHOO_USDKRW");
@@ -119,12 +119,13 @@ class MarketIndicatorMetricsWarmStarterTest {
                     .when(lastSuccessRepository.find("VIX", "CBOE"))
                     .thenThrow(new QueryTimeoutException("Redis 오류")); // VIX×CBOE 실패
             lenient()
-                    .when(lastSuccessRepository.find("VIX", "FRED"))
-                    .thenReturn(Optional.of(redisInstant)); // VIX×FRED 성공
+                    .when(lastSuccessRepository.find("VIX", "YAHOO_VIX"))
+                    .thenReturn(Optional.of(redisInstant)); // VIX×YAHOO_VIX 성공
 
             warmStarter().run(null);
 
-            verify(marketIndicatorMetrics).warmLastSuccess(eq("VIX"), eq("FRED"), eq(redisInstant));
+            verify(marketIndicatorMetrics)
+                    .warmLastSuccess(eq("VIX"), eq("YAHOO_VIX"), eq(redisInstant));
         }
     }
 

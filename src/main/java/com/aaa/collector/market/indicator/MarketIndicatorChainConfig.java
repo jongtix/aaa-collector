@@ -3,7 +3,6 @@ package com.aaa.collector.market.indicator;
 import com.aaa.collector.market.enums.IndicatorCode;
 import com.aaa.collector.market.indicator.usdkrw.KoreaeximExchangeRateClient;
 import com.aaa.collector.market.indicator.vix.CboeVixClient;
-import com.aaa.collector.market.indicator.vix.FredVixClient;
 import java.time.LocalDate;
 import java.util.List;
 import org.springframework.beans.factory.annotation.Qualifier;
@@ -11,10 +10,10 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
 /**
- * 시장 지표 소스 체인 빈 설정 (SPEC-COLLECTOR-MARKETIND-001).
+ * 시장 지표 소스 체인 빈 설정 (SPEC-COLLECTOR-MARKETIND-001; SPEC-COLLECTOR-MARKETIND-003 REQ-030 FRED 제거).
  *
- * <p>VIX 체인: [CBOE, FRED, Yahoo^VIX]. USDKRW 체인: [KOREAEXIM, Yahoo USDKRW=X]. {@link
- * YahooFinanceClient}는 지표 코드별 어댑터({@link MarketIndicatorSource})로 래핑하여 체인에 등록한다.
+ * <p>VIX 체인: [CBOE, Yahoo^VIX]. USDKRW 체인: [KOREAEXIM, Yahoo USDKRW=X]. {@link YahooFinanceClient}는
+ * 지표 코드별 어댑터({@link MarketIndicatorSource})로 래핑하여 체인에 등록한다.
  */
 @Configuration
 public class MarketIndicatorChainConfig {
@@ -31,6 +30,11 @@ public class MarketIndicatorChainConfig {
             @Override
             public List<MarketIndicatorRow> fetchHistory() {
                 return yahooFinanceClient.fetchHistory(IndicatorCode.VIX);
+            }
+
+            @Override
+            public List<MarketIndicatorRow> fetchRange(LocalDate from, LocalDate to) {
+                return yahooFinanceClient.fetchRange(IndicatorCode.VIX, from, to);
             }
 
             @Override
@@ -61,15 +65,14 @@ public class MarketIndicatorChainConfig {
         };
     }
 
-    /** VIX 소스 체인: CBOE → FRED → Yahoo^VIX. */
+    /** VIX 소스 체인: CBOE → Yahoo^VIX (SPEC-COLLECTOR-MARKETIND-003 REQ-030 — FRED 제거). */
     @Bean
     @Qualifier("vixChain") MarketIndicatorSourceChain vixChain(
             CboeVixClient cboeVixClient,
-            FredVixClient fredVixClient,
             @Qualifier("yahooVixSource") MarketIndicatorSource yahooVixSource,
             MarketIndicatorMetrics metrics) {
         return new MarketIndicatorSourceChain(
-                List.of(cboeVixClient, fredVixClient, yahooVixSource), "VIX", metrics);
+                List.of(cboeVixClient, yahooVixSource), "VIX", metrics);
     }
 
     /** USDKRW 소스 체인: KOREAEXIM → Yahoo USDKRW=X. */

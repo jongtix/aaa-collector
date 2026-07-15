@@ -43,10 +43,15 @@ public class MarketIndicatorMetrics {
     private static final String TAG_INDICATOR = "indicator";
     private static final String TAG_SOURCE = "source";
 
-    /** Known (indicator → sources) — @PostConstruct 사전 등록용. */
+    /**
+     * Known (indicator → sources) — @PostConstruct 사전 등록용.
+     *
+     * <p>VIX 항목은 {@code "FRED"}를 포함하지 않는다(SPEC-COLLECTOR-MARKETIND-003 REQ-031 — FRED 제거로 죽은 게이지
+     * {@code {indicator="VIX", source="FRED"}} 사전 등록 방지).
+     */
     private static final Map<String, List<String>> KNOWN_SOURCES =
             Map.of(
-                    "VIX", List.of("CBOE", "FRED", "YAHOO_VIX"),
+                    "VIX", List.of("CBOE", "YAHOO_VIX"),
                     "USDKRW", List.of("KOREAEXIM", "YAHOO_USDKRW"));
 
     private final MeterRegistry registry;
