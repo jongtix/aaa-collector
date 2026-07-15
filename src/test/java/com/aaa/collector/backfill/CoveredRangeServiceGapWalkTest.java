@@ -2,6 +2,7 @@ package com.aaa.collector.backfill;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.clearInvocations;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
@@ -68,6 +69,13 @@ class CoveredRangeServiceGapWalkTest {
         // 기본값: 모든 날짜 개장일(테스트별로 필요 시 재정의) — 비거래일 skip 시나리오 전용 테스트에서만 false 혼입
         when(marketSessionGate.isOpenDay(any())).thenReturn(true);
         when(usMarketSessionGate.isOpenDay(any())).thenReturn(true);
+        // flaky 근본 수정 — BackfillPendingSlotsWarmStarter(ApplicationRunner)가 Spring 컨텍스트 부팅 시
+        // backfillMetrics.setPendingSlots(...)를 1회 호출한다. @MockitoBean은 매 테스트 "이후"에만 자동
+        // reset되므로, 이 컨텍스트로 처음 실행되는 테스트(클래스 간 컨텍스트 캐시 재사용 순서에 따라 달라짐 — 순서
+        // 비결정적)는 그 잔여 호출 이력을 그대로 관측해 verifyNoInteractions(backfillMetrics)가 간헐적으로
+        // 실패했다. 각 테스트 Act 이전에 명시적으로 비워 "이 테스트의 행위로 인한 상호작용 없음"만 검증하도록 범위를
+        // 좁힌다(순서 의존성 자체를 제거 — 재시도/반복 우회 아님).
+        clearInvocations(backfillMetrics);
     }
 
     private BackfillStatus seedUsdkrw(LocalDate lastCollectedDate, LocalDate coveredUntilDate) {
