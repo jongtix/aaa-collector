@@ -107,6 +107,10 @@ aaa:
     usdkrw:
       # 빈 배열 재시도 상한 (REQ-012)
       empty-retry-max: 5
+      # KOREAEXIM Connection reset(순간 RST) I/O 재시도 상한 — 초과 시 Yahoo 폴백(#105)
+      io-retry-max: 3
+      # I/O 재시도 지수 백오프 밑값(ms) — 1000 -> 1s/2s/4s
+      io-retry-backoff-base-ms: 1000
     backfill:
       # cron 표현식 (기본: 02:00 KST 매일). fixedDelay 금지 — Virtual Threads 버그(ADR-008, REQ-046)
       cron: "0 0 2 * * *"

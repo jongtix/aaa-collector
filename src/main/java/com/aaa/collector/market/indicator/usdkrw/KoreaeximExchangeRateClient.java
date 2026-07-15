@@ -15,6 +15,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.ParameterizedTypeReference;
 import org.springframework.stereotype.Component;
+import org.springframework.web.client.ResourceAccessException;
 import org.springframework.web.client.RestClient;
 
 /**
@@ -35,18 +36,27 @@ public class KoreaeximExchangeRateClient implements MarketIndicatorSource {
     private static final DateTimeFormatter DATE_FMT = DateTimeFormatter.ofPattern("yyyyMMdd");
     private static final String PATH =
             "/site/program/financial/exchangeJSON?authkey={key}&searchdate={date}&data=AP01";
+    private static final ParameterizedTypeReference<List<Map<String, String>>> RESPONSE_TYPE =
+            new ParameterizedTypeReference<>() {};
 
     private final RestClient koreaeximRestClient;
     private final String apiKey;
     private final int emptyRetryMax;
+    private final int ioRetryMax;
+    private final long ioRetryBackoffBaseMs;
 
     public KoreaeximExchangeRateClient(
             RestClient koreaeximRestClient,
             @Value("${aaa.market-indicator.koreaexim-api-key:}") String apiKey,
-            @Value("${aaa.market-indicator.usdkrw.empty-retry-max:5}") int emptyRetryMax) {
+            @Value("${aaa.market-indicator.usdkrw.empty-retry-max:5}") int emptyRetryMax,
+            @Value("${aaa.market-indicator.usdkrw.io-retry-max:3}") int ioRetryMax,
+            @Value("${aaa.market-indicator.usdkrw.io-retry-backoff-base-ms:1000}")
+                    long ioRetryBackoffBaseMs) {
         this.koreaeximRestClient = koreaeximRestClient;
         this.apiKey = apiKey;
         this.emptyRetryMax = emptyRetryMax;
+        this.ioRetryMax = ioRetryMax;
+        this.ioRetryBackoffBaseMs = ioRetryBackoffBaseMs;
     }
 
     @Override
@@ -89,15 +99,9 @@ public class KoreaeximExchangeRateClient implements MarketIndicatorSource {
         return List.of();
     }
 
-    @SuppressWarnings("unchecked")
     private List<MarketIndicatorRow> fetchOnDate(LocalDate date) {
         String dateStr = date.format(DATE_FMT);
-        List<Map<String, String>> body =
-                koreaeximRestClient
-                        .get()
-                        .uri(PATH, apiKey, dateStr)
-                        .retrieve()
-                        .body(new ParameterizedTypeReference<>() {});
+        List<Map<String, String>> body = fetchWithIoRetry(dateStr);
         if (body == null || body.isEmpty()) {
             return List.of();
         }
@@ -106,6 +110,53 @@ public class KoreaeximExchangeRateClient implements MarketIndicatorSource {
                 .map(m -> toRow(m, date))
                 .filter(r -> r != null)
                 .toList();
+    }
+
+    /**
+     * KOREAEXIM 서버의 순간적 TCP RST({@code Connection reset})에 대한 transient I/O 재시도(#105).
+     *
+     * <p>{@link ResourceAccessException}(하위 {@link java.io.IOException} 레벨 실패)에 한정해 지수 백오프로 최대
+     * {@code ioRetryMax}회 재시도한다. HTTP 4xx/5xx 등 다른 예외는 재시도 없이 즉시 전파해 상위 {@code
+     * MarketIndicatorSourceChain}의 폴백(Yahoo)이 정상 동작하도록 한다.
+     */
+    private List<Map<String, String>> fetchWithIoRetry(String dateStr) {
+        int attempt = 0;
+        while (true) {
+            try {
+                return koreaeximRestClient
+                        .get()
+                        .uri(PATH, apiKey, dateStr)
+                        .retrieve()
+                        .body(RESPONSE_TYPE);
+            } catch (ResourceAccessException e) {
+                if (attempt >= ioRetryMax) {
+                    log.warn(
+                            "[koreaexim] I/O 오류 재시도 상한({}) 초과 — 예외 전파: {}",
+                            ioRetryMax,
+                            SensitiveDataSanitizer.sanitize(e.getMessage()));
+                    throw e;
+                }
+                long backoffMs = ioRetryBackoffBaseMs << attempt;
+                attempt++;
+                log.warn(
+                        "[koreaexim] I/O 오류 — {}ms 후 재시도 ({}/{}): {}",
+                        backoffMs,
+                        attempt,
+                        ioRetryMax,
+                        SensitiveDataSanitizer.sanitize(e.getMessage()));
+                sleep(backoffMs);
+            }
+        }
+    }
+
+    // Virtual Thread 환경 — 호출 내부 백오프 sleep은 무해(CLAUDE.md ADR-008 fixedDelay 금지와는 무관, 스케줄러 트리거 아님)
+    private void sleep(long millis) {
+        try {
+            Thread.sleep(millis);
+        } catch (InterruptedException ie) {
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException("koreaexim I/O 재시도 대기 중 인터럽트", ie);
+        }
     }
 
     @SuppressWarnings("PMD.AvoidCatchingGenericException") // 행별 파싱 실패 격리

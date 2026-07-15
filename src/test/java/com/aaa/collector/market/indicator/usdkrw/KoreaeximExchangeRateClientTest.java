@@ -1,10 +1,13 @@
 package com.aaa.collector.market.indicator.usdkrw;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.method;
+import static org.springframework.test.web.client.response.MockRestResponseCreators.withBadRequest;
 import static org.springframework.test.web.client.response.MockRestResponseCreators.withSuccess;
 
 import com.aaa.collector.market.indicator.MarketIndicatorRow;
+import java.io.IOException;
 import java.time.LocalDate;
 import java.util.List;
 import org.junit.jupiter.api.BeforeEach;
@@ -14,6 +17,8 @@ import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.client.MockRestServiceServer;
+import org.springframework.web.client.HttpClientErrorException;
+import org.springframework.web.client.ResourceAccessException;
 import org.springframework.web.client.RestClient;
 
 @DisplayName("KoreaeximExchangeRateClient 단위 테스트")
@@ -21,6 +26,8 @@ class KoreaeximExchangeRateClientTest {
 
     private static final String API_KEY = "test-key";
     private static final int EMPTY_RETRY_MAX = 3;
+    private static final int IO_RETRY_MAX = 3;
+    private static final int IO_RETRY_BACKOFF_BASE_MS = 1;
     private static final String SAMPLE_RESPONSE =
             "[{\"cur_unit\":\"USD\",\"deal_bas_r\":\"1,523.40\",\"cur_nm\":\"미국 달러\"},{\"cur_unit\":\"EUR\",\"deal_bas_r\":\"1,650.00\",\"cur_nm\":\"유로\"}]";
 
@@ -32,7 +39,13 @@ class KoreaeximExchangeRateClientTest {
         RestClient.Builder builder = RestClient.builder();
         mockServer = MockRestServiceServer.bindTo(builder).build();
         RestClient koreaeximRestClient = builder.baseUrl("https://oapi.koreaexim.go.kr").build();
-        client = new KoreaeximExchangeRateClient(koreaeximRestClient, API_KEY, EMPTY_RETRY_MAX);
+        client =
+                new KoreaeximExchangeRateClient(
+                        koreaeximRestClient,
+                        API_KEY,
+                        EMPTY_RETRY_MAX,
+                        IO_RETRY_MAX,
+                        IO_RETRY_BACKOFF_BASE_MS);
     }
 
     @Nested
@@ -46,7 +59,13 @@ class KoreaeximExchangeRateClientTest {
             RestClient.Builder builder = RestClient.builder();
             RestClient koreaeximRestClient =
                     builder.baseUrl("https://oapi.koreaexim.go.kr").build();
-            blankKeyClient = new KoreaeximExchangeRateClient(koreaeximRestClient, "", 3);
+            blankKeyClient =
+                    new KoreaeximExchangeRateClient(
+                            koreaeximRestClient,
+                            "",
+                            EMPTY_RETRY_MAX,
+                            IO_RETRY_MAX,
+                            IO_RETRY_BACKOFF_BASE_MS);
         }
 
         @Test
@@ -149,6 +168,91 @@ class KoreaeximExchangeRateClientTest {
             List<MarketIndicatorRow> rows = client.fetchDaily(LocalDate.of(2026, 6, 20));
 
             assertThat(rows).isEmpty();
+        }
+    }
+
+    @Nested
+    @DisplayName("I/O 예외 재시도 — ResourceAccessException 한정 (KOREAEXIM Connection reset 대응)")
+    class IoExceptionRetry {
+
+        @Test
+        @DisplayName("ResourceAccessException 2회 후 성공 — 재시도로 복구, 정상 행 반환")
+        void resourceAccessException_retriesAndRecovers() {
+            // Arrange: 첫 2회는 Connection reset(IOException→ResourceAccessException), 3번째 성공
+            mockServer
+                    .expect(method(HttpMethod.GET))
+                    .andRespond(
+                            request -> {
+                                throw new IOException("Connection reset");
+                            });
+            mockServer
+                    .expect(method(HttpMethod.GET))
+                    .andRespond(
+                            request -> {
+                                throw new IOException("Connection reset");
+                            });
+            mockServer
+                    .expect(method(HttpMethod.GET))
+                    .andRespond(withSuccess(SAMPLE_RESPONSE, MediaType.APPLICATION_JSON));
+
+            // Act
+            List<MarketIndicatorRow> rows = client.fetchDaily(LocalDate.of(2026, 6, 20));
+
+            // Assert
+            assertThat(rows).hasSize(1);
+            assertThat(rows.getFirst().closeValue()).isEqualByComparingTo("1523.40");
+            mockServer.verify();
+        }
+
+        @Test
+        @DisplayName("ResourceAccessException 상한(ioRetryMax) 초과 — 최종 예외 전파")
+        void resourceAccessException_exceedsMax_propagates() {
+            // Arrange: IO_RETRY_MAX=3 이므로 초기 1 + 재시도 3 = 4회 모두 실패
+            for (int i = 0; i <= IO_RETRY_MAX; i++) {
+                mockServer
+                        .expect(method(HttpMethod.GET))
+                        .andRespond(
+                                request -> {
+                                    throw new IOException("Connection reset");
+                                });
+            }
+
+            // Act & Assert
+            assertThatThrownBy(() -> client.fetchDaily(LocalDate.of(2026, 6, 20)))
+                    .isInstanceOf(ResourceAccessException.class);
+            mockServer.verify();
+        }
+
+        @Test
+        @DisplayName("HttpClientErrorException(4xx) — 재시도 없이 즉시 전파")
+        void httpClientErrorException_noRetry_propagatesImmediately() {
+            // Arrange: 단 1회만 4xx 응답 기대 — 재시도가 발생하면 mockServer.verify()에서 초과 요청으로 실패
+            mockServer.expect(method(HttpMethod.GET)).andRespond(withBadRequest());
+
+            // Act & Assert
+            assertThatThrownBy(() -> client.fetchDaily(LocalDate.of(2026, 6, 20)))
+                    .isInstanceOf(HttpClientErrorException.class);
+            mockServer.verify();
+        }
+
+        @Test
+        @DisplayName("재시도 횟수는 ioRetryMax 프로퍼티를 정확히 준수한다")
+        void retryCount_matchesConfiguredMax() {
+            // Arrange: IO_RETRY_MAX+1(초기 1회 포함) 회 실패만 등록 — 초과 호출 시 mockServer.verify() 실패
+            for (int i = 0; i <= IO_RETRY_MAX; i++) {
+                mockServer
+                        .expect(method(HttpMethod.GET))
+                        .andRespond(
+                                request -> {
+                                    throw new IOException("Connection reset");
+                                });
+            }
+
+            assertThatThrownBy(() -> client.fetchDaily(LocalDate.of(2026, 6, 20)))
+                    .isInstanceOf(ResourceAccessException.class);
+
+            // Assert: 등록된 요청 수(IO_RETRY_MAX+1)가 정확히 모두 소비됨
+            mockServer.verify();
         }
     }
 }
