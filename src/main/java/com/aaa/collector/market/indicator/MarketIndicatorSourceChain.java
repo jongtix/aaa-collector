@@ -105,6 +105,8 @@ public class MarketIndicatorSourceChain {
                 }
             }
         }
+        // REQ-023: range 조회도 exhausted 라벨은 "daily"를 재사용한다 — "history"와의 2값 계약을 유지해
+        // {method="daily"} 시계열의 연속성을 보존한다(단일 날짜→윈도우 전환으로도 끊기지 않음).
         metrics.recordExhausted(indicator, "daily");
         return List.of();
     }

@@ -89,6 +89,10 @@ public class MarketIndicatorMetrics {
                                             .tag(TAG_SOURCE, source)
                                             .register(registry);
                                 }));
+        log.info(
+                "[market-ind-metrics] 부팅 시 known sources 사전 등록 완료: {} (VIX의 FRED 소스는 제거됨 —"
+                        + " SPEC-COLLECTOR-MARKETIND-003)",
+                KNOWN_SOURCES);
     }
 
     /**
@@ -174,6 +178,9 @@ public class MarketIndicatorMetrics {
      * @param source 소스 이름
      * @param instant Redis에서 조회한 마지막 성공 시각 (UTC Instant)
      */
+    // @MX:NOTE: [AUTO] recordSuccess(write)의 read-side 미러 — MarketIndicatorMetricsWarmStarter가 부팅 시
+    // 호출
+    // @MX:SPEC: SPEC-COLLECTOR-WARMSTART-REDIS-003 REQ-WSR-021
     public void warmLastSuccess(String indicator, String source, Instant instant) {
         getOrCreateLastSuccess(indicator, source).set(instant.getEpochSecond());
     }

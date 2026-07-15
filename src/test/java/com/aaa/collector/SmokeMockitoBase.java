@@ -157,7 +157,9 @@ import org.springframework.transaction.support.TransactionTemplate;
             BatchLastLoadRepository.class,
             // SPEC-COLLECTOR-WARMSTART-REDIS-003: 시장지표 source_last_success Redis 영속화 신규 빈 모킹.
             // MarketIndicatorMetricsWarmStarter가 ApplicationRunner라 컨텍스트 기동 시 자동 실행되며 find()를
-            // 호출하므로, 위 BatchLastLoadRepository와 동일 이유로 리포지토리 자체를 모킹해야 한다(smoke 회귀 방지)
+            // 호출하므로, 위 BatchLastLoadRepository와 동일 이유로 리포지토리 자체를 모킹해야 한다(smoke 회귀 방지).
+            // mock은 기본적으로 find()에서 Optional.empty()를 반환 — 두 ApplicationRunner 모두 게이지를
+            // 0.0(사전 등록값) 그대로 두고 seed를 생략하는 정상 경로를 탄다(DB 프록시 폴백 없음).
             MarketIndicatorLastSuccessRepository.class
         })
 class SmokeMockitoBase {
