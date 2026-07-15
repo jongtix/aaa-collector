@@ -9,6 +9,7 @@ import com.aaa.collector.support.RootFixtureCleaner;
 import java.sql.SQLException;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.util.List;
 import java.util.Optional;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -332,6 +333,45 @@ class BackfillStatusRepositoryTest {
             // Assert
             assertThat(verifiedBaseline).contains(verifiedDate);
             assertThat(unverifiedBaseline).isEmpty();
+        }
+    }
+
+    @Nested
+    @DisplayName(
+            "findByTargetTypeAndDataTableOrderById — 커버-추적 조회, COMPLETED 포함"
+                    + " (SPEC-COLLECTOR-BACKFILL-011 REQ-CVR-072)")
+    class FindByTargetTypeAndDataTableOrderById {
+
+        @Test
+        @DisplayName("PENDING/IN_PROGRESS/COMPLETED/FAILED 전 상태를 targetType+dataTable 기준으로 반환한다")
+        void returnsAllStatuses_includingCompleted() {
+            // Arrange — backward walk가 이미 COMPLETED된 종목도 상단 갭 발견 대상이어야 한다
+            BackfillStatus pending = row("PENDING1", "daily_ohlcv").build();
+            BackfillStatus inProgress =
+                    row("INPROG1", "daily_ohlcv").status(BackfillStatusType.IN_PROGRESS).build();
+            BackfillStatus completed =
+                    row("COMPLETED1", "daily_ohlcv")
+                            .status(BackfillStatusType.COMPLETED)
+                            .lastCollectedDate(LocalDate.of(2007, 8, 20))
+                            .build();
+            BackfillStatus failed =
+                    row("FAILED1", "daily_ohlcv").status(BackfillStatusType.FAILED).build();
+            // 다른 dataTable — 결과에서 제외되어야 한다
+            backfillStatusRepository.saveAndFlush(row("OTHERTABLE", "investor_trend").build());
+            backfillStatusRepository.saveAndFlush(pending);
+            backfillStatusRepository.saveAndFlush(inProgress);
+            backfillStatusRepository.saveAndFlush(completed);
+            backfillStatusRepository.saveAndFlush(failed);
+
+            // Act
+            List<BackfillStatus> found =
+                    backfillStatusRepository.findByTargetTypeAndDataTableOrderById(
+                            "STOCK", "daily_ohlcv");
+
+            // Assert — COMPLETED를 포함해 4건 전부 반환(기존 findByStatusInAnd...는 COMPLETED/FAILED 제외)
+            assertThat(found)
+                    .extracting(BackfillStatus::getTargetCode)
+                    .containsExactly("PENDING1", "INPROG1", "COMPLETED1", "FAILED1");
         }
     }
 

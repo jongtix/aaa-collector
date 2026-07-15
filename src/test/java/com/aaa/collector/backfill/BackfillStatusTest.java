@@ -49,6 +49,47 @@ class BackfillStatusTest {
     }
 
     @Nested
+    @DisplayName("advanceCoveredUntil — 상단 전용 mutator (SPEC-COLLECTOR-BACKFILL-011 REQ-CVR-072)")
+    class AdvanceCoveredUntil {
+
+        @Test
+        @DisplayName("호출 시 coveredUntilDate만 세팅되고 다른 필드는 불변이다")
+        void setsOnlyCoveredUntilDate_leavesOtherFieldsUnchanged() {
+            // Arrange — backward walk 진행 중인 상태를 구성(다른 필드 전부 non-default 값으로 채워 회귀 감지력 확보)
+            BackfillStatus.BackfillStatusBuilder builderState =
+                    daily("AAPL")
+                            .status(BackfillStatusType.IN_PROGRESS)
+                            .lastCollectedDate(LocalDate.of(2020, 1, 2))
+                            .staleCount(3)
+                            .lastRowCount(42)
+                            .attemptCount(7)
+                            .lastError("prior error")
+                            .verifiedAt(LocalDateTime.of(2026, 7, 1, 9, 0));
+            BackfillStatus status = builderState.build();
+            BackfillStatus expectedOtherFields = builderState.build();
+            LocalDate newCoveredUntil = LocalDate.of(2026, 7, 15);
+
+            // Act
+            status.advanceCoveredUntil(newCoveredUntil);
+
+            // Assert — coveredUntilDate만 변경, 나머지 필드는 backward walk 로직과 회귀 없이 그대로 유지
+            assertThat(status.getCoveredUntilDate()).isEqualTo(newCoveredUntil);
+            assertThat(status)
+                    .usingRecursiveComparison()
+                    .ignoringFields("coveredUntilDate")
+                    .isEqualTo(expectedOtherFields);
+        }
+
+        @Test
+        @DisplayName("초기 상태의 coveredUntilDate는 null(미설정)이다")
+        void initiallyNull() {
+            BackfillStatus status = daily("AAPL").status(BackfillStatusType.PENDING).build();
+
+            assertThat(status.getCoveredUntilDate()).isNull();
+        }
+    }
+
+    @Nested
     @DisplayName("resetForReprocess — 표적 재처리 리셋 (REQ-160)")
     class ResetForReprocess {
 

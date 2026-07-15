@@ -103,6 +103,16 @@ public class BackfillStatus extends BaseEntity {
     private LocalDateTime verifiedAt;
 
     /**
+     * 연속 커버 상단 경계 (SPEC-COLLECTOR-BACKFILL-011).
+     *
+     * <p>매일 최신 방향으로 전진(증가)하는 상단 경계이며, 하단 경계인 {@link #lastCollectedDate}(backward walk 은유, 매일 과거 방향
+     * 전진)와 방향이 비대칭이다. NULL=미설정.
+     */
+    // @MX:SPEC: SPEC-COLLECTOR-BACKFILL-011
+    @Column(name = "covered_until_date")
+    private LocalDate coveredUntilDate;
+
+    /**
      * 윈도우 수집 성공 후 진행점·상태·stale_count·attempt_count를 갱신한다 (REQ-UPDATEDAT-002, REQ-UPDATEDAT-003).
      *
      * <p>JPA dirty-check 경로 — 관리 엔티티에서 호출해야 {@code @LastModifiedDate}(updated_at)가 발화한다. {@code
@@ -167,6 +177,20 @@ public class BackfillStatus extends BaseEntity {
     }
 
     /**
+     * 연속 커버 상단 경계를 전진시킨다 (SPEC-COLLECTOR-BACKFILL-011 REQ-CVR-072).
+     *
+     * <p>상단 전용 mutator — 오직 {@code coveredUntilDate}만 세팅한다. {@code lastCollectedDate}/{@code
+     * status}/{@code staleCount}/{@code verifiedAt}/{@code lastRowCount} 등 하단(backward walk) 경계 관련
+     * 필드는 절대 건드리지 않는다. 두 경계는 방향이 비대칭(하단=과거 방향 전진, 상단=최신 방향 전진)이므로 회귀 방지를 위해 다른 mutator와 분리한다.
+     *
+     * @param coveredUntilDate 새 상단 경계
+     */
+    // @MX:SPEC: SPEC-COLLECTOR-BACKFILL-011
+    public void advanceCoveredUntil(LocalDate coveredUntilDate) {
+        this.coveredUntilDate = coveredUntilDate;
+    }
+
+    /**
      * 표적 재처리를 위해 진행점·검증 마커·이상 카운터를 초기화한다 (SPEC-COLLECTOR-BACKFILL-010 REQ-BACKFILL-160, §7 재복구 절차
      * 리셋 필드 집합 재사용).
      *
@@ -196,7 +220,8 @@ public class BackfillStatus extends BaseEntity {
             Integer lastRowCount,
             int attemptCount,
             String lastError,
-            LocalDateTime verifiedAt) {
+            LocalDateTime verifiedAt,
+            LocalDate coveredUntilDate) {
         super();
         this.targetType = targetType;
         this.targetCode = targetCode;
@@ -208,5 +233,6 @@ public class BackfillStatus extends BaseEntity {
         this.attemptCount = attemptCount;
         this.lastError = lastError;
         this.verifiedAt = verifiedAt;
+        this.coveredUntilDate = coveredUntilDate;
     }
 }

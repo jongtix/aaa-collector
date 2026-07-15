@@ -147,4 +147,20 @@ public interface BackfillStatusRepository extends JpaRepository<BackfillStatus, 
      */
     Optional<BackfillStatus> findByTargetTypeAndTargetCodeAndDataTable(
             String targetType, String targetCode, String dataTable);
+
+    /**
+     * targetType + dataTable 기준으로 상태 무관 전체 항목을 id 순으로 조회한다 (SPEC-COLLECTOR-BACKFILL-011 REQ-CVR-072
+     * — 커버-추적 조회).
+     *
+     * <p>{@link #findByStatusInAndTargetTypeAndDataTableOrderById(Collection, String, String)}는
+     * {@code PENDING}/{@code IN_PROGRESS}만 반환해 backward walk가 이미 {@code COMPLETED}된 종목을 놓친다. 완료된
+     * 종목도 {@code covered_until_date} 이후 구간에 상단 갭이 생길 수 있으므로, 이 조회는 상태를 필터링하지 않고 {@code
+     * COMPLETED}·{@code FAILED}를 포함한 전체 항목을 반환한다.
+     *
+     * @param targetType 대상 유형 (예: {@code "STOCK"})
+     * @param dataTable 데이터 테이블명 (예: {@code "daily_ohlcv"})
+     * @return id 오름차순 정렬된 전체 항목 목록(상태 무관)
+     */
+    // @MX:SPEC: SPEC-COLLECTOR-BACKFILL-011
+    List<BackfillStatus> findByTargetTypeAndDataTableOrderById(String targetType, String dataTable);
 }
