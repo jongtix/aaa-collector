@@ -1,0 +1,107 @@
+package com.aaa.collector.backfill;
+
+import java.time.LocalDate;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.stereotype.Component;
+import org.springframework.transaction.support.TransactionTemplate;
+
+/**
+ * 정방향 갭 walk 증분 primitive + 라이브 배치 조건부 스탬프 (SPEC-COLLECTOR-BACKFILL-011 결정 1/3/4).
+ *
+ * <p>이 클래스가 SPEC의 핵심 불변식 — {@code [last_collected_date, covered_until_date]} 구간이 빈틈없이 연속
+ * 커버됨(REQ-CVR-003) — 을 실제로 지키는 지점이다. {@link #executeStep(BackfillStatus, CoveredGapFiller,
+ * LocalDate)}는 데이터 저장({@link CoveredGapFiller#persistStep(LocalDate)})과 {@code covered_until_date}
+ * 전진을 같은 트랜잭션에서 원자적으로 커밋한다 — 저장은 성공했는데 전진이 유실되거나, 반대로 저장 없이 전진만 커밋되는 상태는 발생하지 않는다.
+ */
+// @MX:ANCHOR: [AUTO] 정방향 갭 walk 증분 커밋 + 조건부 스탬프 — TASK-005~008 소스별 필러가 공통 재사용하는 단일 진입점
+// @MX:REASON: SPEC-COLLECTOR-BACKFILL-011 REQ-CVR-003/012/020/021/030/031 — 데이터
+// 저장·covered_until_date
+// 전진 원자성이 이 클래스 한 곳에만 있어야 한다(중복 구현 시 불변식 위반 위험). fan_in>=3 예상(FINRA/USDKRW/STOCK 필러).
+// @MX:SPEC: SPEC-COLLECTOR-BACKFILL-011
+@Slf4j
+@Component
+@RequiredArgsConstructor
+public class CoveredRangeService {
+
+    private final TransactionTemplate transactionTemplate;
+    private final BackfillStatusRepository backfillStatusRepository;
+    private final BackfillMetrics backfillMetrics;
+
+    /**
+     * 정방향 갭 walk 1스텝을 원자적으로 실행한다 (REQ-CVR-012, -030, -031).
+     *
+     * <p>트랜잭션 경계 안에서 {@code filler.persistStep(cursor)}를 호출해 데이터를 저장하고, 결과의 kept 값으로 {@code
+     * covered_until_date} 전진 여부를 게이트한다:
+     *
+     * <ul>
+     *   <li>{@code kept > 0} — 검증 통과 저장 확인됨. {@code covered_until_date}를 {@code
+     *       result.filledUntil()}로 전진시키고 같은 트랜잭션에서 커밋한다(REQ-CVR-012/030). {@code
+     *       filler.persistStep}이 던진 예외는 이 메서드 밖으로 전파되며, 트랜잭션 전체(데이터 저장 + 전진)가 롤백된다(결정 1 원자성).
+     *   <li>{@code raw > 0 && kept == 0} — 원본 응답은 있으나 검증을 전량 통과하지 못한 이상(#77류 침묵 skip). 전진하지 않고 기존
+     *       anomaly 경보 신호({@link BackfillMetrics#recordAnomalyFailed()})를 발생시킨다(REQ-CVR-031) — 저장
+     *       실패가 "커버됨"으로 오판되는 것을 차단한다.
+     *   <li>{@code raw == 0 && kept == 0} — 원본 응답조차 없는 정상 빈 응답. REQ-CVR-030 원문("검증 통과 행수가 확인된 경우에만
+     *       전진을 수행한다")은 kept 확인을 전진의 필요조건으로 명시하므로, 이 분기도 kept==0인 이상 전진하지 않는다. anomaly도 아니므로 {@code
+     *       recordAnomalyFailed()}는 호출하지 않는다(원본 응답 자체가 없어 검증 실패로 볼 근거가 없다) — 조용한 no-op.
+     * </ul>
+     *
+     * @param status 처리 대상 {@code backfill_status} 행(전진 시 id로 재조회해 관리 상태로 갱신한다)
+     * @param filler 소스별 저장 실행체(TASK-005~008)
+     * @param cursor 이번 스텝의 시작 지점({@code covered_until_date} 다음 날짜)
+     * @return 이번 스텝의 kept/raw/filledUntil (호출자가 갭 walk 루프 지속 여부를 판단하는 데 사용)
+     */
+    public CoveredFillResult executeStep(
+            BackfillStatus status, CoveredGapFiller filler, LocalDate cursor) {
+        return transactionTemplate.execute(
+                tx -> {
+                    CoveredFillResult result = filler.persistStep(cursor);
+                    if (result.kept() > 0) {
+                        BackfillStatus managed =
+                                backfillStatusRepository.findById(status.getId()).orElseThrow();
+                        managed.advanceCoveredUntil(result.filledUntil());
+                    } else if (result.raw() > 0) {
+                        log.warn(
+                                "[covered-range] 검증 전량 실패 이상 — cursor={}, raw={}, kept=0",
+                                cursor,
+                                result.raw());
+                        backfillMetrics.recordAnomalyFailed();
+                    }
+                    // raw == 0 && kept == 0: 정상 빈 응답 — 전진도 anomaly도 없음(REQ-CVR-030 kept 확인 필요조건)
+                    return result;
+                });
+    }
+
+    /**
+     * 라이브 수집 배치 성공 후 조건부 스탬프를 평가한다 (REQ-CVR-020, -021).
+     *
+     * <p>수집 윈도우 {@code [wStart, today]}가 기존 커버 구간과 이어져 있으면({@code covered_until_date >= wStart -
+     * 1}) {@code covered_until_date}를 오늘로 즉시 전진시킨다. 이어지지 않으면(갭 존재) 아무것도 하지 않는다 — 무조건 스탬프하면 갭이 커버 구간
+     * 내부로 편입되어 영원히 관측 불가능해지므로(REQ-CVR-021 근거), 갭은 이후 정방향 갭 walk가 {@code covered_until_date}를 통과하며
+     * 처리하도록 남긴다.
+     *
+     * <p>단일 날짜형 라이브 배치는 {@code wStart == today}로 호출한다 — 연속 조건이 {@code covered_until_date >= today -
+     * 1}로 자연히 축소되어 별도 분기 없이 처리된다.
+     *
+     * @param status 처리 대상 {@code backfill_status} 행
+     * @param wStart 이번 수집 윈도우의 시작일
+     * @param today 이번 수집 윈도우의 종료일(오늘)
+     */
+    public void advanceIfContinuous(BackfillStatus status, LocalDate wStart, LocalDate today) {
+        LocalDate coveredUntil = status.getCoveredUntilDate();
+        boolean continuous = coveredUntil != null && !coveredUntil.isBefore(wStart.minusDays(1));
+        if (!continuous) {
+            log.debug(
+                    "[covered-range] 갭 존재 — 스탬프 억제. coveredUntil={}, wStart={}",
+                    coveredUntil,
+                    wStart);
+            return;
+        }
+        transactionTemplate.executeWithoutResult(
+                tx -> {
+                    BackfillStatus managed =
+                            backfillStatusRepository.findById(status.getId()).orElseThrow();
+                    managed.advanceCoveredUntil(today);
+                });
+    }
+}
