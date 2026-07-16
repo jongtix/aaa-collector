@@ -44,6 +44,8 @@ public class KoreaeximExchangeRateClient implements MarketIndicatorSource {
     private final int emptyRetryMax;
     private final int ioRetryMax;
     private final long ioRetryBackoffBaseMs;
+    private final int ioRetryLongMax;
+    private final long ioRetryLongDelayMs;
 
     public KoreaeximExchangeRateClient(
             RestClient koreaeximRestClient,
@@ -51,12 +53,17 @@ public class KoreaeximExchangeRateClient implements MarketIndicatorSource {
             @Value("${aaa.market-indicator.usdkrw.empty-retry-max:5}") int emptyRetryMax,
             @Value("${aaa.market-indicator.usdkrw.io-retry-max:3}") int ioRetryMax,
             @Value("${aaa.market-indicator.usdkrw.io-retry-backoff-base-ms:1000}")
-                    long ioRetryBackoffBaseMs) {
+                    long ioRetryBackoffBaseMs,
+            @Value("${aaa.market-indicator.usdkrw.io-retry-long-max:2}") int ioRetryLongMax,
+            @Value("${aaa.market-indicator.usdkrw.io-retry-long-delay-ms:300000}")
+                    long ioRetryLongDelayMs) {
         this.koreaeximRestClient = koreaeximRestClient;
         this.apiKey = apiKey;
         this.emptyRetryMax = emptyRetryMax;
         this.ioRetryMax = ioRetryMax;
         this.ioRetryBackoffBaseMs = ioRetryBackoffBaseMs;
+        this.ioRetryLongMax = ioRetryLongMax;
+        this.ioRetryLongDelayMs = ioRetryLongDelayMs;
     }
 
     @Override
@@ -113,28 +120,27 @@ public class KoreaeximExchangeRateClient implements MarketIndicatorSource {
     }
 
     /**
-     * KOREAEXIM 서버의 순간적 TCP RST({@code Connection reset})에 대한 transient I/O 재시도(#105).
+     * KOREAEXIM 서버의 I/O 장애(TCP RST, 리다이렉트 루프, 간헐적 중간 CA 인증서 누락 등)에 대한 2단계 재시도(#105).
      *
-     * <p>{@link ResourceAccessException}(하위 {@link java.io.IOException} 레벨 실패)에 한정해 지수 백오프로 최대
-     * {@code ioRetryMax}회 재시도한다. HTTP 4xx/5xx 등 다른 예외는 재시도 없이 즉시 전파해 상위 {@code
-     * MarketIndicatorSourceChain}의 폴백(Yahoo)이 정상 동작하도록 한다.
+     * <p>{@link ResourceAccessException}(하위 {@link java.io.IOException} 레벨 실패)에 한정해 재시도한다. HTTP
+     * 4xx/5xx 등 다른 예외는 재시도 없이 즉시 전파해 상위 {@code MarketIndicatorSourceChain}의 폴백(Yahoo)이 정상 동작하도록 한다.
+     *
+     * <p>1단계(즉시 재시도): 지수 백오프로 최대 {@code ioRetryMax}회, 순간적인 TCP RST에 유효(최대 7초 내외).
+     *
+     * <p>2단계(장주기 재시도): 1단계 상한을 넘겨도 바로 예외를 던지지 않고, {@code ioRetryLongMax}회에 걸쳐 {@code
+     * ioRetryLongDelayMs}의 배수(5분, 10분, ...)로 대기 후 재시도한다. NAS 24시간 프로브 실측 결과 서버측 장애 창이 수초~1분 이상 지속되는
+     * 경우가 확인되어, 1단계만으로는 넘기지 못하는 장애를 흡수하기 위함이다. {@code market_indicators}는 Tier-1(INSERT IGNORE 전용,
+     * ADR-026)이라 Yahoo로 한 번 폴백되면 이후 KOREAEXIM이 성공해도 정정이 불가능하므로, 같은 배치 실행 안에서 더 오래 재시도하는 편이 낫다. 장주기
+     * 재시도까지 전부 실패해야 예외를 전파한다.
      */
     private List<Map<String, String>> fetchWithIoRetry(String dateStr) {
         int attempt = 0;
         while (true) {
             try {
-                return koreaeximRestClient
-                        .get()
-                        .uri(PATH, apiKey, dateStr)
-                        .retrieve()
-                        .body(RESPONSE_TYPE);
+                return callKoreaexim(dateStr);
             } catch (ResourceAccessException e) {
                 if (attempt >= ioRetryMax) {
-                    log.warn(
-                            "[koreaexim] I/O 오류 재시도 상한({}) 초과 — 예외 전파: {}",
-                            ioRetryMax,
-                            SensitiveDataSanitizer.sanitize(e.getMessage()));
-                    throw e;
+                    return fetchWithLongRetry(dateStr, e);
                 }
                 long backoffMs = ioRetryBackoffBaseMs << attempt;
                 attempt++;
@@ -147,6 +153,40 @@ public class KoreaeximExchangeRateClient implements MarketIndicatorSource {
                 sleep(backoffMs);
             }
         }
+    }
+
+    /**
+     * 즉시 재시도 상한 소진 후의 장주기 재시도(#105). 매 회 {@code ioRetryLongDelayMs}의 배수(1회차 5분, 2회차 10분, ...)로 대기 후
+     * 재시도하며, {@code ioRetryLongMax}회 전부 실패하면 마지막 예외를 전파한다.
+     */
+    private List<Map<String, String>> fetchWithLongRetry(
+            String dateStr, ResourceAccessException lastException) {
+        ResourceAccessException last = lastException;
+        for (int longAttempt = 0; longAttempt < ioRetryLongMax; longAttempt++) {
+            long delayMs = ioRetryLongDelayMs * (longAttempt + 1);
+            log.warn(
+                    "[koreaexim] I/O 오류 — 장주기 재시도 대기 {}ms 후 ({}/{}, 장주기): {}",
+                    delayMs,
+                    longAttempt + 1,
+                    ioRetryLongMax,
+                    SensitiveDataSanitizer.sanitize(last.getMessage()));
+            sleep(delayMs);
+            try {
+                return callKoreaexim(dateStr);
+            } catch (ResourceAccessException e) {
+                last = e;
+            }
+        }
+        log.warn(
+                "[koreaexim] I/O 오류 재시도 상한 초과(즉시 {}회+장주기 {}회 모두 소진) — 예외 전파: {}",
+                ioRetryMax,
+                ioRetryLongMax,
+                SensitiveDataSanitizer.sanitize(last.getMessage()));
+        throw last;
+    }
+
+    private List<Map<String, String>> callKoreaexim(String dateStr) {
+        return koreaeximRestClient.get().uri(PATH, apiKey, dateStr).retrieve().body(RESPONSE_TYPE);
     }
 
     // Virtual Thread 환경 — 호출 내부 백오프 sleep은 무해(CLAUDE.md ADR-008 fixedDelay 금지와는 무관, 스케줄러 트리거 아님)

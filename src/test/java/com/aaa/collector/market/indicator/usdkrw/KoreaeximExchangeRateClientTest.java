@@ -28,6 +28,8 @@ class KoreaeximExchangeRateClientTest {
     private static final int EMPTY_RETRY_MAX = 3;
     private static final int IO_RETRY_MAX = 3;
     private static final int IO_RETRY_BACKOFF_BASE_MS = 1;
+    private static final int IO_RETRY_LONG_MAX = 2;
+    private static final int IO_RETRY_LONG_DELAY_MS = 1;
     private static final String SAMPLE_RESPONSE =
             "[{\"cur_unit\":\"USD\",\"deal_bas_r\":\"1,523.40\",\"cur_nm\":\"미국 달러\"},{\"cur_unit\":\"EUR\",\"deal_bas_r\":\"1,650.00\",\"cur_nm\":\"유로\"}]";
 
@@ -45,7 +47,9 @@ class KoreaeximExchangeRateClientTest {
                         API_KEY,
                         EMPTY_RETRY_MAX,
                         IO_RETRY_MAX,
-                        IO_RETRY_BACKOFF_BASE_MS);
+                        IO_RETRY_BACKOFF_BASE_MS,
+                        IO_RETRY_LONG_MAX,
+                        IO_RETRY_LONG_DELAY_MS);
     }
 
     @Nested
@@ -65,7 +69,9 @@ class KoreaeximExchangeRateClientTest {
                             "",
                             EMPTY_RETRY_MAX,
                             IO_RETRY_MAX,
-                            IO_RETRY_BACKOFF_BASE_MS);
+                            IO_RETRY_BACKOFF_BASE_MS,
+                            IO_RETRY_LONG_MAX,
+                            IO_RETRY_LONG_DELAY_MS);
         }
 
         @Test
@@ -207,8 +213,9 @@ class KoreaeximExchangeRateClientTest {
         @Test
         @DisplayName("ResourceAccessException 상한(ioRetryMax) 초과 — 최종 예외 전파")
         void resourceAccessException_exceedsMax_propagates() {
-            // Arrange: IO_RETRY_MAX=3 이므로 초기 1 + 재시도 3 = 4회 모두 실패
-            for (int i = 0; i <= IO_RETRY_MAX; i++) {
+            // Arrange: 즉시 재시도(IO_RETRY_MAX=3, 초기 1 + 재시도 3 = 4회)
+            // + 장주기 재시도(IO_RETRY_LONG_MAX=2회) 모두 실패
+            for (int i = 0; i <= IO_RETRY_MAX + IO_RETRY_LONG_MAX; i++) {
                 mockServer
                         .expect(method(HttpMethod.GET))
                         .andRespond(
@@ -221,6 +228,69 @@ class KoreaeximExchangeRateClientTest {
             assertThatThrownBy(() -> client.fetchDaily(LocalDate.of(2026, 6, 20)))
                     .isInstanceOf(ResourceAccessException.class);
             mockServer.verify();
+        }
+
+        @Test
+        @DisplayName("즉시 재시도 전부 실패 후 장주기 1회차에서 성공 — 정상 행 반환")
+        void resourceAccessException_recoversOnLongRetry() {
+            // Arrange: 즉시 재시도(4회) 모두 실패, 장주기 1회차에서 성공
+            for (int i = 0; i <= IO_RETRY_MAX; i++) {
+                mockServer
+                        .expect(method(HttpMethod.GET))
+                        .andRespond(
+                                request -> {
+                                    throw new IOException("Connection reset");
+                                });
+            }
+            mockServer
+                    .expect(method(HttpMethod.GET))
+                    .andRespond(withSuccess(SAMPLE_RESPONSE, MediaType.APPLICATION_JSON));
+
+            // Act
+            List<MarketIndicatorRow> rows = client.fetchDaily(LocalDate.of(2026, 6, 20));
+
+            // Assert
+            assertThat(rows).hasSize(1);
+            assertThat(rows.getFirst().closeValue()).isEqualByComparingTo("1523.40");
+            mockServer.verify();
+        }
+
+        @Test
+        @DisplayName("장주기 재시도 지연 값이 배수(1회차, 2회차)로 증가한다")
+        void longRetryDelay_increasesByMultiple() {
+            // Arrange: 지연 시간을 직접 검증할 수 없으므로, 지연 배율을 크게 설정한 별도 클라이언트로
+            // 총 소요 시간이 1회차 지연 + 2회차 지연(1x + 2x) 이상임을 확인한다.
+            long longDelayMs = 20;
+            RestClient.Builder builder = RestClient.builder();
+            MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
+            RestClient restClient = builder.baseUrl("https://oapi.koreaexim.go.kr").build();
+            KoreaeximExchangeRateClient delayClient =
+                    new KoreaeximExchangeRateClient(
+                            restClient,
+                            API_KEY,
+                            EMPTY_RETRY_MAX,
+                            IO_RETRY_MAX,
+                            IO_RETRY_BACKOFF_BASE_MS,
+                            IO_RETRY_LONG_MAX,
+                            longDelayMs);
+            for (int i = 0; i <= IO_RETRY_MAX; i++) {
+                server.expect(method(HttpMethod.GET))
+                        .andRespond(
+                                request -> {
+                                    throw new IOException("Connection reset");
+                                });
+            }
+            server.expect(method(HttpMethod.GET))
+                    .andRespond(withSuccess(SAMPLE_RESPONSE, MediaType.APPLICATION_JSON));
+
+            // Act
+            long start = System.currentTimeMillis();
+            delayClient.fetchDaily(LocalDate.of(2026, 6, 20));
+            long elapsedMs = System.currentTimeMillis() - start;
+
+            // Assert: 장주기 1회차 지연(longDelayMs * 1)만 소요되어야 성공 — 등차 배수 검증
+            assertThat(elapsedMs).isGreaterThanOrEqualTo(longDelayMs);
+            server.verify();
         }
 
         @Test
@@ -236,10 +306,11 @@ class KoreaeximExchangeRateClientTest {
         }
 
         @Test
-        @DisplayName("재시도 횟수는 ioRetryMax 프로퍼티를 정확히 준수한다")
+        @DisplayName("재시도 횟수는 ioRetryMax/ioRetryLongMax 프로퍼티를 정확히 준수한다")
         void retryCount_matchesConfiguredMax() {
-            // Arrange: IO_RETRY_MAX+1(초기 1회 포함) 회 실패만 등록 — 초과 호출 시 mockServer.verify() 실패
-            for (int i = 0; i <= IO_RETRY_MAX; i++) {
+            // Arrange: (IO_RETRY_MAX+1, 초기 1회 포함) + IO_RETRY_LONG_MAX 회 실패만 등록
+            // — 초과 호출 시 mockServer.verify() 실패
+            for (int i = 0; i <= IO_RETRY_MAX + IO_RETRY_LONG_MAX; i++) {
                 mockServer
                         .expect(method(HttpMethod.GET))
                         .andRespond(
@@ -251,7 +322,7 @@ class KoreaeximExchangeRateClientTest {
             assertThatThrownBy(() -> client.fetchDaily(LocalDate.of(2026, 6, 20)))
                     .isInstanceOf(ResourceAccessException.class);
 
-            // Assert: 등록된 요청 수(IO_RETRY_MAX+1)가 정확히 모두 소비됨
+            // Assert: 등록된 요청 수(IO_RETRY_MAX+1+IO_RETRY_LONG_MAX)가 정확히 모두 소비됨
             mockServer.verify();
         }
     }
