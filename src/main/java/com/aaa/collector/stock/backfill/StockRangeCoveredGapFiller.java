@@ -62,11 +62,15 @@ public class StockRangeCoveredGapFiller implements CoveredGapFiller {
     private static final Set<Market> OVERSEAS_MARKETS =
             Set.of(Market.NYSE, Market.NASDAQ, Market.AMEX);
 
-    /** daily_ohlcv·short_sale_domestic 스텝 폭(달력일) — 100건-cap 안전 여유. */
+    /**
+     * daily_ohlcv 스텝 폭(달력일) — 100건-cap 안전 여유.
+     *
+     * <p>daily_ohlcv는 (국내=진짜 (from,to) 범위, 해외=BYMD 단일앵커) 양쪽 다 서비스 내부에 참조 가능한 트레일링 lookback 상수가
+     * 없다(daily_ohlcv는 GROUP_A라 100건-cap 종료 게이트로 별도 관리되는 구조이지 고정 lookback 구조가 아님) — {@link
+     * ShortSaleCollectionService#BACKFILL_LOOKBACK_CALENDAR_DAYS}(90)와 동일 근거(100건-cap 안전 여유)를 공유하는
+     * 로컬 상수로 유지한다.
+     */
     private static final int STEP_DAYS_WIDE = 90;
-
-    /** investor_trend·credit_balance 스텝 폭(달력일) — 각 서비스 자체 트레일링 lookback과 일치. */
-    private static final int STEP_DAYS_NARROW = 45;
 
     private final BackfillStatus status;
     private final Stock stock;
@@ -110,10 +114,24 @@ public class StockRangeCoveredGapFiller implements CoveredGapFiller {
         try {
             return switch (status.getDataTable()) {
                 case "daily_ohlcv" -> persistDailyOhlcv(cursor, stepAnchor(cursor, STEP_DAYS_WIDE));
-                case "investor_trend" -> persistInvestorTrend(stepAnchor(cursor, STEP_DAYS_NARROW));
-                case "credit_balance" -> persistCreditBalance(stepAnchor(cursor, STEP_DAYS_NARROW));
+                case "investor_trend" ->
+                        persistInvestorTrend(
+                                stepAnchor(
+                                        cursor,
+                                        InvestorTrendCollectionService
+                                                .BACKFILL_LOOKBACK_CALENDAR_DAYS));
+                case "credit_balance" ->
+                        persistCreditBalance(
+                                stepAnchor(
+                                        cursor,
+                                        CreditBalanceCollectionService
+                                                .BACKFILL_LOOKBACK_CALENDAR_DAYS));
                 case "short_sale_domestic" ->
-                        persistShortSaleDomestic(stepAnchor(cursor, STEP_DAYS_WIDE));
+                        persistShortSaleDomestic(
+                                stepAnchor(
+                                        cursor,
+                                        ShortSaleCollectionService
+                                                .BACKFILL_LOOKBACK_CALENDAR_DAYS));
                 default ->
                         throw new IllegalStateException(
                                 "커버-추적 비대상 STOCK data_table: " + status.getDataTable());

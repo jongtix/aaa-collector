@@ -53,8 +53,13 @@ public class InvestorTrendCollectionService {
     /** 당일 배치 수집 윈도우 캘린더 일수 (≈최근 5거래일, 연휴 대비 14일). */
     static final int LOOKBACK_CALENDAR_DAYS = 14;
 
-    /** 백필 수집 윈도우 캘린더 일수 — API 단일 호출이 ~30행(≈45달력일)을 반환하므로 전부 포착. */
-    static final int BACKFILL_LOOKBACK_CALENDAR_DAYS = 45;
+    /**
+     * 백필 수집 윈도우 캘린더 일수 — API 단일 호출이 ~30행(≈45달력일)을 반환하므로 전부 포착.
+     *
+     * <p>{@code public} — {@link com.aaa.collector.stock.backfill.StockRangeCoveredGapFiller}(정방향 갭
+     * walk 스텝 폭)가 직접 참조한다(SPEC-COLLECTOR-BACKFILL-011). 이 상수가 바뀌면 스텝 폭도 자동으로 함께 바뀐다 — 리터럴 중복 금지.
+     */
+    public static final int BACKFILL_LOOKBACK_CALENDAR_DAYS = 45;
 
     /**
      * 백만원 → 원 변환 계수 (×1,000,000).

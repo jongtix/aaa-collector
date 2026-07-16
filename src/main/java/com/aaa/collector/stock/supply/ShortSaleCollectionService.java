@@ -54,8 +54,13 @@ public class ShortSaleCollectionService {
 
     static final int LOOKBACK_CALENDAR_DAYS = 14;
 
-    /** 백필 수집 윈도우 캘린더 일수 — API 범위 파라미터 지원, 단일 호출 최대 61행(≈90달력일)을 전부 포착. */
-    static final int BACKFILL_LOOKBACK_CALENDAR_DAYS = 90;
+    /**
+     * 백필 수집 윈도우 캘린더 일수 — API 범위 파라미터 지원, 단일 호출 최대 61행(≈90달력일)을 전부 포착.
+     *
+     * <p>{@code public} — {@link com.aaa.collector.stock.backfill.StockRangeCoveredGapFiller}(정방향 갭
+     * walk 스텝 폭)가 직접 참조한다(SPEC-COLLECTOR-BACKFILL-011). 이 상수가 바뀌면 스텝 폭도 자동으로 함께 바뀐다 — 리터럴 중복 금지.
+     */
+    public static final int BACKFILL_LOOKBACK_CALENDAR_DAYS = 90;
 
     private static final DateTimeFormatter DATE_FMT = DateTimeFormatter.BASIC_ISO_DATE;
     private static final String TR_ID = "FHPST04830000";
