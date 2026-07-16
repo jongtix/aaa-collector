@@ -109,7 +109,7 @@ class MarketBatchSchedulerTest {
         @Test
         @SuppressWarnings("PMD.UnitTestContainsTooManyAsserts") // 7종 고정 순서 전체 검증
         @DisplayName(
-                "7종 모두 호출 — sectorIndex → compInterest → marketFunds → dividendSchedule → revSplit → usdkrw → vix")
+                "7종 모두 호출 — sectorIndex → compInterest → marketFunds → dividendSchedule → revSplit → vix → usdkrw")
         void collectMarket_callsAllSevenServicesInOrder() {
             // Act
             scheduler.collectMarket();
@@ -130,24 +130,24 @@ class MarketBatchSchedulerTest {
             inOrder.verify(dividendScheduleCollectionService).collect(anyString(), anyString());
             inOrder.verify(revSplitCollectionService)
                     .collect(any(LocalDate.class), any(LocalDate.class));
-            inOrder.verify(usdkrwCollectionService).collectDaily(any(LocalDate.class));
             inOrder.verify(vixCollectionService).collectDaily(any(LocalDate.class));
+            inOrder.verify(usdkrwCollectionService).collectDaily(any(LocalDate.class));
         }
 
         @Test
-        @DisplayName("USDKRW(T8)가 revSplit(T7) 다음, VIX(T9) 앞에 호출됨 (REQ-001)")
-        void usdkrw_calledAfterRevSplit_beforeVix() {
+        @DisplayName("USDKRW가 revSplit(T7)·VIX(T9) 다음, 배치 마지막 순서로 호출됨 (aaa-infra#105)")
+        void usdkrw_calledLast_afterRevSplitAndVix() {
             scheduler.collectMarket();
 
             InOrder inOrder =
                     inOrder(
                             revSplitCollectionService,
-                            usdkrwCollectionService,
-                            vixCollectionService);
+                            vixCollectionService,
+                            usdkrwCollectionService);
             inOrder.verify(revSplitCollectionService)
                     .collect(any(LocalDate.class), any(LocalDate.class));
-            inOrder.verify(usdkrwCollectionService).collectDaily(any(LocalDate.class));
             inOrder.verify(vixCollectionService).collectDaily(any(LocalDate.class));
+            inOrder.verify(usdkrwCollectionService).collectDaily(any(LocalDate.class));
         }
     }
 

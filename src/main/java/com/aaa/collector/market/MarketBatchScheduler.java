@@ -111,15 +111,16 @@ public class MarketBatchScheduler {
         succeeded += revSplitResult[1];
         skip += revSplitResult[2];
 
-        // T8: USDKRW — void 반환종(성공 시 1/1, 예외 시 1/0)
-        long[] usdkrwResult = collectUsdkrw(today);
-        attempted += usdkrwResult[0];
-        succeeded += usdkrwResult[1];
-
         // T9: VIX — void 반환종
         long[] vixResult = collectVix(today);
         attempted += vixResult[0];
         succeeded += vixResult[1];
+
+        // T8: USDKRW — void 반환종(성공 시 1/1, 예외 시 1/0). 장주기 재시도(#105)로 최대 15분까지 지연될 수 있어
+        // 다른 지표 적재를 막지 않도록 배치 마지막 순서로 수집한다.
+        long[] usdkrwResult = collectUsdkrw(today);
+        attempted += usdkrwResult[0];
+        succeeded += usdkrwResult[1];
 
         // REQ-OBSV-020/021: fail = attempted - succeeded - skip
         long fail = Math.max(0L, attempted - succeeded - skip);
