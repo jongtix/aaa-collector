@@ -56,23 +56,22 @@ public class CoverageMetricsWarmStarter implements ApplicationRunner {
      * @param series 대상 시리즈
      */
     private void warm(WatermarkSeries series) {
+        String label = series.seriesLabel();
         try {
-            Optional<Double> ratio = coverageRatioRepository.find(series.seriesLabel());
+            Optional<Double> ratio = coverageRatioRepository.find(label);
             if (ratio.isEmpty()) {
-                log.debug(
-                        "CoverageMetrics warm-start skip — series={} Redis 값 없음(0.0 유지)",
-                        series.seriesLabel());
+                log.debug("CoverageMetrics warm-start skip — series={} Redis 값 없음(0.0 유지)", label);
                 return;
             }
             coverageMetrics.warmRatio(series, ratio.get());
             log.info(
                     "CoverageMetrics warm-start 완료(Redis) — series={}, ratio={}",
-                    series.seriesLabel(),
+                    label,
                     ratio.get());
         } catch (DataAccessException e) {
             log.warn(
                     "CoverageMetrics warm-start Redis 조회 실패 — series={}, 무시하고 계속 진행. error={}",
-                    series.seriesLabel(),
+                    label,
                     e.getMessage());
         }
     }

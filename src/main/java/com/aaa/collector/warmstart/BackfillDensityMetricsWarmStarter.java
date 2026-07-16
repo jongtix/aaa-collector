@@ -61,24 +61,25 @@ public class BackfillDensityMetricsWarmStarter implements ApplicationRunner {
      * @param series 대상 시리즈
      */
     private void warmBelowFloor(WatermarkSeries series) {
+        String label = series.seriesLabel();
         try {
-            Optional<Long> count = backfillDensityRepository.findBelowFloor(series.seriesLabel());
+            Optional<Long> count = backfillDensityRepository.findBelowFloor(label);
             if (count.isEmpty()) {
                 log.debug(
                         "BackfillDensity below_floor warm-start skip — series={} Redis 값 없음(0 유지)",
-                        series.seriesLabel());
+                        label);
                 return;
             }
             backfillDensityMetrics.warmBelowFloorCount(series, count.get());
             log.info(
                     "BackfillDensity below_floor warm-start 완료(Redis) — series={}, count={}",
-                    series.seriesLabel(),
+                    label,
                     count.get());
         } catch (DataAccessException e) {
             log.warn(
                     "BackfillDensity below_floor warm-start Redis 조회 실패 — series={}, 무시하고 계속 진행."
                             + " error={}",
-                    series.seriesLabel(),
+                    label,
                     e.getMessage());
         }
     }
@@ -91,24 +92,25 @@ public class BackfillDensityMetricsWarmStarter implements ApplicationRunner {
      * @param series 대상 시리즈
      */
     private void warmInternalGap(WatermarkSeries series) {
+        String label = series.seriesLabel();
         try {
-            Optional<Long> count = backfillDensityRepository.findInternalGap(series.seriesLabel());
+            Optional<Long> count = backfillDensityRepository.findInternalGap(label);
             if (count.isEmpty()) {
                 log.debug(
                         "BackfillDensity internal_gap warm-start skip — series={} Redis 값 없음(0 유지)",
-                        series.seriesLabel());
+                        label);
                 return;
             }
             backfillDensityMetrics.warmInternalGapCount(series, count.get());
             log.info(
                     "BackfillDensity internal_gap warm-start 완료(Redis) — series={}, count={}",
-                    series.seriesLabel(),
+                    label,
                     count.get());
         } catch (DataAccessException e) {
             log.warn(
                     "BackfillDensity internal_gap warm-start Redis 조회 실패 — series={}, 무시하고 계속 진행."
                             + " error={}",
-                    series.seriesLabel(),
+                    label,
                     e.getMessage());
         }
     }

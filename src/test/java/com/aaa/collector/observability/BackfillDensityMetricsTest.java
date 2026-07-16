@@ -168,7 +168,7 @@ class BackfillDensityMetricsTest {
 
     @Nested
     @DisplayName("warm* — 웜스타트 전용(게이지만, Redis 재기록 없음)")
-    class Warm {
+    class WarmMethods {
 
         @Test
         @DisplayName("warmBelowFloorCount는 게이지를 설정하되 Redis에 다시 쓰지 않는다")
