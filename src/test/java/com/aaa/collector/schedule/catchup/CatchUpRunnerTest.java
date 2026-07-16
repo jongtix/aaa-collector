@@ -503,7 +503,7 @@ class CatchUpRunnerTest {
             // now = 2026-06-22(월) 18:00 KST, fresh = 17:30 KST (모든 슬롯보다 이후)
             // 단위별 same-day/grace/stale 조건이 성립하는 경우만 stale 체크 → 최소 stubbing
             Instant now = ZonedDateTime.of(2026, 6, 22, 18, 0, 0, 0, KST).toInstant();
-            // fresh: 오늘 17:30 KST — 16:00/17:00 슬롯 이후이므로 해당 단위들은 stale 아님
+            // fresh: 오늘 17:30 KST — 16:00/17:05 슬롯 이후이므로 해당 단위들은 stale 아님
             LocalDateTime fresh = LocalDateTime.of(2026, 6, 22, 17, 30, 0);
 
             // 실제로 stale 체크까지 도달하는 단위만 stubbing (나머지는 same-day/grace 실패):
@@ -513,7 +513,7 @@ class CatchUpRunnerTest {
             when(investorTrendRepository.findMaxCreatedAt()).thenReturn(Optional.of(fresh));
             when(creditBalanceRepository.findMaxCreatedAt()).thenReturn(Optional.of(fresh));
             when(shortSaleDomesticRepository.findMaxCreatedAt()).thenReturn(Optional.of(fresh));
-            // market-indicators (17:00 KST, grace 경과): 1개 supplier
+            // market-indicators (17:05 KST, grace 경과): 1개 supplier
             when(marketIndicatorRepository.findMaxCreatedAt()).thenReturn(Optional.of(fresh));
             // domestic-etf-representative (07:50 KST, grace 경과, DATE): 1개 supplier
             when(etfRepresentativeHistoryRepository.findMaxEffectiveFrom())

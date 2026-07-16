@@ -219,7 +219,7 @@ class BatchCronsTest {
         @Test
         @DisplayName("MARKET_INDICATORS_CRON은 MarketBatchScheduler 원본 리터럴과 일치해야 한다")
         void marketIndicatorsCron_matchesOriginalLiteral() {
-            assertEquals("0 0 17 * * MON-FRI", BatchCrons.MARKET_INDICATORS_CRON);
+            assertEquals("0 5 17 * * MON-FRI", BatchCrons.MARKET_INDICATORS_CRON);
         }
 
         @Test

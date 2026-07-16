@@ -75,13 +75,13 @@ class MarketBatchSchedulerTest {
     class ScheduledAnnotation {
 
         @Test
-        @DisplayName("cron='0 0 17 * * MON-FRI', zone='Asia/Seoul'")
+        @DisplayName("cron='0 5 17 * * MON-FRI', zone='Asia/Seoul'")
         void collectMarket_hasCorrectScheduledAnnotation() throws NoSuchMethodException {
             Method method = MarketBatchScheduler.class.getMethod("collectMarket");
             Scheduled scheduled = method.getAnnotation(Scheduled.class);
 
             assertThat(scheduled).isNotNull();
-            assertThat(scheduled.cron()).isEqualTo("0 0 17 * * MON-FRI");
+            assertThat(scheduled.cron()).isEqualTo("0 5 17 * * MON-FRI");
             assertThat(scheduled.zone()).isEqualTo("Asia/Seoul");
         }
 

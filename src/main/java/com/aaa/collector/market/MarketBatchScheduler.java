@@ -22,7 +22,8 @@ import org.springframework.stereotype.Component;
 /**
  * 시장지표 묶음 스케줄러 (T8, REQ-BATCH3-001).
  *
- * <p>평일 17:00 KST({@code 0 0 17 * * MON-FRI}) — 16:00 일봉+수급 인라인 체인과 1시간 분리.
+ * <p>평일 17:05 KST({@code 0 5 17 * * MON-FRI}) — 16:00 일봉+수급 인라인 체인과 1시간 분리(aaa-infra#105, KOREAEXIM
+ * 장주기 재시도 여유 확보를 위해 17:00→17:05로 조정).
  *
  * <p>업종지수(T3)→금리(T4)→증시자금(T5)→배당증자(T6)→액면교체(T7, REQ-BATCH5-001) 고정 순서 순차 호출.
  *

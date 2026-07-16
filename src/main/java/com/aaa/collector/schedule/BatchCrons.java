@@ -54,8 +54,8 @@ public final class BatchCrons {
     public static final String MACRO_EXTERNAL_ZONE = "Asia/Seoul";
 
     // ─── market-indicators ───────────────────────────────────────────────────
-    /** 시장지표 묶음 배치 cron — 평일 17:00 KST. */
-    public static final String MARKET_INDICATORS_CRON = "0 0 17 * * MON-FRI";
+    /** 시장지표 묶음 배치 cron — 평일 17:05 KST(aaa-infra#105, KOREAEXIM 장주기 재시도 여유 확보). */
+    public static final String MARKET_INDICATORS_CRON = "0 5 17 * * MON-FRI";
 
     /** 시장지표 묶음 배치 zone. */
     public static final String MARKET_INDICATORS_ZONE = "Asia/Seoul";

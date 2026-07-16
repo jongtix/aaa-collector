@@ -13,7 +13,7 @@ import org.springframework.stereotype.Component;
  * 국내주식종목투자의견 수집 스케줄러 (SPEC-COLLECTOR-BATCH-004).
  *
  * <p>평일 18:00 KST({@code 0 0 18 * * MON-FRI}, {@code Asia/Seoul}) — 매일 장 마감 후, 16:00 일봉+수급 멀티키
- * 체인·17:00 BATCH-003 시장지표 묶음 종료 후 슬롯(REQ-BATCH4-002/005). {@code fixedDelay}/{@code fixedRate} 미사용
+ * 체인·17:05 BATCH-003 시장지표 묶음 종료 후 슬롯(REQ-BATCH4-002/005). {@code fixedDelay}/{@code fixedRate} 미사용
  * — Virtual Threads 버그 회피(ADR-008, REQ-BATCH4-003).
  *
  * <p>완료 이벤트({@code stream:daily:complete})를 발행하지 않고 자기 완료 로깅만 한다(REQ-BATCH4-012). 수집 중 예외가 발생해도

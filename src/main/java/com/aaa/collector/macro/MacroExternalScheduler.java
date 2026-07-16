@@ -12,7 +12,7 @@ import org.springframework.stereotype.Component;
 /**
  * 외부 거시경제 지표(ECOS·FRED) 묶음 스케줄러 (SPEC-COLLECTOR-MACRO-EXT-001 REQ-MACRO-EXT-041).
  *
- * <p>평일 19:00 KST({@code 0 0 19 * * MON-FRI}) — 17:00 KIS 시장지표 배치와 2시간 분리.
+ * <p>평일 19:00 KST({@code 0 0 19 * * MON-FRI}) — 17:05 KIS 시장지표 배치와 2시간 분리.
  *
  * <p>ECOS → FRED 순차 호출. 종 단위 예외 격리 — 한 종 실패가 다음 종을 막지 않는다. {@code fixedDelay}/{@code fixedRate} 미사용
  * — Virtual Threads 버그 회피(ADR-008, CLAUDE.md).
