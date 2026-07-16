@@ -3,7 +3,9 @@ package com.aaa.collector.common.startup;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.aaa.collector.market.indicator.MarketIndicatorLastSuccessRepository;
+import com.aaa.collector.observability.BackfillDensityRepository;
 import com.aaa.collector.observability.BatchLastLoadRepository;
+import com.aaa.collector.observability.CoverageRatioRepository;
 import com.aaa.collector.support.SharedMySqlContainer;
 import java.sql.SQLException;
 import java.util.List;
@@ -42,6 +44,8 @@ class Tier2GrantMigrationStrategyIT {
     @MockitoBean private BatchLastLoadRepository batchLastLoadRepository;
 
     @MockitoBean private MarketIndicatorLastSuccessRepository marketIndicatorLastSuccessRepository;
+    @MockitoBean private CoverageRatioRepository coverageRatioRepository;
+    @MockitoBean private BackfillDensityRepository backfillDensityRepository;
 
     @Test
     @DisplayName("AC — SHOW GRANTS FOR 'collector'@'%'에 TIER2_TABLES 5개 UPDATE가 모두 존재한다")

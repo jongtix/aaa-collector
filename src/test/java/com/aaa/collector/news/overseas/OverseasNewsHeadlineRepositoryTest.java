@@ -3,7 +3,9 @@ package com.aaa.collector.news.overseas;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.aaa.collector.market.indicator.MarketIndicatorLastSuccessRepository;
+import com.aaa.collector.observability.BackfillDensityRepository;
 import com.aaa.collector.observability.BatchLastLoadRepository;
+import com.aaa.collector.observability.CoverageRatioRepository;
 import com.aaa.collector.support.SharedMySqlContainer;
 import java.time.LocalDateTime;
 import org.junit.jupiter.api.DisplayName;
@@ -39,6 +41,8 @@ class OverseasNewsHeadlineRepositoryTest {
 
     @MockitoBean private BatchLastLoadRepository batchLastLoadRepository;
     @MockitoBean private MarketIndicatorLastSuccessRepository marketIndicatorLastSuccessRepository;
+    @MockitoBean private CoverageRatioRepository coverageRatioRepository;
+    @MockitoBean private BackfillDensityRepository backfillDensityRepository;
     @Autowired private OverseasNewsHeadlineRepository repository;
 
     private OverseasNewsHeadline buildHeadline(String newsKey, String title) {

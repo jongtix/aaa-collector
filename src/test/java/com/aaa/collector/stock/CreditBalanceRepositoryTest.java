@@ -3,7 +3,9 @@ package com.aaa.collector.stock;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.aaa.collector.market.indicator.MarketIndicatorLastSuccessRepository;
+import com.aaa.collector.observability.BackfillDensityRepository;
 import com.aaa.collector.observability.BatchLastLoadRepository;
+import com.aaa.collector.observability.CoverageRatioRepository;
 import com.aaa.collector.stock.enums.AssetType;
 import com.aaa.collector.stock.enums.Market;
 import com.aaa.collector.support.SharedMySqlContainer;
@@ -43,6 +45,8 @@ class CreditBalanceRepositoryTest {
 
     @MockitoBean private BatchLastLoadRepository batchLastLoadRepository;
     @MockitoBean private MarketIndicatorLastSuccessRepository marketIndicatorLastSuccessRepository;
+    @MockitoBean private CoverageRatioRepository coverageRatioRepository;
+    @MockitoBean private BackfillDensityRepository backfillDensityRepository;
     @Autowired private CreditBalanceRepository creditBalanceRepository;
     @Autowired private StockRepository stockRepository;
 

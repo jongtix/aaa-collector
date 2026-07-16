@@ -4,7 +4,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import com.aaa.collector.market.indicator.MarketIndicatorLastSuccessRepository;
+import com.aaa.collector.observability.BackfillDensityRepository;
 import com.aaa.collector.observability.BatchLastLoadRepository;
+import com.aaa.collector.observability.CoverageRatioRepository;
 import com.aaa.collector.stock.Stock;
 import com.aaa.collector.stock.StockGrade;
 import com.aaa.collector.stock.StockRepository;
@@ -52,6 +54,8 @@ class StockGradeRepositoryTest {
 
     @MockitoBean private BatchLastLoadRepository batchLastLoadRepository;
     @MockitoBean private MarketIndicatorLastSuccessRepository marketIndicatorLastSuccessRepository;
+    @MockitoBean private CoverageRatioRepository coverageRatioRepository;
+    @MockitoBean private BackfillDensityRepository backfillDensityRepository;
     @Autowired private StockGradeRepository stockGradeRepository;
     @Autowired private StockRepository stockRepository;
 

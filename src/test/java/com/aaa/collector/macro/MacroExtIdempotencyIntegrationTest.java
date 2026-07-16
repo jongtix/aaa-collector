@@ -4,7 +4,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import com.aaa.collector.macro.enums.MacroSource;
 import com.aaa.collector.market.indicator.MarketIndicatorLastSuccessRepository;
+import com.aaa.collector.observability.BackfillDensityRepository;
 import com.aaa.collector.observability.BatchLastLoadRepository;
+import com.aaa.collector.observability.CoverageRatioRepository;
 import com.aaa.collector.support.SharedMySqlContainer;
 import java.math.BigDecimal;
 import java.time.LocalDate;
@@ -48,6 +50,8 @@ class MacroExtIdempotencyIntegrationTest {
 
     @MockitoBean private BatchLastLoadRepository batchLastLoadRepository;
     @MockitoBean private MarketIndicatorLastSuccessRepository marketIndicatorLastSuccessRepository;
+    @MockitoBean private CoverageRatioRepository coverageRatioRepository;
+    @MockitoBean private BackfillDensityRepository backfillDensityRepository;
     @Autowired private MacroIndicatorRepository macroIndicatorRepository;
 
     private MacroIndicator buildEcosIndicator(String code, LocalDate date, BigDecimal value) {

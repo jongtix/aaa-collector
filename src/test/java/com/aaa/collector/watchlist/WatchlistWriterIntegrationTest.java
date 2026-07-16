@@ -6,7 +6,9 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 
 import com.aaa.collector.market.indicator.MarketIndicatorLastSuccessRepository;
+import com.aaa.collector.observability.BackfillDensityRepository;
 import com.aaa.collector.observability.BatchLastLoadRepository;
+import com.aaa.collector.observability.CoverageRatioRepository;
 import com.aaa.collector.stock.Stock;
 import com.aaa.collector.stock.StockListService;
 import com.aaa.collector.stock.StockRepository;
@@ -49,6 +51,8 @@ class WatchlistWriterIntegrationTest {
 
     @MockitoBean private BatchLastLoadRepository batchLastLoadRepository;
     @MockitoBean private MarketIndicatorLastSuccessRepository marketIndicatorLastSuccessRepository;
+    @MockitoBean private CoverageRatioRepository coverageRatioRepository;
+    @MockitoBean private BackfillDensityRepository backfillDensityRepository;
     @MockitoBean private StockListService stockListService;
 
     @Autowired private WatchlistWriter watchlistWriter;

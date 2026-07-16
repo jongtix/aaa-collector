@@ -15,8 +15,6 @@ import com.aaa.collector.backfill.BackfillStatusType;
 import com.aaa.collector.backfill.BackfillWindowResult;
 import com.aaa.collector.kis.gate.KeyLeaseRegistry.LeaseSession;
 import com.aaa.collector.kis.token.KisTokenIssueException;
-import com.aaa.collector.market.indicator.MarketIndicatorLastSuccessRepository;
-import com.aaa.collector.observability.BatchLastLoadRepository;
 import com.aaa.collector.stock.DividendBackfillFetch;
 import com.aaa.collector.stock.DividendScheduleCollectionService;
 import com.aaa.collector.stock.RevSplitBackfillFetch;
@@ -32,6 +30,7 @@ import com.aaa.collector.stock.supply.InvestorTrendCollectionService;
 import com.aaa.collector.stock.supply.InvestorTrendFetch;
 import com.aaa.collector.stock.supply.ShortSaleCollectionService;
 import com.aaa.collector.support.RootFixtureCleaner;
+import com.aaa.collector.support.WarmStartRedisMockSupport;
 import java.sql.SQLException;
 import java.time.LocalDate;
 import java.util.List;
@@ -46,7 +45,6 @@ import org.mockito.Mockito;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
-import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
@@ -65,17 +63,11 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 @Testcontainers
 @DisplayName("BackfillWindowExecutor 트랜잭션 통합 테스트 (AC-1/AC-2/AC-4.1/4.2)")
 @Tag("integration")
-class BackfillWindowExecutorTransactionTest {
+class BackfillWindowExecutorTransactionTest extends WarmStartRedisMockSupport {
 
     @Container @ServiceConnection
     static final MySQLContainer<?> MYSQL = new MySQLContainer<>("mysql:8.4");
 
-    @MockitoBean
-    @SuppressWarnings("unused")
-    private StringRedisTemplate redisTemplate;
-
-    @MockitoBean private BatchLastLoadRepository batchLastLoadRepository;
-    @MockitoBean private MarketIndicatorLastSuccessRepository marketIndicatorLastSuccessRepository;
     // 수집 서비스 전체 모킹 — KIS 미호출
     @MockitoBean private DomesticDailyOhlcvCollectionService domesticOhlcvService;
     @MockitoBean private OverseasDailyOhlcvCollectionService overseasOhlcvService;

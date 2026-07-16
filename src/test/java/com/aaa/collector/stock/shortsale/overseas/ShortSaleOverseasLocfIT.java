@@ -3,8 +3,6 @@ package com.aaa.collector.stock.shortsale.overseas;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.when;
 
-import com.aaa.collector.market.indicator.MarketIndicatorLastSuccessRepository;
-import com.aaa.collector.observability.BatchLastLoadRepository;
 import com.aaa.collector.stock.ShortSaleOverseas;
 import com.aaa.collector.stock.ShortSaleOverseasRepository;
 import com.aaa.collector.stock.Stock;
@@ -12,6 +10,7 @@ import com.aaa.collector.stock.StockRepository;
 import com.aaa.collector.stock.enums.AssetType;
 import com.aaa.collector.stock.enums.Market;
 import com.aaa.collector.support.SharedMySqlContainer;
+import com.aaa.collector.support.WarmStartRedisMockSupport;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -23,7 +22,6 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
-import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.transaction.annotation.Transactional;
@@ -36,7 +34,7 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 @Transactional
 @DisplayName("Daily 경로 LOCF forward 병합 통합 테스트")
 @Tag("integration")
-class ShortSaleOverseasLocfIT {
+class ShortSaleOverseasLocfIT extends WarmStartRedisMockSupport {
 
     private static final AtomicInteger SYMBOL_SEQ = new AtomicInteger();
     private static final LocalDate TRADE_DATE = LocalDate.of(2026, 1, 6);
@@ -46,12 +44,6 @@ class ShortSaleOverseasLocfIT {
     // 공유 컨테이너가 죽는다.
     static final MySQLContainer<?> MYSQL = SharedMySqlContainer.MYSQL;
 
-    @MockitoBean
-    @SuppressWarnings("unused")
-    private StringRedisTemplate redisTemplate;
-
-    @MockitoBean private BatchLastLoadRepository batchLastLoadRepository;
-    @MockitoBean private MarketIndicatorLastSuccessRepository marketIndicatorLastSuccessRepository;
     @MockitoBean private FinraShortSaleClient finraClient;
 
     @Autowired private ShortSaleOverseasDailyCollectionService service;

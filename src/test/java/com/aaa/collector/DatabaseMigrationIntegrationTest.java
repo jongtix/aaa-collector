@@ -3,7 +3,9 @@ package com.aaa.collector;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.aaa.collector.market.indicator.MarketIndicatorLastSuccessRepository;
+import com.aaa.collector.observability.BackfillDensityRepository;
 import com.aaa.collector.observability.BatchLastLoadRepository;
+import com.aaa.collector.observability.CoverageRatioRepository;
 import com.aaa.collector.support.SharedMySqlContainer;
 import java.sql.SQLException;
 import java.util.List;
@@ -51,6 +53,8 @@ class DatabaseMigrationIntegrationTest {
 
     @MockitoBean private BatchLastLoadRepository batchLastLoadRepository;
     @MockitoBean private MarketIndicatorLastSuccessRepository marketIndicatorLastSuccessRepository;
+    @MockitoBean private CoverageRatioRepository coverageRatioRepository;
+    @MockitoBean private BackfillDensityRepository backfillDensityRepository;
     @Autowired private Flyway flyway;
     @Autowired private JdbcTemplate jdbcTemplate;
 

@@ -13,7 +13,9 @@ import com.aaa.collector.kis.gate.KeyLeaseRegistry;
 import com.aaa.collector.kis.gate.KeyLeaseRegistry.LeaseSession;
 import com.aaa.collector.market.indicator.MarketIndicatorLastSuccessRepository;
 import com.aaa.collector.market.session.UsMarketSessionGate;
+import com.aaa.collector.observability.BackfillDensityRepository;
 import com.aaa.collector.observability.BatchLastLoadRepository;
+import com.aaa.collector.observability.CoverageRatioRepository;
 import com.aaa.collector.stock.CorporateEvent;
 import com.aaa.collector.stock.CorporateEventRepository;
 import com.aaa.collector.stock.Stock;
@@ -73,6 +75,8 @@ class OverseasSplitIntegrationTest {
 
     @MockitoBean private BatchLastLoadRepository batchLastLoadRepository;
     @MockitoBean private MarketIndicatorLastSuccessRepository marketIndicatorLastSuccessRepository;
+    @MockitoBean private CoverageRatioRepository coverageRatioRepository;
+    @MockitoBean private BackfillDensityRepository backfillDensityRepository;
     @MockitoBean private GuardedKisExecutor guardedKisExecutor;
     @MockitoBean private KeyLeaseRegistry keyLeaseRegistry;
 

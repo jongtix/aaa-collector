@@ -6,7 +6,9 @@ import com.aaa.collector.dart.disclosure.Disclosure;
 import com.aaa.collector.dart.disclosure.DisclosureRepository;
 import com.aaa.collector.dart.disclosure.DisclosureRow;
 import com.aaa.collector.market.indicator.MarketIndicatorLastSuccessRepository;
+import com.aaa.collector.observability.BackfillDensityRepository;
 import com.aaa.collector.observability.BatchLastLoadRepository;
+import com.aaa.collector.observability.CoverageRatioRepository;
 import com.aaa.collector.support.SharedMySqlContainer;
 import java.time.LocalDate;
 import java.util.List;
@@ -48,6 +50,8 @@ class DisclosureIdempotencyIntegrationTest {
 
     @MockitoBean private BatchLastLoadRepository batchLastLoadRepository;
     @MockitoBean private MarketIndicatorLastSuccessRepository marketIndicatorLastSuccessRepository;
+    @MockitoBean private CoverageRatioRepository coverageRatioRepository;
+    @MockitoBean private BackfillDensityRepository backfillDensityRepository;
     @Autowired private DisclosureRepository disclosureRepository;
 
     private static final long STOCK_ID = 1L;

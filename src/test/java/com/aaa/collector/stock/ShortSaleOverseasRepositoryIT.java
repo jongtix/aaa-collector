@@ -3,7 +3,9 @@ package com.aaa.collector.stock;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.aaa.collector.market.indicator.MarketIndicatorLastSuccessRepository;
+import com.aaa.collector.observability.BackfillDensityRepository;
 import com.aaa.collector.observability.BatchLastLoadRepository;
+import com.aaa.collector.observability.CoverageRatioRepository;
 import com.aaa.collector.stock.ShortSaleOverseasRepository.ShortInterestSnapshot;
 import com.aaa.collector.stock.enums.AssetType;
 import com.aaa.collector.stock.enums.Market;
@@ -48,6 +50,8 @@ class ShortSaleOverseasRepositoryIT {
 
     @MockitoBean private BatchLastLoadRepository batchLastLoadRepository;
     @MockitoBean private MarketIndicatorLastSuccessRepository marketIndicatorLastSuccessRepository;
+    @MockitoBean private CoverageRatioRepository coverageRatioRepository;
+    @MockitoBean private BackfillDensityRepository backfillDensityRepository;
     private static final AtomicInteger SYMBOL_SEQ = new AtomicInteger();
 
     @Autowired private ShortSaleOverseasRepository repository;

@@ -3,7 +3,9 @@ package com.aaa.collector.stock.shortsale.overseas.backfill;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.aaa.collector.market.indicator.MarketIndicatorLastSuccessRepository;
+import com.aaa.collector.observability.BackfillDensityRepository;
 import com.aaa.collector.observability.BatchLastLoadRepository;
+import com.aaa.collector.observability.CoverageRatioRepository;
 import com.aaa.collector.stock.ShortSaleOverseas;
 import com.aaa.collector.stock.ShortSaleOverseasRepository;
 import com.aaa.collector.stock.Stock;
@@ -62,6 +64,8 @@ class FinraCdnShortSaleBackfillUpsertIT {
 
     @MockitoBean private BatchLastLoadRepository batchLastLoadRepository;
     @MockitoBean private MarketIndicatorLastSuccessRepository marketIndicatorLastSuccessRepository;
+    @MockitoBean private CoverageRatioRepository coverageRatioRepository;
+    @MockitoBean private BackfillDensityRepository backfillDensityRepository;
     @Autowired private ShortSaleOverseasRepository repository;
     @Autowired private StockRepository stockRepository;
 
