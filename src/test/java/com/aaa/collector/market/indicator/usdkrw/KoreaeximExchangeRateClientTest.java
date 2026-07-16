@@ -325,5 +325,70 @@ class KoreaeximExchangeRateClientTest {
             // Assert: 등록된 요청 수(IO_RETRY_MAX+1+IO_RETRY_LONG_MAX)가 정확히 모두 소비됨
             mockServer.verify();
         }
+
+        @Test
+        @DisplayName("ioRetryLongMax=0 — 장주기 재시도 없이 즉시 재시도 소진 직후 예외 전파")
+        void longRetryMaxZero_skipsLongRetry_propagatesAfterImmediateRetries() {
+            // Arrange: 즉시 재시도(IO_RETRY_MAX+1회)만 등록 — 장주기 호출이 발생하면 초과 요청으로 실패
+            RestClient.Builder builder = RestClient.builder();
+            MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
+            RestClient restClient = builder.baseUrl("https://oapi.koreaexim.go.kr").build();
+            KoreaeximExchangeRateClient zeroLongMaxClient =
+                    new KoreaeximExchangeRateClient(
+                            restClient,
+                            API_KEY,
+                            EMPTY_RETRY_MAX,
+                            IO_RETRY_MAX,
+                            IO_RETRY_BACKOFF_BASE_MS,
+                            0,
+                            IO_RETRY_LONG_DELAY_MS);
+            for (int i = 0; i <= IO_RETRY_MAX; i++) {
+                server.expect(method(HttpMethod.GET))
+                        .andRespond(
+                                request -> {
+                                    throw new IOException("Connection reset");
+                                });
+            }
+
+            // Act & Assert
+            assertThatThrownBy(() -> zeroLongMaxClient.fetchDaily(LocalDate.of(2026, 6, 20)))
+                    .isInstanceOf(ResourceAccessException.class);
+            server.verify();
+        }
+
+        @Test
+        @DisplayName("ioRetryLongDelayMs=0 — 대기 없이 장주기 재시도가 즉시 실행돼 복구된다")
+        void longRetryDelayZero_retriesWithoutWaiting() {
+            // Arrange: 즉시 재시도 전부 실패, 장주기 1회차(지연 0ms)에서 성공
+            RestClient.Builder builder = RestClient.builder();
+            MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
+            RestClient restClient = builder.baseUrl("https://oapi.koreaexim.go.kr").build();
+            KoreaeximExchangeRateClient zeroDelayClient =
+                    new KoreaeximExchangeRateClient(
+                            restClient,
+                            API_KEY,
+                            EMPTY_RETRY_MAX,
+                            IO_RETRY_MAX,
+                            IO_RETRY_BACKOFF_BASE_MS,
+                            IO_RETRY_LONG_MAX,
+                            0);
+            for (int i = 0; i <= IO_RETRY_MAX; i++) {
+                server.expect(method(HttpMethod.GET))
+                        .andRespond(
+                                request -> {
+                                    throw new IOException("Connection reset");
+                                });
+            }
+            server.expect(method(HttpMethod.GET))
+                    .andRespond(withSuccess(SAMPLE_RESPONSE, MediaType.APPLICATION_JSON));
+
+            // Act
+            List<MarketIndicatorRow> rows = zeroDelayClient.fetchDaily(LocalDate.of(2026, 6, 20));
+
+            // Assert
+            assertThat(rows).hasSize(1);
+            assertThat(rows.getFirst().closeValue()).isEqualByComparingTo("1523.40");
+            server.verify();
+        }
     }
 }
