@@ -7,7 +7,9 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 
 import com.aaa.collector.market.indicator.MarketIndicatorLastSuccessRepository;
+import com.aaa.collector.observability.BackfillDensityRepository;
 import com.aaa.collector.observability.BatchLastLoadRepository;
+import com.aaa.collector.observability.CoverageRatioRepository;
 import com.aaa.collector.support.RootFixtureCleaner;
 import java.sql.SQLException;
 import java.time.LocalDate;
@@ -49,6 +51,8 @@ class CoveredRangeServiceTest {
 
     @MockitoBean private BatchLastLoadRepository batchLastLoadRepository;
     @MockitoBean private MarketIndicatorLastSuccessRepository marketIndicatorLastSuccessRepository;
+    @MockitoBean private CoverageRatioRepository coverageRatioRepository;
+    @MockitoBean private BackfillDensityRepository backfillDensityRepository;
 
     /** 실제 카운터 대신 verify()로 REQ-CVR-031 anomaly 신호 발생을 검증한다. */
     @MockitoBean private BackfillMetrics backfillMetrics;

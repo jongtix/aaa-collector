@@ -9,7 +9,9 @@ import static org.mockito.Mockito.when;
 import com.aaa.collector.market.indicator.MarketIndicatorLastSuccessRepository;
 import com.aaa.collector.market.session.MarketSessionGate;
 import com.aaa.collector.market.session.UsMarketSessionGate;
+import com.aaa.collector.observability.BackfillDensityRepository;
 import com.aaa.collector.observability.BatchLastLoadRepository;
+import com.aaa.collector.observability.CoverageRatioRepository;
 import com.aaa.collector.support.RootFixtureCleaner;
 import java.sql.SQLException;
 import java.time.DayOfWeek;
@@ -52,6 +54,8 @@ class CoveredRangeServiceGapWalkTest {
 
     @MockitoBean private BatchLastLoadRepository batchLastLoadRepository;
     @MockitoBean private MarketIndicatorLastSuccessRepository marketIndicatorLastSuccessRepository;
+    @MockitoBean private CoverageRatioRepository coverageRatioRepository;
+    @MockitoBean private BackfillDensityRepository backfillDensityRepository;
     @MockitoBean private BackfillMetrics backfillMetrics;
 
     /** 국내(USDKRW) 캘린더 게이트 — 신규 로직 없이 기존 게이트를 mock으로 결정론화한다. */

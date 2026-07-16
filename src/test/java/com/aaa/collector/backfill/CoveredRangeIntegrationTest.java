@@ -14,7 +14,9 @@ import com.aaa.collector.market.indicator.MarketIndicatorSourceChain;
 import com.aaa.collector.market.indicator.usdkrw.UsdkrwCollectionService;
 import com.aaa.collector.market.session.MarketSessionGate;
 import com.aaa.collector.market.session.UsMarketSessionGate;
+import com.aaa.collector.observability.BackfillDensityRepository;
 import com.aaa.collector.observability.BatchLastLoadRepository;
+import com.aaa.collector.observability.CoverageRatioRepository;
 import com.aaa.collector.support.RootFixtureCleaner;
 import java.math.BigDecimal;
 import java.sql.SQLException;
@@ -61,6 +63,8 @@ class CoveredRangeIntegrationTest {
 
     @MockitoBean private BatchLastLoadRepository batchLastLoadRepository;
     @MockitoBean private MarketIndicatorLastSuccessRepository marketIndicatorLastSuccessRepository;
+    @MockitoBean private CoverageRatioRepository coverageRatioRepository;
+    @MockitoBean private BackfillDensityRepository backfillDensityRepository;
     @MockitoBean private BackfillMetrics backfillMetrics;
     @MockitoBean private MarketSessionGate marketSessionGate;
     @MockitoBean private UsMarketSessionGate usMarketSessionGate;
