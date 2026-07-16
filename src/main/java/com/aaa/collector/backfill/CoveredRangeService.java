@@ -133,6 +133,10 @@ public class CoveredRangeService {
      * @param filler 소스별 저장 실행체(TASK-005~008)
      * @param today 갭 walk 목표 상한(오늘)
      */
+    // @MX:ANCHOR: [AUTO] 정방향 갭 walk 진입점 — 실측 fan_in=3(FinraCdnCoveredGapWalkRunner,
+    // MarketIndicatorBackfillOrchestrator, StockCoveredGapWalkRunner)
+    // @MX:REASON: 클래스 레벨 태그가 이 메서드의 원자성 근거를 이미 서술함(SPEC-COLLECTOR-BACKFILL-011) — 여기서는
+    // 실제 fan_in 호출처 3곳만 정확히 고정한다(executeStep은 이 메서드 내부에서만 호출되어 외부 fan_in 없음).
     public void walkGapForward(BackfillStatus status, CoveredGapFiller filler, LocalDate today) {
         if (!CoveredTrackingEligibility.isTracked(
                 status.getTargetType(), status.getTargetCode(), status.getDataTable())) {

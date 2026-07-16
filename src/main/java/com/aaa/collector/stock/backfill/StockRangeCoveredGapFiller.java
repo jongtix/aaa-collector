@@ -56,6 +56,7 @@ import java.util.Set;
  * {@code rawRowCount := rowCount}가 항상 성립해(§2.6 실측), 이 3개 테이블에서는 REQ-CVR-031(raw>0 && kept==0
  * anomaly) 분기가 구조적으로 도달 불가능하다 — 검증 로직 결함이 아니라 원본 서비스가 raw/kept를 애초에 구분해 노출하지 않기 때문이다.
  */
+// @MX:NOTE: [AUTO] backward anchor 로직(resolveAnchor/nextAnchor)과 격리된 독립 경로 — 상세 근거는 클래스 Javadoc
 // @MX:SPEC: SPEC-COLLECTOR-BACKFILL-011
 public class StockRangeCoveredGapFiller implements CoveredGapFiller {
 
