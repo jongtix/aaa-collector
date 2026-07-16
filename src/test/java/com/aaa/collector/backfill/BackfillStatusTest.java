@@ -117,5 +117,27 @@ class BackfillStatusTest {
             assertThat(status.getStaleCount()).isZero();
             assertThat(status.getLastError()).isNull();
         }
+
+        @Test
+        @DisplayName(
+                "coveredUntilDate(상단 커버 경계)는 리셋 전후로 불변 — 하단(backward) 재처리가 상단(forward) 진행을"
+                        + " 되돌리지 않는다 (SPEC-COLLECTOR-BACKFILL-011 REQ-CVR-072)")
+        void preservesCoveredUntilDate() {
+            // Arrange — 하단 진행 중 + 상단 커버가 이미 앞서 나가 있는 상태를 재현
+            BackfillStatus status =
+                    daily("PLTR")
+                            .status(BackfillStatusType.COMPLETED)
+                            .lastCollectedDate(LocalDate.of(2024, 11, 26))
+                            .build();
+            LocalDate coveredUntil = LocalDate.of(2026, 7, 10);
+            status.advanceCoveredUntil(coveredUntil);
+
+            // Act
+            status.resetForReprocess();
+
+            // Assert — 하단 진행점은 초기화되지만 상단 커버 경계는 그대로 유지
+            assertThat(status.getLastCollectedDate()).isNull();
+            assertThat(status.getCoveredUntilDate()).isEqualTo(coveredUntil);
+        }
     }
 }

@@ -198,6 +198,10 @@ public class BackfillStatus extends BaseEntity {
      * GROUP_A {@code daily_ohlcv} status를 표적 리셋해, 정정된(신뢰 가능해진) floor로 기존 오케스트레이터 cron이 재처리하게 한다.
      * {@code last_collected_date=NULL}까지 반드시 초기화해야 옛 진행점 위 구간을 재방문한다(§7 이음새 손상 교훈). {@code
      * stale_count}도 0으로 되돌려 리셋 후 첫 이상 사이클이 N 사이클 만에 종결되게 한다([R5-MI-01]).
+     *
+     * <p><b>{@code coveredUntilDate}는 의도적으로 건드리지 않는다</b>(SPEC-COLLECTOR-BACKFILL-011 REQ-CVR-072) —
+     * 표적 재처리는 backward walk 하단 진행점을 재시작하는 것이지, 이미 정방향 갭 walk가 확보한 상단 커버 구간의 진행을 되돌리는 것이 아니다.
+     * 하단(backward)과 상단(forward) 경계는 서로 독립적인 진행 축이므로, 하단 재처리가 상단 커버리지를 무효화할 근거가 없다.
      */
     // @MX:SPEC: SPEC-COLLECTOR-BACKFILL-010
     @SuppressWarnings("PMD.NullAssignment") // 진행점·검증 마커·오류 의도적 null 초기화 (표적 재처리 리셋)
