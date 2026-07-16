@@ -52,6 +52,7 @@ class BackfillOrchestratorTest {
     @Mock private StockRepository stockRepository;
     @Mock private BackfillProperties properties;
     @Mock private BackfillMetrics backfillMetrics;
+    @Mock private StockCoveredGapWalkRunner stockCoveredGapWalkRunner;
 
     @InjectMocks private BackfillOrchestrator orchestrator;
 

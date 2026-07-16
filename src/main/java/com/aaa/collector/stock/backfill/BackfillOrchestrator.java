@@ -58,6 +58,7 @@ public class BackfillOrchestrator {
     private final StockRepository stockRepository;
     private final BackfillProperties properties;
     private final BackfillMetrics backfillMetrics;
+    private final StockCoveredGapWalkRunner stockCoveredGapWalkRunner;
 
     /**
      * 백필 1 cron 회차를 실행한다.
@@ -95,17 +96,22 @@ public class BackfillOrchestrator {
                 backfillStatusRepository.findByStatusInAndTargetTypeOrderById(
                         PENDING_STATUSES, TARGET_TYPE_STOCK);
 
+        int[] counters = {0, 0};
         if (pending.isEmpty()) {
             log.info("[backfill-orchestrator] 처리 대상 없음 (AC-6.5)");
-            return;
+        } else {
+            // Step 5: data_table 기준 인메모리 그룹핑 (REQ-BACKFILL-062)
+            Map<String, List<BackfillStatus>> byTable =
+                    pending.stream().collect(Collectors.groupingBy(BackfillStatus::getDataTable));
+
+            // Step 6: 테이블별 Virtual Thread 스트림 동시 처리 (REQ-BACKFILL-063)
+            counters = processTableStreams(byTable, activeStockBySymbol, session);
         }
 
-        // Step 5: data_table 기준 인메모리 그룹핑 (REQ-BACKFILL-062)
-        Map<String, List<BackfillStatus>> byTable =
-                pending.stream().collect(Collectors.groupingBy(BackfillStatus::getDataTable));
-
-        // Step 6: 테이블별 Virtual Thread 스트림 동시 처리 (REQ-BACKFILL-063)
-        int[] counters = processTableStreams(byTable, activeStockBySymbol, session);
+        // Step 6.5: STOCK 범위형 정방향 갭 walk (SPEC-COLLECTOR-BACKFILL-011 REQ-CVR-011, -060) —
+        // backward walk의 PENDING/IN_PROGRESS 필터와 무관하게(REQ-CVR-041) 매 회차 항상 시도한다. COMPLETED에
+        // 도달해 위 pending 조회에서 빠진 대상도 상단 라이브 갭은 이 호출이 계속 책임진다(§1.1 근본원인, TASK-006과 동일 패턴).
+        stockCoveredGapWalkRunner.runFor(activeStockBySymbol, session);
 
         // Step 7: 진행률 gauge 갱신 (REQ-BACKFILL-040)
         long completedCount =
