@@ -4,14 +4,9 @@ import com.aaa.collector.backfill.BackfillStatus;
 import com.aaa.collector.backfill.BackfillStatusRepository;
 import com.aaa.collector.backfill.BackfillStatusType;
 import com.aaa.collector.observability.BatchMetrics;
-import com.aaa.collector.stock.ShortSaleOverseasRepository;
 import com.aaa.collector.stock.Stock;
 import com.aaa.collector.stock.StockRepository;
-import com.aaa.collector.stock.shortsale.overseas.FinraSymbolNormalizer;
-import java.math.BigDecimal;
 import java.time.LocalDate;
-import java.time.LocalDateTime;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
@@ -30,9 +25,14 @@ import org.springframework.transaction.support.TransactionTemplate;
  *
  * <p>크론 1회 로직(plan.md §4): 앵커 멱등 시딩 → 로드 → COMPLETED면 신규 종목 편입 감지 시 리셋(REQ-BACKFILL-116) 아니면 종료 →
  * 활성 미국 tradable 종목 1회 로드(REQ-BACKFILL-108) → 앵커부터 과거로 {@code perCronDateCap}일 순회하며 날짜당 CDN 파일 1회
- * 취득(REQ-BACKFILL-112/-112a) → 시설 파일 종목별 합산(REQ-BACKFILL-104) → 매칭 종목 UPSERT(interest 파라미터 null 전달로
- * 기존 Short Interest 보존, REQ-BACKFILL-117/-118) → 앵커 전진 → floor 도달 시에만 COMPLETED(유일 종료,
- * REQ-BACKFILL-114).
+ * 취득(REQ-BACKFILL-112/-112a) → {@link FinraCdnDailyLoader}에 위임해 시설 파일 종목별
+ * 합산·매칭·UPSERT(REQ-BACKFILL-104, -117/-118) → 앵커 전진 → floor 도달 시에만 COMPLETED(유일 종료,
+ * REQ-BACKFILL-114) → 전역 앵커의 정방향 갭 walk를 {@link FinraCdnCoveredGapWalkRunner}에
+ * 위임(REQ-CVR-011/-070/-071).
+ *
+ * <p>책임 분리(코드리뷰 — PMD CouplingBetweenObjects 완화, 억제 주석 대신 구조 추출): 이 클래스는 전역 앵커 조회+생명주기(시딩·리셋
+ * 판정·backward walk 커서 전진)만 담당한다. 파싱·심볼 매칭·UPSERT는 {@link FinraCdnDailyLoader}(구현 {@link
+ * FinraCdnDailyLoaderImpl})로, 정방향 갭 walk 실행은 {@link FinraCdnCoveredGapWalkRunner}로 위임한다.
  */
 // @MX:ANCHOR: [AUTO] 백필 진입점 — 전역 앵커 단조 전진·floor 유일 종료
 // @MX:REASON: [AUTO] 스케줄러(FinraCdnShortSaleBackfillScheduler)의 유일 호출 지점이며 크론 1회 전체 사이클을 담당한다.
@@ -49,25 +49,31 @@ public class FinraCdnShortSaleBackfillOrchestrator {
     static final String TARGET_CODE = "__GLOBAL__";
     static final String DATA_TABLE = "short_sale_overseas";
 
-    /** BatchMetrics 배치 라벨 — CDN 백필 경로(종전 Micrometer 계측 전무, REQ-SSD-009). */
-    private static final String BATCH_BACKFILL = "overseas-shortsale-backfill";
-
     private static final List<BackfillStatusType> ALL_STATUSES =
             List.of(
                     BackfillStatusType.PENDING,
                     BackfillStatusType.IN_PROGRESS,
                     BackfillStatusType.COMPLETED);
 
+    /** BatchMetrics 배치 라벨 — CDN 백필 경로(종전 Micrometer 계측 전무, REQ-SSD-009). */
+    private static final String BATCH_BACKFILL = "overseas-shortsale-backfill";
+
     private final BackfillStatusRepository backfillStatusRepository;
     private final StockRepository stockRepository;
     private final FinraCdnDailyFileClient client;
-    private final FinraCdnFileParser parser;
-    private final ShortSaleOverseasRepository shortSaleOverseasRepository;
+    private final FinraCdnDailyLoader dailyLoader;
     private final FinraCdnShortSaleBackfillProperties properties;
     private final TransactionTemplate transactionTemplate;
     private final BatchMetrics batchMetrics;
+    private final FinraCdnCoveredGapWalkRunner coveredGapWalkRunner;
 
-    /** 크론 1회 백필 사이클 진입점. */
+    /**
+     * 크론 1회 백필 사이클 진입점.
+     *
+     * <p>backward walk(하단, {@code last_collected_date})에 이어 전역 앵커의 정방향 갭 walk(상단, {@code
+     * covered_until_date})를 항상 시도한다(SPEC-COLLECTOR-BACKFILL-011 REQ-CVR-011, -070) — backward walk가
+     * COMPLETED 유지로 조기 반환하더라도 상단 라이브 갭은 이 회차가 계속 책임진다(§1.1 근본원인, TASK-006 USDKRW와 동일 패턴).
+     */
     public void run() {
         backfillStatusRepository.insertIgnoreSeed(TARGET_TYPE, TARGET_CODE, DATA_TABLE);
 
@@ -83,13 +89,33 @@ public class FinraCdnShortSaleBackfillOrchestrator {
 
         List<Stock> tradableStocks = stockRepository.findAllActiveOverseasTradable();
         int currentActiveUsCount = tradableStocks.size();
+        Map<String, Stock> symbolMap = buildSymbolMap(tradableStocks);
 
         LocalDate resumeFrom = resolveResumeFrom(anchor, anchorId, currentActiveUsCount);
-        if (resumeFrom == null) {
-            return;
+        if (resumeFrom != null) {
+            runCycle(anchorId, resumeFrom, symbolMap, currentActiveUsCount);
         }
 
-        runCycle(anchorId, resumeFrom, buildSymbolMap(tradableStocks), currentActiveUsCount);
+        runCoveredGapWalk(anchorId, symbolMap);
+    }
+
+    /**
+     * 전역 앵커 1행을 재조회해 {@link FinraCdnCoveredGapWalkRunner}에 정방향 갭 walk 실행을 위임한다 (REQ-CVR-071 — 종목별
+     * 신규 행 생성 절대 금지, BACKFILL-008 불변식).
+     *
+     * <p>DP-4: 이 호출은 backward walk의 {@link #advanceAnchor}(하단 커밋, {@code transactionTemplate})와 완전히
+     * 독립된 최상위 호출이다 — {@code advanceAnchor}의 트랜잭션 콜백 안에 중첩하지 않는다. {@link
+     * FinraCdnCoveredGapWalkRunner#runFor}는 내부적으로 자신의 {@code CoveredRangeService}가 스텝마다 별도 {@code
+     * TransactionTemplate}으로 트랜잭션을 커밋하므로(TASK-003 원자성 단위), 정방향 증분으로 상단 커밋 빈도가 하단보다 훨씬 잦아져도 두 갱신이 서로
+     * 얽히지 않는다.
+     */
+    private void runCoveredGapWalk(Long anchorId, Map<String, Stock> symbolMap) {
+        BackfillStatus freshAnchor = backfillStatusRepository.findById(anchorId).orElse(null);
+        if (freshAnchor == null) {
+            log.warn("[finra-cdn-backfill] 갭 walk skip — 앵커 재조회 실패(id={})", anchorId);
+            return;
+        }
+        coveredGapWalkRunner.runFor(freshAnchor, LocalDate.now(), dailyLoader, symbolMap);
     }
 
     /**
@@ -120,7 +146,9 @@ public class FinraCdnShortSaleBackfillOrchestrator {
         return today.minusDays(1);
     }
 
-    /** 앵커부터 과거로 {@code perCronDateCap}일 순회하며 날짜별 파일 취득·매칭·적재·앵커 전진을 수행한다. */
+    /**
+     * 앵커부터 과거로 {@code perCronDateCap}일 순회하며 날짜별 파일 취득·{@link FinraCdnDailyLoader} 위임·앵커 전진을 수행한다.
+     */
     private void runCycle(
             Long anchorId,
             LocalDate resumeFrom,
@@ -134,7 +162,8 @@ public class FinraCdnShortSaleBackfillOrchestrator {
         while (!date.isBefore(floor) && acc.processedDays < perCronDateCap) {
             FinraCdnFetchResult fetchResult = client.fetch(date);
             if (fetchResult instanceof FinraCdnFetchResult.Found found) {
-                DailyLoadOutcome outcome = loadDate(date, found.fileBodies(), symbolMap);
+                FinraCdnDailyLoadOutcome outcome =
+                        dailyLoader.loadDate(date, found.fileBodies(), symbolMap);
                 acc.parseSkips += outcome.skipped();
                 acc.matchFailures += outcome.unmatched();
             } else if (fetchResult instanceof FinraCdnFetchResult.Absent absent) {
@@ -204,51 +233,6 @@ public class FinraCdnShortSaleBackfillOrchestrator {
         return map;
     }
 
-    /**
-     * 하루치 파일 본문(다중 시설 가능)을 종목별로 합산·매칭·UPSERT한다(REQ-BACKFILL-104/-117/-118/-119).
-     *
-     * <p>패키지 가시성 — {@link FinraCdnCoveredGapFiller}(SPEC-COLLECTOR-BACKFILL-011)가 정방향 갭 walk에서 이
-     * 메서드를 그대로 재사용한다(REQ-CVR-051, 신규 fetch 메서드 없음). {@code kept}/{@code raw}는 TASK-005a 실측 결론에 따라
-     * 신설한 신호다(§2.6) — {@code kept}는 저장 시도가 예외 없이 완료된 매칭 심볼 수({@code upsertDaily}가 {@code INSERT ...
-     * ON DUPLICATE KEY UPDATE}라 호출 성공=저장 확정, 중복 삽입 시도 포함이라는 kept 정의와 부합), {@code raw}는 병합 이전 파일별 파싱
-     * 성공 행수 합("API 원본 응답 행수"는 병합·매칭 이전 시점을 가리킨다는 코디네이터 확정 정의).
-     */
-    @SuppressWarnings("PMD.UseConcurrentHashMap") // 단일 스레드 빌드 전용, 이후 읽기만 함
-    DailyLoadOutcome loadDate(
-            LocalDate date, List<String> fileBodies, Map<String, Stock> symbolMap) {
-        // REQ-SSD-007: 시설/행 합산을 소수 산술로 수행해 정밀도 보존(Long::sum → BigDecimal::add)
-        Map<String, BigDecimal> shortSums = new HashMap<>();
-        Map<String, BigDecimal> totalSums = new HashMap<>();
-        int skipped = 0;
-        int raw = 0;
-        for (String body : fileBodies) {
-            ParsedFileResult parsed = parser.parse(body);
-            skipped += parsed.skippedCount();
-            raw += parsed.rows().size(); // TASK-005a 후보 A — 병합 전 파일별 파싱 성공 행수 합
-            for (ParsedRow row : parsed.rows()) {
-                String normalized = FinraSymbolNormalizer.normalize(row.symbol());
-                shortSums.merge(normalized, row.shortVolume(), BigDecimal::add);
-                totalSums.merge(normalized, row.totalVolume(), BigDecimal::add);
-            }
-        }
-
-        int unmatched = 0;
-        int kept = 0;
-        LocalDateTime now = LocalDateTime.now();
-        for (Map.Entry<String, BigDecimal> entry : shortSums.entrySet()) {
-            String symbol = entry.getKey();
-            Stock stock = symbolMap.get(symbol);
-            if (stock == null) {
-                unmatched++;
-                continue;
-            }
-            shortSaleOverseasRepository.upsertDaily(
-                    stock.getId(), date, entry.getValue(), totalSums.get(symbol), now, null, null);
-            kept++; // ON DUPLICATE KEY UPDATE 호출이 예외 없이 완료 = 저장 확정(§2.6 kept, 중복 삽입 시도 포함)
-        }
-        return new DailyLoadOutcome(kept, raw, skipped, unmatched);
-    }
-
     private void advanceAnchor(
             Long anchorId,
             BackfillStatusType status,
@@ -261,16 +245,4 @@ public class FinraCdnShortSaleBackfillOrchestrator {
                     managed.advance(status, lastCollectedDate, 0, lastRowCount);
                 });
     }
-
-    /**
-     * 하루치 처리 결과 (REQ-BACKFILL-123 관측성 + SPEC-COLLECTOR-BACKFILL-011 §2.6 kept/raw).
-     *
-     * <p>패키지 가시성 — {@link FinraCdnCoveredGapFiller}가 {@link #loadDate}의 반환 타입으로 참조한다.
-     *
-     * @param kept 저장 시도가 예외 없이 완료된 매칭 심볼 수(§2.6 kept, 중복 삽입 시도 포함)
-     * @param raw 병합 전 파일별 파싱 성공 행수 합(§2.6 raw, TASK-005a 후보 A)
-     * @param skipped 파싱 skip 수(요약 행·빈값·음수·컬럼 부족)
-     * @param unmatched 매칭 실패 심볼 수(symbolMap에 없는 심볼)
-     */
-    record DailyLoadOutcome(int kept, int raw, int skipped, int unmatched) {}
 }

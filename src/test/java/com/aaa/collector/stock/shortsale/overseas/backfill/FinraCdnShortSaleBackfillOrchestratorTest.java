@@ -2,8 +2,6 @@ package com.aaa.collector.stock.shortsale.overseas.backfill;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyLong;
-import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.doAnswer;
@@ -16,14 +14,11 @@ import com.aaa.collector.backfill.BackfillStatus;
 import com.aaa.collector.backfill.BackfillStatusRepository;
 import com.aaa.collector.backfill.BackfillStatusType;
 import com.aaa.collector.observability.BatchMetrics;
-import com.aaa.collector.stock.ShortSaleOverseasRepository;
 import com.aaa.collector.stock.Stock;
 import com.aaa.collector.stock.StockRepository;
 import com.aaa.collector.stock.enums.AssetType;
 import com.aaa.collector.stock.enums.Market;
-import java.math.BigDecimal;
 import java.time.LocalDate;
-import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
 import java.util.function.Consumer;
@@ -33,6 +28,7 @@ import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
+import org.mockito.InOrder;
 import org.mockito.Mock;
 import org.mockito.Mockito;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -43,9 +39,13 @@ import org.springframework.transaction.TransactionStatus;
 import org.springframework.transaction.support.TransactionTemplate;
 
 /**
- * FinraCdnShortSaleBackfillOrchestrator 단위 테스트 (SPEC-COLLECTOR-BACKFILL-008 T4).
+ * FinraCdnShortSaleBackfillOrchestrator 단위 테스트 (SPEC-COLLECTOR-BACKFILL-008 T4,
+ * SPEC-COLLECTOR-BACKFILL-011 AC-16/-17).
  *
- * <p>전역 앵커 시딩/로드/리셋, 시설 합산, 심볼 매칭(재사용), 날짜당 1회 다운로드, floor 유일 종료, target_type 격리(R2)를 검증한다.
+ * <p>전역 앵커 시딩/로드/리셋, 날짜당 1회 다운로드, floor 유일 종료, target_type 격리(R2), 전역 앵커 커버-추적 배선을 검증한다. 시설 합산·심볼
+ * 매칭·kept/raw 계산 로직은 {@link FinraCdnDailyLoaderImpl}로 추출되어 {@link FinraCdnDailyLoaderImplTest}가
+ * 담당한다(코드리뷰 — PMD CouplingBetweenObjects 완화 리팩터). 이 클래스는 {@link FinraCdnDailyLoader}를 mock으로 대체해
+ * 오케스트레이션 흐름(호출 여부·인자·순서)만 검증한다.
  */
 @ExtendWith(MockitoExtension.class)
 @MockitoSettings(strictness = Strictness.LENIENT)
@@ -55,10 +55,10 @@ class FinraCdnShortSaleBackfillOrchestratorTest {
     @Mock private BackfillStatusRepository backfillStatusRepository;
     @Mock private StockRepository stockRepository;
     @Mock private FinraCdnDailyFileClient client;
-    @Mock private FinraCdnFileParser parser;
-    @Mock private ShortSaleOverseasRepository shortSaleOverseasRepository;
+    @Mock private FinraCdnDailyLoader dailyLoader;
     @Mock private TransactionTemplate transactionTemplate;
     @Mock private BatchMetrics batchMetrics;
+    @Mock private FinraCdnCoveredGapWalkRunner coveredGapWalkRunner;
 
     private FinraCdnShortSaleBackfillProperties properties;
     private FinraCdnShortSaleBackfillOrchestrator orchestrator;
@@ -72,11 +72,11 @@ class FinraCdnShortSaleBackfillOrchestratorTest {
                         backfillStatusRepository,
                         stockRepository,
                         client,
-                        parser,
-                        shortSaleOverseasRepository,
+                        dailyLoader,
                         properties,
                         transactionTemplate,
-                        batchMetrics);
+                        batchMetrics,
+                        coveredGapWalkRunner);
 
         doAnswer(
                         inv -> {
@@ -97,17 +97,6 @@ class FinraCdnShortSaleBackfillOrchestratorTest {
                         .build();
         ReflectionTestUtils.setField(stock, "id", id);
         return stock;
-    }
-
-    /** DECIMAL 전환 — 거래량을 BigDecimal로 담는 ParsedRow 생성 헬퍼. */
-    private static ParsedRow row(String symbol, long shortVol, long totalVol) {
-        return new ParsedRow(symbol, BigDecimal.valueOf(shortVol), BigDecimal.valueOf(totalVol));
-    }
-
-    /** scale에 무관하게 값으로 비교하는 BigDecimal 인자 매처. */
-    private static BigDecimal bd(String value) {
-        BigDecimal expected = new BigDecimal(value);
-        return argThat(actual -> actual != null && actual.compareTo(expected) == 0);
     }
 
     private static BackfillStatus anchor(
@@ -162,100 +151,6 @@ class FinraCdnShortSaleBackfillOrchestratorTest {
 
             verify(backfillStatusRepository, never())
                     .findByStatusInAndTargetTypeOrderById(any(), any());
-        }
-    }
-
-    // ────────────────────────────────────────────────────────────────────
-    // 시설 합산 (AC-BF-04)
-    // ────────────────────────────────────────────────────────────────────
-
-    @Nested
-    @DisplayName("시설 다중 파일 합산 (AC-BF-04)")
-    class FacilitySummation {
-
-        @Test
-        @DisplayName("시설 2개 파일 존재 시 종목별 short/total volume이 파일 합과 일치한다")
-        void multiFacilityFiles_summedPerStock() {
-            properties.setFloorDate(LocalDate.of(2000, 1, 1));
-            properties.setPerCronDateCap(1);
-            LocalDate target = LocalDate.of(2013, 1, 2);
-            BackfillStatus status =
-                    anchor(1L, BackfillStatusType.IN_PROGRESS, target.plusDays(1), null);
-            stubAnchorLookup(status);
-            when(stockRepository.findAllActiveOverseasTradable())
-                    .thenReturn(List.of(stock(1L, "AAPL")));
-
-            when(client.fetch(target))
-                    .thenReturn(new FinraCdnFetchResult.Found(List.of("FNSQ-BODY", "FNYX-BODY")));
-            when(parser.parse("FNSQ-BODY"))
-                    .thenReturn(new ParsedFileResult(List.of(row("AAPL", 100, 1000)), 0));
-            when(parser.parse("FNYX-BODY"))
-                    .thenReturn(new ParsedFileResult(List.of(row("AAPL", 50, 500)), 0));
-
-            orchestrator.run();
-
-            verify(shortSaleOverseasRepository)
-                    .upsertDaily(
-                            eq(1L),
-                            eq(target),
-                            bd("150"),
-                            bd("1500"),
-                            any(LocalDateTime.class),
-                            isNull(),
-                            isNull());
-        }
-    }
-
-    // ────────────────────────────────────────────────────────────────────
-    // 매칭 — 라이브 범위 재사용, 슬래시 정규화, 워런트 제외 (AC-BF-08/-09/-11)
-    // ────────────────────────────────────────────────────────────────────
-
-    @Nested
-    @DisplayName("종목 매칭 — 범위·정규화·워런트 제외 (AC-BF-08/-09/-11)")
-    class SymbolMatching {
-
-        @Test
-        @DisplayName("슬래시 클래스주식(BRK/B)은 정규화되어 매칭, 워런트(/WS)·범위 밖 종목은 자연 제외된다")
-        void matching_normalizesSlashAndExcludesOutOfScope() {
-            properties.setFloorDate(LocalDate.of(2000, 1, 1));
-            properties.setPerCronDateCap(1);
-            LocalDate target = LocalDate.of(2013, 1, 2);
-            BackfillStatus status =
-                    anchor(1L, BackfillStatusType.IN_PROGRESS, target.plusDays(1), null);
-            stubAnchorLookup(status);
-            when(stockRepository.findAllActiveOverseasTradable())
-                    .thenReturn(List.of(stock(2L, "BRK.B")));
-
-            when(client.fetch(target)).thenReturn(new FinraCdnFetchResult.Found(List.of("BODY")));
-            when(parser.parse("BODY"))
-                    .thenReturn(
-                            new ParsedFileResult(
-                                    List.of(
-                                            row("BRK/B", 10, 100),
-                                            row("AAPL/WS", 5, 50),
-                                            row("MSFT", 20, 200)),
-                                    0));
-
-            orchestrator.run();
-
-            verify(shortSaleOverseasRepository)
-                    .upsertDaily(
-                            eq(2L),
-                            eq(target),
-                            bd("10"),
-                            bd("100"),
-                            any(LocalDateTime.class),
-                            isNull(),
-                            isNull());
-            verify(shortSaleOverseasRepository, times(1))
-                    .upsertDaily(
-                            anyLong(),
-                            eq(target),
-                            any(BigDecimal.class),
-                            any(BigDecimal.class),
-                            any(),
-                            any(),
-                            any());
         }
     }
 
@@ -474,48 +369,6 @@ class FinraCdnShortSaleBackfillOrchestratorTest {
     }
 
     // ────────────────────────────────────────────────────────────────────
-    // upsertDaily interest 파라미터 null 계약 (AC-BF-20/-21)
-    // ────────────────────────────────────────────────────────────────────
-
-    @Nested
-    @DisplayName("upsertDaily interest 파라미터 null 계약 (AC-BF-20/-21)")
-    class UpsertInterestNullContract {
-
-        @Test
-        @DisplayName("백필 적재는 shortInterest/shortInterestDate에 항상 null을 전달한다")
-        void loadDate_alwaysPassesNullInterestParams() {
-            properties.setFloorDate(LocalDate.of(2000, 1, 1));
-            properties.setPerCronDateCap(1);
-            LocalDate target = LocalDate.of(2013, 1, 2);
-            BackfillStatus status =
-                    anchor(1L, BackfillStatusType.IN_PROGRESS, target.plusDays(1), null);
-            stubAnchorLookup(status);
-            when(stockRepository.findAllActiveOverseasTradable())
-                    .thenReturn(List.of(stock(1L, "AAPL")));
-            when(client.fetch(target)).thenReturn(new FinraCdnFetchResult.Found(List.of("BODY")));
-            when(parser.parse("BODY"))
-                    .thenReturn(new ParsedFileResult(List.of(row("AAPL", 10, 100)), 0));
-
-            orchestrator.run();
-
-            ArgumentCaptor<Long> shortInterestCaptor = ArgumentCaptor.forClass(Long.class);
-            ArgumentCaptor<LocalDate> shortInterestDateCaptor =
-                    ArgumentCaptor.forClass(LocalDate.class);
-            verify(shortSaleOverseasRepository)
-                    .upsertDaily(
-                            eq(1L),
-                            eq(target),
-                            bd("10"),
-                            bd("100"),
-                            any(LocalDateTime.class),
-                            shortInterestCaptor.capture(),
-                            shortInterestDateCaptor.capture());
-            assertThat(shortInterestCaptor.getValue()).isNull();
-            assertThat(shortInterestDateCaptor.getValue()).isNull();
-        }
-    }
-
-    // ────────────────────────────────────────────────────────────────────
     // 파싱 skip·매칭 실패가 있어도 예외 없이 사이클 완료 (AC-BF-25 관측성 스모크)
     // ────────────────────────────────────────────────────────────────────
 
@@ -524,7 +377,7 @@ class FinraCdnShortSaleBackfillOrchestratorTest {
     class ObservabilitySmoke {
 
         @Test
-        @DisplayName("다운로드 부재·파싱 skip·매칭 실패가 혼재해도 예외 없이 앵커를 전진시킨다")
+        @DisplayName("다운로드 부재·dailyLoader의 파싱 skip·매칭 실패 결과가 혼재해도 예외 없이 앵커를 전진시킨다")
         void mixedFailures_completesCycleWithoutException() {
             properties.setFloorDate(LocalDate.of(2000, 1, 1));
             properties.setPerCronDateCap(2);
@@ -536,8 +389,8 @@ class FinraCdnShortSaleBackfillOrchestratorTest {
             when(stockRepository.findAllActiveOverseasTradable())
                     .thenReturn(List.of(stock(1L, "AAPL")));
             when(client.fetch(d1)).thenReturn(new FinraCdnFetchResult.Found(List.of("BODY")));
-            when(parser.parse("BODY"))
-                    .thenReturn(new ParsedFileResult(List.of(row("UNMATCHED", 1, 2)), 3));
+            when(dailyLoader.loadDate(eq(d1), eq(List.of("BODY")), any()))
+                    .thenReturn(new FinraCdnDailyLoadOutcome(0, 1, 3, 1));
             when(client.fetch(d0))
                     .thenReturn(
                             new FinraCdnFetchResult.Absent(
@@ -545,18 +398,70 @@ class FinraCdnShortSaleBackfillOrchestratorTest {
 
             orchestrator.run();
 
-            verify(shortSaleOverseasRepository, never())
-                    .upsertDaily(
-                            anyLong(),
-                            any(),
-                            any(BigDecimal.class),
-                            any(BigDecimal.class),
-                            any(),
-                            any(),
-                            any());
             verify(status).advance(eq(BackfillStatusType.IN_PROGRESS), eq(d0), eq(0), any());
             // REQ-SSD-009: 파싱 거부(skip=3)가 last_load 독립 카운터로 계측된다(CDN 경로 계측 연결)
             verify(batchMetrics).recordParseRejections("overseas-shortsale-backfill", 3L);
+        }
+    }
+
+    // ────────────────────────────────────────────────────────────────────
+    // FINRA Daily 전역 앵커 커버-추적 배선 (SPEC-COLLECTOR-BACKFILL-011 AC-16/-17, DP-4)
+    // ────────────────────────────────────────────────────────────────────
+
+    @Nested
+    @DisplayName("전역 앵커 커버-추적 배선 (SPEC-COLLECTOR-BACKFILL-011 AC-16/-17)")
+    class CoveredGapWalkWiring {
+
+        @Test
+        @DisplayName(
+                "①②③ backward walk가 COMPLETED 유지로 조기 반환해도 coveredGapWalkRunner는 동일 전역 앵커로 항상 호출된다")
+        void gapWalkRunsEvenWhenBackwardWalkCompletesEarly() {
+            // Arrange — COMPLETED 유지(증가 없음) 시나리오: 기존 코드는 여기서 return했었다(REQ-CVR-011 무시 버그).
+            BackfillStatus status =
+                    anchor(1L, BackfillStatusType.COMPLETED, LocalDate.of(2009, 8, 3), 2);
+            stubAnchorLookup(status);
+            when(stockRepository.findAllActiveOverseasTradable())
+                    .thenReturn(List.of(stock(1L, "AAPL"), stock(2L, "MSFT")));
+
+            orchestrator.run();
+
+            // backward walk는 여전히 조기 반환(다운로드 없음) — 기존 AC-BF-18 비회귀
+            verify(client, never()).fetch(any());
+            // 하지만 갭 walk는 동일 전역 앵커(단 1행)·동일 dailyLoader로 위임됨 — 종목별 신규 행이 아니다(REQ-CVR-071).
+            verify(coveredGapWalkRunner)
+                    .runFor(eq(status), any(LocalDate.class), eq(dailyLoader), any());
+        }
+
+        @Test
+        @DisplayName(
+                "⑤ DP-4 — 하단 backward walk 커밋(advanceAnchor)과 상단 갭 walk 위임은 서로 다른 최상위 호출로 순차 실행된다")
+        void backwardWalkCommitAndGapWalkAreIndependentTransactions() {
+            // Arrange — backward walk가 실제로
+            // advanceAnchor(=transactionTemplate.executeWithoutResult)를
+            // 호출하는 시나리오(IN_PROGRESS, 날짜 부재로 즉시 IN_PROGRESS 재확정)를 구성한다.
+            properties.setFloorDate(LocalDate.of(2000, 1, 1));
+            properties.setPerCronDateCap(1);
+            LocalDate anchorDate = LocalDate.of(2013, 1, 5);
+            BackfillStatus status = anchor(1L, BackfillStatusType.IN_PROGRESS, anchorDate, null);
+            stubAnchorLookup(status);
+            when(stockRepository.findAllActiveOverseasTradable())
+                    .thenReturn(List.of(stock(1L, "AAPL")));
+            when(client.fetch(any()))
+                    .thenReturn(
+                            new FinraCdnFetchResult.Absent(
+                                    FinraCdnFetchResult.AbsenceReason.NOT_GENERATED_404));
+
+            orchestrator.run();
+
+            // 갭 walk 위임(coveredGapWalkRunner.runFor) 호출이 backward walk의 트랜잭션 콜백
+            // (transactionTemplate.executeWithoutResult) 내부에 중첩되지 않고, 별도의 최상위 호출로
+            // 순차 실행됨을 순서로 확인한다 — 두 갱신이 독립 트랜잭션 경계에서 커밋됨을 방증한다(실제 트랜잭션 격리는
+            // FinraCdnCoveredGapWalkRunner/CoveredRangeService 내부에서 보장 —
+            // FinraCdnCoveredGapWalkRunnerTest
+            // 담당).
+            InOrder inOrder = Mockito.inOrder(transactionTemplate, coveredGapWalkRunner);
+            inOrder.verify(transactionTemplate).executeWithoutResult(any());
+            inOrder.verify(coveredGapWalkRunner).runFor(any(), any(), any(), any());
         }
     }
 }

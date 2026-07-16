@@ -10,27 +10,28 @@ import java.util.Map;
  * FINRA Daily 전역 앵커 정방향 갭 walk 1스텝 실행체 (SPEC-COLLECTOR-BACKFILL-011 REQ-CVR-051/-051a, AC-12).
  *
  * <p>단일 날짜형 소스({@link com.aaa.collector.backfill.CoveredTrackingEligibility.Mode#SINGLE_DATE}) —
- * {@code cursor} 하루치를 {@link FinraCdnDailyFileClient#fetch(LocalDate)}(CDN 파일 경로)로 취득하고, {@link
- * FinraCdnShortSaleBackfillOrchestrator#loadDate}를 그대로 재사용해 적재한다(REQ-CVR-051, 신규 fetch 메서드 없음). 라이브
- * REST({@code FinraShortSaleClient.fetchRegShoDaily})는 이 클래스가 아예 의존하지 않으므로 구조적으로 호출될 수
- * 없다(REQ-CVR-051a, 소스 이중성 — 백필/갭 walk는 CDN 전용).
+ * {@code cursor} 하루치를 {@link FinraCdnDailyFileClient#fetch(LocalDate)}(CDN 파일 경로)로 취득하고, 주입받은
+ * {@link FinraCdnDailyLoader}(오케스트레이터의 {@code loadDate} 메서드 참조)로 적재한다(REQ-CVR-051, 신규 fetch 메서드
+ * 없음). 오케스트레이터 구체 타입을 직접 참조하지 않고 함수형 인터페이스만 참조해 순환 의존 없이 결합도를 낮춘다(코드리뷰). 라이브 REST({@code
+ * FinraShortSaleClient.fetchRegShoDaily})는 이 클래스가 아예 의존하지 않으므로 구조적으로 호출될 수 없다(REQ-CVR-051a, 소스 이중성
+ * — 백필/갭 walk는 CDN 전용).
  *
- * <p>{@code symbolMap}(활성 미국 tradable 종목)은 호출자(TASK-007 오케스트레이터)가 사이클당 1회 조회해 주입한다 — {@code
- * persistStep} 매 호출마다 재조회하지 않는다(불필요한 DB 조회 방지, 기존 {@code run()}의 사이클당-1회 조회 패턴과 동일).
+ * <p>{@code symbolMap}(활성 미국 tradable 종목)은 호출자(TASK-007 {@link FinraCdnCoveredGapWalkRunner})가 사이클당
+ * 1회 조회해 주입한다 — {@code persistStep} 매 호출마다 재조회하지 않는다.
  */
 // @MX:SPEC: SPEC-COLLECTOR-BACKFILL-011
 public class FinraCdnCoveredGapFiller implements CoveredGapFiller {
 
     private final FinraCdnDailyFileClient client;
-    private final FinraCdnShortSaleBackfillOrchestrator orchestrator;
+    private final FinraCdnDailyLoader loader;
     private final Map<String, Stock> symbolMap;
 
     public FinraCdnCoveredGapFiller(
             FinraCdnDailyFileClient client,
-            FinraCdnShortSaleBackfillOrchestrator orchestrator,
+            FinraCdnDailyLoader loader,
             Map<String, Stock> symbolMap) {
         this.client = client;
-        this.orchestrator = orchestrator;
+        this.loader = loader;
         this.symbolMap = Map.copyOf(symbolMap);
     }
 
@@ -49,8 +50,8 @@ public class FinraCdnCoveredGapFiller implements CoveredGapFiller {
     public CoveredFillResult persistStep(LocalDate cursor) {
         FinraCdnFetchResult fetchResult = client.fetch(cursor);
         if (fetchResult instanceof FinraCdnFetchResult.Found found) {
-            FinraCdnShortSaleBackfillOrchestrator.DailyLoadOutcome outcome =
-                    orchestrator.loadDate(cursor, found.fileBodies(), symbolMap);
+            FinraCdnDailyLoadOutcome outcome =
+                    loader.loadDate(cursor, found.fileBodies(), symbolMap);
             return new CoveredFillResult(outcome.kept(), outcome.raw(), cursor);
         }
         return new CoveredFillResult(0, 0, cursor);

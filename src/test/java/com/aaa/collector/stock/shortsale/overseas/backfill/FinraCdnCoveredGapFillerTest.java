@@ -17,14 +17,10 @@ import com.aaa.collector.backfill.CoveredFillResult;
 import com.aaa.collector.backfill.CoveredRangeService;
 import com.aaa.collector.common.gate.MarketOpenGate;
 import com.aaa.collector.common.gate.UsMarketOpenGate;
-import com.aaa.collector.observability.BatchMetrics;
-import com.aaa.collector.stock.ShortSaleOverseasRepository;
 import com.aaa.collector.stock.Stock;
-import com.aaa.collector.stock.StockRepository;
 import com.aaa.collector.stock.enums.AssetType;
 import com.aaa.collector.stock.enums.Market;
 import com.aaa.collector.stock.shortsale.overseas.FinraShortSaleClient;
-import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.List;
 import java.util.Map;
@@ -43,39 +39,21 @@ import org.springframework.transaction.support.TransactionTemplate;
  * {@link FinraCdnCoveredGapFiller} 단위 테스트 (SPEC-COLLECTOR-BACKFILL-011 AC-12, 부분 AC-8/-9).
  *
  * <p>순수 Mockito — CDN 경로({@link FinraCdnDailyFileClient})만 재사용 검증하고 라이브 REST({@link
- * FinraShortSaleClient})와의 결합이 아예 없음을 증명한다(REQ-CVR-051a). {@code loadDate} 재사용을 통해 kept/raw를 노출하는
- * 경로는 {@link FinraCdnShortSaleBackfillOrchestrator}(TASK-005a/-005 확장)를 그대로 사용한다.
+ * FinraShortSaleClient})와의 결합이 아예 없음을 증명한다(REQ-CVR-051a). {@code loadDate} 재사용은 {@link
+ * FinraCdnDailyLoader} 함수형 인터페이스를 통해 검증한다 — 오케스트레이터 구체 타입은 더 이상 필요 없다(코드리뷰 — PMD
+ * CouplingBetweenObjects 완화 리팩터).
  */
 @ExtendWith(MockitoExtension.class)
 @DisplayName("FinraCdnCoveredGapFiller — CDN 전용 갭 채우기 (SPEC-COLLECTOR-BACKFILL-011)")
 class FinraCdnCoveredGapFillerTest {
 
     @Mock private FinraCdnDailyFileClient client;
-    @Mock private FinraCdnFileParser parser;
-    @Mock private ShortSaleOverseasRepository shortSaleOverseasRepository;
-    @Mock private StockRepository stockRepository;
+    @Mock private FinraCdnDailyLoader loader;
     @Mock private BackfillStatusRepository backfillStatusRepository;
     @Mock private TransactionTemplate transactionTemplate;
-    @Mock private BatchMetrics batchMetrics;
 
     /** 라이브 REST 클라이언트 — Filler는 이 타입을 전혀 참조하지 않는다(구조적으로 호출 불가, ②에서 재확인). */
     @Mock private FinraShortSaleClient finraShortSaleClient;
-
-    private FinraCdnShortSaleBackfillOrchestrator orchestrator;
-
-    @BeforeEach
-    void setUp() {
-        orchestrator =
-                new FinraCdnShortSaleBackfillOrchestrator(
-                        backfillStatusRepository,
-                        stockRepository,
-                        client,
-                        parser,
-                        shortSaleOverseasRepository,
-                        new FinraCdnShortSaleBackfillProperties(),
-                        transactionTemplate,
-                        batchMetrics);
-    }
 
     private static Stock stock(String symbol) {
         return Stock.builder()
@@ -91,24 +69,17 @@ class FinraCdnCoveredGapFillerTest {
     class PersistStep {
 
         @Test
-        @DisplayName("① Found + 매칭 성공 — client.fetch(cursor)만 호출되고 kept=raw=매칭 행수")
-        void found_matchedSymbol_keptEqualsRawEqualsOne() {
+        @DisplayName("① Found + loader 위임 — client.fetch(cursor)만 호출되고 kept/raw는 loader 결과 그대로")
+        void found_delegatesToLoader() {
             // Arrange
             LocalDate cursor = LocalDate.of(2026, 7, 10);
             Map<String, Stock> symbolMap = Map.of("AAPL", stock("AAPL"));
             FinraCdnCoveredGapFiller filler =
-                    new FinraCdnCoveredGapFiller(client, orchestrator, symbolMap);
+                    new FinraCdnCoveredGapFiller(client, loader, symbolMap);
 
             when(client.fetch(cursor)).thenReturn(new FinraCdnFetchResult.Found(List.of("body")));
-            when(parser.parse("body"))
-                    .thenReturn(
-                            new ParsedFileResult(
-                                    List.of(
-                                            new ParsedRow(
-                                                    "AAPL",
-                                                    BigDecimal.TEN,
-                                                    BigDecimal.valueOf(20))),
-                                    0));
+            when(loader.loadDate(eq(cursor), eq(List.of("body")), eq(symbolMap)))
+                    .thenReturn(new FinraCdnDailyLoadOutcome(1, 1, 0, 0));
 
             // Act
             CoveredFillResult result = filler.persistStep(cursor);
@@ -118,8 +89,6 @@ class FinraCdnCoveredGapFillerTest {
             assertThat(result.raw()).isEqualTo(1);
             assertThat(result.filledUntil()).isEqualTo(cursor);
             verify(client, times(1)).fetch(cursor);
-            verify(shortSaleOverseasRepository, times(1))
-                    .upsertDaily(any(), eq(cursor), any(), any(), any(), eq(null), eq(null));
         }
 
         @Test
@@ -127,7 +96,7 @@ class FinraCdnCoveredGapFillerTest {
         void neverCallsLiveRestClient() {
             LocalDate cursor = LocalDate.of(2026, 7, 10);
             FinraCdnCoveredGapFiller filler =
-                    new FinraCdnCoveredGapFiller(client, orchestrator, Map.of());
+                    new FinraCdnCoveredGapFiller(client, loader, Map.of());
             when(client.fetch(cursor))
                     .thenReturn(
                             new FinraCdnFetchResult.Absent(
@@ -139,11 +108,11 @@ class FinraCdnCoveredGapFillerTest {
         }
 
         @Test
-        @DisplayName("Absent(404, 정상 빈 응답) — kept=raw=0")
+        @DisplayName("Absent(404, 정상 빈 응답) — kept=raw=0, loader 미호출")
         void absent_notGenerated_keptRawZero() {
             LocalDate cursor = LocalDate.of(2026, 7, 12); // 토요일 — 휴장
             FinraCdnCoveredGapFiller filler =
-                    new FinraCdnCoveredGapFiller(client, orchestrator, Map.of());
+                    new FinraCdnCoveredGapFiller(client, loader, Map.of());
             when(client.fetch(cursor))
                     .thenReturn(
                             new FinraCdnFetchResult.Absent(
@@ -153,8 +122,7 @@ class FinraCdnCoveredGapFillerTest {
 
             assertThat(result.kept()).isZero();
             assertThat(result.raw()).isZero();
-            verify(shortSaleOverseasRepository, never())
-                    .upsertDaily(any(), any(), any(), any(), any(), any(), any());
+            verify(loader, never()).loadDate(any(), any(), any());
         }
 
         @Test
@@ -162,7 +130,7 @@ class FinraCdnCoveredGapFillerTest {
         void absent_transientError_keptRawZero() {
             LocalDate cursor = LocalDate.of(2026, 7, 10);
             FinraCdnCoveredGapFiller filler =
-                    new FinraCdnCoveredGapFiller(client, orchestrator, Map.of());
+                    new FinraCdnCoveredGapFiller(client, loader, Map.of());
             when(client.fetch(cursor))
                     .thenReturn(
                             new FinraCdnFetchResult.Absent(
@@ -179,23 +147,15 @@ class FinraCdnCoveredGapFillerTest {
         void found_allUnmatched_rawPositiveKeptZero() {
             LocalDate cursor = LocalDate.of(2026, 7, 10);
             FinraCdnCoveredGapFiller filler =
-                    new FinraCdnCoveredGapFiller(
-                            client, orchestrator, Map.of()); // 빈 symbolMap → 전량 미매칭
+                    new FinraCdnCoveredGapFiller(client, loader, Map.of());
             when(client.fetch(cursor)).thenReturn(new FinraCdnFetchResult.Found(List.of("body")));
-            when(parser.parse("body"))
-                    .thenReturn(
-                            new ParsedFileResult(
-                                    List.of(
-                                            new ParsedRow(
-                                                    "UNKNOWN", BigDecimal.ONE, BigDecimal.TEN)),
-                                    0));
+            when(loader.loadDate(eq(cursor), eq(List.of("body")), eq(Map.of())))
+                    .thenReturn(new FinraCdnDailyLoadOutcome(0, 1, 0, 1));
 
             CoveredFillResult result = filler.persistStep(cursor);
 
             assertThat(result.raw()).isEqualTo(1);
             assertThat(result.kept()).isZero();
-            verify(shortSaleOverseasRepository, never())
-                    .upsertDaily(any(), any(), any(), any(), any(), any(), any());
         }
     }
 
@@ -243,17 +203,10 @@ class FinraCdnCoveredGapFillerTest {
 
             Map<String, Stock> symbolMap = Map.of("AAPL", stock("AAPL"));
             FinraCdnCoveredGapFiller filler =
-                    new FinraCdnCoveredGapFiller(client, orchestrator, symbolMap);
+                    new FinraCdnCoveredGapFiller(client, loader, symbolMap);
             when(client.fetch(cursor)).thenReturn(new FinraCdnFetchResult.Found(List.of("body")));
-            when(parser.parse("body"))
-                    .thenReturn(
-                            new ParsedFileResult(
-                                    List.of(
-                                            new ParsedRow(
-                                                    "AAPL",
-                                                    BigDecimal.TEN,
-                                                    BigDecimal.valueOf(20))),
-                                    0));
+            when(loader.loadDate(eq(cursor), eq(List.of("body")), eq(symbolMap)))
+                    .thenReturn(new FinraCdnDailyLoadOutcome(1, 1, 0, 0));
 
             // Act
             coveredRangeService.executeStep(status, filler, cursor);
@@ -277,15 +230,10 @@ class FinraCdnCoveredGapFillerTest {
                             .build();
 
             FinraCdnCoveredGapFiller filler =
-                    new FinraCdnCoveredGapFiller(client, orchestrator, Map.of());
+                    new FinraCdnCoveredGapFiller(client, loader, Map.of());
             when(client.fetch(cursor)).thenReturn(new FinraCdnFetchResult.Found(List.of("body")));
-            when(parser.parse("body"))
-                    .thenReturn(
-                            new ParsedFileResult(
-                                    List.of(
-                                            new ParsedRow(
-                                                    "UNKNOWN", BigDecimal.ONE, BigDecimal.TEN)),
-                                    0));
+            when(loader.loadDate(eq(cursor), eq(List.of("body")), eq(Map.of())))
+                    .thenReturn(new FinraCdnDailyLoadOutcome(0, 1, 0, 1));
 
             // Act — kept==0 분기는 backfillStatusRepository.findById를 호출하지 않는다(전진 없음)
             coveredRangeService.executeStep(status, filler, cursor);
