@@ -31,6 +31,7 @@ import com.aaa.collector.market.indicator.vix.VixCollectionService;
 import com.aaa.collector.market.session.UsMarketSessionGate;
 import com.aaa.collector.news.DomesticNewsHeadlineRepository;
 import com.aaa.collector.news.overseas.OverseasNewsHeadlineRepository;
+import com.aaa.collector.observability.BackfillDensityRepository;
 import com.aaa.collector.observability.BatchLastLoadRepository;
 import com.aaa.collector.observability.CoverageRatioRepository;
 import com.aaa.collector.stock.AnalystEstimateRepository;
@@ -166,7 +167,12 @@ import org.springframework.transaction.support.TransactionTemplate;
             // CoverageMetricsWarmStarter가 ApplicationRunner라 컨텍스트 기동 시 자동 실행되며 find()를 호출하므로,
             // 위 리포지토리들과 동일 이유로 리포지토리 자체를 모킹해야 한다(smoke 회귀 방지). mock은 기본적으로
             // find()에서 Optional.empty()를 반환 — 게이지를 0.0(사전 등록값) 그대로 두고 seed를 생략한다.
-            CoverageRatioRepository.class
+            CoverageRatioRepository.class,
+            // SPEC-COLLECTOR-WARMSTART-REDIS-004: 밀도 게이지 A/B Redis 영속화 신규 빈 모킹.
+            // BackfillDensityMetricsWarmStarter가 ApplicationRunner라 컨텍스트 기동 시 자동 실행되며 find*()를
+            // 호출하므로, 위 리포지토리들과 동일 이유로 리포지토리 자체를 모킹해야 한다(smoke 회귀 방지). mock은 기본적으로
+            // find*()에서 Optional.empty()를 반환 — 게이지를 0(사전 등록값) 그대로 두고 seed를 생략한다.
+            BackfillDensityRepository.class
         })
 class SmokeMockitoBase {
 
