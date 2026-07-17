@@ -4,6 +4,7 @@ import com.aaa.collector.macro.MacroExternalScheduler;
 import com.aaa.collector.macro.MacroIndicatorRepository;
 import com.aaa.collector.market.MarketBatchScheduler;
 import com.aaa.collector.market.MarketIndicatorRepository;
+import com.aaa.collector.market.enums.IndicatorCode;
 import com.aaa.collector.schedule.BatchCrons;
 import com.aaa.collector.stock.AnalystEstimateRepository;
 import com.aaa.collector.stock.CreditBalanceRepository;
@@ -307,6 +308,21 @@ public class CatchUpRunner {
                         BatchCrons.DOMESTIC_ETF_REPRESENTATIVE_ZONE,
                         Freshness.DATE,
                         List.of(etfRepresentativeHistoryRepository::findMaxEffectiveFrom),
-                        etfRepresentativeScheduler::recalculateWeekly));
+                        etfRepresentativeScheduler::recalculateWeekly),
+                // @MX:NOTE: [AUTO] USDKRW 전용 catch-up 유닛 — 지표코드 스코프 신선도(TASK-C4) 사용
+                // @MX:REASON: [AUTO] SPEC-COLLECTOR-MARKETIND-004 TASK-C5, REQ-007/-008 —
+                // USDKRW(10:30
+                // KST)와 6종(17:05 KST)이 스케줄 분리된 상태에서 market-indicators 유닛의 비-스코프
+                // findMaxCreatedAt()을 공유하면 한 배치의 성공이 다른 배치의 실패를 은폐한다.
+                new CatchUpUnit(
+                        "usdkrw-daily",
+                        BatchCrons.USDKRW_DAILY_CRON,
+                        BatchCrons.USDKRW_DAILY_ZONE,
+                        Freshness.INSTANT,
+                        List.of(
+                                () ->
+                                        marketIndicatorRepository.findMaxCreatedAtByIndicatorCode(
+                                                IndicatorCode.USDKRW)),
+                        marketBatchScheduler::collectUsdkrwDaily));
     }
 }

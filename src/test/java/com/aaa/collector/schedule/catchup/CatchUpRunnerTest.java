@@ -14,6 +14,7 @@ import com.aaa.collector.macro.MacroExternalScheduler;
 import com.aaa.collector.macro.MacroIndicatorRepository;
 import com.aaa.collector.market.MarketBatchScheduler;
 import com.aaa.collector.market.MarketIndicatorRepository;
+import com.aaa.collector.market.enums.IndicatorCode;
 import com.aaa.collector.schedule.BatchCrons;
 import com.aaa.collector.stock.AnalystEstimateRepository;
 import com.aaa.collector.stock.CreditBalanceRepository;
@@ -588,15 +589,60 @@ class CatchUpRunnerTest {
     class BuildRegistry {
 
         @Test
-        @DisplayName("buildRegistry()는 8개 단위를 반환한다")
-        void buildRegistry_returns8Units() {
+        @DisplayName("buildRegistry()는 9개 단위를 반환한다 (TASK-C5: usdkrw-daily 추가)")
+        void buildRegistry_returns9Units() {
             Instant now = Instant.now();
             Clock clock = Clock.fixed(now, KST);
             CatchUpRunner runner = buildRunner(clock, defaultProperties());
 
             List<CatchUpUnit> units = runner.buildRegistry();
 
-            assertThat(units).hasSize(8);
+            assertThat(units).hasSize(9);
+        }
+
+        @Test
+        @DisplayName(
+                "usdkrw-daily 단위는 USDKRW_DAILY_CRON/ZONE·INSTANT freshness를 가져야 한다"
+                        + " (SPEC-COLLECTOR-MARKETIND-004 TASK-C5, REQ-007/-008)")
+        void usdkrwDailyUnit_hasDedicatedCronAndScopedFreshness() {
+            Clock clock = Clock.fixed(Instant.now(), KST);
+            CatchUpRunner runner = buildRunner(clock, defaultProperties());
+
+            List<CatchUpUnit> units = runner.buildRegistry();
+            CatchUpUnit usdkrwUnit =
+                    units.stream()
+                            .filter(u -> "usdkrw-daily".equals(u.name()))
+                            .findFirst()
+                            .orElseThrow();
+
+            assertThat(usdkrwUnit.cron()).isEqualTo(BatchCrons.USDKRW_DAILY_CRON);
+            assertThat(usdkrwUnit.zone()).isEqualTo(BatchCrons.USDKRW_DAILY_ZONE);
+            assertThat(usdkrwUnit.freshness()).isEqualTo(Freshness.INSTANT);
+            assertThat(usdkrwUnit.lastLoadSuppliers()).hasSize(1);
+            assertThat(usdkrwUnit.trigger()).isNotNull();
+        }
+
+        @Test
+        @DisplayName(
+                "usdkrw-daily 단위의 lastLoad supplier는 marketIndicatorRepository의 USDKRW 스코프 쿼리를 사용한다"
+                        + " (TASK-C5, TASK-C4 재사용)")
+        void usdkrwDailyUnit_usesIndicatorScopedFreshnessQuery() {
+            LocalDateTime fresh = LocalDateTime.of(2026, 7, 17, 10, 40, 0);
+            when(marketIndicatorRepository.findMaxCreatedAtByIndicatorCode(IndicatorCode.USDKRW))
+                    .thenReturn(Optional.of(fresh));
+
+            Clock clock = Clock.fixed(Instant.now(), KST);
+            CatchUpRunner runner = buildRunner(clock, defaultProperties());
+            List<CatchUpUnit> units = runner.buildRegistry();
+            CatchUpUnit usdkrwUnit =
+                    units.stream()
+                            .filter(u -> "usdkrw-daily".equals(u.name()))
+                            .findFirst()
+                            .orElseThrow();
+
+            Optional<LocalDateTime> result = usdkrwUnit.lastLoadSuppliers().get(0).get();
+
+            assertThat(result).contains(fresh);
         }
 
         @Test
