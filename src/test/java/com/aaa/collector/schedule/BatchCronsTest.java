@@ -155,158 +155,196 @@ class BatchCronsTest {
 
     @Nested
     @DisplayName("원본 리터럴 등가 단언 (AC-14) — 스케줄러 원본과 일치해야 드리프트를 차단한다")
-    @SuppressWarnings("PMD.TooManyMethods") // 15개 배치 단위 × cron/zone 리터럴 등가 검증 — 배치 단위 증가에 비례
     class LiteralEquality {
 
-        @Test
-        @DisplayName("DOMESTIC_DAILY_CHAIN_CRON은 DomesticDailyOhlcvScheduler 원본 리터럴과 일치해야 한다")
-        void domesticDailyChainCron_matchesOriginalLiteral() {
-            assertEquals("0 0 16 * * MON-FRI", BatchCrons.DOMESTIC_DAILY_CHAIN_CRON);
+        @Nested
+        @DisplayName("일봉·수급 배치 — domestic-daily-chain/overseas-daily/overseas-shortsale")
+        class DailyAndShortsaleBatches {
+
+            @Test
+            @DisplayName("DOMESTIC_DAILY_CHAIN_CRON은 DomesticDailyOhlcvScheduler 원본 리터럴과 일치해야 한다")
+            void domesticDailyChainCron_matchesOriginalLiteral() {
+                assertEquals("0 0 16 * * MON-FRI", BatchCrons.DOMESTIC_DAILY_CHAIN_CRON);
+            }
+
+            @Test
+            @DisplayName("DOMESTIC_DAILY_CHAIN_ZONE은 DomesticDailyOhlcvScheduler 원본 리터럴과 일치해야 한다")
+            void domesticDailyChainZone_matchesOriginalLiteral() {
+                assertEquals("Asia/Seoul", BatchCrons.DOMESTIC_DAILY_CHAIN_ZONE);
+            }
+
+            @Test
+            @DisplayName("OVERSEAS_DAILY_CRON은 OverseasDailyOhlcvScheduler 원본 리터럴과 일치해야 한다")
+            void overseasDailyCron_matchesOriginalLiteral() {
+                assertEquals("0 30 16 * * MON-FRI", BatchCrons.OVERSEAS_DAILY_CRON);
+            }
+
+            @Test
+            @DisplayName("OVERSEAS_DAILY_ZONE은 OverseasDailyOhlcvScheduler 원본 리터럴과 일치해야 한다")
+            void overseasDailyZone_matchesOriginalLiteral() {
+                assertEquals("America/New_York", BatchCrons.OVERSEAS_DAILY_ZONE);
+            }
+
+            @Test
+            @DisplayName("OVERSEAS_SHORTSALE_CRON은 ShortSaleOverseasScheduler 원본 리터럴과 일치해야 한다")
+            void overseasShortsaleCron_matchesOriginalLiteral() {
+                assertEquals("0 0 10 * * MON-FRI", BatchCrons.OVERSEAS_SHORTSALE_CRON);
+            }
+
+            @Test
+            @DisplayName("OVERSEAS_SHORTSALE_ZONE은 ShortSaleOverseasScheduler 원본 리터럴과 일치해야 한다")
+            void overseasShortsaleZone_matchesOriginalLiteral() {
+                assertEquals("America/New_York", BatchCrons.OVERSEAS_SHORTSALE_ZONE);
+            }
+
+            @Test
+            @DisplayName("cron 상수 값은 null이 아니어야 한다")
+            void allCronConstants_areNotNull() {
+                // 개별 등가 단언이 이미 위에서 수행됨 — null 아님은 파생적 불변식
+                assertThat(BatchCrons.DOMESTIC_DAILY_CHAIN_CRON).isNotNull();
+                assertThat(BatchCrons.OVERSEAS_DAILY_CRON).isNotNull();
+                assertThat(BatchCrons.OVERSEAS_SHORTSALE_CRON).isNotNull();
+            }
+
+            @Test
+            @DisplayName("zone 상수 값은 null이 아니어야 한다")
+            void allZoneConstants_areNotNull() {
+                assertThat(BatchCrons.DOMESTIC_DAILY_CHAIN_ZONE).isNotNull();
+                assertThat(BatchCrons.OVERSEAS_DAILY_ZONE).isNotNull();
+                assertThat(BatchCrons.OVERSEAS_SHORTSALE_ZONE).isNotNull();
+            }
         }
 
-        @Test
-        @DisplayName("DOMESTIC_DAILY_CHAIN_ZONE은 DomesticDailyOhlcvScheduler 원본 리터럴과 일치해야 한다")
-        void domesticDailyChainZone_matchesOriginalLiteral() {
-            assertEquals("Asia/Seoul", BatchCrons.DOMESTIC_DAILY_CHAIN_ZONE);
-        }
-
-        @Test
-        @DisplayName("OVERSEAS_DAILY_CRON은 OverseasDailyOhlcvScheduler 원본 리터럴과 일치해야 한다")
-        void overseasDailyCron_matchesOriginalLiteral() {
-            assertEquals("0 30 16 * * MON-FRI", BatchCrons.OVERSEAS_DAILY_CRON);
-        }
-
-        @Test
-        @DisplayName("OVERSEAS_DAILY_ZONE은 OverseasDailyOhlcvScheduler 원본 리터럴과 일치해야 한다")
-        void overseasDailyZone_matchesOriginalLiteral() {
-            assertEquals("America/New_York", BatchCrons.OVERSEAS_DAILY_ZONE);
-        }
-
-        @Test
-        @DisplayName("OVERSEAS_SHORTSALE_CRON은 ShortSaleOverseasScheduler 원본 리터럴과 일치해야 한다")
-        void overseasShortsaleCron_matchesOriginalLiteral() {
-            assertEquals("0 0 10 * * MON-FRI", BatchCrons.OVERSEAS_SHORTSALE_CRON);
-        }
-
-        @Test
-        @DisplayName("OVERSEAS_SHORTSALE_ZONE은 ShortSaleOverseasScheduler 원본 리터럴과 일치해야 한다")
-        void overseasShortsaleZone_matchesOriginalLiteral() {
-            assertEquals("America/New_York", BatchCrons.OVERSEAS_SHORTSALE_ZONE);
-        }
-
-        @Test
-        @DisplayName("DOMESTIC_INVEST_OPINION_CRON은 InvestOpinionScheduler 원본 리터럴과 일치해야 한다")
-        void domesticInvestOpinionCron_matchesOriginalLiteral() {
-            assertEquals("0 0 18 * * MON-FRI", BatchCrons.DOMESTIC_INVEST_OPINION_CRON);
-        }
-
-        @Test
-        @DisplayName("DOMESTIC_INVEST_OPINION_ZONE은 InvestOpinionScheduler 원본 리터럴과 일치해야 한다")
-        void domesticInvestOpinionZone_matchesOriginalLiteral() {
-            assertEquals("Asia/Seoul", BatchCrons.DOMESTIC_INVEST_OPINION_ZONE);
-        }
-
-        @Test
-        @DisplayName("DOMESTIC_FINANCIAL_RATIO_CRON은 FinancialRatioScheduler 원본 리터럴과 일치해야 한다")
-        void domesticFinancialRatioCron_matchesOriginalLiteral() {
-            assertEquals("0 0 8 * * SAT", BatchCrons.DOMESTIC_FINANCIAL_RATIO_CRON);
-        }
-
-        @Test
-        @DisplayName("DOMESTIC_FINANCIAL_RATIO_ZONE은 FinancialRatioScheduler 원본 리터럴과 일치해야 한다")
-        void domesticFinancialRatioZone_matchesOriginalLiteral() {
-            assertEquals("Asia/Seoul", BatchCrons.DOMESTIC_FINANCIAL_RATIO_ZONE);
-        }
-
-        @Test
-        @DisplayName("MACRO_EXTERNAL_CRON은 MacroExternalScheduler 원본 리터럴과 일치해야 한다")
-        void macroExternalCron_matchesOriginalLiteral() {
-            assertEquals("0 0 19 * * MON-FRI", BatchCrons.MACRO_EXTERNAL_CRON);
-        }
-
-        @Test
-        @DisplayName("MACRO_EXTERNAL_ZONE은 MacroExternalScheduler 원본 리터럴과 일치해야 한다")
-        void macroExternalZone_matchesOriginalLiteral() {
-            assertEquals("Asia/Seoul", BatchCrons.MACRO_EXTERNAL_ZONE);
-        }
-
-        @Test
-        @DisplayName("MARKET_INDICATORS_CRON은 MarketBatchScheduler 원본 리터럴과 일치해야 한다")
-        void marketIndicatorsCron_matchesOriginalLiteral() {
-            assertEquals("0 5 17 * * MON-FRI", BatchCrons.MARKET_INDICATORS_CRON);
-        }
-
-        @Test
-        @DisplayName("MARKET_INDICATORS_ZONE은 MarketBatchScheduler 원본 리터럴과 일치해야 한다")
-        void marketIndicatorsZone_matchesOriginalLiteral() {
-            assertEquals("Asia/Seoul", BatchCrons.MARKET_INDICATORS_ZONE);
-        }
-
-        @Test
-        @DisplayName("DOMESTIC_ETF_REPRESENTATIVE_CRON은 EtfRepresentativeScheduler 원본 리터럴과 일치해야 한다")
-        void domesticEtfRepresentativeCron_matchesOriginalLiteral() {
-            assertEquals("0 50 7 * * MON", BatchCrons.DOMESTIC_ETF_REPRESENTATIVE_CRON);
-        }
-
-        @Test
-        @DisplayName("DOMESTIC_ETF_REPRESENTATIVE_ZONE은 EtfRepresentativeScheduler 원본 리터럴과 일치해야 한다")
-        void domesticEtfRepresentativeZone_matchesOriginalLiteral() {
-            assertEquals("Asia/Seoul", BatchCrons.DOMESTIC_ETF_REPRESENTATIVE_ZONE);
-        }
-
-        @Test
-        @DisplayName("cron 상수 값은 null이 아니어야 한다")
-        void allCronConstants_areNotNull() {
-            // 개별 등가 단언이 이미 위에서 수행됨 — null 아님은 파생적 불변식
-            assertThat(BatchCrons.DOMESTIC_DAILY_CHAIN_CRON).isNotNull();
-            assertThat(BatchCrons.OVERSEAS_DAILY_CRON).isNotNull();
-            assertThat(BatchCrons.OVERSEAS_SHORTSALE_CRON).isNotNull();
-            assertThat(BatchCrons.DOMESTIC_INVEST_OPINION_CRON).isNotNull();
-            assertThat(BatchCrons.DOMESTIC_FINANCIAL_RATIO_CRON).isNotNull();
-        }
-
-        @Test
-        @DisplayName("zone 상수 값은 null이 아니어야 한다")
-        void allZoneConstants_areNotNull() {
-            assertThat(BatchCrons.DOMESTIC_DAILY_CHAIN_ZONE).isNotNull();
-            assertThat(BatchCrons.OVERSEAS_DAILY_ZONE).isNotNull();
-            assertThat(BatchCrons.OVERSEAS_SHORTSALE_ZONE).isNotNull();
-            assertThat(BatchCrons.DOMESTIC_INVEST_OPINION_ZONE).isNotNull();
-            assertThat(BatchCrons.DOMESTIC_FINANCIAL_RATIO_ZONE).isNotNull();
-        }
-
-        @Test
-        @DisplayName("macro-external/market-indicators cron/zone 상수 값은 null이 아니어야 한다")
-        void macroAndMarketConstants_areNotNull() {
-            assertThat(BatchCrons.MACRO_EXTERNAL_CRON).isNotNull();
-            assertThat(BatchCrons.MACRO_EXTERNAL_ZONE).isNotNull();
-            assertThat(BatchCrons.MARKET_INDICATORS_CRON).isNotNull();
-            assertThat(BatchCrons.MARKET_INDICATORS_ZONE).isNotNull();
-        }
-
-        @Test
-        @DisplayName("domestic-etf-representative cron/zone 상수 값은 null이 아니어야 한다")
-        void etfConstants_areNotNull() {
-            assertThat(BatchCrons.DOMESTIC_ETF_REPRESENTATIVE_CRON).isNotNull();
-            assertThat(BatchCrons.DOMESTIC_ETF_REPRESENTATIVE_ZONE).isNotNull();
-        }
-
-        @Test
+        @Nested
         @DisplayName(
-                "USDKRW_DAILY_CRON은 평일 10:30 KST — MARKET_INDICATORS_CRON(17:05)과 독립"
-                        + " (SPEC-COLLECTOR-MARKETIND-004 REQ-002)")
-        void usdkrwDailyCron_matchesDedicatedLiteral() {
-            assertEquals("0 30 10 * * MON-FRI", BatchCrons.USDKRW_DAILY_CRON);
-            assertEquals("Asia/Seoul", BatchCrons.USDKRW_DAILY_ZONE);
-            assertThat(BatchCrons.USDKRW_DAILY_CRON).isNotNull();
-            assertThat(BatchCrons.USDKRW_DAILY_ZONE).isNotNull();
+                "투자의견·재무비율·거시경제 배치 — domestic-invest-opinion/domestic-financial-ratio/macro-external")
+        class InvestOpinionAndMacroBatches {
+
+            @Test
+            @DisplayName("DOMESTIC_INVEST_OPINION_CRON은 InvestOpinionScheduler 원본 리터럴과 일치해야 한다")
+            void domesticInvestOpinionCron_matchesOriginalLiteral() {
+                assertEquals("0 0 18 * * MON-FRI", BatchCrons.DOMESTIC_INVEST_OPINION_CRON);
+            }
+
+            @Test
+            @DisplayName("DOMESTIC_INVEST_OPINION_ZONE은 InvestOpinionScheduler 원본 리터럴과 일치해야 한다")
+            void domesticInvestOpinionZone_matchesOriginalLiteral() {
+                assertEquals("Asia/Seoul", BatchCrons.DOMESTIC_INVEST_OPINION_ZONE);
+            }
+
+            @Test
+            @DisplayName("DOMESTIC_FINANCIAL_RATIO_CRON은 FinancialRatioScheduler 원본 리터럴과 일치해야 한다")
+            void domesticFinancialRatioCron_matchesOriginalLiteral() {
+                assertEquals("0 0 8 * * SAT", BatchCrons.DOMESTIC_FINANCIAL_RATIO_CRON);
+            }
+
+            @Test
+            @DisplayName("DOMESTIC_FINANCIAL_RATIO_ZONE은 FinancialRatioScheduler 원본 리터럴과 일치해야 한다")
+            void domesticFinancialRatioZone_matchesOriginalLiteral() {
+                assertEquals("Asia/Seoul", BatchCrons.DOMESTIC_FINANCIAL_RATIO_ZONE);
+            }
+
+            @Test
+            @DisplayName("MACRO_EXTERNAL_CRON은 MacroExternalScheduler 원본 리터럴과 일치해야 한다")
+            void macroExternalCron_matchesOriginalLiteral() {
+                assertEquals("0 0 19 * * MON-FRI", BatchCrons.MACRO_EXTERNAL_CRON);
+            }
+
+            @Test
+            @DisplayName("MACRO_EXTERNAL_ZONE은 MacroExternalScheduler 원본 리터럴과 일치해야 한다")
+            void macroExternalZone_matchesOriginalLiteral() {
+                assertEquals("Asia/Seoul", BatchCrons.MACRO_EXTERNAL_ZONE);
+            }
+
+            @Test
+            @DisplayName("cron 상수 값은 null이 아니어야 한다")
+            void allCronConstants_areNotNull() {
+                assertThat(BatchCrons.DOMESTIC_INVEST_OPINION_CRON).isNotNull();
+                assertThat(BatchCrons.DOMESTIC_FINANCIAL_RATIO_CRON).isNotNull();
+                assertThat(BatchCrons.MACRO_EXTERNAL_CRON).isNotNull();
+            }
+
+            @Test
+            @DisplayName("zone 상수 값은 null이 아니어야 한다")
+            void allZoneConstants_areNotNull() {
+                assertThat(BatchCrons.DOMESTIC_INVEST_OPINION_ZONE).isNotNull();
+                assertThat(BatchCrons.DOMESTIC_FINANCIAL_RATIO_ZONE).isNotNull();
+                assertThat(BatchCrons.MACRO_EXTERNAL_ZONE).isNotNull();
+            }
         }
 
-        @Test
-        @DisplayName("MARKET_INDICATORS_CRON(17:05)은 USDKRW 분리 이후에도 무변경이어야 한다 (D1 감사 리스크 격리)")
-        void marketIndicatorsCron_unchangedAfterUsdkrwSplit() {
-            assertEquals("0 5 17 * * MON-FRI", BatchCrons.MARKET_INDICATORS_CRON);
-            assertEquals("Asia/Seoul", BatchCrons.MARKET_INDICATORS_ZONE);
+        @Nested
+        @DisplayName("market-indicators 배치 (17:05 KST, 6종) — USDKRW 분리 이후에도 무변경")
+        class MarketIndicatorsBatch {
+
+            @Test
+            @DisplayName("MARKET_INDICATORS_CRON은 MarketBatchScheduler 원본 리터럴과 일치해야 한다")
+            void marketIndicatorsCron_matchesOriginalLiteral() {
+                assertEquals("0 5 17 * * MON-FRI", BatchCrons.MARKET_INDICATORS_CRON);
+            }
+
+            @Test
+            @DisplayName("MARKET_INDICATORS_ZONE은 MarketBatchScheduler 원본 리터럴과 일치해야 한다")
+            void marketIndicatorsZone_matchesOriginalLiteral() {
+                assertEquals("Asia/Seoul", BatchCrons.MARKET_INDICATORS_ZONE);
+            }
+
+            @Test
+            @DisplayName("MARKET_INDICATORS_CRON(17:05)은 USDKRW 분리 이후에도 무변경이어야 한다 (D1 감사 리스크 격리)")
+            void marketIndicatorsCron_unchangedAfterUsdkrwSplit() {
+                assertEquals("0 5 17 * * MON-FRI", BatchCrons.MARKET_INDICATORS_CRON);
+                assertEquals("Asia/Seoul", BatchCrons.MARKET_INDICATORS_ZONE);
+            }
+
+            @Test
+            @DisplayName("market-indicators cron/zone 상수 값은 null이 아니어야 한다")
+            void marketIndicatorsConstants_areNotNull() {
+                assertThat(BatchCrons.MARKET_INDICATORS_CRON).isNotNull();
+                assertThat(BatchCrons.MARKET_INDICATORS_ZONE).isNotNull();
+            }
+        }
+
+        @Nested
+        @DisplayName(
+                "usdkrw-daily 배치 (10:30 KST, D-1) — SPEC-COLLECTOR-MARKETIND-004 TASK-C1, REQ-002")
+        class UsdkrwDailyBatch {
+
+            @Test
+            @DisplayName(
+                    "USDKRW_DAILY_CRON은 평일 10:30 KST — MARKET_INDICATORS_CRON(17:05)과 독립"
+                            + " (SPEC-COLLECTOR-MARKETIND-004 REQ-002)")
+            void usdkrwDailyCron_matchesDedicatedLiteral() {
+                assertEquals("0 30 10 * * MON-FRI", BatchCrons.USDKRW_DAILY_CRON);
+                assertEquals("Asia/Seoul", BatchCrons.USDKRW_DAILY_ZONE);
+                assertThat(BatchCrons.USDKRW_DAILY_CRON).isNotNull();
+                assertThat(BatchCrons.USDKRW_DAILY_ZONE).isNotNull();
+            }
+        }
+
+        @Nested
+        @DisplayName("domestic-etf-representative 배치")
+        class EtfRepresentativeBatch {
+
+            @Test
+            @DisplayName(
+                    "DOMESTIC_ETF_REPRESENTATIVE_CRON은 EtfRepresentativeScheduler 원본 리터럴과 일치해야 한다")
+            void domesticEtfRepresentativeCron_matchesOriginalLiteral() {
+                assertEquals("0 50 7 * * MON", BatchCrons.DOMESTIC_ETF_REPRESENTATIVE_CRON);
+            }
+
+            @Test
+            @DisplayName(
+                    "DOMESTIC_ETF_REPRESENTATIVE_ZONE은 EtfRepresentativeScheduler 원본 리터럴과 일치해야 한다")
+            void domesticEtfRepresentativeZone_matchesOriginalLiteral() {
+                assertEquals("Asia/Seoul", BatchCrons.DOMESTIC_ETF_REPRESENTATIVE_ZONE);
+            }
+
+            @Test
+            @DisplayName("domestic-etf-representative cron/zone 상수 값은 null이 아니어야 한다")
+            void etfConstants_areNotNull() {
+                assertThat(BatchCrons.DOMESTIC_ETF_REPRESENTATIVE_CRON).isNotNull();
+                assertThat(BatchCrons.DOMESTIC_ETF_REPRESENTATIVE_ZONE).isNotNull();
+            }
         }
     }
 
