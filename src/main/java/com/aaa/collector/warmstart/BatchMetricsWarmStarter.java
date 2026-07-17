@@ -65,6 +65,9 @@ public class BatchMetricsWarmStarter implements ApplicationRunner {
         warm("domestic-financial-ratio");
         warm("macro-external");
         warm("market-indicators");
+        // SPEC-COLLECTOR-MARKETIND-004 후속 — market-usdkrw가 expected-run 레지스트리에 편입되어
+        // 재배포 직후 last_load 시계열 공백을 해소하도록 warm-start에도 추가한다.
+        warm("market-usdkrw");
         warm("domestic-etf-representative");
 
         // SPEC-OBSV-WATERMARK-001 REQ-WM-014: dart-disclosure(현행 암묵 누락) + 신규 라벨 중 warm-start=O 3종

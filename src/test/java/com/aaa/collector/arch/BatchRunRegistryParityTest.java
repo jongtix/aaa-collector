@@ -63,7 +63,7 @@ class BatchRunRegistryParityTest {
                     Map.entry("MacroExternalScheduler", Set.of("macro-external")),
                     Map.entry("NewsScheduler", Set.of("domestic-news")),
                     Map.entry("OverseasNewsScheduler", Set.of("overseas-news")),
-                    Map.entry("MarketBatchScheduler", Set.of("market-indicators")),
+                    Map.entry("MarketBatchScheduler", Set.of("market-indicators", "market-usdkrw")),
                     Map.entry(
                             "ShortSaleOverseasDailyCollectionService",
                             Set.of("overseas-shortsale-daily")),
@@ -122,7 +122,7 @@ class BatchRunRegistryParityTest {
     class LabelParity {
 
         @Test
-        @DisplayName("GREEN — 현재 코드베이스는 정합한다 (제외 집합 반영, 레지스트리 20 == stamp 23 - 제외 3)")
+        @DisplayName("GREEN — 현재 코드베이스는 정합한다 (제외 집합 반영, 레지스트리 21 == stamp 24 - 제외 3)")
         void currentCodebase_isInParity() {
             // Arrange
             Set<String> stampLabels = allStampLabels();
@@ -139,11 +139,11 @@ class BatchRunRegistryParityTest {
         }
 
         @Test
-        @DisplayName("최종 라벨 집합 크기 확정 — stamp 23, 제외 3, 레지스트리 20 (§3.3 실측)")
+        @DisplayName("최종 라벨 집합 크기 확정 — stamp 24, 제외 3, 레지스트리 21 (§3.3 실측, market-usdkrw 편입)")
         void labelSetCardinalities_areExact() {
-            assertThat(allStampLabels()).as("stamp 라벨 총수").hasSize(23);
+            assertThat(allStampLabels()).as("stamp 라벨 총수").hasSize(24);
             assertThat(GATE_LEGACY_EXCLUSIONS).as("게이트-레거시 제외 수").hasSize(3);
-            assertThat(registryLabels()).as("레지스트리 엔트리 수").hasSize(20);
+            assertThat(registryLabels()).as("레지스트리 엔트리 수").hasSize(21);
         }
 
         @Test

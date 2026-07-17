@@ -13,7 +13,7 @@ import org.springframework.mock.env.MockEnvironment;
 /**
  * {@link BatchRunRegistry} 단위 테스트 (SPEC-COLLECTOR-EXPECTED-RUN-001 REQ-XR-002 / T-002).
  *
- * <p>레지스트리가 §3.1의 20개 편입 배치를 {@code (label, cron, zone, marginSeconds)} 단일 소스로 선언하는지, label이 유일한지,
+ * <p>레지스트리가 §3.1의 21개 편입 배치를 {@code (label, cron, zone, marginSeconds)} 단일 소스로 선언하는지, label이 유일한지,
  * extended-hours pre/after가 스케줄러와 동일한 property placeholder를 읽는지 검증한다.
  */
 class BatchRunRegistryTest {
@@ -39,7 +39,8 @@ class BatchRunRegistryTest {
                     "dart-backfill",
                     "extended-hours-pre",
                     "extended-hours-after",
-                    "overseas-split");
+                    "overseas-split",
+                    "market-usdkrw");
 
     private BatchRunEntry entry(BatchRunRegistry registry, String label) {
         return registry.entries().stream()
@@ -53,11 +54,11 @@ class BatchRunRegistryTest {
     class Composition {
 
         @Test
-        @DisplayName("20개 엔트리 전수를 선언한다")
-        void declaresTwentyEntries() {
+        @DisplayName("21개 엔트리 전수를 선언한다")
+        void declaresTwentyOneEntries() {
             BatchRunRegistry registry = new BatchRunRegistry(new MockEnvironment());
 
-            assertThat(registry.entries()).hasSize(20);
+            assertThat(registry.entries()).hasSize(21);
         }
 
         @Test

@@ -6,7 +6,7 @@ import org.springframework.core.env.Environment;
 import org.springframework.stereotype.Component;
 
 /**
- * 예상 실행(expected-run) 모델 편입 배치 20종의 단일 소스 레지스트리 (SPEC-COLLECTOR-EXPECTED-RUN-001 REQ-XR-002, DP-3).
+ * 예상 실행(expected-run) 모델 편입 배치 21종의 단일 소스 레지스트리 (SPEC-COLLECTOR-EXPECTED-RUN-001 REQ-XR-002, DP-3).
  *
  * <p>{@link com.aaa.collector.schedule.catchup.CatchUpRunner#buildRegistry()}의 "단일 소스" 조립 스타일을 미러한다
  * — 스케줄러 {@code @Scheduled}와 드리프트가 없도록 cron·zone 값은 공유 상수({@link BatchCrons})를 참조한다. 이 레지스트리는
@@ -18,7 +18,7 @@ import org.springframework.stereotype.Component;
  * static-상수 홀더가 아니라 생성자로 {@link Environment}를 주입받는 빈으로 구성한다. Environment는 필드로 보관하지 않고 생성자에서
  * property를 읽어 불변 리스트를 조립한 뒤 폐기한다.
  */
-// @MX:ANCHOR: [AUTO] 예상-실행 편입 배치 20종의 단일 소스 — expected_run/run_margin/enrolled 게이지와
+// @MX:ANCHOR: [AUTO] 예상-실행 편입 배치 21종의 단일 소스 — expected_run/run_margin/enrolled 게이지와
 // aaa-infra 라벨-무관 룰(M2)이 이 레지스트리를 신뢰한다. 엔트리 추가/제거 시 BatchRunRegistryParityTest가
 // recordCompletion 호출자 집합과의 양방향 정합을 강제한다(REQ-XR-004).
 // @MX:SPEC: SPEC-COLLECTOR-EXPECTED-RUN-001
@@ -53,7 +53,7 @@ public class BatchRunRegistry {
     }
 
     /**
-     * 편입 배치 20종 레지스트리 엔트리 목록.
+     * 편입 배치 21종 레지스트리 엔트리 목록.
      *
      * @return 불변 목록
      */
@@ -62,7 +62,7 @@ public class BatchRunRegistry {
     }
 
     /**
-     * 20개 엔트리를 조립한다(§3.1 표, 마진은 §9 시작 표).
+     * 21개 엔트리를 조립한다(§3.1 표, 마진은 §9 시작 표).
      *
      * <p>extended-hours pre/after cron은 리터럴 하드코딩 대신 스케줄러와 동일한 property placeholder를 읽어 취한다
      * (REQ-XR-002) — 운영자가 배포 config에서 오버라이드해도 레지스트리와 실제 스케줄이 자동 정합한다.
@@ -175,6 +175,14 @@ public class BatchRunRegistry {
                         "overseas-split",
                         BatchCrons.OVERSEAS_SPLIT_CRON,
                         BatchCrons.OVERSEAS_SPLIT_ZONE,
-                        Duration.ofHours(5).toSeconds()));
+                        Duration.ofHours(5).toSeconds()),
+                // SPEC-COLLECTOR-MARKETIND-004 후속 — market-indicators(그룹2, 28h 룰)는 주말 갭과
+                // 불합치해 편입 제외 상태를 유지하되, 화~토 10:30 KST 전용 cron으로 분리된 market-usdkrw는
+                // expected-run 모델로 신규 편입한다.
+                new BatchRunEntry(
+                        "market-usdkrw",
+                        BatchCrons.USDKRW_DAILY_CRON,
+                        BatchCrons.USDKRW_DAILY_ZONE,
+                        Duration.ofHours(4).toSeconds()));
     }
 }
