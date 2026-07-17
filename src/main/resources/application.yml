@@ -121,6 +121,8 @@ aaa:
       usdkrw:
         # KOREAEXIM 백필 연속 평일 빈 결과 종료 임계 (REQ-044)
         stale-weekday-threshold: 7
+        # USDKRW 백필 회차당 KOREAEXIM 호출 상한 — 문서 한도(1,000)의 절반 (REQ-MARKETIND4-021, DP-B)
+        max-calls-per-run: 500
     koreaexim-api-key: ${KOREAEXIM_API_KEY:}
   backfill:
     # cron 표현식 (기본: 02:00 KST 매일). fixedDelay 금지 — Virtual Threads 버그(CLAUDE.md)

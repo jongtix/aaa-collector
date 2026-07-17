@@ -1,5 +1,6 @@
 package com.aaa.collector.market.backfill;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
@@ -18,9 +19,14 @@ import com.aaa.collector.backfill.BackfillStatusType;
 import com.aaa.collector.backfill.CoveredRangeService;
 import com.aaa.collector.market.MarketIndicatorRepository;
 import com.aaa.collector.market.enums.IndicatorCode;
+import com.aaa.collector.market.indicator.MarketIndicatorRow;
+import com.aaa.collector.market.indicator.usdkrw.KoreaeximExchangeRateClient;
+import com.aaa.collector.market.indicator.usdkrw.KoreaeximQuotaExhaustedException;
 import com.aaa.collector.market.indicator.usdkrw.UsdkrwCollectionService;
 import com.aaa.collector.market.indicator.vix.VixCollectionService;
+import java.math.BigDecimal;
 import java.time.LocalDate;
+import java.time.ZoneId;
 import java.util.List;
 import java.util.Optional;
 import java.util.function.Consumer;
@@ -45,12 +51,15 @@ import org.springframework.transaction.support.TransactionTemplate;
 @DisplayName("MarketIndicatorBackfillOrchestrator 단위 테스트")
 class MarketIndicatorBackfillOrchestratorTest {
 
+    private static final ZoneId KST = ZoneId.of("Asia/Seoul");
+
     @Mock private BackfillStatusRepository backfillStatusRepository;
     @Mock private MarketIndicatorRepository marketIndicatorRepository;
     @Mock private VixCollectionService vixCollectionService;
     @Mock private UsdkrwCollectionService usdkrwCollectionService;
     @Mock private TransactionTemplate transactionTemplate;
     @Mock private CoveredRangeService coveredRangeService;
+    @Mock private KoreaeximExchangeRateClient koreaeximExchangeRateClient;
 
     private MarketIndicatorBackfillOrchestrator orchestrator;
 
@@ -67,9 +76,11 @@ class MarketIndicatorBackfillOrchestratorTest {
                         vixCollectionService,
                         usdkrwCollectionService,
                         transactionTemplate,
-                        coveredRangeService);
+                        coveredRangeService,
+                        koreaeximExchangeRateClient);
         // @Value 필드는 DI가 없으므로 테스트용 값 직접 주입
         ReflectionTestUtils.setField(orchestrator, "staleWeekdayThreshold", 3);
+        ReflectionTestUtils.setField(orchestrator, "maxCallsPerRunUsdkrw", 500);
 
         // TransactionTemplate.executeWithoutResult 실제 Consumer 실행
         doAnswer(
@@ -94,6 +105,11 @@ class MarketIndicatorBackfillOrchestratorTest {
                         .build();
         ReflectionTestUtils.setField(s, "id", id);
         return s;
+    }
+
+    private MarketIndicatorRow sampleRow(LocalDate date) {
+        return new MarketIndicatorRow(
+                IndicatorCode.USDKRW, date, null, null, null, BigDecimal.ONE, "KOREAEXIM");
     }
 
     @Nested
@@ -156,17 +172,19 @@ class MarketIndicatorBackfillOrchestratorTest {
     }
 
     @Nested
-    @DisplayName("runBackfill — USDKRW 백필 (날짜 루프)")
+    @DisplayName("runBackfill — USDKRW 백필 (KOREAEXIM 직접 호출 날짜 루프, REQ-020~027)")
     class RunBackfillUsdkrw {
 
         @Test
-        @DisplayName("USDKRW PENDING — staleWeekdayCount 누적 후 COMPLETED (REQ-044)")
+        @DisplayName(
+                "USDKRW PENDING — staleWeekdayCount 누적 후 COMPLETED, KOREAEXIM 직접 호출만·체인 미경유 (REQ-020,"
+                        + " REQ-044, AC-10)")
         void usdkrw_staleThresholdReached_completed() {
             BackfillStatus status = buildStatus(2L, "USDKRW", BackfillStatusType.PENDING);
             when(backfillStatusRepository.findByStatusInAndTargetTypeOrderById(any(), anyString()))
                     .thenReturn(List.of(status));
-            when(usdkrwCollectionService.collectDailyForBackfill(any(LocalDate.class)))
-                    .thenReturn(0);
+            when(koreaeximExchangeRateClient.fetchDailyForBackfill(any(LocalDate.class)))
+                    .thenReturn(List.of());
             when(backfillStatusRepository.findById(2L)).thenReturn(Optional.of(mockManaged));
 
             orchestrator.runBackfill();
@@ -174,23 +192,28 @@ class MarketIndicatorBackfillOrchestratorTest {
             // stale threshold 도달 후 COMPLETED 처리
             verify(mockManaged, atLeastOnce())
                     .advance(eq(BackfillStatusType.COMPLETED), any(), anyInt(), anyInt());
+            // AC-10: 체인 경유 collectDailyForBackfill(Yahoo 폴백 가능)은 backward walk에서 절대 호출되지 않는다
+            verify(usdkrwCollectionService, never()).collectDailyForBackfill(any());
         }
 
         @Test
-        @DisplayName("USDKRW — 데이터 수신 시 staleCount 리셋")
+        @DisplayName("USDKRW — 데이터 수신 시 staleCount 리셋(saveBackfillRows 경유 저장)")
         void usdkrw_dataReceived_staleCountReset() {
             BackfillStatus status = buildStatus(2L, "USDKRW", BackfillStatusType.PENDING);
+            LocalDate today = LocalDate.now(KST);
             when(backfillStatusRepository.findByStatusInAndTargetTypeOrderById(any(), anyString()))
                     .thenReturn(List.of(status));
-            when(usdkrwCollectionService.collectDailyForBackfill(any(LocalDate.class)))
-                    .thenReturn(1) // 첫 호출: 데이터
-                    .thenReturn(0); // 이후: stale
+            when(koreaeximExchangeRateClient.fetchDailyForBackfill(any(LocalDate.class)))
+                    .thenReturn(List.of(sampleRow(today))) // 첫 호출: 데이터
+                    .thenReturn(List.of()); // 이후: stale
+            when(usdkrwCollectionService.saveBackfillRows(any())).thenReturn(1);
             when(backfillStatusRepository.findById(2L)).thenReturn(Optional.of(mockManaged));
 
             orchestrator.runBackfill();
 
             // 최소한 한 번은 advance 호출
             verify(mockManaged, atLeastOnce()).advance(any(), any(), anyInt(), anyInt());
+            verify(usdkrwCollectionService, atLeastOnce()).saveBackfillRows(any());
         }
 
         @Test
@@ -198,15 +221,17 @@ class MarketIndicatorBackfillOrchestratorTest {
         void usdkrw_lessThan10Days_noInProgressUpdate() {
             // staleWeekdayThreshold=3, 5일 데이터 수신 후 stale
             BackfillStatus status = buildStatus(2L, "USDKRW", BackfillStatusType.PENDING);
+            LocalDate today = LocalDate.now(KST);
             when(backfillStatusRepository.findByStatusInAndTargetTypeOrderById(any(), anyString()))
                     .thenReturn(List.of(status));
-            when(usdkrwCollectionService.collectDailyForBackfill(any(LocalDate.class)))
-                    .thenReturn(1) // 5회
-                    .thenReturn(1)
-                    .thenReturn(1)
-                    .thenReturn(1)
-                    .thenReturn(1)
-                    .thenReturn(0); // 이후 stale
+            when(koreaeximExchangeRateClient.fetchDailyForBackfill(any(LocalDate.class)))
+                    .thenReturn(List.of(sampleRow(today))) // 5회
+                    .thenReturn(List.of(sampleRow(today)))
+                    .thenReturn(List.of(sampleRow(today)))
+                    .thenReturn(List.of(sampleRow(today)))
+                    .thenReturn(List.of(sampleRow(today)))
+                    .thenReturn(List.of()); // 이후 stale
+            when(usdkrwCollectionService.saveBackfillRows(any())).thenReturn(1);
             when(backfillStatusRepository.findById(2L)).thenReturn(Optional.of(mockManaged));
 
             orchestrator.runBackfill();
@@ -217,6 +242,179 @@ class MarketIndicatorBackfillOrchestratorTest {
             // 루프 종료 후 COMPLETED 1회
             verify(mockManaged, times(1))
                     .advance(eq(BackfillStatusType.COMPLETED), any(), anyInt(), anyInt());
+        }
+
+        @Test
+        @DisplayName("정상 stale 종료(쿼터 사망 아님) — 그 밤 갭 walk 정상 실행 (REQ-028 반례)")
+        void usdkrw_normalCompletion_gapWalkStillRuns() {
+            BackfillStatus status = buildStatus(2L, "USDKRW", BackfillStatusType.PENDING);
+            when(backfillStatusRepository.findByStatusInAndTargetTypeOrderById(any(), anyString()))
+                    .thenReturn(List.of(status));
+            when(koreaeximExchangeRateClient.fetchDailyForBackfill(any(LocalDate.class)))
+                    .thenReturn(List.of());
+            when(backfillStatusRepository.findById(2L)).thenReturn(Optional.of(mockManaged));
+            when(backfillStatusRepository.findByTargetTypeAndTargetCodeAndDataTable(
+                            "MARKET_INDICATOR", "USDKRW", "market_indicators"))
+                    .thenReturn(Optional.of(status));
+
+            orchestrator.runBackfill();
+
+            verify(coveredRangeService)
+                    .walkGapForward(
+                            eq(status), any(UsdkrwCoveredGapFiller.class), any(LocalDate.class));
+        }
+    }
+
+    @Nested
+    @DisplayName("processUsdkrw — 앵커 재개 커서 시작 (REQ-025, REQ-026, AC-14)")
+    class UsdkrwAnchorResume {
+
+        @Test
+        @DisplayName("IN_PROGRESS + anchor 존재 — 커서 시작 = 앵커-1일, 오늘부터 재주행 안 함 (AC-14a)")
+        void inProgressWithAnchor_resumesFromAnchorMinusOne() {
+            LocalDate anchor = LocalDate.of(2015, 6, 10);
+            BackfillStatus status = buildStatus(2L, "USDKRW", BackfillStatusType.IN_PROGRESS);
+            ReflectionTestUtils.setField(status, "lastCollectedDate", anchor);
+            when(backfillStatusRepository.findByStatusInAndTargetTypeOrderById(any(), anyString()))
+                    .thenReturn(List.of(status));
+            when(koreaeximExchangeRateClient.fetchDailyForBackfill(any(LocalDate.class)))
+                    .thenReturn(List.of());
+            when(backfillStatusRepository.findById(2L)).thenReturn(Optional.of(mockManaged));
+
+            orchestrator.runBackfill();
+
+            ArgumentCaptor<LocalDate> dateCaptor = ArgumentCaptor.forClass(LocalDate.class);
+            verify(koreaeximExchangeRateClient, atLeastOnce())
+                    .fetchDailyForBackfill(dateCaptor.capture());
+            assertThat(dateCaptor.getAllValues().getFirst()).isEqualTo(anchor.minusDays(1));
+        }
+
+        @Test
+        @DisplayName("PENDING — 커서 시작 = 오늘(KST) 근방(AC-14b)")
+        void pending_startsFromToday() {
+            BackfillStatus status = buildStatus(2L, "USDKRW", BackfillStatusType.PENDING);
+            when(backfillStatusRepository.findByStatusInAndTargetTypeOrderById(any(), anyString()))
+                    .thenReturn(List.of(status));
+            when(koreaeximExchangeRateClient.fetchDailyForBackfill(any(LocalDate.class)))
+                    .thenReturn(List.of());
+            when(backfillStatusRepository.findById(2L)).thenReturn(Optional.of(mockManaged));
+
+            orchestrator.runBackfill();
+
+            ArgumentCaptor<LocalDate> dateCaptor = ArgumentCaptor.forClass(LocalDate.class);
+            verify(koreaeximExchangeRateClient, atLeastOnce())
+                    .fetchDailyForBackfill(dateCaptor.capture());
+            LocalDate today = LocalDate.now(KST);
+            // 커서 초기화 직후 while문 내 주말 skip으로 최대 이틀 당겨질 수 있어 근접 범위로 검증
+            assertThat(dateCaptor.getAllValues().getFirst()).isBetween(today.minusDays(2), today);
+        }
+
+        @Test
+        @DisplayName("IN_PROGRESS + anchor=NULL(첫 저장 전 중단) — 오늘(KST) 폴백 (AC-14c)")
+        void inProgressWithNullAnchor_startsFromTodayFallback() {
+            BackfillStatus status = buildStatus(2L, "USDKRW", BackfillStatusType.IN_PROGRESS);
+            when(backfillStatusRepository.findByStatusInAndTargetTypeOrderById(any(), anyString()))
+                    .thenReturn(List.of(status));
+            when(koreaeximExchangeRateClient.fetchDailyForBackfill(any(LocalDate.class)))
+                    .thenReturn(List.of());
+            when(backfillStatusRepository.findById(2L)).thenReturn(Optional.of(mockManaged));
+
+            orchestrator.runBackfill();
+
+            ArgumentCaptor<LocalDate> dateCaptor = ArgumentCaptor.forClass(LocalDate.class);
+            verify(koreaeximExchangeRateClient, atLeastOnce())
+                    .fetchDailyForBackfill(dateCaptor.capture());
+            LocalDate today = LocalDate.now(KST);
+            assertThat(dateCaptor.getAllValues().getFirst()).isBetween(today.minusDays(2), today);
+        }
+    }
+
+    @Nested
+    @DisplayName("processUsdkrw — 회차 캡 (REQ-021, REQ-022, AC-11)")
+    class UsdkrwCapReached {
+
+        @Test
+        @DisplayName(
+                "캡 도달 — IN_PROGRESS 저장 + backward walk 즉시 종료 + 그 밤 갭 walk skip (REQ-021, REQ-022, REQ-028)")
+        void capReached_savesInProgressAndSkipsGapWalk() {
+            BackfillStatus status = buildStatus(2L, "USDKRW", BackfillStatusType.PENDING);
+            ReflectionTestUtils.setField(orchestrator, "maxCallsPerRunUsdkrw", 2);
+            LocalDate today = LocalDate.now(KST);
+            when(backfillStatusRepository.findByStatusInAndTargetTypeOrderById(any(), anyString()))
+                    .thenReturn(List.of(status));
+            // 매 호출 데이터 수신 — stale 임계에 먼저 도달하지 않고 캡이 먼저 발동함을 검증
+            when(koreaeximExchangeRateClient.fetchDailyForBackfill(any(LocalDate.class)))
+                    .thenReturn(List.of(sampleRow(today)));
+            when(usdkrwCollectionService.saveBackfillRows(any())).thenReturn(1);
+            when(backfillStatusRepository.findById(2L)).thenReturn(Optional.of(mockManaged));
+
+            orchestrator.runBackfill();
+
+            verify(koreaeximExchangeRateClient, times(2))
+                    .fetchDailyForBackfill(any(LocalDate.class));
+            verify(mockManaged)
+                    .advance(
+                            eq(BackfillStatusType.IN_PROGRESS),
+                            any(LocalDate.class),
+                            eq(0),
+                            anyInt());
+            verify(mockManaged, never())
+                    .advance(eq(BackfillStatusType.COMPLETED), any(), anyInt(), anyInt());
+            // REQ-028: 캡 도달 회차는 그 밤 갭 walk를 실행하지 않는다
+            verify(coveredRangeService, never()).walkGapForward(any(), any(), any());
+        }
+    }
+
+    @Nested
+    @DisplayName("processUsdkrw — 쿼터 예외 백스톱 (REQ-023, AC-12)")
+    class UsdkrwQuotaBackstop {
+
+        @Test
+        @DisplayName(
+                "쿼터 예외 발생 — 즉시 IN_PROGRESS 저장 + backward walk 중단 + 그 밤 갭 walk skip (REQ-023, REQ-028)")
+        void quotaException_savesInProgressAndSkipsGapWalk() {
+            BackfillStatus status = buildStatus(2L, "USDKRW", BackfillStatusType.PENDING);
+            LocalDate today = LocalDate.now(KST);
+            when(backfillStatusRepository.findByStatusInAndTargetTypeOrderById(any(), anyString()))
+                    .thenReturn(List.of(status));
+            when(koreaeximExchangeRateClient.fetchDailyForBackfill(any(LocalDate.class)))
+                    .thenReturn(List.of(sampleRow(today)))
+                    .thenThrow(new KoreaeximQuotaExhaustedException("쿼터 소진(result:4)"));
+            when(usdkrwCollectionService.saveBackfillRows(any())).thenReturn(1);
+            when(backfillStatusRepository.findById(2L)).thenReturn(Optional.of(mockManaged));
+
+            orchestrator.runBackfill();
+
+            // 쿼터 예외 직후 backward walk 중단 — 추가 backward 호출 없음(정확히 2회: 정상 1회 + 예외 1회)
+            verify(koreaeximExchangeRateClient, times(2))
+                    .fetchDailyForBackfill(any(LocalDate.class));
+            verify(mockManaged)
+                    .advance(
+                            eq(BackfillStatusType.IN_PROGRESS),
+                            any(LocalDate.class),
+                            eq(0),
+                            anyInt());
+            verify(mockManaged, never())
+                    .advance(eq(BackfillStatusType.COMPLETED), any(), anyInt(), anyInt());
+            // REQ-028: 쿼터 예외 회차는 그 밤 갭 walk를 실행하지 않는다
+            verify(coveredRangeService, never()).walkGapForward(any(), any(), any());
+        }
+
+        @Test
+        @DisplayName("쿼터 예외는 REQ-045 지표 단위 예외 격리 경로(FAILED)로 새지 않는다 — IN_PROGRESS로만 저장")
+        void quotaException_doesNotFallThroughToGenericFailureHandling() {
+            BackfillStatus status = buildStatus(2L, "USDKRW", BackfillStatusType.PENDING);
+            when(backfillStatusRepository.findByStatusInAndTargetTypeOrderById(any(), anyString()))
+                    .thenReturn(List.of(status));
+            when(koreaeximExchangeRateClient.fetchDailyForBackfill(any(LocalDate.class)))
+                    .thenThrow(new KoreaeximQuotaExhaustedException("쿼터 소진(result:4)"));
+            when(backfillStatusRepository.findById(2L)).thenReturn(Optional.of(mockManaged));
+
+            assertThatCode(orchestrator::runBackfill).doesNotThrowAnyException();
+
+            verify(mockManaged, never()).fail(any(), anyString());
+            verify(mockManaged)
+                    .advance(eq(BackfillStatusType.IN_PROGRESS), any(), anyInt(), anyInt());
         }
     }
 
@@ -234,8 +432,8 @@ class MarketIndicatorBackfillOrchestratorTest {
             when(backfillStatusRepository.findByStatusInAndTargetTypeOrderById(any(), anyString()))
                     .thenReturn(List.of(vixStatus, usdkrwStatus));
             when(vixCollectionService.collectHistory()).thenThrow(new RuntimeException("VIX 실패"));
-            when(usdkrwCollectionService.collectDailyForBackfill(any(LocalDate.class)))
-                    .thenReturn(0);
+            when(koreaeximExchangeRateClient.fetchDailyForBackfill(any(LocalDate.class)))
+                    .thenReturn(List.of());
             when(backfillStatusRepository.findById(1L)).thenReturn(Optional.of(mockManagedVix));
             when(backfillStatusRepository.findById(2L)).thenReturn(Optional.of(mockManagedUsdkrw));
 
