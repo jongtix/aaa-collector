@@ -32,6 +32,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.transaction.TransactionStatus;
 import org.springframework.transaction.support.TransactionCallback;
 import org.springframework.transaction.support.TransactionTemplate;
 
@@ -51,6 +52,7 @@ class FinraCdnCoveredGapFillerTest {
     @Mock private FinraCdnDailyLoader loader;
     @Mock private BackfillStatusRepository backfillStatusRepository;
     @Mock private TransactionTemplate transactionTemplate;
+    @Mock private TransactionStatus transactionStatus;
 
     /** 라이브 REST 클라이언트 — Filler는 이 타입을 전혀 참조하지 않는다(구조적으로 호출 불가, ②에서 재확인). */
     @Mock private FinraShortSaleClient finraShortSaleClient;
@@ -183,7 +185,7 @@ class FinraCdnCoveredGapFillerTest {
                     .thenAnswer(
                             invocation -> {
                                 TransactionCallback<?> callback = invocation.getArgument(0);
-                                return callback.doInTransaction(null);
+                                return callback.doInTransaction(transactionStatus);
                             });
         }
 

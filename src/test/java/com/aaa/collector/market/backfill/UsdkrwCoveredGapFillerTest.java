@@ -35,6 +35,7 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.Captor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.transaction.TransactionStatus;
 import org.springframework.transaction.support.TransactionCallback;
 import org.springframework.transaction.support.TransactionTemplate;
 
@@ -137,6 +138,7 @@ class UsdkrwCoveredGapFillerTest {
         @Mock private UsMarketOpenGate usMarketOpenGate;
         @Mock private BackfillStatusRepository backfillStatusRepository;
         @Mock private TransactionTemplate transactionTemplate;
+        @Mock private TransactionStatus transactionStatus;
 
         private CoveredRangeService coveredRangeService;
 
@@ -153,7 +155,7 @@ class UsdkrwCoveredGapFillerTest {
                     .thenAnswer(
                             invocation -> {
                                 TransactionCallback<?> callback = invocation.getArgument(0);
-                                return callback.doInTransaction(null);
+                                return callback.doInTransaction(transactionStatus);
                             });
         }
 
