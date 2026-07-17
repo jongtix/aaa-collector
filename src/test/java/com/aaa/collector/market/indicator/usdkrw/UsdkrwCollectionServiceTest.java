@@ -115,4 +115,35 @@ class UsdkrwCollectionServiceTest {
             assertThat(count).isEqualTo(2);
         }
     }
+
+    @Nested
+    @DisplayName(
+            "saveBackfillRows — 백필 backward walk 전용 저장 진입점 (SPEC-COLLECTOR-MARKETIND-004 REQ-020)")
+    class SaveBackfillRows {
+
+        @Test
+        @DisplayName("조회 없이 전달받은 행만 저장 — usdkrwChain 미호출")
+        void savesGivenRows_withoutFetchingFromChain() {
+            LocalDate date = LocalDate.of(2015, 6, 10);
+
+            int kept = service.saveBackfillRows(List.of(usdkrwRow(date)));
+
+            assertThat(kept).isEqualTo(1);
+            verify(marketIndicatorInserter).insertBatch(inserterCaptor.capture());
+            List<MarketIndicator> inserted =
+                    inserterCaptor.getAllValues().stream().flatMap(List::stream).toList();
+            assertThat(inserted).hasSize(1);
+            assertThat(inserted.getFirst().getIndicatorCode()).isEqualTo(IndicatorCode.USDKRW);
+            verify(usdkrwChain, never()).fetchDaily(any());
+        }
+
+        @Test
+        @DisplayName("빈 목록 — insertBatch 미호출, kept=0")
+        void emptyRows_noInsert() {
+            int kept = service.saveBackfillRows(List.of());
+
+            assertThat(kept).isEqualTo(0);
+            verify(marketIndicatorInserter, never()).insertBatch(any());
+        }
+    }
 }

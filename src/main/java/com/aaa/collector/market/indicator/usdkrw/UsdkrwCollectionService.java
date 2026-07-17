@@ -91,6 +91,25 @@ public class UsdkrwCollectionService {
         return saveRowsWithRaw(rows);
     }
 
+    /**
+     * 백필 오케스트레이터가 KOREAEXIM 백필 전용 메서드로 직접 조회한 행을 저장한다 (SPEC-COLLECTOR-MARKETIND-004
+     * REQ-MARKETIND4-020, TASK-B5).
+     *
+     * <p>{@link #collectDailyForBackfill(LocalDate)}와 달리 이 메서드는 조회를 수행하지 않는다 — 호출자(백필 backward
+     * walk)가 {@code KoreaeximExchangeRateClient.fetchDailyForBackfill}로 이미 조회한 행을 전달하면 기존 검증·INSERT
+     * IGNORE 저장 로직({@link #saveRows(List)})만 재사용한다. {@code collectDailyForBackfill}(체인 경유, Yahoo 폴백
+     * 가능)은 라이브 갭 walk({@code UsdkrwCoveredGapFiller})가 계속 사용하므로 이 메서드 추가는 그 경로에 영향이 없다(무회귀).
+     *
+     * @param rows KOREAEXIM 백필 전용 메서드로 이미 조회한 행 목록
+     * @return 검증 통과·저장 시도 행 수(§2.6 kept, 중복 삽입 시도 포함)
+     */
+    // @MX:NOTE: [AUTO] 조회 없이 저장만 담당하는 백필 backward walk 전용 진입점 — 오케스트레이터가 KOREAEXIM
+    // 클라이언트를 직접 호출(REQ-020)해 얻은 행을 여기로 전달한다. 신규 fetch 로직 없음, 기존 saveRows 재사용.
+    // @MX:SPEC: SPEC-COLLECTOR-MARKETIND-004 REQ-MARKETIND4-020
+    public int saveBackfillRows(List<MarketIndicatorRow> rows) {
+        return saveRows(rows);
+    }
+
     private int saveRows(List<MarketIndicatorRow> rows) {
         return saveRowsWithRaw(rows).kept();
     }
