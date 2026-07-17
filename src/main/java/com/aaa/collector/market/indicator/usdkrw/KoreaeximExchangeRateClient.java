@@ -119,6 +119,10 @@ public class KoreaeximExchangeRateClient implements MarketIndicatorSource {
      * @return USD 행 목록 (성공 시 1건, 정상 빈 결과면 빈 리스트)
      * @throws KoreaeximQuotaExhaustedException KOREAEXIM 응답이 쿼터 소진(`result:4`)일 때
      */
+    // @MX:NOTE: [AUTO] empty-retry(전 영업일 역산)를 사용하지 않는다 — 백필 walk는 커서가 스스로 전날로 이동하므로
+    // empty-retry는 순수 쿼터 낭비(빈 날짜 1건당 최대 6콜). 라이브 fetchDaily는 이 메서드와 무관하게 empty-retry를
+    // 그대로 유지한다(무영향).
+    // @MX:SPEC: SPEC-COLLECTOR-MARKETIND-004 REQ-MARKETIND4-012, REQ-MARKETIND4-014
     public List<MarketIndicatorRow> fetchDailyForBackfill(LocalDate date) {
         if (apiKey == null || apiKey.isBlank()) {
             log.warn("[koreaexim] KOREAEXIM_API_KEY 미설정 — 빈 결과 반환 (W-5, MA-03)");
@@ -153,6 +157,10 @@ public class KoreaeximExchangeRateClient implements MarketIndicatorSource {
      * KOREAEXIM 쿼터 소진(`result:4`) 판별(REQ-010). 전 필드 null인 1원소 배열이고 그 {@code result} 코드가 {@code 4}인
      * 경우를 정상 빈 결과(길이 0 배열)와 구분한다.
      */
+    // @MX:NOTE: [AUTO] result 코드 판별 규칙 — 1=성공, 4=쿼터 소진/차단(전 필드 null 1원소 배열), []=정상 빈 결과(주말·휴일·
+    // 11시 이전 당일). fetchOnDate(라이브)는 result:4를 계속 빈 결과로 취급해 empty-retry·체인 폴백을 그대로 타지만,
+    // fetchDailyForBackfill(백필)은 이 판별로 KoreaeximQuotaExhaustedException을 던져 정상 빈 결과와 구분한다.
+    // @MX:SPEC: SPEC-COLLECTOR-MARKETIND-004 REQ-MARKETIND4-010, REQ-MARKETIND4-011
     private static boolean isQuotaExhausted(List<Map<String, String>> body) {
         return body.size() == 1 && "4".equals(body.getFirst().get("result"));
     }

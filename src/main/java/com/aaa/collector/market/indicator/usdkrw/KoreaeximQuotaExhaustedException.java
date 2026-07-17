@@ -12,6 +12,11 @@ import com.aaa.collector.common.exception.CollectorException;
  * KoreaeximExchangeRateClient#fetchDaily(java.time.LocalDate)}는 이 예외를 던지지 않고 result:4를 계속 빈 결과로
  * 취급한다(empty-retry·체인 폴백 유지, 무회귀).
  */
+// @MX:NOTE: [AUTO] 소스 체인(MarketIndicatorSourceChain)에서 삼켜지지 않고 백필 오케스트레이터까지 그대로 전파돼야
+// 한다 — fetchDailyForBackfill이 체인을 경유하지 않고 오케스트레이터가 직접 호출하는 구조이므로(REQ-012), 체인의
+// Yahoo 폴백 흡수 경로 자체가 없다. 오케스트레이터는 이 예외를 캡(REQ-022)과 동급의 백스톱으로 받아 진행점을
+// IN_PROGRESS 저장 후 그 회차 backward walk를 중단한다(REQ-023).
+// @MX:SPEC: SPEC-COLLECTOR-MARKETIND-004 REQ-MARKETIND4-012
 public class KoreaeximQuotaExhaustedException extends CollectorException {
 
     /**
