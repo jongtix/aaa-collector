@@ -110,6 +110,7 @@ class MarketBatchSchedulerTest {
     class NormalFlow {
 
         @Test
+        @SuppressWarnings("PMD.UnitTestContainsTooManyAsserts") // 6종 고정 순서 전체 검증
         @DisplayName(
                 "6종 모두 호출 — sectorIndex → compInterest → marketFunds → dividendSchedule →"
                         + " revSplit → vix")

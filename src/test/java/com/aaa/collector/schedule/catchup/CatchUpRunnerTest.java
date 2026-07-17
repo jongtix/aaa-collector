@@ -640,7 +640,7 @@ class CatchUpRunnerTest {
                             .findFirst()
                             .orElseThrow();
 
-            Optional<LocalDateTime> result = usdkrwUnit.lastLoadSuppliers().get(0).get();
+            Optional<LocalDateTime> result = usdkrwUnit.lastLoadSuppliers().getFirst().get();
 
             assertThat(result).contains(fresh);
         }

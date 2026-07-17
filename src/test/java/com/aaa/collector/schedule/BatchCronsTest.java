@@ -155,6 +155,7 @@ class BatchCronsTest {
 
     @Nested
     @DisplayName("원본 리터럴 등가 단언 (AC-14) — 스케줄러 원본과 일치해야 드리프트를 차단한다")
+    @SuppressWarnings("PMD.TooManyMethods") // 15개 배치 단위 × cron/zone 리터럴 등가 검증 — 배치 단위 증가에 비례
     class LiteralEquality {
 
         @Test
