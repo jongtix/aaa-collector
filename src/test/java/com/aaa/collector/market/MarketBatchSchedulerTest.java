@@ -5,8 +5,10 @@ import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.inOrder;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -27,6 +29,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.InOrder;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
@@ -99,18 +102,18 @@ class MarketBatchSchedulerTest {
     }
 
     // ────────────────────────────────────────────────────────────────────
-    // 정상 수집 흐름 — 4종 고정 순서 (REQ-BATCH3-005)
+    // 정상 수집 흐름 — 6종 고정 순서 (REQ-BATCH3-005). USDKRW는 TASK-C3에서 분리됨
     // ────────────────────────────────────────────────────────────────────
 
     @Nested
-    @DisplayName("정상 수집 흐름 — 7종 고정 순서 (REQ-BATCH3-005, REQ-BATCH5-001, REQ-001)")
+    @DisplayName("정상 수집 흐름 — 6종 고정 순서 (REQ-BATCH3-005, REQ-BATCH5-001, REQ-005)")
     class NormalFlow {
 
         @Test
-        @SuppressWarnings("PMD.UnitTestContainsTooManyAsserts") // 7종 고정 순서 전체 검증
         @DisplayName(
-                "7종 모두 호출 — sectorIndex → compInterest → marketFunds → dividendSchedule → revSplit → vix → usdkrw")
-        void collectMarket_callsAllSevenServicesInOrder() {
+                "6종 모두 호출 — sectorIndex → compInterest → marketFunds → dividendSchedule →"
+                        + " revSplit → vix")
+        void collectMarket_callsAllSixServicesInOrder() {
             // Act
             scheduler.collectMarket();
 
@@ -122,7 +125,6 @@ class MarketBatchSchedulerTest {
                             marketFundsCollectionService,
                             dividendScheduleCollectionService,
                             revSplitCollectionService,
-                            usdkrwCollectionService,
                             vixCollectionService);
             inOrder.verify(sectorIndexCollectionService).collect(any(LocalDate.class));
             inOrder.verify(compInterestCollectionService).collect();
@@ -131,23 +133,14 @@ class MarketBatchSchedulerTest {
             inOrder.verify(revSplitCollectionService)
                     .collect(any(LocalDate.class), any(LocalDate.class));
             inOrder.verify(vixCollectionService).collectDaily(any(LocalDate.class));
-            inOrder.verify(usdkrwCollectionService).collectDaily(any(LocalDate.class));
         }
 
         @Test
-        @DisplayName("USDKRW가 revSplit(T7)·VIX(T9) 다음, 배치 마지막 순서로 호출됨 (aaa-infra#105)")
-        void usdkrw_calledLast_afterRevSplitAndVix() {
+        @DisplayName("TASK-C3: collectMarket()은 USDKRW를 더 이상 호출하지 않는다 (전용 cron으로 분리, REQ-005)")
+        void collectMarket_doesNotCallUsdkrw() {
             scheduler.collectMarket();
 
-            InOrder inOrder =
-                    inOrder(
-                            revSplitCollectionService,
-                            vixCollectionService,
-                            usdkrwCollectionService);
-            inOrder.verify(revSplitCollectionService)
-                    .collect(any(LocalDate.class), any(LocalDate.class));
-            inOrder.verify(vixCollectionService).collectDaily(any(LocalDate.class));
-            inOrder.verify(usdkrwCollectionService).collectDaily(any(LocalDate.class));
+            verify(usdkrwCollectionService, never()).collectDaily(any(LocalDate.class));
         }
     }
 
@@ -228,8 +221,8 @@ class MarketBatchSchedulerTest {
         }
 
         @Test
-        @DisplayName("모든 7종 예외 — 스케줄러 스레드 종료 없음")
-        void allSevenServicesException_schedulerThreadSurvives() {
+        @DisplayName("모든 6종 예외 — 스케줄러 스레드 종료 없음")
+        void allSixServicesException_schedulerThreadSurvives() {
             // Arrange
             when(sectorIndexCollectionService.collect(any(LocalDate.class)))
                     .thenThrow(new RuntimeException("T3 실패"));
@@ -240,9 +233,6 @@ class MarketBatchSchedulerTest {
                     .thenThrow(new RuntimeException("T6 실패"));
             when(revSplitCollectionService.collect(any(LocalDate.class), any(LocalDate.class)))
                     .thenThrow(new RuntimeException("T7 실패"));
-            doThrow(new RuntimeException("T8 실패"))
-                    .when(usdkrwCollectionService)
-                    .collectDaily(any(LocalDate.class));
             doThrow(new RuntimeException("T9 실패"))
                     .when(vixCollectionService)
                     .collectDaily(any(LocalDate.class));
@@ -270,45 +260,27 @@ class MarketBatchSchedulerTest {
     }
 
     // ────────────────────────────────────────────────────────────────────
-    // 배치 계측 (REQ-OBSV-020/021)
+    // 배치 계측 (REQ-OBSV-020/021) — USDKRW 제외 6종 합산
     // ────────────────────────────────────────────────────────────────────
 
     @Nested
-    @DisplayName("배치 계측 — 7종 합산 (REQ-OBSV-020/021)")
+    @DisplayName("배치 계측 — 6종 합산 (REQ-OBSV-020/021, TASK-C3)")
     class BatchMetricsRecording {
 
         @Test
-        @DisplayName("7종 정상 완료 — 합산 결과를 batch=market-indicators로 1회 기록")
+        @DisplayName("6종 정상 완료 — 합산 결과를 batch=market-indicators로 1회 기록 (USDKRW 제외)")
         void recordsBatchMetricsOnCompletion() {
             // setUp의 stub 기준:
             // sectorIndex: 2/2/0, compInterest: 8/8/0, marketFunds: 9/9/0
-            // dividend: 10/8/(1+1=2skip), revSplit: 21/5/(14+2=16skip)
-            // usdkrw: void 성공(1/1/0), vix: void 성공(1/1/0)
-            // 합계: attempted=2+8+9+10+21+1+1=52, succeeded=2+8+9+8+5+1+1=34
-            // skip=0+0+0+2+16+0+0=18, fail=52-34-18=0
+            // dividend: 10/8/(1+1=2skip), revSplit: 21/5/(14+2=16skip), vix: void 성공(1/1/0)
+            // 합계: attempted=2+8+9+10+21+1=51, succeeded=2+8+9+8+5+1=33
+            // skip=0+0+0+2+16+0=18, fail=51-33-18=0
 
             // Act
             scheduler.collectMarket();
 
             // Assert
-            verify(batchMetrics).recordCompletion("market-indicators", 52, 34, 0, 18);
-        }
-
-        @Test
-        @DisplayName("usdkrw 예외 — fail=1 계상, 나머지 합산, 1회 recordCompletion 호출")
-        void usdkrwException_countsAsOneFail() {
-            // Arrange — usdkrw 예외
-            doThrow(new RuntimeException("usdkrw 장애"))
-                    .when(usdkrwCollectionService)
-                    .collectDaily(any(LocalDate.class));
-
-            // Act
-            scheduler.collectMarket();
-
-            // Assert — usdkrw: attempted=1, fail=1 / 나머지 정상
-            // 합계: attempted=2+8+9+10+21+1+1=52, succeeded=2+8+9+8+5+0+1=33
-            // skip=18, fail=52-33-18=1
-            verify(batchMetrics).recordCompletion("market-indicators", 52, 33, 1, 18);
+            verify(batchMetrics).recordCompletion("market-indicators", 51, 33, 0, 18);
         }
 
         @Test
@@ -323,12 +295,12 @@ class MarketBatchSchedulerTest {
             scheduler.collectMarket();
 
             // Assert — vix: attempted=1, fail=1 / 나머지 정상
-            // 합계: attempted=52, succeeded=33, skip=18, fail=1
-            verify(batchMetrics).recordCompletion("market-indicators", 52, 33, 1, 18);
+            // 합계: attempted=51, succeeded=32, skip=18, fail=1
+            verify(batchMetrics).recordCompletion("market-indicators", 51, 32, 1, 18);
         }
 
         @Test
-        @DisplayName("모든 7종 예외 — attempted=7, fail=7, 1회 recordCompletion 호출")
+        @DisplayName("모든 6종 예외 — attempted=6, fail=6, 1회 recordCompletion 호출")
         void allException_countsAllAsFail() {
             // Arrange — 모든 종 예외
             when(sectorIndexCollectionService.collect(any(LocalDate.class)))
@@ -340,9 +312,6 @@ class MarketBatchSchedulerTest {
                     .thenThrow(new RuntimeException("T6"));
             when(revSplitCollectionService.collect(any(LocalDate.class), any(LocalDate.class)))
                     .thenThrow(new RuntimeException("T7"));
-            doThrow(new RuntimeException("T8"))
-                    .when(usdkrwCollectionService)
-                    .collectDaily(any(LocalDate.class));
             doThrow(new RuntimeException("T9"))
                     .when(vixCollectionService)
                     .collectDaily(any(LocalDate.class));
@@ -350,8 +319,8 @@ class MarketBatchSchedulerTest {
             // Act
             scheduler.collectMarket();
 
-            // Assert — attempted=7(각 1), fail=7, success=0, skip=0
-            verify(batchMetrics).recordCompletion("market-indicators", 7, 0, 7, 0);
+            // Assert — attempted=6(각 1), fail=6, success=0, skip=0
+            verify(batchMetrics).recordCompletion("market-indicators", 6, 0, 6, 0);
         }
 
         @Test
@@ -365,9 +334,9 @@ class MarketBatchSchedulerTest {
             scheduler.collectMarket();
 
             // Assert — sectorIndex: attempted=1, fail=1 / 나머지 정상
-            // 합계: attempted=1+8+9+10+21+1+1=51, succeeded=0+8+9+8+5+1+1=32, skip=18,
-            // fail=51-32-18=1
-            verify(batchMetrics).recordCompletion("market-indicators", 51, 32, 1, 18);
+            // 합계: attempted=1+8+9+10+21+1=50, succeeded=0+8+9+8+5+1=31, skip=18,
+            // fail=50-31-18=1
+            verify(batchMetrics).recordCompletion("market-indicators", 50, 31, 1, 18);
         }
 
         @Test
@@ -377,6 +346,71 @@ class MarketBatchSchedulerTest {
 
             verify(batchMetrics)
                     .recordCompletion(anyString(), anyLong(), anyLong(), anyLong(), anyLong());
+        }
+    }
+
+    // ────────────────────────────────────────────────────────────────────
+    // TASK-C2: USDKRW 전용 배치 — 10:30 KST cron + D-1 파생
+    // ────────────────────────────────────────────────────────────────────
+
+    @Nested
+    @DisplayName("USDKRW 전용 배치 (SPEC-COLLECTOR-MARKETIND-004 TASK-C2, REQ-001/-004/-007c)")
+    class UsdkrwDailyBatch {
+
+        @Test
+        @DisplayName("cron='0 30 10 * * MON-FRI', zone='Asia/Seoul'")
+        void collectUsdkrwDaily_hasCorrectScheduledAnnotation() throws NoSuchMethodException {
+            Method method = MarketBatchScheduler.class.getMethod("collectUsdkrwDaily");
+            Scheduled scheduled = method.getAnnotation(Scheduled.class);
+
+            assertThat(scheduled).isNotNull();
+            assertThat(scheduled.cron()).isEqualTo("0 30 10 * * MON-FRI");
+            assertThat(scheduled.zone()).isEqualTo("Asia/Seoul");
+        }
+
+        @Test
+        @DisplayName("fixedDelay/fixedRate 미사용 — cron만 사용 (ADR-008)")
+        void collectUsdkrwDaily_noFixedDelayOrRate() throws NoSuchMethodException {
+            Method method = MarketBatchScheduler.class.getMethod("collectUsdkrwDaily");
+            Scheduled scheduled = method.getAnnotation(Scheduled.class);
+
+            assertThat(scheduled.fixedDelay()).isEqualTo(-1L);
+            assertThat(scheduled.fixedRate()).isEqualTo(-1L);
+        }
+
+        @Test
+        @DisplayName("D-1 파생 — usdkrwCollectionService.collectDaily(today.minusDays(1)) 호출")
+        void collectUsdkrwDaily_callsWithYesterday() {
+            // Act
+            scheduler.collectUsdkrwDaily();
+
+            // Assert — 오늘이 아닌 D-1 날짜로 호출됐는지 검증
+            ArgumentCaptor<LocalDate> dateCaptor = ArgumentCaptor.forClass(LocalDate.class);
+            verify(usdkrwCollectionService).collectDaily(dateCaptor.capture());
+            assertThat(dateCaptor.getValue()).isEqualTo(LocalDate.now().minusDays(1));
+        }
+
+        @Test
+        @DisplayName("정상 완료 — batch=market-usdkrw로 1/1/0/0 기록")
+        void collectUsdkrwDaily_recordsSuccessMetrics() {
+            scheduler.collectUsdkrwDaily();
+
+            verify(batchMetrics)
+                    .recordCompletion(eq("market-usdkrw"), eq(1L), eq(1L), eq(0L), eq(0L));
+        }
+
+        @Test
+        @DisplayName("예외 — fail=1 계상, 스케줄러 스레드로 전파 안 됨")
+        void collectUsdkrwDaily_exceptionIsolated() {
+            // Arrange
+            doThrow(new RuntimeException("usdkrw 장애"))
+                    .when(usdkrwCollectionService)
+                    .collectDaily(any(LocalDate.class));
+
+            // Act & Assert
+            assertThatCode(scheduler::collectUsdkrwDaily).doesNotThrowAnyException();
+            verify(batchMetrics)
+                    .recordCompletion(eq("market-usdkrw"), eq(1L), eq(0L), eq(1L), eq(0L));
         }
     }
 }

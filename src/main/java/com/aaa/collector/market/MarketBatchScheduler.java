@@ -20,12 +20,14 @@ import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
 /**
- * 시장지표 묶음 스케줄러 (T8, REQ-BATCH3-001).
+ * 시장지표 묶음 스케줄러 (REQ-BATCH3-001).
  *
  * <p>평일 17:05 KST({@code 0 5 17 * * MON-FRI}) — 16:00 일봉+수급 인라인 체인과 1시간 분리(aaa-infra#105, KOREAEXIM
  * 장주기 재시도 여유 확보를 위해 17:00→17:05로 조정).
  *
- * <p>업종지수(T3)→금리(T4)→증시자금(T5)→배당증자(T6)→액면교체(T7, REQ-BATCH5-001) 고정 순서 순차 호출.
+ * <p>업종지수(T3)→금리(T4)→증시자금(T5)→배당증자(T6)→액면교체(T7, REQ-BATCH5-001)→VIX(T9) 고정 순서 순차 호출. USDKRW(T8)는
+ * SPEC-COLLECTOR-MARKETIND-004로 {@link #collectUsdkrwDaily()} 전용 cron(평일 10:30 KST)으로 분리됐다 — D-1
+ * 파생.
  *
  * <p>{@code fixedDelay}/{@code fixedRate} 미사용 — Virtual Threads 버그 회피(ADR-008, REQ-BATCH3-003). 종
  * 단위 예외 격리 — 한 종 실패가 다음 종·스케줄러 스레드를 막지 않음(REQ-BATCH3-004). {@code stream:daily:complete}
@@ -54,6 +56,11 @@ public class MarketBatchScheduler {
     /** 시장지표 묶음 배치 계측 라벨 (REQ-OBSV-020/021). */
     private static final String BATCH_LABEL = "market-indicators";
 
+    // @MX:NOTE: [AUTO] USDKRW 전용 배치 라벨 — market-usdkrw 워터마크 시리즈(WatermarkSeries)와 명명 일관성
+    // @MX:REASON: [AUTO] SPEC-COLLECTOR-MARKETIND-004 REQ-002/-008
+    /** USDKRW 전용 배치 계측 라벨 (SPEC-COLLECTOR-MARKETIND-004). */
+    private static final String USDKRW_BATCH_LABEL = "market-usdkrw";
+
     private final SectorIndexCollectionService sectorIndexCollectionService;
     private final CompInterestCollectionService compInterestCollectionService;
     private final MarketFundsCollectionService marketFundsCollectionService;
@@ -68,15 +75,20 @@ public class MarketBatchScheduler {
      *
      * <p>예외 흡수: 각 종의 예외가 전파되어 스케줄러 스레드가 종료되는 것을 방지한다. 각 종 예외는 다음 종 수집을 막지 않는다(REQ-BATCH3-004).
      *
-     * <p>계측 누적 전략: 7종 결과를 collectMarket() 수준에서 합산하여 1회 recordCompletion 호출. void 반환 종(usdkrw/vix)은
-     * 성공 시 +1, 예외 시 attempted+1만 증가(fail 자동 계상). REQ-OBSV-020/021.
+     * <p>계측 누적 전략: 6종 결과를 collectMarket() 수준에서 합산하여 1회 recordCompletion 호출. void 반환 종(vix)은 성공 시
+     * +1, 예외 시 attempted+1만 증가(fail 자동 계상). REQ-OBSV-020/021.
+     *
+     * <p>USDKRW는 SPEC-COLLECTOR-MARKETIND-004(TASK-C3)로 {@link #collectUsdkrwDaily()} 전용 cron(10:30
+     * KST)으로 분리됐다 — 6종 카운터 무회귀(fan_in·트랜잭션 경계 무변경).
      */
+    // @MX:NOTE: [AUTO] 6종 카운터 무회귀 — USDKRW 분리(TASK-C3) 이후에도 나머지 6종 순서·예외격리·recordCompletion 기여 무변경
+    // @MX:REASON: [AUTO] SPEC-COLLECTOR-MARKETIND-004 REQ-005 — collectUsdkrw 호출·누적만 제거, 6종 로직 무수정
     @Scheduled(cron = BatchCrons.MARKET_INDICATORS_CRON, zone = BatchCrons.MARKET_INDICATORS_ZONE)
     public void collectMarket() {
         LocalDate today = LocalDate.now(KST);
         log.info("[market-batch] 시장지표 묶음 배치 시작 — {}", today);
 
-        // 7종 결과 누적 카운터 — collectMarket() 수준에서 합산 후 1회 recordCompletion
+        // 6종 결과 누적 카운터 — collectMarket() 수준에서 합산 후 1회 recordCompletion
         long attempted = 0;
         long succeeded = 0;
         long skip = 0;
@@ -117,16 +129,36 @@ public class MarketBatchScheduler {
         attempted += vixResult[0];
         succeeded += vixResult[1];
 
-        // T8: USDKRW — void 반환종(성공 시 1/1, 예외 시 1/0). 장주기 재시도(#105)로 최대 15분까지 지연될 수 있어
-        // 다른 지표 적재를 막지 않도록 배치 마지막 순서로 수집한다.
-        long[] usdkrwResult = collectUsdkrw(today);
-        attempted += usdkrwResult[0];
-        succeeded += usdkrwResult[1];
-
         // REQ-OBSV-020/021: fail = attempted - succeeded - skip
         long fail = Math.max(0L, attempted - succeeded - skip);
         batchMetrics.recordCompletion(BATCH_LABEL, attempted, succeeded, fail, skip);
         log.info("[market-batch] 시장지표 묶음 배치 완료 — {}", today);
+    }
+
+    // @MX:NOTE: [AUTO] USDKRW 전용 진입점 — D-1 파생 근거 및 통합 배치 분리 사유
+    // @MX:REASON: [AUTO] SPEC-COLLECTOR-MARKETIND-004 REQ-001/-002/-004 — 10:30 KST 시점에는
+    // KOREAEXIM(11:00 확정 이전 최종 게시)·Yahoo 폴백 모두 D-1(전 거래일) 값이 이미 확정돼 있어 미확정 당일 부분바
+    // 오염(aaa-infra#104)이
+    // 구조적으로 불가능하다. market-indicators(17:05, 6종) 통합 배치와 분리해 다른 6종 스케줄을 절대 건드리지 않는다.
+    /**
+     * USDKRW 전용 배치 진입점 (SPEC-COLLECTOR-MARKETIND-004 TASK-C2, REQ-001/-002/-004/-007c).
+     *
+     * <p>평일 10:30 KST({@code 0 30 10 * * MON-FRI}). D-1({@code today.minusDays(1)}) 조회·수집 — 양
+     * 소스(KOREAEXIM, Yahoo 폴백) 모두 확정값만 취급해 미확정 당일 부분바 저장을 구조적으로 차단한다. 전용 배치 계측 라벨 {@code
+     * market-usdkrw}로 기록한다.
+     */
+    @Scheduled(cron = BatchCrons.USDKRW_DAILY_CRON, zone = BatchCrons.USDKRW_DAILY_ZONE)
+    public void collectUsdkrwDaily() {
+        LocalDate today = LocalDate.now(KST);
+        LocalDate targetDate = today.minusDays(1);
+        log.info("[usdkrw-batch] USDKRW 전용 배치 시작 — target={}", targetDate);
+
+        long[] usdkrwResult = collectUsdkrw(targetDate);
+        long attempted = usdkrwResult[0];
+        long succeeded = usdkrwResult[1];
+        long fail = Math.max(0L, attempted - succeeded);
+        batchMetrics.recordCompletion(USDKRW_BATCH_LABEL, attempted, succeeded, fail, 0);
+        log.info("[usdkrw-batch] USDKRW 전용 배치 완료 — target={}", targetDate);
     }
 
     /** 업종지수 수집. [attempted, succeeded, skip] 반환. 예외 시 [1, 0, 0]. */
