@@ -32,6 +32,8 @@ class KoreaeximExchangeRateClientTest {
     private static final int IO_RETRY_LONG_DELAY_MS = 1;
     private static final String SAMPLE_RESPONSE =
             "[{\"cur_unit\":\"USD\",\"deal_bas_r\":\"1,523.40\",\"cur_nm\":\"미국 달러\"},{\"cur_unit\":\"EUR\",\"deal_bas_r\":\"1,650.00\",\"cur_nm\":\"유로\"}]";
+    private static final String RESULT4_RESPONSE =
+            "[{\"result\":4,\"cur_unit\":null,\"deal_bas_r\":null,\"cur_nm\":null}]";
 
     private MockRestServiceServer mockServer;
     private KoreaeximExchangeRateClient client;
@@ -172,6 +174,118 @@ class KoreaeximExchangeRateClientTest {
             }
 
             List<MarketIndicatorRow> rows = client.fetchDaily(LocalDate.of(2026, 6, 20));
+
+            assertThat(rows).isEmpty();
+        }
+
+        @Test
+        @DisplayName("result:4(쿼터 소진) — 라이브 경로는 빈 결과로 취급하고 예외 없이 전날 영업일 재시도 (REQ-010 무회귀)")
+        void resultFour_treatedAsEmpty_noExceptionAndRetriesPreviousBusinessDay() {
+            // Arrange: 첫 요청은 result:4(쿼터 소진), 두 번째(전날 영업일)는 정상 응답
+            mockServer
+                    .expect(method(HttpMethod.GET))
+                    .andRespond(withSuccess(RESULT4_RESPONSE, MediaType.APPLICATION_JSON));
+            mockServer
+                    .expect(method(HttpMethod.GET))
+                    .andRespond(withSuccess(SAMPLE_RESPONSE, MediaType.APPLICATION_JSON));
+
+            // Act
+            List<MarketIndicatorRow> rows = client.fetchDaily(LocalDate.of(2026, 6, 20));
+
+            // Assert: 예외 없이 빈 결과로 취급되어 empty-retry가 이어지고 결국 성공 행을 반환한다
+            assertThat(rows).hasSize(1);
+            assertThat(rows.getFirst().closeValue()).isEqualByComparingTo("1523.40");
+            mockServer.verify();
+        }
+    }
+
+    @Nested
+    @DisplayName("fetchDailyForBackfill — 백필 전용, empty-retry 미사용, result:4 쿼터 예외 전파 (REQ-010~014)")
+    class FetchDailyForBackfill {
+
+        @Test
+        @DisplayName("result:4 — KoreaeximQuotaExhaustedException 전파, 정상 빈 리스트로 삼키지 않음 (AC-06)")
+        void resultFour_throwsQuotaExhaustedException() {
+            mockServer
+                    .expect(method(HttpMethod.GET))
+                    .andRespond(withSuccess(RESULT4_RESPONSE, MediaType.APPLICATION_JSON));
+
+            assertThatThrownBy(() -> client.fetchDailyForBackfill(LocalDate.of(2026, 6, 20)))
+                    .isInstanceOf(KoreaeximQuotaExhaustedException.class);
+            mockServer.verify();
+        }
+
+        @Test
+        @DisplayName("[] 정상 빈 — 예외 없이 빈 리스트 반환, 재조회 없음(1콜만) (AC-07, AC-08)")
+        void emptyArray_returnsEmptyWithoutRetry() {
+            // Arrange: [] 1회만 기대 — empty-retry가 발생하면 초과 요청으로 mockServer.verify() 실패
+            mockServer
+                    .expect(method(HttpMethod.GET))
+                    .andRespond(withSuccess("[]", MediaType.APPLICATION_JSON));
+
+            // Act
+            List<MarketIndicatorRow> rows = client.fetchDailyForBackfill(LocalDate.of(2026, 6, 20));
+
+            // Assert
+            assertThat(rows).isEmpty();
+            mockServer.verify();
+        }
+
+        @Test
+        @DisplayName("정상 응답 — USD 필터, 쉼표 제거 후 4자리 BigDecimal, source=KOREAEXIM")
+        void parsesUsdAndRemovesComma() {
+            mockServer
+                    .expect(method(HttpMethod.GET))
+                    .andRespond(withSuccess(SAMPLE_RESPONSE, MediaType.APPLICATION_JSON));
+
+            List<MarketIndicatorRow> rows = client.fetchDailyForBackfill(LocalDate.of(2026, 6, 20));
+
+            assertThat(rows).hasSize(1);
+            MarketIndicatorRow row = rows.getFirst();
+            assertThat(row.closeValue()).isEqualByComparingTo("1523.40");
+            assertThat(row.source()).isEqualTo("KOREAEXIM");
+        }
+
+        @Test
+        @DisplayName("ResourceAccessException — #105 I/O 재시도 보존, 재시도 후 정상 행 반환 (AC-09)")
+        void resourceAccessException_ioRetryPreserved() {
+            // Arrange
+            mockServer
+                    .expect(method(HttpMethod.GET))
+                    .andRespond(
+                            request -> {
+                                throw new IOException("Connection reset");
+                            });
+            mockServer
+                    .expect(method(HttpMethod.GET))
+                    .andRespond(withSuccess(SAMPLE_RESPONSE, MediaType.APPLICATION_JSON));
+
+            // Act
+            List<MarketIndicatorRow> rows = client.fetchDailyForBackfill(LocalDate.of(2026, 6, 20));
+
+            // Assert
+            assertThat(rows).hasSize(1);
+            mockServer.verify();
+        }
+
+        @Test
+        @DisplayName("apiKey 빈 문자열 — API 호출 없이 빈 리스트 반환")
+        void blankApiKey_returnsEmptyWithoutCall() {
+            RestClient.Builder builder = RestClient.builder();
+            RestClient koreaeximRestClient =
+                    builder.baseUrl("https://oapi.koreaexim.go.kr").build();
+            KoreaeximExchangeRateClient blankKeyClient =
+                    new KoreaeximExchangeRateClient(
+                            koreaeximRestClient,
+                            "",
+                            EMPTY_RETRY_MAX,
+                            IO_RETRY_MAX,
+                            IO_RETRY_BACKOFF_BASE_MS,
+                            IO_RETRY_LONG_MAX,
+                            IO_RETRY_LONG_DELAY_MS);
+
+            List<MarketIndicatorRow> rows =
+                    blankKeyClient.fetchDailyForBackfill(LocalDate.of(2026, 6, 20));
 
             assertThat(rows).isEmpty();
         }

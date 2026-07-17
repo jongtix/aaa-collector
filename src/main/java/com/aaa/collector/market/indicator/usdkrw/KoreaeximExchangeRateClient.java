@@ -106,12 +106,58 @@ public class KoreaeximExchangeRateClient implements MarketIndicatorSource {
         return List.of();
     }
 
+    /**
+     * 백필 전용 단일 날짜 조회(SPEC-COLLECTOR-MARKETIND-004 REQ-012~014). 라이브 {@link #fetchDaily(LocalDate)}와
+     * 달리 empty-retry(전 영업일 역산)를 사용하지 않고, 소스 체인({@code MarketIndicatorSourceChain})도 경유하지 않는다 — 백필
+     * 오케스트레이터가 이 메서드를 직접 호출한다.
+     *
+     * <p>#105 I/O 재시도({@link #fetchWithIoRetry(String)})는 라이브 경로와 동일하게 보존된다. KOREAEXIM 쿼터
+     * 소진(`result:4`) 응답을 받으면 {@link KoreaeximQuotaExhaustedException}을 던져 호출자에게 전파한다 — 정상 빈 리스트로
+     * 삼키지 않는다.
+     *
+     * @param date 수집 대상 날짜
+     * @return USD 행 목록 (성공 시 1건, 정상 빈 결과면 빈 리스트)
+     * @throws KoreaeximQuotaExhaustedException KOREAEXIM 응답이 쿼터 소진(`result:4`)일 때
+     */
+    public List<MarketIndicatorRow> fetchDailyForBackfill(LocalDate date) {
+        if (apiKey == null || apiKey.isBlank()) {
+            log.warn("[koreaexim] KOREAEXIM_API_KEY 미설정 — 빈 결과 반환 (W-5, MA-03)");
+            return List.of();
+        }
+        String dateStr = date.format(DATE_FMT);
+        List<Map<String, String>> body = fetchWithIoRetry(dateStr);
+        if (body == null || body.isEmpty()) {
+            return List.of();
+        }
+        if (isQuotaExhausted(body)) {
+            throw new KoreaeximQuotaExhaustedException(
+                    "KOREAEXIM 쿼터 소진(result:4) — date=" + dateStr);
+        }
+        return parseUsdRows(body, date);
+    }
+
     private List<MarketIndicatorRow> fetchOnDate(LocalDate date) {
         String dateStr = date.format(DATE_FMT);
         List<Map<String, String>> body = fetchWithIoRetry(dateStr);
         if (body == null || body.isEmpty()) {
             return List.of();
         }
+        if (isQuotaExhausted(body)) {
+            // 라이브 경로는 result:4를 계속 빈 결과로 취급한다(empty-retry·체인 폴백 유지, REQ-010 무회귀).
+            return List.of();
+        }
+        return parseUsdRows(body, date);
+    }
+
+    /**
+     * KOREAEXIM 쿼터 소진(`result:4`) 판별(REQ-010). 전 필드 null인 1원소 배열이고 그 {@code result} 코드가 {@code 4}인
+     * 경우를 정상 빈 결과(길이 0 배열)와 구분한다.
+     */
+    private static boolean isQuotaExhausted(List<Map<String, String>> body) {
+        return body.size() == 1 && "4".equals(body.getFirst().get("result"));
+    }
+
+    private List<MarketIndicatorRow> parseUsdRows(List<Map<String, String>> body, LocalDate date) {
         return body.stream()
                 .filter(m -> "USD".equals(m.get("cur_unit")))
                 .map(m -> toRow(m, date))
