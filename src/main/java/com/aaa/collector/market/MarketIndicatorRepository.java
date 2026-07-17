@@ -58,6 +58,17 @@ public interface MarketIndicatorRepository extends JpaRepository<MarketIndicator
     @Query("SELECT MAX(m.createdAt) FROM MarketIndicator m")
     Optional<LocalDateTime> findMaxCreatedAt();
 
+    // @MX:NOTE: [AUTO] 지표코드 스코프 신선도 — USDKRW(10:30)/6종(17:05) 스케줄 분리 후 상호 은폐 방지
+    // @MX:REASON: [AUTO] SPEC-COLLECTOR-MARKETIND-004 REQ-008 — USDKRW catch-up 전용 유닛(TASK-C5)이
+    // 이 쿼리를 사용한다. 비-스코프 findMaxCreatedAt()은 6종 market-indicators 유닛이 계속 사용(무회귀) —
+    // 스케줄이 갈라진 상태에서 비-스코프 신선도를 공유하면 한 배치의 성공이 다른 배치의 실패를 은폐한다.
+    /**
+     * 지표 코드별 최신 적재 시각 조회 (SPEC-COLLECTOR-MARKETIND-004 TASK-C4, REQ-008 — USDKRW 전용 catch-up 신선도용).
+     */
+    @Query("SELECT MAX(m.createdAt) FROM MarketIndicator m WHERE m.indicatorCode = :indicatorCode")
+    Optional<LocalDateTime> findMaxCreatedAtByIndicatorCode(
+            @Param("indicatorCode") IndicatorCode indicatorCode);
+
     /**
      * 지표 코드별 최대 거래일 조회 (SPEC-OBSV-WATERMARK-001 REQ-WM-003 warm-start용 — {@code
      * market-usdkrw}/{@code market-vix}).

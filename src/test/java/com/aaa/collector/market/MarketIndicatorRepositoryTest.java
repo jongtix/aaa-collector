@@ -10,6 +10,7 @@ import com.aaa.collector.observability.CoverageRatioRepository;
 import com.aaa.collector.support.SharedMySqlContainer;
 import java.math.BigDecimal;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.util.Optional;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -198,6 +199,40 @@ class MarketIndicatorRepositoryTest {
                     marketIndicatorRepository.findMinTradeDateByIndicatorCode(IndicatorCode.USDKRW);
             assertThat(usdkrwResult).isPresent();
             assertThat(usdkrwResult.get()).isEqualTo(LocalDate.of(2000, 2, 1));
+        }
+    }
+
+    @Nested
+    @DisplayName(
+            "findMaxCreatedAtByIndicatorCode — 지표코드 스코프 신선도 (SPEC-COLLECTOR-MARKETIND-004 TASK-C4,"
+                    + " REQ-008)")
+    class FindMaxCreatedAtByIndicatorCode {
+
+        @Test
+        @DisplayName("USDKRW 행만 저장 — USDKRW 스코프 조회는 값 반환, VIX 스코프 조회는 empty")
+        void usdkrwOnly_scopedQuery_isolatedFromVix() {
+            marketIndicatorRepository.insertIgnoreDuplicate(
+                    buildUsdkrw(LocalDate.of(2026, 3, 2), new BigDecimal("1330.5000")));
+
+            Optional<LocalDateTime> usdkrwResult =
+                    marketIndicatorRepository.findMaxCreatedAtByIndicatorCode(IndicatorCode.USDKRW);
+            Optional<LocalDateTime> vixResult =
+                    marketIndicatorRepository.findMaxCreatedAtByIndicatorCode(IndicatorCode.VIX);
+
+            assertThat(usdkrwResult).isPresent();
+            assertThat(vixResult).isEmpty();
+        }
+
+        @Test
+        @DisplayName("VIX만 저장된 상태에서 다른 배치(17:05)가 실패해도 USDKRW 스코프 신선도는 은폐되지 않는다")
+        void vixOnly_doesNotMaskUsdkrwFreshness() {
+            marketIndicatorRepository.insertIgnoreDuplicate(
+                    buildVix(LocalDate.of(2026, 3, 3), new BigDecimal("14.2000")));
+
+            Optional<LocalDateTime> usdkrwResult =
+                    marketIndicatorRepository.findMaxCreatedAtByIndicatorCode(IndicatorCode.USDKRW);
+
+            assertThat(usdkrwResult).isEmpty();
         }
     }
 }
