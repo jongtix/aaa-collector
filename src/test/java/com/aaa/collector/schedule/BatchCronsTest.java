@@ -81,6 +81,13 @@ class BatchCronsTest {
                                     CronExpression.parse(
                                             BatchCrons.DOMESTIC_ETF_REPRESENTATIVE_CRON));
         }
+
+        @Test
+        @DisplayName("USDKRW_DAILY_CRON은 유효한 cron 표현식이어야 한다 (SPEC-COLLECTOR-MARKETIND-004 TASK-C1)")
+        void usdkrwDailyCron_isValid() {
+            assertThatNoException()
+                    .isThrownBy(() -> CronExpression.parse(BatchCrons.USDKRW_DAILY_CRON));
+        }
     }
 
     @Nested
@@ -137,6 +144,12 @@ class BatchCronsTest {
         void domesticEtfRepresentativeZone_isValid() {
             assertThatNoException()
                     .isThrownBy(() -> ZoneId.of(BatchCrons.DOMESTIC_ETF_REPRESENTATIVE_ZONE));
+        }
+
+        @Test
+        @DisplayName("USDKRW_DAILY_ZONE은 유효한 ZoneId이어야 한다 (SPEC-COLLECTOR-MARKETIND-004 TASK-C1)")
+        void usdkrwDailyZone_isValid() {
+            assertThatNoException().isThrownBy(() -> ZoneId.of(BatchCrons.USDKRW_DAILY_ZONE));
         }
     }
 
@@ -275,6 +288,24 @@ class BatchCronsTest {
         void etfConstants_areNotNull() {
             assertThat(BatchCrons.DOMESTIC_ETF_REPRESENTATIVE_CRON).isNotNull();
             assertThat(BatchCrons.DOMESTIC_ETF_REPRESENTATIVE_ZONE).isNotNull();
+        }
+
+        @Test
+        @DisplayName(
+                "USDKRW_DAILY_CRON은 평일 10:30 KST — MARKET_INDICATORS_CRON(17:05)과 독립"
+                        + " (SPEC-COLLECTOR-MARKETIND-004 REQ-002)")
+        void usdkrwDailyCron_matchesDedicatedLiteral() {
+            assertEquals("0 30 10 * * MON-FRI", BatchCrons.USDKRW_DAILY_CRON);
+            assertEquals("Asia/Seoul", BatchCrons.USDKRW_DAILY_ZONE);
+            assertThat(BatchCrons.USDKRW_DAILY_CRON).isNotNull();
+            assertThat(BatchCrons.USDKRW_DAILY_ZONE).isNotNull();
+        }
+
+        @Test
+        @DisplayName("MARKET_INDICATORS_CRON(17:05)은 USDKRW 분리 이후에도 무변경이어야 한다 (D1 감사 리스크 격리)")
+        void marketIndicatorsCron_unchangedAfterUsdkrwSplit() {
+            assertEquals("0 5 17 * * MON-FRI", BatchCrons.MARKET_INDICATORS_CRON);
+            assertEquals("Asia/Seoul", BatchCrons.MARKET_INDICATORS_ZONE);
         }
     }
 

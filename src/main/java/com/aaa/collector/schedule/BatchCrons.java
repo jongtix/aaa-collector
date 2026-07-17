@@ -60,6 +60,17 @@ public final class BatchCrons {
     /** 시장지표 묶음 배치 zone. */
     public static final String MARKET_INDICATORS_ZONE = "Asia/Seoul";
 
+    // ─── usdkrw-daily ────────────────────────────────────────────────────────
+    // @MX:NOTE: [AUTO] USDKRW 전용 cron — D-1 파생 근거 및 통합 배치 분리 사유
+    // @MX:REASON: [AUTO] SPEC-COLLECTOR-MARKETIND-004 REQ-002 — 10:30 KST 시점에는 KOREAEXIM(11:00 확정
+    // 이전 최종 게시)과 Yahoo 폴백 모두 D-1(전 거래일) 값이 이미 확정되어 있어 미확정 당일 부분바 오염(aaa-infra#104)이
+    // 구조적으로 불가능하다. market-indicators(17:05, 6종)와 분리해 통합 배치·다른 6종 스케줄을 절대 건드리지 않는다.
+    /** USDKRW 전용 배치 cron — 평일 10:30 KST(SPEC-COLLECTOR-MARKETIND-004, D-1 파생). */
+    public static final String USDKRW_DAILY_CRON = "0 30 10 * * MON-FRI";
+
+    /** USDKRW 전용 배치 zone. */
+    public static final String USDKRW_DAILY_ZONE = "Asia/Seoul";
+
     // ─── domestic-etf-representative ─────────────────────────────────────────
     /** ETF 대표 종목 재계산 배치 cron — 매주 월요일 07:50 KST. */
     public static final String DOMESTIC_ETF_REPRESENTATIVE_CRON = "0 50 7 * * MON";
