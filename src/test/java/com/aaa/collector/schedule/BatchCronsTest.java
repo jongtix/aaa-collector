@@ -311,10 +311,10 @@ class BatchCronsTest {
 
             @Test
             @DisplayName(
-                    "USDKRW_DAILY_CRON은 평일 10:30 KST — MARKET_INDICATORS_CRON(17:05)과 독립"
-                            + " (SPEC-COLLECTOR-MARKETIND-004 REQ-002)")
+                    "USDKRW_DAILY_CRON은 화~토 10:30 KST — MARKET_INDICATORS_CRON(17:05)과 독립"
+                            + " (SPEC-COLLECTOR-MARKETIND-004 후속: 월요일 D-1=일요일 헛발 제거)")
             void usdkrwDailyCron_matchesDedicatedLiteral() {
-                assertEquals("0 30 10 * * MON-FRI", BatchCrons.USDKRW_DAILY_CRON);
+                assertEquals("0 30 10 * * TUE-SAT", BatchCrons.USDKRW_DAILY_CRON);
                 assertEquals("Asia/Seoul", BatchCrons.USDKRW_DAILY_ZONE);
                 assertThat(BatchCrons.USDKRW_DAILY_CRON).isNotNull();
                 assertThat(BatchCrons.USDKRW_DAILY_ZONE).isNotNull();

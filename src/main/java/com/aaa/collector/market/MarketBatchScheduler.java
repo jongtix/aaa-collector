@@ -26,7 +26,7 @@ import org.springframework.stereotype.Component;
  * 장주기 재시도 여유 확보를 위해 17:00→17:05로 조정).
  *
  * <p>업종지수(T3)→금리(T4)→증시자금(T5)→배당증자(T6)→액면교체(T7, REQ-BATCH5-001)→VIX(T9) 고정 순서 순차 호출. USDKRW(T8)는
- * SPEC-COLLECTOR-MARKETIND-004로 {@link #collectUsdkrwDaily()} 전용 cron(평일 10:30 KST)으로 분리됐다 — D-1
+ * SPEC-COLLECTOR-MARKETIND-004로 {@link #collectUsdkrwDaily()} 전용 cron(화~토 10:30 KST)으로 분리됐다 — D-1
  * 파생.
  *
  * <p>{@code fixedDelay}/{@code fixedRate} 미사용 — Virtual Threads 버그 회피(ADR-008, REQ-BATCH3-003). 종
@@ -140,10 +140,13 @@ public class MarketBatchScheduler {
     // KOREAEXIM(11:00 확정 이전 최종 게시)·Yahoo 폴백 모두 D-1(전 거래일) 값이 이미 확정돼 있어 미확정 당일 부분바
     // 오염(aaa-infra#104)이
     // 구조적으로 불가능하다. market-indicators(17:05, 6종) 통합 배치와 분리해 다른 6종 스케줄을 절대 건드리지 않는다.
+    // @MX:NOTE: [AUTO] cron MON-FRI→TUE-SAT 전환 사유(SPEC-COLLECTOR-MARKETIND-004 후속) — 월요일
+    // target=D-1=일요일은 소스 데이터가 없어 소스 성공 앵커 없이 실행 앵커만 전진, vmalert 월요일 오발 원인. TUE-SAT면 D-1이
+    // 항상 영업일이라 헛발이 소멸하고 토요일 10:30에 금요일분을 라이브로 추가 수집한다.
     /**
      * USDKRW 전용 배치 진입점 (SPEC-COLLECTOR-MARKETIND-004 TASK-C2, REQ-001/-002/-004/-007c).
      *
-     * <p>평일 10:30 KST({@code 0 30 10 * * MON-FRI}). D-1({@code today.minusDays(1)}) 조회·수집 — 양
+     * <p>화~토 10:30 KST({@code 0 30 10 * * TUE-SAT}). D-1({@code today.minusDays(1)}) 조회·수집 — 양
      * 소스(KOREAEXIM, Yahoo 폴백) 모두 확정값만 취급해 미확정 당일 부분바 저장을 구조적으로 차단한다. 전용 배치 계측 라벨 {@code
      * market-usdkrw}로 기록한다.
      */

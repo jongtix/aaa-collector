@@ -359,13 +359,13 @@ class MarketBatchSchedulerTest {
     class UsdkrwDailyBatch {
 
         @Test
-        @DisplayName("cron='0 30 10 * * MON-FRI', zone='Asia/Seoul'")
+        @DisplayName("cron='0 30 10 * * TUE-SAT', zone='Asia/Seoul'")
         void collectUsdkrwDaily_hasCorrectScheduledAnnotation() throws NoSuchMethodException {
             Method method = MarketBatchScheduler.class.getMethod("collectUsdkrwDaily");
             Scheduled scheduled = method.getAnnotation(Scheduled.class);
 
             assertThat(scheduled).isNotNull();
-            assertThat(scheduled.cron()).isEqualTo("0 30 10 * * MON-FRI");
+            assertThat(scheduled.cron()).isEqualTo("0 30 10 * * TUE-SAT");
             assertThat(scheduled.zone()).isEqualTo("Asia/Seoul");
         }
 

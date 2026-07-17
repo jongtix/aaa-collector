@@ -65,8 +65,13 @@ public final class BatchCrons {
     // @MX:REASON: [AUTO] SPEC-COLLECTOR-MARKETIND-004 REQ-002 — 10:30 KST 시점에는 KOREAEXIM(11:00 확정
     // 이전 최종 게시)과 Yahoo 폴백 모두 D-1(전 거래일) 값이 이미 확정되어 있어 미확정 당일 부분바 오염(aaa-infra#104)이
     // 구조적으로 불가능하다. market-indicators(17:05, 6종)와 분리해 통합 배치·다른 6종 스케줄을 절대 건드리지 않는다.
-    /** USDKRW 전용 배치 cron — 평일 10:30 KST(SPEC-COLLECTOR-MARKETIND-004, D-1 파생). */
-    public static final String USDKRW_DAILY_CRON = "0 30 10 * * MON-FRI";
+    // @MX:NOTE: [AUTO] cron MON-FRI→TUE-SAT 전환 사유(SPEC-COLLECTOR-MARKETIND-004 후속) — 월요일 실행의
+    // target=D-1=일요일은 KOREAEXIM·Yahoo 모두 데이터가 없어 MarketIndicatorSourceChain이 recordSuccess를
+    // 남기지 않는다. 실행 앵커(batch_last_load)만 전진하고 소스 성공 앵커는 정지해 vmalert
+    // MarketIndicatorPrimaryStale이 매주 월요일 오발한다. TUE-SAT로 전환하면 D-1이 항상 영업일(월~금)이 되어 이 헛발이
+    // 구조적으로 소멸하고, 금요일 데이터를 토요일 10:30에 라이브로 추가 수집한다(기존에는 02:00 백필 갭워크 단일 의존).
+    /** USDKRW 전용 배치 cron — 화~토 10:30 KST(SPEC-COLLECTOR-MARKETIND-004, D-1 파생). */
+    public static final String USDKRW_DAILY_CRON = "0 30 10 * * TUE-SAT";
 
     /** USDKRW 전용 배치 zone. */
     public static final String USDKRW_DAILY_ZONE = "Asia/Seoul";
