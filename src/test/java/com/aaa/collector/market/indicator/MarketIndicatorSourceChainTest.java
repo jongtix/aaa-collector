@@ -241,10 +241,8 @@ class MarketIndicatorSourceChainTest {
     class PrimaryExpectedEmptyPredicate {
 
         @Test
-        @DisplayName(
-                "휴장일(predicate=true) primary 빈 결과 — recordExpectedNoData 기록 + Yahoo 폴백 진행,"
-                        + " active_source 무변경 (AC-01)")
-        void holiday_primaryEmpty_recordsExpectedNoDataAndFallsBack() {
+        @DisplayName("휴장일(predicate=true) primary 빈 결과 — Yahoo 폴백 확정값 반환 (AC-01)")
+        void holiday_primaryEmpty_fallsBackToYahoo() {
             // Arrange
             MarketIndicatorRow row = usdkrwRow("YAHOO_USDKRW");
             MarketIndicatorSourceChain c =
@@ -258,8 +256,24 @@ class MarketIndicatorSourceChainTest {
 
             // Assert: Yahoo 폴백 확정값 반환
             assertThat(result).containsExactly(row);
+        }
 
-            // Assert: KOREAEXIM 신선도 게이지는 recordExpectedNoData로 전진, active_source는 무변경
+        @Test
+        @DisplayName(
+                "휴장일(predicate=true) primary 빈 결과 — KOREAEXIM 신선도 게이지 전진(recordExpectedNoData) (AC-01)")
+        void holiday_primaryEmpty_advancesKoreaeximLastSuccess() {
+            // Arrange
+            MarketIndicatorRow row = usdkrwRow("YAHOO_USDKRW");
+            MarketIndicatorSourceChain c =
+                    usdkrwChain(
+                            d -> true,
+                            emptySource("KOREAEXIM"),
+                            successSource("YAHOO_USDKRW", row));
+
+            // Act
+            c.fetchDaily(DATE);
+
+            // Assert: KOREAEXIM 신선도 게이지는 recordExpectedNoData로 전진
             Gauge koreaeximLastSuccess =
                     registry.find(MarketIndicatorMetrics.LAST_SUCCESS)
                             .tag("indicator", "USDKRW")
@@ -268,7 +282,25 @@ class MarketIndicatorSourceChainTest {
             assertThat(koreaeximLastSuccess).isNotNull();
             assertThat(koreaeximLastSuccess.value())
                     .isEqualTo((double) FIXED_INSTANT.getEpochSecond());
+        }
 
+        @Test
+        @DisplayName(
+                "휴장일(predicate=true) primary 빈 결과 — active_source는 KOREAEXIM 무변경·YAHOO_USDKRW만 플립"
+                        + " (AC-01)")
+        void holiday_primaryEmpty_activeSourceOnlyFlipsOnRealSuccess() {
+            // Arrange
+            MarketIndicatorRow row = usdkrwRow("YAHOO_USDKRW");
+            MarketIndicatorSourceChain c =
+                    usdkrwChain(
+                            d -> true,
+                            emptySource("KOREAEXIM"),
+                            successSource("YAHOO_USDKRW", row));
+
+            // Act
+            c.fetchDaily(DATE);
+
+            // Assert: KOREAEXIM active_source 무변경
             Gauge koreaeximActive =
                     registry.find(MarketIndicatorMetrics.ACTIVE_SOURCE)
                             .tag("indicator", "USDKRW")
@@ -285,6 +317,21 @@ class MarketIndicatorSourceChainTest {
                             .gauge();
             assertThat(yahooActive).isNotNull();
             assertThat(yahooActive.value()).isEqualTo(1.0);
+        }
+
+        @Test
+        @DisplayName("휴장일(predicate=true) primary 빈 결과 — 폴백 계측 보존(empty_result) (AC-01, REQ-010)")
+        void holiday_primaryEmpty_preservesFallbackInstrumentation() {
+            // Arrange
+            MarketIndicatorRow row = usdkrwRow("YAHOO_USDKRW");
+            MarketIndicatorSourceChain c =
+                    usdkrwChain(
+                            d -> true,
+                            emptySource("KOREAEXIM"),
+                            successSource("YAHOO_USDKRW", row));
+
+            // Act
+            c.fetchDaily(DATE);
 
             // Assert: 폴백 계측 보존(empty_result)
             Counter fallback =
