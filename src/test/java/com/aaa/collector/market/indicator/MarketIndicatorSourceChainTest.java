@@ -16,6 +16,7 @@ import java.time.Instant;
 import java.time.LocalDate;
 import java.time.ZoneOffset;
 import java.util.List;
+import java.util.function.Predicate;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -114,6 +115,23 @@ class MarketIndicatorSourceChainTest {
 
     private MarketIndicatorSourceChain chain(MarketIndicatorSource... sources) {
         return new MarketIndicatorSourceChain(List.of(sources), "VIX", metrics);
+    }
+
+    private MarketIndicatorSourceChain usdkrwChain(
+            Predicate<LocalDate> primaryExpectedEmpty, MarketIndicatorSource... sources) {
+        return new MarketIndicatorSourceChain(
+                List.of(sources), "USDKRW", metrics, primaryExpectedEmpty);
+    }
+
+    private MarketIndicatorRow usdkrwRow(String source) {
+        return new MarketIndicatorRow(
+                IndicatorCode.USDKRW,
+                DATE,
+                new BigDecimal("1300.00"),
+                new BigDecimal("1310.00"),
+                new BigDecimal("1290.00"),
+                new BigDecimal("1305.00"),
+                source);
     }
 
     @Nested
@@ -215,6 +233,165 @@ class MarketIndicatorSourceChainTest {
                             .counter();
             assertThat(fallback).isNotNull();
             assertThat(fallback.count()).isEqualTo(1.0);
+        }
+    }
+
+    @Nested
+    @DisplayName("fetchDaily — primary 예상-빈 조건 (SPEC-COLLECTOR-MARKETIND-006)")
+    class PrimaryExpectedEmptyPredicate {
+
+        @Test
+        @DisplayName(
+                "휴장일(predicate=true) primary 빈 결과 — recordExpectedNoData 기록 + Yahoo 폴백 진행,"
+                        + " active_source 무변경 (AC-01)")
+        void holiday_primaryEmpty_recordsExpectedNoDataAndFallsBack() {
+            // Arrange
+            MarketIndicatorRow row = usdkrwRow("YAHOO_USDKRW");
+            MarketIndicatorSourceChain c =
+                    usdkrwChain(
+                            d -> true,
+                            emptySource("KOREAEXIM"),
+                            successSource("YAHOO_USDKRW", row));
+
+            // Act
+            List<MarketIndicatorRow> result = c.fetchDaily(DATE);
+
+            // Assert: Yahoo 폴백 확정값 반환
+            assertThat(result).containsExactly(row);
+
+            // Assert: KOREAEXIM 신선도 게이지는 recordExpectedNoData로 전진, active_source는 무변경
+            Gauge koreaeximLastSuccess =
+                    registry.find(MarketIndicatorMetrics.LAST_SUCCESS)
+                            .tag("indicator", "USDKRW")
+                            .tag("source", "KOREAEXIM")
+                            .gauge();
+            assertThat(koreaeximLastSuccess).isNotNull();
+            assertThat(koreaeximLastSuccess.value())
+                    .isEqualTo((double) FIXED_INSTANT.getEpochSecond());
+
+            Gauge koreaeximActive =
+                    registry.find(MarketIndicatorMetrics.ACTIVE_SOURCE)
+                            .tag("indicator", "USDKRW")
+                            .tag("source", "KOREAEXIM")
+                            .gauge();
+            assertThat(koreaeximActive).isNotNull();
+            assertThat(koreaeximActive.value()).isEqualTo(0.0);
+
+            // Assert: YAHOO_USDKRW는 실제 성공이므로 active_source 플립
+            Gauge yahooActive =
+                    registry.find(MarketIndicatorMetrics.ACTIVE_SOURCE)
+                            .tag("indicator", "USDKRW")
+                            .tag("source", "YAHOO_USDKRW")
+                            .gauge();
+            assertThat(yahooActive).isNotNull();
+            assertThat(yahooActive.value()).isEqualTo(1.0);
+
+            // Assert: 폴백 계측 보존(empty_result)
+            Counter fallback =
+                    registry.find(MarketIndicatorMetrics.FALLBACK_TOTAL)
+                            .tag("indicator", "USDKRW")
+                            .tag("from_source", "KOREAEXIM")
+                            .tag("to_source", "YAHOO_USDKRW")
+                            .tag("reason", "empty_result")
+                            .counter();
+            assertThat(fallback).isNotNull();
+            assertThat(fallback.count()).isEqualTo(1.0);
+        }
+
+        @Test
+        @DisplayName(
+                "개장일(predicate=false) primary 빈 결과 — recordExpectedNoData 미기록, 기존 WARN 동작 보존 (AC-02)")
+        void openDay_primaryEmpty_doesNotRecordExpectedNoData() {
+            // Arrange
+            MarketIndicatorRow row = usdkrwRow("YAHOO_USDKRW");
+            MarketIndicatorSourceChain c =
+                    usdkrwChain(
+                            d -> false,
+                            emptySource("KOREAEXIM"),
+                            successSource("YAHOO_USDKRW", row));
+
+            // Act
+            c.fetchDaily(DATE);
+
+            // Assert: KOREAEXIM 신선도 게이지는 미전진(0.0, PostConstruct 사전등록값 유지)
+            Gauge koreaeximLastSuccess =
+                    registry.find(MarketIndicatorMetrics.LAST_SUCCESS)
+                            .tag("indicator", "USDKRW")
+                            .tag("source", "KOREAEXIM")
+                            .gauge();
+            assertThat(koreaeximLastSuccess).isNotNull();
+            assertThat(koreaeximLastSuccess.value()).isEqualTo(0.0);
+
+            // Assert: 폴백 계측은 기존대로 보존
+            Counter fallback =
+                    registry.find(MarketIndicatorMetrics.FALLBACK_TOTAL)
+                            .tag("indicator", "USDKRW")
+                            .tag("from_source", "KOREAEXIM")
+                            .tag("to_source", "YAHOO_USDKRW")
+                            .tag("reason", "empty_result")
+                            .counter();
+            assertThat(fallback).isNotNull();
+            assertThat(fallback.count()).isEqualTo(1.0);
+        }
+
+        @Test
+        @DisplayName("휴장일이어도 primary 예외 — 실패 집계, recordExpectedNoData 미기록 (AC-03, 핵심 안전장치)")
+        void holiday_primaryException_stillRecordsFailure() {
+            // Arrange
+            MarketIndicatorRow row = usdkrwRow("YAHOO_USDKRW");
+            MarketIndicatorSourceChain c =
+                    usdkrwChain(
+                            d -> true,
+                            failingSource("KOREAEXIM"),
+                            successSource("YAHOO_USDKRW", row));
+
+            // Act
+            List<MarketIndicatorRow> result = c.fetchDaily(DATE);
+
+            // Assert: Yahoo 폴백 확정값 반환
+            assertThat(result).containsExactly(row);
+
+            // Assert: KOREAEXIM 신선도 게이지는 미전진(예외는 predicate 무관 실패로 집계)
+            Gauge koreaeximLastSuccess =
+                    registry.find(MarketIndicatorMetrics.LAST_SUCCESS)
+                            .tag("indicator", "USDKRW")
+                            .tag("source", "KOREAEXIM")
+                            .gauge();
+            assertThat(koreaeximLastSuccess).isNotNull();
+            assertThat(koreaeximLastSuccess.value()).isEqualTo(0.0);
+
+            // Assert: 예외 사유(error)로 폴백 계측
+            Counter fallback =
+                    registry.find(MarketIndicatorMetrics.FALLBACK_TOTAL)
+                            .tag("indicator", "USDKRW")
+                            .tag("from_source", "KOREAEXIM")
+                            .tag("to_source", "YAHOO_USDKRW")
+                            .tag("reason", "error")
+                            .counter();
+            assertThat(fallback).isNotNull();
+            assertThat(fallback.count()).isEqualTo(1.0);
+        }
+
+        @Test
+        @DisplayName(
+                "VIX 체인(조건 미주입 3-인자 생성자) — 기본값 always-false로 recordExpectedNoData 미기록 (AC-04, 무회귀)")
+        void vixChain_defaultPredicate_neverRecordsExpectedNoData() {
+            // Arrange: 3-인자 생성자 — predicate 기본값(항상 거짓)
+            MarketIndicatorRow row = vixRow("YAHOO_VIX");
+            MarketIndicatorSourceChain c =
+                    chain(emptySource("CBOE"), successSource("YAHOO_VIX", row));
+
+            // Act
+            c.fetchDaily(DATE);
+
+            // Assert: CBOE 신선도 게이지 미전진(기존 실패 집계 그대로 유지)
+            Gauge cboeLastSuccess =
+                    registry.find(MarketIndicatorMetrics.LAST_SUCCESS)
+                            .tag("indicator", "VIX")
+                            .tag("source", "CBOE")
+                            .gauge();
+            assertThat(cboeLastSuccess).isNotNull();
+            assertThat(cboeLastSuccess.value()).isEqualTo(0.0);
         }
     }
 

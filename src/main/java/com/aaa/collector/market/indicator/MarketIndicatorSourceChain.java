@@ -4,6 +4,7 @@ import static com.aaa.collector.market.indicator.SensitiveDataSanitizer.sanitize
 
 import java.time.LocalDate;
 import java.util.List;
+import java.util.function.Predicate;
 import lombok.extern.slf4j.Slf4j;
 
 /**
@@ -25,11 +26,34 @@ public class MarketIndicatorSourceChain {
     private final String indicator;
     private final MarketIndicatorMetrics metrics;
 
+    // @MX:NOTE: [AUTO] primary가 대상 날짜에 빈 결과를 반환할 것으로 예상되는지 판별하는 조건
+    // @MX:REASON: [AUTO] 3-인자 생성자(this(..., d -> false))로 위임되어 VIX·기존 테스트 무회귀 보장
+    // @MX:SPEC: SPEC-COLLECTOR-MARKETIND-006 REQ-005~007
+    private final Predicate<LocalDate> primaryExpectedEmpty;
+
     public MarketIndicatorSourceChain(
             List<MarketIndicatorSource> sources, String indicator, MarketIndicatorMetrics metrics) {
+        this(sources, indicator, metrics, date -> false);
+    }
+
+    /**
+     * primary 예상-빈 조건을 명시적으로 주입하는 생성자 (SPEC-COLLECTOR-MARKETIND-006 REQ-007).
+     *
+     * @param sources 순서대로 시도할 소스 목록
+     * @param indicator 지표 식별자 ("VIX" / "USDKRW")
+     * @param metrics 소스 체인 계측
+     * @param primaryExpectedEmpty primary가 대상 날짜에 빈 결과를 반환할 것으로 예상되는지 판별하는 조건. 조건이 참이고 primary가 실제로
+     *     빈 결과를 반환하면 {@link #fetchDaily(LocalDate)}는 실패 대신 예상 무데이터로 기록한다(REQ-008).
+     */
+    public MarketIndicatorSourceChain(
+            List<MarketIndicatorSource> sources,
+            String indicator,
+            MarketIndicatorMetrics metrics,
+            Predicate<LocalDate> primaryExpectedEmpty) {
         this.sources = List.copyOf(sources);
         this.indicator = indicator;
         this.metrics = metrics;
+        this.primaryExpectedEmpty = primaryExpectedEmpty;
     }
 
     /**
@@ -49,7 +73,17 @@ public class MarketIndicatorSourceChain {
                     metrics.recordSuccess(indicator, source.sourceName());
                     return rows;
                 }
-                log.warn("[market-ind-chain] {} fetchDaily 빈 결과 — 다음 소스로", source.sourceName());
+                // REQ-008/009: primary(i==0)이고 대상 날짜가 확실한 휴장일(predicate=true)일 때만 예상
+                // 무데이터로 기록한다. 그 외(비-primary 또는 predicate=false)는 기존 WARN을 그대로 보존한다
+                // — 불확실한 상황(fail-open)은 항상 실패로 집계되어 오검출(알람 누락) 방향으로 넘어가지 않는다.
+                if (i == 0 && primaryExpectedEmpty.test(date)) {
+                    metrics.recordExpectedNoData(indicator, source.sourceName());
+                    log.info(
+                            "[market-ind-chain] {} fetchDaily 휴장일 예상 무데이터 — 다음 소스로",
+                            source.sourceName());
+                } else {
+                    log.warn("[market-ind-chain] {} fetchDaily 빈 결과 — 다음 소스로", source.sourceName());
+                }
                 if (nextSourceName != null) {
                     metrics.recordFallback(
                             indicator, source.sourceName(), nextSourceName, "empty_result");
