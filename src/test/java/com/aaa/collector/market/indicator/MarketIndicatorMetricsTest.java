@@ -187,6 +187,53 @@ class MarketIndicatorMetricsTest {
     }
 
     @Nested
+    @DisplayName("recordExpectedNoData — 예상 무데이터 신선도 스탬프 (SPEC-COLLECTOR-MARKETIND-006)")
+    class RecordExpectedNoData {
+
+        @Test
+        @DisplayName("last_success Gauge를 현재 epoch 초로 전진시키고 Redis에 영속한다 (REQ-001, REQ-003, AC-06)")
+        void recordExpectedNoData_advancesLastSuccessAndPersists() {
+            metrics.recordExpectedNoData("USDKRW", "KOREAEXIM");
+
+            assertGaugeValue(
+                    MarketIndicatorMetrics.LAST_SUCCESS,
+                    "USDKRW",
+                    "KOREAEXIM",
+                    (double) FIXED_INSTANT.getEpochSecond());
+            verify(lastSuccessRepository)
+                    .save("USDKRW", "KOREAEXIM", FIXED_INSTANT.getEpochSecond());
+        }
+
+        @Test
+        @DisplayName("active_source 게이지는 변경하지 않는다 (REQ-002)")
+        void recordExpectedNoData_doesNotFlipActiveSource() {
+            metrics.recordExpectedNoData("USDKRW", "KOREAEXIM");
+
+            assertGaugeValue(MarketIndicatorMetrics.ACTIVE_SOURCE, "USDKRW", "KOREAEXIM", 0.0);
+            assertGaugeValue(MarketIndicatorMetrics.ACTIVE_SOURCE, "USDKRW", "YAHOO_USDKRW", 0.0);
+        }
+
+        @Test
+        @DisplayName("Redis 기록이 DataAccessException으로 실패해도 게이지 기록은 완료된다 (REQ-004, AC-07)")
+        void recordExpectedNoData_absorbsRedisWriteFailure() {
+            // Arrange
+            doThrow(new QueryTimeoutException("Redis 연결 실패"))
+                    .when(lastSuccessRepository)
+                    .save("USDKRW", "KOREAEXIM", FIXED_INSTANT.getEpochSecond());
+
+            // Act & Assert — 예외가 전파되지 않고 게이지는 정상 갱신된다
+            assertThatCode(() -> metrics.recordExpectedNoData("USDKRW", "KOREAEXIM"))
+                    .doesNotThrowAnyException();
+            assertGaugeValue(
+                    MarketIndicatorMetrics.LAST_SUCCESS,
+                    "USDKRW",
+                    "KOREAEXIM",
+                    (double) FIXED_INSTANT.getEpochSecond());
+            assertGaugeValue(MarketIndicatorMetrics.ACTIVE_SOURCE, "USDKRW", "KOREAEXIM", 0.0);
+        }
+    }
+
+    @Nested
     @DisplayName("warmLastSuccess — 부팅 시 게이지 seed (REQ-WSR-021)")
     class WarmLastSuccess {
 
@@ -274,6 +321,8 @@ class MarketIndicatorMetricsTest {
                     .doesNotThrowAnyException();
             assertThatCode(() -> metrics.recordSuccess("VIX", "CBOE")).doesNotThrowAnyException();
             assertThatCode(() -> metrics.recordExhausted("VIX", "daily"))
+                    .doesNotThrowAnyException();
+            assertThatCode(() -> metrics.recordExpectedNoData("USDKRW", "KOREAEXIM"))
                     .doesNotThrowAnyException();
         }
     }

@@ -196,6 +196,29 @@ public class MarketIndicatorMetrics {
     }
 
     /**
+     * 예상 무데이터를 신선도 관점의 성공으로 기록한다 (SPEC-COLLECTOR-MARKETIND-006 REQ-001~004).
+     *
+     * <p>{@link #recordSuccess(String, String)}의 부분집합이다 — {@code source_last_success} 게이지를 현재 epoch
+     * 초로 전진시키고 기존 영속 경로({@link #persistLastSuccess})로 저장하지만, {@code active_source}는 변경하지
+     * 않는다(REQ-002). 예상 무데이터는 "이 소스가 지금 활성"이 아니라 "신선도상 stale 아님"만 표현하기 때문이다.
+     *
+     * @param indicator 지표 식별자 ("VIX" / "USDKRW")
+     * @param source 예상 무데이터를 반환한 소스 이름
+     */
+    // @MX:NOTE: [AUTO] recordSuccess와 달리 active_source 미플립 — 휴장일 예상 무데이터는 "활성 소스" 의미가 아님
+    // @MX:SPEC: SPEC-COLLECTOR-MARKETIND-006 REQ-001, REQ-002
+    @SuppressWarnings("PMD.AvoidCatchingGenericException") // 메트릭 실패 격리 — REQ-004
+    public void recordExpectedNoData(String indicator, String source) {
+        try {
+            long epochSeconds = clock.instant().getEpochSecond();
+            getOrCreateLastSuccess(indicator, source).set(epochSeconds);
+            persistLastSuccess(indicator, source, epochSeconds);
+        } catch (Exception e) {
+            log.warn("[market-ind-metrics] ExpectedNoData 메트릭 기록 실패 — 무시", e);
+        }
+    }
+
+    /**
      * 전 소스 탈진을 기록한다 (REQ-004).
      *
      * @param indicator 지표 식별자
