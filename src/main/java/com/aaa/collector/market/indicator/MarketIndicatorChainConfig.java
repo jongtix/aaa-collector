@@ -3,6 +3,7 @@ package com.aaa.collector.market.indicator;
 import com.aaa.collector.market.enums.IndicatorCode;
 import com.aaa.collector.market.indicator.usdkrw.KoreaeximExchangeRateClient;
 import com.aaa.collector.market.indicator.vix.CboeVixClient;
+import com.aaa.collector.market.session.MarketSessionGate;
 import java.time.LocalDate;
 import java.util.List;
 import org.springframework.beans.factory.annotation.Qualifier;
@@ -75,14 +76,28 @@ public class MarketIndicatorChainConfig {
                 List.of(cboeVixClient, yahooVixSource), "VIX", metrics);
     }
 
-    /** USDKRW 소스 체인: KOREAEXIM → Yahoo USDKRW=X. */
+    /**
+     * USDKRW 소스 체인: KOREAEXIM → Yahoo USDKRW=X.
+     *
+     * <p>{@link MarketSessionGate}(기존 {@code @Component}, {@code MarketOpenGate} 구현체)를 주입받아 "대상 날짜가
+     * KRX 휴장일인 경우"를 primary 예상-빈 조건으로 배선한다(SPEC-COLLECTOR-MARKETIND-006 REQ-013). {@code
+     * isOpenDay}는 fail-open(캘린더 미로드/날짜 미존재 시 개장으로 판정)이므로, 조건이 참이 되는 것은 "확실히 휴장일로 아는" 경우로 한정되어 불확실
+     * 상황이 오탐 억제 방향으로 넘어가지 않는다(REQ-015).
+     */
+    // @MX:NOTE: [AUTO] MarketSessionGate.isOpenDay의 부정을 predicate로 배선 — fail-open이라 알람 누락
+    // 방향으로 미전이
+    // @MX:SPEC: SPEC-COLLECTOR-MARKETIND-006 REQ-013, REQ-015
     @Bean
     @Qualifier("usdkrwChain") MarketIndicatorSourceChain usdkrwChain(
             KoreaeximExchangeRateClient koreaeximClient,
             @Qualifier("yahooUsdkrwSource") MarketIndicatorSource yahooUsdkrwSource,
-            MarketIndicatorMetrics metrics) {
+            MarketIndicatorMetrics metrics,
+            MarketSessionGate marketSessionGate) {
         return new MarketIndicatorSourceChain(
-                List.of(koreaeximClient, yahooUsdkrwSource), "USDKRW", metrics);
+                List.of(koreaeximClient, yahooUsdkrwSource),
+                "USDKRW",
+                metrics,
+                date -> !marketSessionGate.isOpenDay(date));
     }
 
     /**
