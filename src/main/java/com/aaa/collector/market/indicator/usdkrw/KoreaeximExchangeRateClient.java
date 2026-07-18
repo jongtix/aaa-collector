@@ -6,7 +6,6 @@ import com.aaa.collector.market.indicator.MarketIndicatorSource;
 import com.aaa.collector.market.indicator.SensitiveDataSanitizer;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
-import java.time.DayOfWeek;
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
 import java.util.List;
@@ -23,8 +22,9 @@ import org.springframework.web.client.RestClient;
  *
  * <p>URL: {@code
  * /site/program/financial/exchangeJSON?authkey={key}&searchdate={yyyyMMdd}&data=AP01}. {@code
- * cur_unit=="USD"} 필터, 쉼표 제거 후 BigDecimal 4자리, close만/source="KOREAEXIM"(REQ-013). 빈 배열 시 전날 영업일
- * 재시도(상한 {@code empty-retry-max}, REQ-012).
+ * cur_unit=="USD"} 필터, 쉼표 제거 후 BigDecimal 4자리, close만/source="KOREAEXIM"(REQ-013). 빈 결과({@code
+ * []})는 단일 조회 후 즉시 반환한다 — 전 영업일 역산 재시도는 사용하지 않는다(SPEC-COLLECTOR-MARKETIND-005 TASK-C, 체인이 즉시 Yahoo로
+ * 폴백).
  *
  * <p>{@code fetchHistory()}는 단일 호출 미지원 소스이므로 빈 리스트를 반환한다(REQ-041).
  */
@@ -41,7 +41,6 @@ public class KoreaeximExchangeRateClient implements MarketIndicatorSource {
 
     private final RestClient koreaeximRestClient;
     private final String apiKey;
-    private final int emptyRetryMax;
     private final int ioRetryMax;
     private final long ioRetryBackoffBaseMs;
     private final int ioRetryLongMax;
@@ -50,7 +49,6 @@ public class KoreaeximExchangeRateClient implements MarketIndicatorSource {
     public KoreaeximExchangeRateClient(
             RestClient koreaeximRestClient,
             @Value("${aaa.market-indicator.koreaexim-api-key:}") String apiKey,
-            @Value("${aaa.market-indicator.usdkrw.empty-retry-max:5}") int emptyRetryMax,
             @Value("${aaa.market-indicator.usdkrw.io-retry-max:3}") int ioRetryMax,
             @Value("${aaa.market-indicator.usdkrw.io-retry-backoff-base-ms:1000}")
                     long ioRetryBackoffBaseMs,
@@ -59,7 +57,6 @@ public class KoreaeximExchangeRateClient implements MarketIndicatorSource {
                     long ioRetryLongDelayMs) {
         this.koreaeximRestClient = koreaeximRestClient;
         this.apiKey = apiKey;
-        this.emptyRetryMax = emptyRetryMax;
         this.ioRetryMax = ioRetryMax;
         this.ioRetryBackoffBaseMs = ioRetryBackoffBaseMs;
         this.ioRetryLongMax = ioRetryLongMax;
@@ -72,10 +69,13 @@ public class KoreaeximExchangeRateClient implements MarketIndicatorSource {
     }
 
     /**
-     * 지정 날짜의 USDKRW 환율을 수집한다. 빈 배열이면 전날 영업일(주말 skip)로 재시도한다(REQ-012).
+     * 지정 날짜의 USDKRW 환율을 단일 조회한다(SPEC-COLLECTOR-MARKETIND-005 TASK-C, 전 영업일 역산 재시도 제거).
      *
-     * @param date 수집 시작 날짜
-     * @return USD 행 목록 (성공 시 1건, 상한 초과 시 빈 리스트)
+     * <p>빈 결과({@code []})면 재시도 없이 즉시 빈 리스트를 반환해 상위 {@code MarketIndicatorSourceChain}이 바로 다음
+     * 소스(Yahoo)로 폴백하게 한다. D+A 적용으로 Yahoo가 정확한 날짜의 완결 바만 반환하므로 안전하다.
+     *
+     * @param date 수집 대상 날짜
+     * @return USD 행 목록 (성공 시 1건, 정상 빈 결과면 빈 리스트)
      */
     @Override
     public List<MarketIndicatorRow> fetchDaily(LocalDate date) {
@@ -83,21 +83,7 @@ public class KoreaeximExchangeRateClient implements MarketIndicatorSource {
             log.warn("[koreaexim] KOREAEXIM_API_KEY 미설정 — 빈 결과 반환 (W-5, MA-03)");
             return List.of();
         }
-        LocalDate target = date;
-        for (int attempt = 0; attempt <= emptyRetryMax; attempt++) {
-            List<MarketIndicatorRow> rows = fetchOnDate(target);
-            if (!rows.isEmpty()) {
-                return rows;
-            }
-            log.warn(
-                    "[koreaexim] {} 빈 결과 — 전날 영업일로 재시도 ({}/{})",
-                    target,
-                    attempt + 1,
-                    emptyRetryMax);
-            target = prevBusinessDay(target);
-        }
-        log.warn("[koreaexim] 재시도 상한({}) 초과 — 빈 결과 반환", emptyRetryMax);
-        return List.of();
+        return fetchOnDate(date);
     }
 
     /** 전체 이력 단일 호출 미지원 — 빈 리스트 반환(REQ-041). 백필은 날짜 루프로 수행한다. */
@@ -283,15 +269,5 @@ public class KoreaeximExchangeRateClient implements MarketIndicatorSource {
                     SensitiveDataSanitizer.sanitize(e.getMessage()));
             return null;
         }
-    }
-
-    /** 이전 영업일: 토요일이면 -1(금), 일요일이면 -2(금), 그 외 -1일. */
-    static LocalDate prevBusinessDay(LocalDate date) {
-        LocalDate prev = date.minusDays(1);
-        while (prev.getDayOfWeek() == DayOfWeek.SATURDAY
-                || prev.getDayOfWeek() == DayOfWeek.SUNDAY) {
-            prev = prev.minusDays(1);
-        }
-        return prev;
     }
 }

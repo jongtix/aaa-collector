@@ -105,8 +105,6 @@ aaa:
     chunk-size: 1000
   market-indicator:
     usdkrw:
-      # 빈 배열 재시도 상한 (REQ-012)
-      empty-retry-max: 5
       # KOREAEXIM Connection reset(순간 RST) 즉시 I/O 재시도 상한 — 초과 시 장주기 재시도로 이관(#105)
       io-retry-max: 3
       # 즉시 I/O 재시도 지수 백오프 밑값(ms) — 1000 -> 1s/2s/4s
