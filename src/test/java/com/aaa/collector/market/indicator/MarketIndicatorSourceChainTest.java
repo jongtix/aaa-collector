@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.mockito.Mockito.mock;
 
 import com.aaa.collector.market.enums.IndicatorCode;
+import com.aaa.collector.market.indicator.usdkrw.KoreaeximQuotaExhaustedException;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.Gauge;
 import io.micrometer.core.instrument.MeterRegistry;
@@ -174,6 +175,46 @@ class MarketIndicatorSourceChainTest {
 
             assertThatCode(() -> c.fetchDaily(DATE)).doesNotThrowAnyException();
             assertThat(c.fetchDaily(DATE)).isEmpty();
+        }
+
+        @Test
+        @DisplayName(
+                "AC-B2: KOREAEXIM 쿼터 예외를 체인이 흡수 — Yahoo 폴백(reason=error), 체인 코드 무수정"
+                        + " (SPEC-COLLECTOR-MARKETIND-005 TASK-B)")
+        void quotaExhaustedException_absorbedByChain_fallsBackToYahoo() {
+            MarketIndicatorRow row = vixRow("YAHOO_USDKRW");
+            MarketIndicatorSource quotaExhaustedSource =
+                    new MarketIndicatorSource() {
+                        @Override
+                        public List<MarketIndicatorRow> fetchDaily(LocalDate date) {
+                            throw new KoreaeximQuotaExhaustedException("쿼터 소진 — date=" + date);
+                        }
+
+                        @Override
+                        public List<MarketIndicatorRow> fetchHistory() {
+                            return List.of();
+                        }
+
+                        @Override
+                        public String sourceName() {
+                            return "KOREAEXIM";
+                        }
+                    };
+            MarketIndicatorSourceChain c =
+                    chain(quotaExhaustedSource, successSource("YAHOO_USDKRW", row));
+
+            List<MarketIndicatorRow> result = c.fetchDaily(DATE);
+
+            assertThat(result).containsExactly(row);
+            Counter fallback =
+                    registry.find(MarketIndicatorMetrics.FALLBACK_TOTAL)
+                            .tag("indicator", "VIX")
+                            .tag("from_source", "KOREAEXIM")
+                            .tag("to_source", "YAHOO_USDKRW")
+                            .tag("reason", "error")
+                            .counter();
+            assertThat(fallback).isNotNull();
+            assertThat(fallback.count()).isEqualTo(1.0);
         }
     }
 

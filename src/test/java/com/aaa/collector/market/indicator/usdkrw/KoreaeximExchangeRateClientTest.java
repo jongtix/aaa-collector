@@ -179,23 +179,34 @@ class KoreaeximExchangeRateClientTest {
         }
 
         @Test
-        @DisplayName("result:4(쿼터 소진) — 라이브 경로는 빈 결과로 취급하고 예외 없이 전날 영업일 재시도 (REQ-010 무회귀)")
-        void resultFour_treatedAsEmpty_noExceptionAndRetriesPreviousBusinessDay() {
-            // Arrange: 첫 요청은 result:4(쿼터 소진), 두 번째(전날 영업일)는 정상 응답
+        @DisplayName(
+                "AC-B1: result:4(쿼터 소진) — 라이브 경로도 KoreaeximQuotaExhaustedException 전파(백필과 동일화,"
+                        + " SPEC-COLLECTOR-MARKETIND-005 TASK-B)")
+        void resultFour_liveThrowsQuotaExhaustedException() {
+            // Arrange: result:4(쿼터 소진) — 1회만 호출되고 예외로 즉시 전파된다(전날 영업일 재시도 없음)
             mockServer
                     .expect(method(HttpMethod.GET))
                     .andRespond(withSuccess(RESULT4_RESPONSE, MediaType.APPLICATION_JSON));
+
+            // Act & Assert
+            assertThatThrownBy(() -> client.fetchDaily(LocalDate.of(2026, 6, 20)))
+                    .isInstanceOf(KoreaeximQuotaExhaustedException.class);
+            mockServer.verify();
+        }
+
+        @Test
+        @DisplayName("AC-B3: [] 정상 빈 결과는 예외 아님 — result:4와 구분 유지")
+        void emptyArray_liveDoesNotThrow() {
+            mockServer
+                    .expect(method(HttpMethod.GET))
+                    .andRespond(withSuccess("[]", MediaType.APPLICATION_JSON));
             mockServer
                     .expect(method(HttpMethod.GET))
                     .andRespond(withSuccess(SAMPLE_RESPONSE, MediaType.APPLICATION_JSON));
 
-            // Act
             List<MarketIndicatorRow> rows = client.fetchDaily(LocalDate.of(2026, 6, 20));
 
-            // Assert: 예외 없이 빈 결과로 취급되어 empty-retry가 이어지고 결국 성공 행을 반환한다
             assertThat(rows).hasSize(1);
-            assertThat(rows.getFirst().closeValue()).isEqualByComparingTo("1523.40");
-            mockServer.verify();
         }
     }
 

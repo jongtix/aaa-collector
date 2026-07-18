@@ -140,6 +140,10 @@ public class KoreaeximExchangeRateClient implements MarketIndicatorSource {
         return parseUsdRows(body, date);
     }
 
+    // @MX:NOTE: [AUTO] 라이브도 백필과 동일화한다(SPEC-COLLECTOR-MARKETIND-005 TASK-B) — result:4를
+    // 빈 리스트로 위장하지 않고 KoreaeximQuotaExhaustedException을 던진다. 체인(MarketIndicatorSourceChain)의
+    // 기존 catch가 이를 흡수해 Yahoo로 폴백(reason="error")하므로 체인 코드는 무수정이다.
+    // @MX:SPEC: SPEC-COLLECTOR-MARKETIND-005 REQ-MARKETIND5-010, REQ-MARKETIND5-011
     private List<MarketIndicatorRow> fetchOnDate(LocalDate date) {
         String dateStr = date.format(DATE_FMT);
         List<Map<String, String>> body = fetchWithIoRetry(dateStr);
@@ -147,8 +151,9 @@ public class KoreaeximExchangeRateClient implements MarketIndicatorSource {
             return List.of();
         }
         if (isQuotaExhausted(body)) {
-            // 라이브 경로는 result:4를 계속 빈 결과로 취급한다(empty-retry·체인 폴백 유지, REQ-010 무회귀).
-            return List.of();
+            log.warn("[koreaexim] 쿼터 소진(result:4) — date={}", dateStr);
+            throw new KoreaeximQuotaExhaustedException(
+                    "KOREAEXIM 쿼터 소진(result:4) — date=" + dateStr);
         }
         return parseUsdRows(body, date);
     }
@@ -158,9 +163,12 @@ public class KoreaeximExchangeRateClient implements MarketIndicatorSource {
      * 경우를 정상 빈 결과(길이 0 배열)와 구분한다.
      */
     // @MX:NOTE: [AUTO] result 코드 판별 규칙 — 1=성공, 4=쿼터 소진/차단(전 필드 null 1원소 배열), []=정상 빈 결과(주말·휴일·
-    // 11시 이전 당일). fetchOnDate(라이브)는 result:4를 계속 빈 결과로 취급해 empty-retry·체인 폴백을 그대로 타지만,
-    // fetchDailyForBackfill(백필)은 이 판별로 KoreaeximQuotaExhaustedException을 던져 정상 빈 결과와 구분한다.
-    // @MX:SPEC: SPEC-COLLECTOR-MARKETIND-004 REQ-MARKETIND4-010, REQ-MARKETIND4-011
+    // 11시 이전 당일). 라이브 fetchOnDate·백필 fetchDailyForBackfill 모두 이 판별로
+    // KoreaeximQuotaExhaustedException을 던져 정상 빈 결과와 구분한다(SPEC-COLLECTOR-MARKETIND-005 TASK-B로
+    // 라이브·백필 동일화, 무회귀 예외).
+    // @MX:SPEC: SPEC-COLLECTOR-MARKETIND-004 REQ-MARKETIND4-010, REQ-MARKETIND4-011,
+    // SPEC-COLLECTOR-MARKETIND-005
+    // REQ-MARKETIND5-010
     private static boolean isQuotaExhausted(List<Map<String, String>> body) {
         return body.size() == 1 && "4".equals(body.getFirst().get("result"));
     }
