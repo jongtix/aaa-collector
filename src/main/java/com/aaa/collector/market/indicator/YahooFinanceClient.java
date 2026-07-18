@@ -35,6 +35,13 @@ public class YahooFinanceClient {
 
     private static final String SOURCE = "YAHOO";
     private static final ZoneId NEW_YORK = ZoneId.of("America/New_York");
+
+    // @MX:NOTE: [AUTO] USDKRW=X 일봉 바 timestamp는 런던 자정(Europe/London 00:00) 고정이며, 이는 KST 같은 날
+    // 08:00(BST)/09:00(GMT)에 해당해 Asia/Seoul 라벨이 KOREAEXIM 고시일(11:00 KST)과 같은 거래일로 정합한다.
+    // America/New_York 라벨은 런던 자정이 NY 전날 19~20시에 해당해 하루 밀린다(SPEC-COLLECTOR-MARKETIND-005
+    // REQ-001/002).
+    private static final ZoneId SEOUL = ZoneId.of("Asia/Seoul");
+
     private static final String USER_AGENT =
             "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36";
 
@@ -116,6 +123,19 @@ public class YahooFinanceClient {
         };
     }
 
+    /**
+     * 지표별 바 라벨링 시간대 분기 (SPEC-COLLECTOR-MARKETIND-005 REQ-001~003).
+     *
+     * @param code 지표 코드
+     * @return USDKRW는 {@code Asia/Seoul}, VIX는 {@code America/New_York}(기존 매핑 무회귀)
+     */
+    private ZoneId zoneFor(IndicatorCode code) {
+        return switch (code) {
+            case USDKRW -> SEOUL;
+            case VIX -> NEW_YORK;
+        };
+    }
+
     @SuppressWarnings({
         "unchecked",
         "PMD.UnnecessaryCast"
@@ -170,7 +190,8 @@ public class YahooFinanceClient {
             int i) {
         try {
             long epoch = timestamps.get(i).longValue();
-            LocalDate date = Instant.ofEpochSecond(epoch).atZone(NEW_YORK).toLocalDate();
+            ZoneId zone = zoneFor(indicatorCode);
+            LocalDate date = Instant.ofEpochSecond(epoch).atZone(zone).toLocalDate();
 
             Number closeNum = closes.get(i);
             if (closeNum == null) {

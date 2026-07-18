@@ -8,6 +8,7 @@ import static org.springframework.test.web.client.response.MockRestResponseCreat
 
 import com.aaa.collector.market.enums.IndicatorCode;
 import java.time.LocalDate;
+import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.List;
 import org.junit.jupiter.api.BeforeEach;
@@ -250,6 +251,81 @@ class YahooFinanceClientTest {
 
             assertThat(rows).isNotEmpty();
             mockServer.verify();
+        }
+    }
+
+    @Nested
+    @DisplayName("존 분기 — 지표별 라벨링 (SPEC-COLLECTOR-MARKETIND-005 TASK-D)")
+    class ZoneBranchByIndicator {
+
+        private String singleRowJson(long epoch) {
+            return """
+                    {
+                      "chart": {
+                        "result": [{
+                          "timestamp": [__EPOCH__],
+                          "indicators": {
+                            "quote": [{
+                              "open": [1380.0],
+                              "high": [1385.0],
+                              "low": [1375.0],
+                              "close": [1382.5]
+                            }]
+                          }
+                        }]
+                      }
+                    }
+                    """
+                    .replace("__EPOCH__", Long.toString(epoch));
+        }
+
+        @Test
+        @DisplayName("USDKRW — 런던 자정(BST) 바를 Asia/Seoul 기준 같은 거래일로 라벨링 (REQ-001, REQ-002)")
+        void usdkrw_labelsWithSeoulZone() {
+            // 런던 자정(BST, UTC+1) 2026-07-06T00:00:00+01:00 = UTC 2026-07-05T23:00:00Z
+            long epoch = OffsetDateTime.parse("2026-07-05T23:00:00Z").toEpochSecond();
+            mockServer
+                    .expect(method(HttpMethod.GET))
+                    .andRespond(withSuccess(singleRowJson(epoch), MediaType.APPLICATION_JSON));
+
+            List<MarketIndicatorRow> rows = client.fetchHistory(IndicatorCode.USDKRW);
+
+            assertThat(rows.getFirst().tradeDate()).isEqualTo(LocalDate.of(2026, 7, 6));
+        }
+
+        @Test
+        @DisplayName("VIX — America/New_York 라벨 유지, 존 분기가 VIX에는 영향 없음 (REQ-003, 무회귀)")
+        void vix_labelsWithNewYorkZone_unchanged() {
+            // 동일 UTC epoch를 VIX로 라벨링하면 America/New_York 기준 하루 전 날짜가 된다(기존 매핑 유지)
+            long epoch = OffsetDateTime.parse("2026-07-05T23:00:00Z").toEpochSecond();
+            mockServer
+                    .expect(method(HttpMethod.GET))
+                    .andRespond(withSuccess(singleRowJson(epoch), MediaType.APPLICATION_JSON));
+
+            List<MarketIndicatorRow> rows = client.fetchHistory(IndicatorCode.VIX);
+
+            assertThat(rows.getFirst().tradeDate()).isEqualTo(LocalDate.of(2026, 7, 5));
+        }
+
+        @Test
+        @DisplayName("동일 timestamp라도 지표 코드에 따라 서로 다른 존을 사용한다 (REQ-001)")
+        void sameTimestamp_differentZonePerIndicator() {
+            long epoch = OffsetDateTime.parse("2026-07-05T23:00:00Z").toEpochSecond();
+            String json = singleRowJson(epoch);
+
+            mockServer
+                    .expect(method(HttpMethod.GET))
+                    .andRespond(withSuccess(json, MediaType.APPLICATION_JSON));
+            mockServer
+                    .expect(method(HttpMethod.GET))
+                    .andRespond(withSuccess(json, MediaType.APPLICATION_JSON));
+
+            LocalDate usdkrwDate = client.fetchHistory(IndicatorCode.USDKRW).getFirst().tradeDate();
+            LocalDate vixDate = client.fetchHistory(IndicatorCode.VIX).getFirst().tradeDate();
+
+            assertThat(usdkrwDate).isNotEqualTo(vixDate);
+            assertThat(usdkrwDate).isEqualTo(LocalDate.of(2026, 7, 6));
+            assertThat(vixDate).isEqualTo(LocalDate.of(2026, 7, 5));
         }
     }
 
