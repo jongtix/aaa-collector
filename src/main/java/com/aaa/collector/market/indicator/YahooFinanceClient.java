@@ -81,8 +81,23 @@ public class YahooFinanceClient {
      * @param date 수집 날짜
      * @return 해당 날짜 행 목록
      */
+    // @MX:NOTE: [AUTO] fetchRange(date, date) 응답에서 요청 날짜 밖 이웃 바를 걸러낸다(계약 준수, "해당 날짜
+    // 행 목록"). fetchRange(윈도우 조회, VIX MARKETIND-003)에는 이 필터를 적용하지 않는다 — 범위 내 모든 날짜
+    // 행이 정당한 응답이기 때문이다(SPEC-COLLECTOR-MARKETIND-005 REQ-004/005/009).
     public List<MarketIndicatorRow> fetchDaily(IndicatorCode indicatorCode, LocalDate date) {
-        return fetchRange(indicatorCode, date, date);
+        List<MarketIndicatorRow> rows = fetchRange(indicatorCode, date, date);
+        List<MarketIndicatorRow> kept = new ArrayList<>();
+        for (MarketIndicatorRow row : rows) {
+            if (date.equals(row.tradeDate())) {
+                kept.add(row);
+            } else {
+                log.warn(
+                        "[yahoo] fetchDaily 요청 날짜 밖 이웃 바 — skip: requested={}, actual={}",
+                        date,
+                        row.tradeDate());
+            }
+        }
+        return kept;
     }
 
     /**

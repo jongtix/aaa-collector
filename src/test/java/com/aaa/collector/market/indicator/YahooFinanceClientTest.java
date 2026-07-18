@@ -255,6 +255,63 @@ class YahooFinanceClientTest {
     }
 
     @Nested
+    @DisplayName("fetchDaily 날짜 필터 — 요청 날짜 밖 이웃 바 제거 (SPEC-COLLECTOR-MARKETIND-005 TASK-A)")
+    class FetchDailyDateFilter {
+
+        private String threeDayUsdkrwJson() {
+            // 3개 연속 Seoul 거래일(2026-07-05·06·07)에 대응하는 UTC epoch(각 00:00 UTC = 09:00 KST 같은 날)
+            return """
+                    {
+                      "chart": {
+                        "result": [{
+                          "timestamp": [1783209600, 1783296000, 1783382400],
+                          "indicators": {
+                            "quote": [{
+                              "open": [1380.0, 1381.0, 1382.0],
+                              "high": [1385.0, 1386.0, 1387.0],
+                              "low": [1375.0, 1376.0, 1377.0],
+                              "close": [1382.5, 1383.5, 1384.5]
+                            }]
+                          }
+                        }]
+                      }
+                    }
+                    """;
+        }
+
+        @Test
+        @DisplayName("AC-A1: 이웃 날짜 바를 제거하고 요청 날짜 행만 남긴다")
+        void keepsOnlyRequestedDateRow() {
+            LocalDate target = LocalDate.of(2026, 7, 6);
+            mockServer
+                    .expect(method(HttpMethod.GET))
+                    .andRespond(withSuccess(threeDayUsdkrwJson(), MediaType.APPLICATION_JSON));
+
+            List<MarketIndicatorRow> rows = client.fetchDaily(IndicatorCode.USDKRW, target);
+
+            assertThat(rows).hasSize(1);
+            assertThat(rows.getFirst().tradeDate()).isEqualTo(target);
+        }
+
+        @Test
+        @DisplayName(
+                "AC-A2: fetchRange(윈도우)는 날짜 필터 미적용 — 범위 내 모든 날짜 행 유지 (VIX MARKETIND-003 회귀 방지)")
+        void fetchRange_notFiltered_keepsAllRows() {
+            mockServer
+                    .expect(method(HttpMethod.GET))
+                    .andRespond(withSuccess(threeDayUsdkrwJson(), MediaType.APPLICATION_JSON));
+
+            List<MarketIndicatorRow> rows =
+                    client.fetchRange(
+                            IndicatorCode.USDKRW,
+                            LocalDate.of(2026, 7, 5),
+                            LocalDate.of(2026, 7, 7));
+
+            assertThat(rows).hasSize(3);
+        }
+    }
+
+    @Nested
     @DisplayName("존 분기 — 지표별 라벨링 (SPEC-COLLECTOR-MARKETIND-005 TASK-D)")
     class ZoneBranchByIndicator {
 

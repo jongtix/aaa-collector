@@ -95,6 +95,24 @@ class UsdkrwCollectionServiceTest {
 
             assertThatCode(() -> service.collectDaily(date)).doesNotThrowAnyException();
         }
+
+        @Test
+        @DisplayName(
+                "AC-A3: target 날짜 이중 게이트 — 불일치 행은 저장하지 않는다 (SPEC-COLLECTOR-MARKETIND-005 TASK-A)")
+        void targetDateGate_dropsMismatchedRow() {
+            LocalDate target = LocalDate.of(2026, 6, 20);
+            LocalDate mismatched = LocalDate.of(2026, 6, 19);
+            when(usdkrwChain.fetchDaily(target))
+                    .thenReturn(List.of(usdkrwRow(target), usdkrwRow(mismatched)));
+
+            service.collectDaily(target);
+
+            verify(marketIndicatorInserter).insertBatch(inserterCaptor.capture());
+            List<MarketIndicator> inserted =
+                    inserterCaptor.getAllValues().stream().flatMap(List::stream).toList();
+            assertThat(inserted).hasSize(1);
+            assertThat(inserted.getFirst().getTradeDate()).isEqualTo(target);
+        }
     }
 
     @Nested
@@ -113,6 +131,54 @@ class UsdkrwCollectionServiceTest {
             int count = service.collectHistory();
 
             assertThat(count).isEqualTo(2);
+        }
+    }
+
+    @Nested
+    @DisplayName(
+            "collectDailyForBackfillWithRaw — target 게이트 + raw 의미 (SPEC-COLLECTOR-MARKETIND-005"
+                    + " TASK-A)")
+    class CollectDailyForBackfillWithRaw {
+
+        @Test
+        @DisplayName("AC-A4: 정상 동작 — 게이트 통과 후 raw == kept == 계약 준수 응답 행수")
+        void normalOperation_rawEqualsKept() {
+            LocalDate target = LocalDate.of(2026, 6, 20);
+            when(usdkrwChain.fetchDaily(target)).thenReturn(List.of(usdkrwRow(target)));
+
+            UsdkrwCollectionService.SaveOutcome outcome =
+                    service.collectDailyForBackfillWithRaw(target);
+
+            assertThat(outcome.kept()).isEqualTo(1);
+            assertThat(outcome.raw()).isEqualTo(1);
+        }
+
+        @Test
+        @DisplayName("AC-A4: target 불일치 행은 게이트에서 탈락 — raw/kept 모두 게이트 통과 후 행수로 카운트")
+        void mismatchedRow_droppedByGate_rawExcludesIt() {
+            LocalDate target = LocalDate.of(2026, 6, 20);
+            LocalDate mismatched = LocalDate.of(2026, 6, 19);
+            when(usdkrwChain.fetchDaily(target))
+                    .thenReturn(List.of(usdkrwRow(target), usdkrwRow(mismatched)));
+
+            UsdkrwCollectionService.SaveOutcome outcome =
+                    service.collectDailyForBackfillWithRaw(target);
+
+            assertThat(outcome.kept()).isEqualTo(1);
+            assertThat(outcome.raw()).isEqualTo(1);
+        }
+
+        @Test
+        @DisplayName("빈 결과 — raw == kept == 0")
+        void emptyResult_rawAndKeptZero() {
+            LocalDate target = LocalDate.of(2026, 6, 20);
+            when(usdkrwChain.fetchDaily(target)).thenReturn(List.of());
+
+            UsdkrwCollectionService.SaveOutcome outcome =
+                    service.collectDailyForBackfillWithRaw(target);
+
+            assertThat(outcome.kept()).isEqualTo(0);
+            assertThat(outcome.raw()).isEqualTo(0);
         }
     }
 

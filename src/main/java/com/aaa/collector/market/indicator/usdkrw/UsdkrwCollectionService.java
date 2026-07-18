@@ -44,7 +44,8 @@ public class UsdkrwCollectionService {
     public void collectDaily(LocalDate date) {
         try {
             List<MarketIndicatorRow> rows = usdkrwChain.fetchDaily(date);
-            int saved = saveRows(rows);
+            List<MarketIndicatorRow> gated = filterByTargetDate(rows, date);
+            int saved = saveRows(gated);
             log.info("[usdkrw] 일봉 수집 완료 — date={}, saved={}", date, saved);
         } catch (Exception e) {
             log.error("[usdkrw] 일봉 수집 예외 — date={}", date, e);
@@ -84,11 +85,40 @@ public class UsdkrwCollectionService {
      * TASK-006a에서 실측 확인했다 — 별도 변환 없이 그대로 노출한다.
      *
      * @param date 수집 대상 날짜
-     * @return kept(검증 통과·저장 시도 행수)/raw(검증 전 원본 응답 행수)
+     * @return kept(검증 통과·저장 시도 행수)/raw(검증 전 원본 응답 행수 — target 날짜 게이트 통과 후, §9 raw 결정)
      */
     public SaveOutcome collectDailyForBackfillWithRaw(LocalDate date) {
         List<MarketIndicatorRow> rows = usdkrwChain.fetchDaily(date);
-        return saveRowsWithRaw(rows);
+        List<MarketIndicatorRow> gated = filterByTargetDate(rows, date);
+        return saveRowsWithRaw(gated);
+    }
+
+    /**
+     * 저장 직전 target 날짜 최종 게이트 (SPEC-COLLECTOR-MARKETIND-005 REQ-006/007) — {@code
+     * VixCollectionService.saveRows} 당일 배제 가드와 동형의 이중 방어. 클라이언트({@code
+     * YahooFinanceClient.fetchDaily})가 이미 날짜 계약을 지키므로(REQ-004) 정상 동작에서는 아무 행도 탈락시키지 않는다.
+     *
+     * @param rows 체인 응답 행 목록
+     * @param target 수집 대상 날짜
+     * @return target과 일치하는 행만 남긴 목록
+     */
+    // @MX:NOTE: [AUTO] 클라이언트 날짜 계약(YahooFinanceClient.fetchDaily) 위반 시의 방어적 이중 게이트 —
+    // 정상 동작에서는 vacuous(탈락 0건)하며, 클라이언트 계약이 깨질 경우의 안전망 역할이다.
+    // @MX:SPEC: SPEC-COLLECTOR-MARKETIND-005 REQ-MARKETIND5-006, REQ-MARKETIND5-007
+    private List<MarketIndicatorRow> filterByTargetDate(
+            List<MarketIndicatorRow> rows, LocalDate target) {
+        List<MarketIndicatorRow> kept = new ArrayList<>();
+        for (MarketIndicatorRow row : rows) {
+            if (target.equals(row.tradeDate())) {
+                kept.add(row);
+            } else {
+                log.warn(
+                        "[usdkrw] target 날짜 불일치 — skip: target={}, actual={}",
+                        target,
+                        row.tradeDate());
+            }
+        }
+        return kept;
     }
 
     /**
