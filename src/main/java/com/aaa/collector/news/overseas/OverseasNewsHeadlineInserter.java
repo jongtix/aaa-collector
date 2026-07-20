@@ -70,6 +70,7 @@ public class OverseasNewsHeadlineInserter {
                                         rows,
                                         this::bindRow,
                                         "overseas_news_headlines",
+                                        // REQ-OBSV-028: 공개 식별자만 사용 — title(본문)은 로그에서 의도적으로 제외
                                         e ->
                                                 "newsKey="
                                                         + e.getNewsKey()
@@ -106,6 +107,7 @@ public class OverseasNewsHeadlineInserter {
                                         this::bindRow,
                                         onFailure,
                                         "overseas_news_headlines",
+                                        // REQ-OBSV-028: 공개 식별자만 사용 — title(본문)은 로그에서 의도적으로 제외
                                         e ->
                                                 "newsKey="
                                                         + e.getNewsKey()

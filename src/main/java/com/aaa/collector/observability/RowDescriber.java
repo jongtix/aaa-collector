@@ -6,8 +6,17 @@ package com.aaa.collector.observability;
  * <p>{@link SilentDropWarningCounter}가 비-1062 경고를 발견한 행에 한해 지연 호출하여, 로그의 {@code row=} 값을 조립한다.
  * 인서터별로 자신의 행 타입에 맞는 공개 식별자(시세/이벤트 데이터의 symbol/date/종목ID 등)를 조합해 위임한다.
  *
- * <p><b>보안 계약 (REQ-OBSV-028)</b>: 구현체는 시크릿(appkey/secret/token)·개인식별정보(HTS_ID·계좌번호)·본문(뉴스 title 등)을
- * 식별자에 포함하면 안 된다 — 로그로 유출되기 때문이다. 시세/이벤트 데이터의 공개 식별자만 사용한다.
+ * <p><b>[경고] 보안 계약 (REQ-OBSV-028) — 구현체는 반드시 준수할 것</b>: {@link #describe}의 반환값은 그대로 WARN 로그의 {@code
+ * row=} 필드에 실려 VictoriaLogs 등 로그 저장소에 영구 보관된다. 구현체는 다음을 절대 포함하면 안 된다.
+ *
+ * <ul>
+ *   <li>시크릿 — appkey, secret, access_token 등 인증 자격증명
+ *   <li>개인식별정보(PII) — HTS_ID, 계좌번호 등 사용자 식별 정보
+ *   <li>본문 — 뉴스 title/content 등 원문 텍스트
+ * </ul>
+ *
+ * <p>시세/이벤트 데이터의 공개 식별자(symbol·date·종목ID 등)만 조합해 사용한다. 새 인서터를 추가할 때 이 계약을 어기면 시크릿·PII·본문이 로그로 유출된다
+ * — 리뷰 시 반드시 확인할 것.
  *
  * @param <T> 행 타입
  */

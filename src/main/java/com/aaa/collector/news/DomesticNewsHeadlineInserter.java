@@ -71,6 +71,7 @@ public class DomesticNewsHeadlineInserter {
                                         rows,
                                         this::bindRow,
                                         "domestic_news_headlines",
+                                        // REQ-OBSV-028: 공개 식별자만 사용 — title(본문)은 로그에서 의도적으로 제외
                                         e ->
                                                 "serialNo="
                                                         + e.getSerialNo()
@@ -106,6 +107,7 @@ public class DomesticNewsHeadlineInserter {
                                         this::bindRow,
                                         onFailure,
                                         "domestic_news_headlines",
+                                        // REQ-OBSV-028: 공개 식별자만 사용 — title(본문)은 로그에서 의도적으로 제외
                                         e ->
                                                 "serialNo="
                                                         + e.getSerialNo()

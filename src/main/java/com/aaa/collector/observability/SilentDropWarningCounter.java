@@ -34,6 +34,30 @@ import org.slf4j.LoggerFactory;
  * 남긴다(경고 1건 = 로그 1건). 행 식별자는 {@link RowDescriber}로 위임하며, 비-1062 경고를 발견한 행에서만 그 행의 첫 경고에서 한 번
  * 호출·메모이즈해 정상 경로 오버헤드를 0으로 유지한다(REQ-OBSV-026). describer 호출이 예외를 던지면 그 경고의 로깅만 생략하고 카운트는 반영한 채 루프를
  * 계속한다(REQ-OBSV-035).
+ *
+ * <p><b>정상 침묵 드롭 로그 vs 진단 로그 구분</b>: 이 클래스는 접두사가 다른 두 종류의 WARN 로그를 방출하며, 운영자는 접두사로 필터링해 둘을 구분할 수
+ * 있다.
+ *
+ * <ul>
+ *   <li>{@code silent_drop} — 정상 경로. 비-1062 경고 1건당 1줄, {@code table}·{@code errorCode}·{@code
+ *       warning}·{@code row} 필드를 모두 포함한다(위 REQ-OBSV-024).
+ *   <li>{@code silent_drop_row_describe_failed} — 진단 로그. {@link RowDescriber#describe}가 예외를 던졌을 때만
+ *       {@link #describeSafely}가 남기며, {@code table}·{@code errorCode}·{@code cause} 필드만 갖는다({@code
+ *       warning}/{@code row} 없음, REQ-OBSV-035). 침묵 드롭 카운트에는 반영되지만 원본 경고의 {@code silent_drop} 로그 한
+ *       줄이 생략된 것이므로, 이 로그가 나타나면 해당 인서터의 {@link RowDescriber} 구현을 점검할 것.
+ * </ul>
+ *
+ * <p><b>LogsQL 조회 예시 (VictoriaLogs, SSH 터널 후 VMUI {@code /select/vmui/} 또는 {@code
+ * /select/logsql/query?query=...})</b>:
+ *
+ * <ul>
+ *   <li>특정 테이블의 침묵 드롭 전체 조회: {@code _msg:"silent_drop table=daily_ohlcv"}
+ *   <li>특정 테이블의 특정 errorCode만 조회(예: FK 위반 1452): {@code _msg:"silent_drop table=daily_ohlcv" AND
+ *       _msg:"errorCode=1452"}
+ *   <li>describer 예외로 로깅이 누락된 진단 이벤트만 조회: {@code _msg:"silent_drop_row_describe_failed"}
+ *   <li>테이블별 errorCode 집계(logfmt 파싱): {@code _msg:"silent_drop table=" | unpack_logfmt | stats by
+ *       (table, errorCode) count() as drops}
+ * </ul>
  */
 // @MX:ANCHOR: [AUTO] 침묵 드롭 분류·행별 실행 공유 엔진 — 14개 Tier-1 인서터가 호출(fan_in 14)
 // 기존 4(daily/short-sale/investor/credit) + 신규 10(infra#9:
