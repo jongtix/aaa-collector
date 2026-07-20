@@ -127,6 +127,19 @@ public class SafeModeManager {
         return safeModeRepository.isSafeMode(alias);
     }
 
+    /**
+     * 이 매니저의 module 태그 값({@code "token"} 또는 {@code "ws"})을 반환한다.
+     *
+     * <p>{@code enter_total} 카운터의 {@code module} 태그에 쓰이는 값과 동일한 값을 신규 상태형 게이지({@code
+     * aaa_collector_safe_mode_active})의 {@code module} 태그에도 재사용하기 위해 노출한다. 컨텍스트별 문자열을 게이지 바인더에서 별도로
+     * 하드코딩하지 않고 이 접근자를 재사용함으로써 두 메트릭의 {@code module} 태그 일관성을 코드로 보장한다.
+     *
+     * @return module 태그 값
+     */
+    public String getModule() {
+        return module;
+    }
+
     private Counter counter(String name, String alias) {
         // alias = KIS 계좌/세션 식별자 (isa, key1~key4, ws 세션). 최대 ~10종 고정값 — cardinality 안전.
         // Micrometer.register()는 멱등 — 동일 name+tags는 캐시된 counter를 반환한다.
