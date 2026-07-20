@@ -103,21 +103,6 @@ class SafeModeManagerTest {
                             .count();
             assertThat(count).isEqualTo(1.0);
         }
-
-        @Test
-        @DisplayName("exit — exit_total 카운터 1 증가")
-        void exit_incrementsExitCounter() {
-            SafeModeManager manager = legacyManager();
-
-            manager.exit("isa");
-
-            double count =
-                    registry.get("aaa_collector_safe_mode_exit_total")
-                            .tags("module", "ws", "alias", "isa")
-                            .counter()
-                            .count();
-            assertThat(count).isEqualTo(1.0);
-        }
     }
 
     // ── 정책 있음(token) — REQ-SAFEMODE-002/003/004/005/008 ───────────────────
@@ -229,8 +214,7 @@ class SafeModeManagerTest {
         }
 
         @Test
-        @DisplayName(
-                "exit — setSafeMode(alias, false) 호출, exit_total 증가 (백오프 리셋은 exit()에서 하지 않음, D-F)")
+        @DisplayName("exit — setSafeMode(alias, false) 호출 (백오프 리셋은 exit()에서 하지 않음, D-F)")
         void exit_callsSetSafeModeFalse() {
             SafeModeManager manager = tokenManager();
             String alias = "isa";
@@ -238,12 +222,6 @@ class SafeModeManagerTest {
             manager.exit(alias);
 
             verify(safeModeRepository).setSafeMode(alias, false);
-            double count =
-                    registry.get("aaa_collector_safe_mode_exit_total")
-                            .tags("module", "token", "alias", alias)
-                            .counter()
-                            .count();
-            assertThat(count).isEqualTo(1.0);
         }
 
         @Test

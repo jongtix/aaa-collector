@@ -19,12 +19,14 @@ import lombok.extern.slf4j.Slf4j;
  * 협력자가 주입된 인스턴스(token 컨텍스트)만 SafeMode "ON"에 유한 TTL을 부여하고 재진입 백오프(1h→2h→4h 상한)를 적용한다. 정책이 {@code
  * null}인 인스턴스(WebSocket 컨텍스트)는 TTL 없이 영구 저장하는 현행 동작을 그대로 유지한다(REQ-SAFEMODE-016).
  *
- * <p>진입/해제 시 {@code aaa_collector_safe_mode_enter_total}/{@code aaa_collector_safe_mode_exit_total}
- * 메트릭을 계측한다. {@code enter_total}은 실제 진입(비활성→활성 전이)에서만 증가하며, 활성 중 재진입 no-op(REQ-SAFEMODE-008)은 카운트하지
- * 않는다.
+ * <p>진입 시 {@code aaa_collector_safe_mode_enter_total} 메트릭을 계측한다. {@code enter_total}은 실제 진입(비활성→활성
+ * 전이)에서만 증가하며, 활성 중 재진입 no-op(REQ-SAFEMODE-008)은 카운트하지 않는다. 해제 관측은 별도의 상태형 게이지 {@code
+ * aaa_collector_safe_mode_active}({@link com.aaa.collector.kis.token.SafeModeGaugeBinder})가 담당한다 —
+ * 해제는 TTL 자연 만료·수동 삭제·명시적 {@code exit()} 등 여러 경로로 발생하고 그중 다수가 이 컴포넌트를 거치지 않으므로, 이벤트(카운터)가 아니라 스크레이프
+ * 시점의 실제 상태(0/1)로 관측한다(SPEC-COLLECTOR-SAFEMODEGAUGE-001, aaa-infra#85).
  */
-// @MX:NOTE: [AUTO] 안전 모드 진입/해제 시 aaa_collector_safe_mode_enter/exit_total 메트릭 계측 — vmalert
-// CollectorSafeMode 룰의 입력 소스
+// @MX:NOTE: [AUTO] 안전 모드 진입 시 aaa_collector_safe_mode_enter_total 메트릭 계측 — vmalert
+// CollectorSafeMode 진입 룰의 입력 소스. 해제 관측은 상태형 게이지 aaa_collector_safe_mode_active가 담당(exit_total 폐지)
 // @MX:NOTE: [AUTO] TTL·백오프 라이프사이클은 backoffPolicy != null인 인스턴스(token 컨텍스트)에만 적용된다(D-B)
 @Slf4j
 @AllArgsConstructor
@@ -97,7 +99,6 @@ public class SafeModeManager {
     public void exit(String alias) {
         safeModeRepository.setSafeMode(alias, false);
         log.info("[{}] 안전 모드 해제", alias);
-        counter("aaa_collector_safe_mode_exit_total", alias).increment();
     }
 
     /**
