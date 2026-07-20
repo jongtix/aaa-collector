@@ -62,7 +62,17 @@ public class CorporateEventInserter {
                         (Connection conn) -> {
                             try (PreparedStatement ps = conn.prepareStatement(INSERT_IGNORE_SQL)) {
                                 return SilentDropWarningCounter.countDropsPerRow(
-                                        ps, rows, this::bindRow);
+                                        ps,
+                                        rows,
+                                        this::bindRow,
+                                        "corporate_events",
+                                        e ->
+                                                "stockId="
+                                                        + e.getStock().getId()
+                                                        + " eventType="
+                                                        + e.getEventType()
+                                                        + " eventDate="
+                                                        + e.getEventDate());
                             }
                         });
         batchMetrics.recordSilentDrops(drops == null ? 0L : drops);
@@ -86,7 +96,18 @@ public class CorporateEventInserter {
                         (Connection conn) -> {
                             try (PreparedStatement ps = conn.prepareStatement(INSERT_IGNORE_SQL)) {
                                 return SilentDropWarningCounter.countDropsPerRowIsolated(
-                                        ps, rows, this::bindRow, onFailure);
+                                        ps,
+                                        rows,
+                                        this::bindRow,
+                                        onFailure,
+                                        "corporate_events",
+                                        e ->
+                                                "stockId="
+                                                        + e.getStock().getId()
+                                                        + " eventType="
+                                                        + e.getEventType()
+                                                        + " eventDate="
+                                                        + e.getEventDate());
                             }
                         });
         batchMetrics.recordSilentDrops(drops == null ? 0L : drops);

@@ -65,7 +65,15 @@ public class AnalystEstimateInserter {
                         (Connection conn) -> {
                             try (PreparedStatement ps = conn.prepareStatement(INSERT_IGNORE_SQL)) {
                                 return SilentDropWarningCounter.countDropsPerRow(
-                                        ps, rows, this::bindRow);
+                                        ps,
+                                        rows,
+                                        this::bindRow,
+                                        "analyst_estimates",
+                                        e ->
+                                                "stockId="
+                                                        + e.getStock().getId()
+                                                        + " tradeDate="
+                                                        + e.getTradeDate());
                             }
                         });
         batchMetrics.recordSilentDrops(drops == null ? 0L : drops);

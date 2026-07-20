@@ -76,7 +76,15 @@ public class WarningCountingOhlcvInserter {
                         (Connection conn) -> {
                             try (PreparedStatement ps = conn.prepareStatement(INSERT_IGNORE_SQL)) {
                                 return SilentDropWarningCounter.countDropsPerRow(
-                                        ps, rows, (s, row) -> bindRow(s, stockId, row, fmt));
+                                        ps,
+                                        rows,
+                                        (s, row) -> bindRow(s, stockId, row, fmt),
+                                        "daily_ohlcv",
+                                        row ->
+                                                "stockId="
+                                                        + stockId
+                                                        + " date="
+                                                        + row.stckBsopDate());
                             }
                         });
         batchMetrics.recordSilentDrops(drops == null ? 0L : drops);
@@ -113,7 +121,15 @@ public class WarningCountingOhlcvInserter {
                         (Connection conn) -> {
                             try (PreparedStatement ps = conn.prepareStatement(INSERT_IGNORE_SQL)) {
                                 return SilentDropWarningCounter.countDropsPerRow(
-                                        ps, rows, (s, row) -> bindParsedRow(s, stockId, row));
+                                        ps,
+                                        rows,
+                                        (s, row) -> bindParsedRow(s, stockId, row),
+                                        "daily_ohlcv",
+                                        row ->
+                                                "stockId="
+                                                        + stockId
+                                                        + " tradeDate="
+                                                        + row.tradeDate());
                             }
                         });
         batchMetrics.recordSilentDrops(drops == null ? 0L : drops);

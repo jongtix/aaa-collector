@@ -76,7 +76,15 @@ public class CreditBalanceInserter {
                         (Connection conn) -> {
                             try (PreparedStatement ps = conn.prepareStatement(INSERT_IGNORE_SQL)) {
                                 return SilentDropWarningCounter.countDropsPerRow(
-                                        ps, rows, this::bindRow);
+                                        ps,
+                                        rows,
+                                        this::bindRow,
+                                        "credit_balance",
+                                        e ->
+                                                "stockId="
+                                                        + e.getStock().getId()
+                                                        + " tradeDate="
+                                                        + e.getTradeDate());
                             }
                         });
         batchMetrics.recordSilentDrops(drops == null ? 0L : drops);

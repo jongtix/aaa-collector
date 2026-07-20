@@ -64,7 +64,17 @@ public class DisclosureInserter {
                         (Connection conn) -> {
                             try (PreparedStatement ps = conn.prepareStatement(INSERT_IGNORE_SQL)) {
                                 return SilentDropWarningCounter.countDropsPerRow(
-                                        ps, rows, this::bindRow);
+                                        ps,
+                                        rows,
+                                        this::bindRow,
+                                        "disclosures",
+                                        row ->
+                                                "stockId="
+                                                        + row.stockId()
+                                                        + " rceptNo="
+                                                        + row.rceptNo()
+                                                        + " rceptDt="
+                                                        + row.rceptDt());
                             }
                         });
         batchMetrics.recordSilentDrops(drops == null ? 0L : drops);
@@ -90,7 +100,18 @@ public class DisclosureInserter {
                         (Connection conn) -> {
                             try (PreparedStatement ps = conn.prepareStatement(INSERT_IGNORE_SQL)) {
                                 return SilentDropWarningCounter.countDropsPerRowIsolated(
-                                        ps, rows, this::bindRow, onFailure);
+                                        ps,
+                                        rows,
+                                        this::bindRow,
+                                        onFailure,
+                                        "disclosures",
+                                        row ->
+                                                "stockId="
+                                                        + row.stockId()
+                                                        + " rceptNo="
+                                                        + row.rceptNo()
+                                                        + " rceptDt="
+                                                        + row.rceptDt());
                             }
                         });
         batchMetrics.recordSilentDrops(drops == null ? 0L : drops);

@@ -64,7 +64,17 @@ public class MacroIndicatorInserter {
                         (Connection conn) -> {
                             try (PreparedStatement ps = conn.prepareStatement(INSERT_IGNORE_SQL)) {
                                 return SilentDropWarningCounter.countDropsPerRow(
-                                        ps, rows, this::bindRow);
+                                        ps,
+                                        rows,
+                                        this::bindRow,
+                                        "macro_indicators",
+                                        e ->
+                                                "indicatorCode="
+                                                        + e.getIndicatorCode()
+                                                        + " source="
+                                                        + e.getSource()
+                                                        + " tradeDate="
+                                                        + e.getTradeDate());
                             }
                         });
         batchMetrics.recordSilentDrops(drops == null ? 0L : drops);

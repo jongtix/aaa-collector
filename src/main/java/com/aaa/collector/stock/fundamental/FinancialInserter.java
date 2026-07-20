@@ -58,7 +58,17 @@ public class FinancialInserter {
                         (Connection conn) -> {
                             try (PreparedStatement ps = conn.prepareStatement(INSERT_IGNORE_SQL)) {
                                 return SilentDropWarningCounter.countDropsPerRow(
-                                        ps, rows, this::bindRow);
+                                        ps,
+                                        rows,
+                                        this::bindRow,
+                                        "financials",
+                                        e ->
+                                                "stockId="
+                                                        + e.getStock().getId()
+                                                        + " periodType="
+                                                        + e.getPeriodType()
+                                                        + " periodDate="
+                                                        + e.getPeriodDate());
                             }
                         });
         batchMetrics.recordSilentDrops(drops == null ? 0L : drops);

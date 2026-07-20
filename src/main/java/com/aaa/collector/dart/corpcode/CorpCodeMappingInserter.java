@@ -55,7 +55,15 @@ public class CorpCodeMappingInserter {
                         (Connection conn) -> {
                             try (PreparedStatement ps = conn.prepareStatement(INSERT_IGNORE_SQL)) {
                                 return SilentDropWarningCounter.countDropsPerRow(
-                                        ps, rows, this::bindRow);
+                                        ps,
+                                        rows,
+                                        this::bindRow,
+                                        "corp_code_mapping",
+                                        e ->
+                                                "stockCode="
+                                                        + e.getStockCode()
+                                                        + " corpCode="
+                                                        + e.getCorpCode());
                             }
                         });
         batchMetrics.recordSilentDrops(drops == null ? 0L : drops);

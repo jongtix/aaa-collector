@@ -67,7 +67,15 @@ public class DomesticNewsHeadlineInserter {
                         (Connection conn) -> {
                             try (PreparedStatement ps = conn.prepareStatement(INSERT_IGNORE_SQL)) {
                                 return SilentDropWarningCounter.countDropsPerRow(
-                                        ps, rows, this::bindRow);
+                                        ps,
+                                        rows,
+                                        this::bindRow,
+                                        "domestic_news_headlines",
+                                        e ->
+                                                "serialNo="
+                                                        + e.getSerialNo()
+                                                        + " publishedAt="
+                                                        + e.getPublishedAt());
                             }
                         });
         batchMetrics.recordSilentDrops(drops == null ? 0L : drops);
@@ -93,7 +101,16 @@ public class DomesticNewsHeadlineInserter {
                         (Connection conn) -> {
                             try (PreparedStatement ps = conn.prepareStatement(INSERT_IGNORE_SQL)) {
                                 return SilentDropWarningCounter.countDropsPerRowIsolated(
-                                        ps, rows, this::bindRow, onFailure);
+                                        ps,
+                                        rows,
+                                        this::bindRow,
+                                        onFailure,
+                                        "domestic_news_headlines",
+                                        e ->
+                                                "serialNo="
+                                                        + e.getSerialNo()
+                                                        + " publishedAt="
+                                                        + e.getPublishedAt());
                             }
                         });
         batchMetrics.recordSilentDrops(drops == null ? 0L : drops);
