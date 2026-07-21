@@ -1,6 +1,7 @@
 package com.aaa.collector.watchlist;
 
 import com.aaa.collector.stock.enums.AssetType;
+import com.aaa.collector.stock.enums.ListingStatus;
 import com.aaa.collector.stock.enums.Market;
 import com.aaa.collector.stock.etf.EtfMetaInfo;
 import java.math.BigDecimal;
@@ -53,8 +54,30 @@ public class StockInfoParser {
         if (assetType == AssetType.ETF) {
             etfMetaInfo = extractDomesticEtfMeta(out);
         }
+
+        // 상장폐지·거래정지 판정 (REQ-WLSYNC-142). 상폐 종목도 rt_cd=0 정상 응답으로 온다 — rt_cd가 아닌
+        // lstg_abol_dt 채움 여부로 판정한다(실측 2026-07-20). "00000000"/공백 sentinel은 기존 parseDate가
+        // 이미 null로 정규화하므로 그대로 재사용한다.
+        // @MX:NOTE: [AUTO] 상폐 종목도 rt_cd=0 정상 응답 — lstg_abol_dt 채움 여부로 판정, tr_stop_yn 단독 판정 금지
+        // @MX:REASON: KIS CTPF1002R 실측(010620 HD현대미포, 2026-07-20) — rt_cd만으로는 상폐를 구분할 수 없음
+        LocalDate delistedAt = parseDate(out.lstgAbolDt());
+        ListingStatus listingStatus;
+        if (delistedAt != null) {
+            listingStatus = ListingStatus.DELISTED;
+        } else if ("Y".equals(out.trStopYn())) {
+            listingStatus = ListingStatus.HALTED;
+        } else {
+            listingStatus = ListingStatus.NORMAL;
+        }
+
         return new StockInfo(
-                assetType, out.prdtEngName(), parseDate(rawDate), etfMetaInfo, authoritative);
+                assetType,
+                out.prdtEngName(),
+                parseDate(rawDate),
+                etfMetaInfo,
+                authoritative,
+                listingStatus,
+                listingStatus == ListingStatus.DELISTED ? delistedAt : null);
     }
 
     /**

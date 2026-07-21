@@ -3,6 +3,7 @@ package com.aaa.collector.watchlist;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.aaa.collector.stock.enums.AssetType;
+import com.aaa.collector.stock.enums.ListingStatus;
 import com.aaa.collector.stock.enums.Market;
 import java.time.LocalDate;
 import org.junit.jupiter.api.DisplayName;
@@ -15,6 +16,7 @@ class StockInfoParserTest {
 
     private final StockInfoParser parser = new StockInfoParser();
 
+    /** 상폐/거래정지 필드는 기본값(미상폐·미정지)으로 채운 편의 오버로드 — 기존 호출부 전부 무변경. */
     private static KisDomesticStockInfoResponse.Output domesticOutWithMketId(
             String grp,
             String nameEn,
@@ -24,8 +26,32 @@ class StockInfoParserTest {
             String idxCode,
             String erngRt,
             String tpCd) {
+        return domesticOutWithMketId(
+                grp, nameEn, sctsDt, kosdaqDt, mketIdCd, idxCode, erngRt, tpCd, "", "N");
+    }
+
+    private static KisDomesticStockInfoResponse.Output domesticOutWithMketId(
+            String grp,
+            String nameEn,
+            String sctsDt,
+            String kosdaqDt,
+            String mketIdCd,
+            String idxCode,
+            String erngRt,
+            String tpCd,
+            String lstgAbolDt,
+            String trStopYn) {
         return new KisDomesticStockInfoResponse.Output(
-                grp, nameEn, sctsDt, kosdaqDt, mketIdCd, idxCode, erngRt, tpCd);
+                grp,
+                nameEn,
+                sctsDt,
+                kosdaqDt,
+                mketIdCd,
+                idxCode,
+                erngRt,
+                tpCd,
+                lstgAbolDt,
+                trStopYn);
     }
 
     private static KisOverseasStockInfoResponse.Output overseasOut(
@@ -360,6 +386,106 @@ class StockInfoParserTest {
                             "005930");
 
             assertThat(info.listedDate()).isEqualTo(LocalDate.of(1975, 6, 11));
+        }
+    }
+
+    @Nested
+    @DisplayName("parseDomestic — 상장폐지·거래정지 판정 (REQ-WLSYNC-142, 실측 010620 HD현대미포)")
+    class DomesticDelistingDetection {
+
+        @Test
+        @DisplayName("시나리오 2 — lstg_abol_dt=20251215 채워짐 → 상장폐지, rt_cd=0이라도 판정 무관")
+        void lstgAbolDtFilled_returnsDelistedWithDate() {
+            KisDomesticStockInfoResponse.Output out =
+                    domesticOutWithMketId(
+                            "ST",
+                            "HD Hyundai Mipo",
+                            "19960101",
+                            "",
+                            "STK",
+                            "",
+                            "",
+                            "",
+                            "20251215",
+                            "Y");
+
+            StockInfo info = parser.parseDomestic(out, "010620");
+
+            assertThat(info.listingStatus()).isEqualTo(ListingStatus.DELISTED);
+            assertThat(info.delistedAt()).isEqualTo(LocalDate.of(2025, 12, 15));
+        }
+
+        @Test
+        @DisplayName("시나리오 3 — lstg_abol_dt 빈 값 + tr_stop_yn=Y → 거래정지(가역), 상폐일자 없음")
+        void trStopYnOnlyWithoutAbolDate_returnsHaltedNotDelisted() {
+            KisDomesticStockInfoResponse.Output out =
+                    domesticOutWithMketId(
+                            "ST", "Halted Stock", "20100101", "", "STK", "", "", "", "", "Y");
+
+            StockInfo info = parser.parseDomestic(out, "999001");
+
+            assertThat(info.listingStatus()).isEqualTo(ListingStatus.HALTED);
+            assertThat(info.delistedAt()).isNull();
+        }
+
+        @Test
+        @DisplayName("시나리오 4 — lstg_abol_dt 빈 값 + tr_stop_yn=N(삼성전자) → 정상, 기존 필드 무영향")
+        void normalStock_returnsNormalAndPreservesExistingFields() {
+            KisDomesticStockInfoResponse.Output out =
+                    domesticOutWithMketId(
+                            "ST",
+                            "Samsung Electronics",
+                            "19750611",
+                            "",
+                            "STK",
+                            "",
+                            "",
+                            "",
+                            "",
+                            "N");
+
+            StockInfo info = parser.parseDomestic(out, "005930");
+
+            assertThat(info.listingStatus()).isEqualTo(ListingStatus.NORMAL);
+            assertThat(info.delistedAt()).isNull();
+            assertThat(info.assetType()).isEqualTo(AssetType.STOCK);
+            assertThat(info.market()).isEqualTo(Market.KOSPI);
+            assertThat(info.listedDate()).isEqualTo(LocalDate.of(1975, 6, 11));
+        }
+
+        @Test
+        @DisplayName("Edge case — lstg_abol_dt='00000000'(전부 0) sentinel → 상폐 아님(빈 값 취급)")
+        void allZeroSentinelDate_notTreatedAsDelisted() {
+            KisDomesticStockInfoResponse.Output out =
+                    domesticOutWithMketId(
+                            "ST", "종목", "20100101", "", "STK", "", "", "", "00000000", "N");
+
+            StockInfo info = parser.parseDomestic(out, "999002");
+
+            assertThat(info.listingStatus()).isEqualTo(ListingStatus.NORMAL);
+            assertThat(info.delistedAt()).isNull();
+        }
+
+        @Test
+        @DisplayName("Edge case — 이미 상폐(lstg_abol_dt 채워짐) 종목에 tr_stop_yn=Y 동시 — 상폐 판정 우선")
+        void delistedTakesPriorityOverHaltFlag() {
+            KisDomesticStockInfoResponse.Output out =
+                    domesticOutWithMketId(
+                            "EF",
+                            "PLUS TDF2050",
+                            "20200101",
+                            "",
+                            "STK",
+                            "",
+                            "",
+                            "",
+                            "20251230",
+                            "Y");
+
+            StockInfo info = parser.parseDomestic(out, "433870");
+
+            assertThat(info.listingStatus()).isEqualTo(ListingStatus.DELISTED);
+            assertThat(info.delistedAt()).isEqualTo(LocalDate.of(2025, 12, 30));
         }
     }
 }
