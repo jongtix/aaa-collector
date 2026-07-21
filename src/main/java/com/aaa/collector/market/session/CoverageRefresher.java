@@ -25,10 +25,12 @@ import org.springframework.transaction.support.TransactionTemplate;
 /**
  * 일봉 데이터 커버리지 일1회(deadline 직후) 계산 (SPEC-OBSV-WATERMARK-001 REQ-WM-010/011).
  *
- * <p>daily-ohlcv-krx/us에 한해 활성 유니버스(§3 실측: KRX 159, US 75 — {@link
- * StockRepository#findAllActiveDomesticTradable()}/{@link
- * StockRepository#findAllActiveOverseasTradable()}가 이미 지수·비대상 시장을 제외한 STOCK+ETF 종목만 반환) 대비
- * expected_watermark 날짜 행 보유 종목 비율을 계산한다. 밀도가 검증되지 않은 다른 시리즈는 커버리지 룰을 만들지 않는다(CR-02).
+ * <p>daily-ohlcv-krx/us에 한해 활성 유니버스({@link StockRepository#findAllActiveDomesticTradable()}/{@link
+ * StockRepository#findAllActiveOverseasTradable()}가 이미 지수·비대상 시장을 제외한 종목만 반환) 대비 expected_watermark
+ * 날짜 행 보유 종목 비율을 계산한다. 국내(KRX) 유니버스는 STOCK·ETF·ETN·COMMODITY를 포함하고(§3 실측 이후
+ * SPEC-COLLECTOR-ASSETSCOPE-001 REQ-ASSETSCOPE-008로 ETN 6종·금현물 1종 추가 편입), 미국(US) 유니버스는
+ * ETN·COMMODITY가 전부 KOSPI 시장이라 시장 필터로 자동 배제되어 실질적으로 STOCK·ETF만 반환한다. 밀도가 검증되지 않은 다른 시리즈는 커버리지 룰을
+ * 만들지 않는다(CR-02).
  *
  * <p>패키지 위치: {@code market.session} — {@link MarketSessionGate}/{@link UsMarketSessionGate}의 {@code
  * computeExpectedTradeDate()}에 의존하므로 {@code observability} 패키지에 두면 {@code kis → observability →
