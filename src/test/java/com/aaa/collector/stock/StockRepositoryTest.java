@@ -103,6 +103,30 @@ class StockRepositoryTest {
             assertThat(result.stream().map(Stock::getAssetType).toList())
                     .doesNotContain(AssetType.INDEX);
         }
+
+        @Test
+        @DisplayName(
+                "STOCK·ETF·ETN·COMMODITY·INDEX 활성 행 다섯 개 중 ETN·COMMODITY 포함, INDEX만 제외"
+                        + " (SPEC-COLLECTOR-ASSETSCOPE-001 REQ-ASSETSCOPE-001·003, AC-1·AC-2)")
+        void returnsEtnAndCommodity_excludesIndex() {
+            // Arrange
+            Stock stock = savedStock("TRAD_STOCK_002", AssetType.STOCK);
+            Stock etf = savedStock("TRAD_ETF_002", AssetType.ETF);
+            Stock etn = savedStock("TRAD_ETN_001", AssetType.ETN);
+            Stock commodity = savedStock("TRAD_COM_001", AssetType.COMMODITY);
+            Stock index = savedStock("TRAD_IDX_003", AssetType.INDEX);
+
+            // Act
+            List<Stock> result = stockRepository.findAllActiveTradable();
+
+            // Assert — STOCK·ETF·ETN·COMMODITY 포함, INDEX만 제외
+            List<Long> resultIds = result.stream().map(Stock::getId).toList();
+            assertThat(resultIds)
+                    .contains(stock.getId(), etf.getId(), etn.getId(), commodity.getId());
+            assertThat(resultIds).doesNotContain(index.getId());
+            assertThat(result.stream().map(Stock::getAssetType).toList())
+                    .doesNotContain(AssetType.INDEX);
+        }
     }
 
     @Nested
@@ -312,6 +336,25 @@ class StockRepositoryTest {
             assertThat(resultIds).contains(kospiStock.getId(), kosdaqEtf.getId());
             assertThat(resultIds)
                     .doesNotContain(krxIndex.getId(), nasdaqStock.getId(), removedKospi.getId());
+        }
+
+        @Test
+        @DisplayName(
+                "KOSPI ETN·COMMODITY 포함 — 국내 tradable에 신규 편입"
+                        + " (SPEC-COLLECTOR-ASSETSCOPE-001 REQ-ASSETSCOPE-001, AC-1)")
+        void returnsDomesticEtnAndCommodity() {
+            // Arrange
+            Stock etn = savedStock("DOM_KPI_ETN", AssetType.ETN, Market.KOSPI);
+            Stock commodity = savedStock("DOM_KPI_COM", AssetType.COMMODITY, Market.KOSPI);
+            Stock krxIndex = savedStock("DOM_KRX_IDX2", AssetType.INDEX, Market.KRX);
+
+            // Act
+            List<Stock> result = stockRepository.findAllActiveDomesticTradable();
+
+            // Assert — ETN·COMMODITY 포함, INDEX 제외
+            List<Long> resultIds = result.stream().map(Stock::getId).toList();
+            assertThat(resultIds).contains(etn.getId(), commodity.getId());
+            assertThat(resultIds).doesNotContain(krxIndex.getId());
         }
     }
 }

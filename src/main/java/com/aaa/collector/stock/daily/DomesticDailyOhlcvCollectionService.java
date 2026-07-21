@@ -41,7 +41,8 @@ import org.springframework.web.client.RestClientException;
  * <p>실패 경로(REQ-BATCH-025): 특정 키의 token 발급 실패({@link KisTokenIssueException})는 해당 종목을 graceful
  * skip하고 skip 카운터에 집계한다. 영구 비즈니스 오류(인증·파라미터)는 전파한다(REQ-BATCH-024).
  *
- * <p>수집 대상: {@code asset_type IN (STOCK, ETF)} — INDEX 제외(REQ-BATCH3-024). INDEX는 U 전용 API
+ * <p>수집 대상: {@code asset_type IN (STOCK, ETF, ETN, COMMODITY)} — INDEX 제외(REQ-BATCH3-024,
+ * SPEC-COLLECTOR-ASSETSCOPE-001 REQ-ASSETSCOPE-001,003). INDEX는 U 전용 API
  * SectorIndexCollectionService가 담당한다.
  *
  * <p>REQ-INSERT-002: 행 검증(isValid) 시 파싱된 결과를 {@link ParsedOhlcvRow}로 반환하여, 불일치 탐지·JDBC 바인딩이 재파싱 없이
@@ -93,7 +94,8 @@ public class DomesticDailyOhlcvCollectionService {
      * @return 시도/성공/skip 종목 수 집계
      */
     public CollectionResult collect(LocalDate today) {
-        // REQ-BATCH3-024: per-stock 대상은 STOCK+ETF만 — INDEX 헛호출 제거 (StockRepository 계층에서 캡슐화)
+        // REQ-BATCH3-024: per-stock 대상은 STOCK+ETF+ETN+COMMODITY — INDEX 헛호출 제거 (StockRepository
+        // 계층에서 캡슐화, SPEC-COLLECTOR-ASSETSCOPE-001 REQ-ASSETSCOPE-001)
         List<Stock> activeStocks = stockRepository.findAllActiveTradable();
 
         if (activeStocks.isEmpty()) {

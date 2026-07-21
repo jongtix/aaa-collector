@@ -15,8 +15,12 @@ import org.springframework.transaction.annotation.Transactional;
 /** 종목 마스터 저장소. */
 public interface StockRepository extends JpaRepository<Stock, Long> {
 
-    /** per-stock J-API 배치(일봉/수급) 대상 자산 유형 — STOCK·ETF만 포함, INDEX 제외(REQ-BATCH3-024). */
-    Set<AssetType> TRADABLE_ASSET_TYPES = Set.of(AssetType.STOCK, AssetType.ETF);
+    /**
+     * per-stock J-API 배치(일봉/수급) 대상 자산 유형 — STOCK·ETF·ETN·COMMODITY 포함, INDEX 제외(REQ-BATCH3-024,
+     * SPEC-COLLECTOR-ASSETSCOPE-001 REQ-ASSETSCOPE-001).
+     */
+    Set<AssetType> TRADABLE_ASSET_TYPES =
+            Set.of(AssetType.STOCK, AssetType.ETF, AssetType.ETN, AssetType.COMMODITY);
 
     /** 미국 일봉 배치 대상 시장 — NYSE/NASDAQ/AMEX(REQ-OVOH-001). */
     Set<Market> OVERSEAS_TRADABLE_MARKETS = Set.of(Market.NYSE, Market.NASDAQ, Market.AMEX);
@@ -53,10 +57,12 @@ public interface StockRepository extends JpaRepository<Stock, Long> {
     List<Stock> findAllActive();
 
     /**
-     * per-stock J-API 배치(일봉/수급) 대상 종목을 조회한다 — {@code asset_type IN (STOCK, ETF)} 한정.
+     * per-stock J-API 배치(일봉/수급) 대상 종목을 조회한다 — {@code asset_type IN (STOCK, ETF, ETN, COMMODITY)}
+     * 한정.
      *
      * <p>REQ-BATCH3-024: INDEX 종목을 J API로 헛호출(빈 응답·rate-limit 낭비)하는 비효율 제거. 지수는 U 전용 API(T3
-     * SectorIndexCollectionService)로 수집하므로 per-stock 배치에서 제외한다.
+     * SectorIndexCollectionService)로 수집하므로 per-stock 배치에서 제외한다. SPEC-COLLECTOR-ASSETSCOPE-001
+     * REQ-ASSETSCOPE-001: ETN·COMMODITY를 대상에 편입(INDEX 배제는 유지).
      *
      * <p>호출자는 {@code AssetType}을 직접 참조하지 않아도 된다. TRADABLE 집합은 이 레포지토리 계층에서만 관리한다.
      */
@@ -65,7 +71,7 @@ public interface StockRepository extends JpaRepository<Stock, Long> {
     }
 
     /**
-     * per-stock 배치(일봉/수급) 대상 종목을 조회한다 — {@code asset_type IN (STOCK, ETF)} 한정.
+     * per-stock 배치(일봉/수급) 대상 종목을 조회한다 — {@code asset_type IN (STOCK, ETF, ETN, COMMODITY)} 한정.
      *
      * <p>REQ-BATCH3-024: INDEX 종목을 J API로 헛호출(빈 응답·rate-limit 낭비)하는 비효율 제거. 지수는 U 전용 API(T3
      * SectorIndexCollectionService)로 수집하므로 per-stock 배치에서 제외한다.
@@ -80,7 +86,7 @@ public interface StockRepository extends JpaRepository<Stock, Long> {
 
     /**
      * 국내 수급 배치 대상 종목을 조회한다 — 활성({@code watchlistRemovedAt IS NULL}) ∩ {@code market IN (KOSPI,
-     * KOSDAQ, KRX)} ∩ {@code asset_type IN (STOCK, ETF)}.
+     * KOSDAQ, KRX)} ∩ {@code asset_type IN (STOCK, ETF, ETN, COMMODITY)}.
      *
      * <p>KIS 국내 수급 API(공매도·투자자동향·신용잔고)는 미국 종목(NYSE/NASDAQ/AMEX)에 대해 rt_cd=0이지만 날짜 필드가 null인 빈 객체
      * 배열을 반환한다. {@link #findAllActiveTradable()}(시장 무관)을 쓰면 미국 종목마다 API 낭비 + WARN 로그 노이즈가 발생한다. 국내
@@ -92,12 +98,13 @@ public interface StockRepository extends JpaRepository<Stock, Long> {
 
     /**
      * 미국 일봉 배치 대상 종목을 조회한다 — 활성({@code watchlistRemovedAt IS NULL}) ∩ {@code market IN (NYSE,
-     * NASDAQ, AMEX)} ∩ {@code asset_type IN (STOCK, ETF)} (SPEC-COLLECTOR-OVERSEAS-OHLCV-001
-     * REQ-OVOH-001).
+     * NASDAQ, AMEX)} ∩ {@code asset_type IN (STOCK, ETF, ETN, COMMODITY)}
+     * (SPEC-COLLECTOR-OVERSEAS-OHLCV-001 REQ-OVOH-001). ETN·COMMODITY는 전부 KOSPI 시장이라 미국 시장 필터에 의해
+     * 자동 배제되며 실질 반환 집합은 STOCK·ETF뿐이다 (SPEC-COLLECTOR-ASSETSCOPE-001 Exclusions §4).
      *
-     * <p>국내 일봉/수급 배치가 사용하는 {@link #findAllActiveTradable()}(시장 무관 STOCK+ETF)와 분리된 미국 시장 한정 조회다 — 국내
-     * 종목·미국 INDEX를 제외한다. 기존 {@link #findAllActive()}/{@link #findAllActiveTradable()}/{@link
-     * #findAllActiveStock()}는 변경하지 않는다.
+     * <p>국내 일봉/수급 배치가 사용하는 {@link #findAllActiveTradable()}(시장 무관 STOCK·ETF·ETN·COMMODITY)와 분리된 미국
+     * 시장 한정 조회다 — 국내 종목·미국 INDEX를 제외한다. 기존 {@link #findAllActive()}/{@link
+     * #findAllActiveTradable()}/{@link #findAllActiveStock()}는 변경하지 않는다.
      */
     default List<Stock> findAllActiveOverseasTradable() {
         return findAllActiveByMarketInAndAssetTypeIn(
