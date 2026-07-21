@@ -73,14 +73,14 @@ public class CoveredRangeService {
                                     cursor,
                                     result.oldest(),
                                     result.filledUntil());
-                            backfillMetrics.recordAnomalyFailed();
+                            recordAnomalyFailedSafely();
                         }
                     } else if (result.raw() > 0) {
                         log.warn(
                                 "[covered-range] 검증 전량 실패 이상 — cursor={}, raw={}, kept=0",
                                 cursor,
                                 result.raw());
-                        backfillMetrics.recordAnomalyFailed();
+                        recordAnomalyFailedSafely();
                     }
                     // raw == 0 && kept == 0: 정상 빈 응답 — 전진도 anomaly도 없음(REQ-CVR-030 kept 확인 필요조건)
                     return result;
@@ -179,6 +179,23 @@ public class CoveredRangeService {
                 break; // 이번 회차 종료 — 다음 회차가 covered_until_date+1부터 재개(REQ-CVR-013, 라이브락 없음)
             }
             cursor = result.filledUntil().plusDays(1);
+        }
+    }
+
+    /**
+     * {@link BackfillMetrics#recordAnomalyFailed()}를 호출하되, 예외가 트랜잭션 밖으로 전파되지 않도록 방어한다.
+     *
+     * <p>이 메서드는 {@code executeStep}의 트랜잭션 람다 내부에서만 호출된다 — 메트릭 카운터 증가는 관측 신호일 뿐이므로, 여기서 예외가 나더라도 이미
+     * 적용된 {@code covered_until_date} 전진(또는 데이터 저장)까지 롤백시켜서는 안 된다(REQ-CVR-076 설계 의도: anomaly는 전진을
+     * 억제하지 않는다).
+     */
+    @SuppressWarnings(
+            "PMD.AvoidCatchingGenericException") // 메트릭 실패가 트랜잭션 롤백을 유발하면 안 됨 — REQ-CVR-076
+    private void recordAnomalyFailedSafely() {
+        try {
+            backfillMetrics.recordAnomalyFailed();
+        } catch (RuntimeException e) {
+            log.error("[covered-range] anomaly 메트릭 기록 실패(트랜잭션에는 영향 없음)", e);
         }
     }
 

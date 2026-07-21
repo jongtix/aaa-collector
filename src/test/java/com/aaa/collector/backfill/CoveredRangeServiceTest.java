@@ -2,6 +2,7 @@ package com.aaa.collector.backfill;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -142,6 +143,28 @@ class CoveredRangeServiceTest {
             assertThat(reload(status.getId()).getCoveredUntilDate()).isEqualTo(initialCoveredUntil);
             verify(backfillMetrics, times(1)).recordAnomalyFailed();
         }
+
+        @Test
+        @DisplayName(
+                "AC-9/raw>0&&kept==0 — recordAnomalyFailed() 예외 발생해도 executeStep은 정상 반환한다(메트릭"
+                        + " 실패가 트랜잭션을 흔들지 않아야 함)")
+        void recordAnomalyFailedThrows_stepStillReturnsNormally() {
+            // Arrange
+            LocalDate initialCoveredUntil = LocalDate.of(2026, 7, 1);
+            BackfillStatus status = seed("ANOMALY2", initialCoveredUntil);
+            LocalDate cursor = LocalDate.of(2026, 7, 2);
+            CoveredGapFiller filler = step -> new CoveredFillResult(0, 12, step);
+            doThrow(new RuntimeException("metrics registry 장애"))
+                    .when(backfillMetrics)
+                    .recordAnomalyFailed();
+
+            // Act — 메트릭 예외가 executeStep 밖으로 전파되지 않아야 한다
+            CoveredFillResult result = coveredRangeService.executeStep(status, filler, cursor);
+
+            // Assert — 기존 미전진 동작은 그대로 유지된다
+            assertThat(result.kept()).isZero();
+            assertThat(reload(status.getId()).getCoveredUntilDate()).isEqualTo(initialCoveredUntil);
+        }
     }
 
     @Nested
@@ -247,6 +270,29 @@ class CoveredRangeServiceTest {
             // Assert
             assertThat(reload(status.getId()).getCoveredUntilDate()).isEqualTo(filledUntil);
             verify(backfillMetrics, never()).recordAnomalyFailed();
+        }
+
+        @Test
+        @DisplayName(
+                "recordAnomalyFailed() 예외 발생해도 covered_until_date 전진은 롤백되지 않는다(REQ-CVR-076 관측 신호는"
+                        + " 전진을 억제하지 않는다는 설계 의도가 메트릭 실패로 깨지면 안 됨)")
+        void recordAnomalyFailedThrows_advanceStillCommits() {
+            // Arrange — 앞단 미도달 anomaly 분기에서 메트릭 카운터 증가가 예외를 던지는 상황을 모사한다
+            BackfillStatus status = seed("FRONTGAP2", LocalDate.of(2026, 7, 1));
+            LocalDate cursor = LocalDate.of(2026, 7, 2);
+            LocalDate filledUntil = LocalDate.of(2026, 7, 5);
+            LocalDate oldest = LocalDate.of(2026, 7, 3); // cursor보다 늦음 = 앞단 미도달
+            CoveredGapFiller filler = step -> new CoveredFillResult(5, 5, filledUntil, oldest);
+            doThrow(new RuntimeException("metrics registry 장애"))
+                    .when(backfillMetrics)
+                    .recordAnomalyFailed();
+
+            // Act — 메트릭 예외가 executeStep 밖으로 전파되지 않아야 한다
+            CoveredFillResult result = coveredRangeService.executeStep(status, filler, cursor);
+
+            // Assert — 트랜잭션이 롤백되지 않고 covered_until_date 전진이 그대로 커밋된다
+            assertThat(result.filledUntil()).isEqualTo(filledUntil);
+            assertThat(reload(status.getId()).getCoveredUntilDate()).isEqualTo(filledUntil);
         }
     }
 
