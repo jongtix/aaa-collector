@@ -41,7 +41,9 @@ public class CoveredRangeService {
      * <ul>
      *   <li>{@code kept > 0} — 검증 통과 저장 확인됨. {@code covered_until_date}를 {@code
      *       result.filledUntil()}로 전진시키고 같은 트랜잭션에서 커밋한다(REQ-CVR-012/030). {@code
-     *       filler.persistStep}이 던진 예외는 이 메서드 밖으로 전파되며, 트랜잭션 전체(데이터 저장 + 전진)가 롤백된다(결정 1 원자성).
+     *       filler.persistStep}이 던진 예외는 이 메서드 밖으로 전파되며, 트랜잭션 전체(데이터 저장 + 전진)가 롤백된다(결정 1 원자성). 추가로
+     *       {@code result.oldest() > cursor}(앞단 미도달)이면 기존 anomaly 경보 신호를 발생시킨다(REQ-CVR-076, 심층 방어)
+     *       — 단 전진은 억제하지 않는다(동일 anchor 재호출 라이브락 방지, 앞단 hole을 경보로 관측 가능하게 남긴다).
      *   <li>{@code raw > 0 && kept == 0} — 원본 응답은 있으나 검증을 전량 통과하지 못한 이상(#77류 침묵 skip). 전진하지 않고 기존
      *       anomaly 경보 신호({@link BackfillMetrics#recordAnomalyFailed()})를 발생시킨다(REQ-CVR-031) — 저장
      *       실패가 "커버됨"으로 오판되는 것을 차단한다.
@@ -53,7 +55,7 @@ public class CoveredRangeService {
      * @param status 처리 대상 {@code backfill_status} 행(전진 시 id로 재조회해 관리 상태로 갱신한다)
      * @param filler 소스별 저장 실행체(TASK-005~008)
      * @param cursor 이번 스텝의 시작 지점({@code covered_until_date} 다음 날짜)
-     * @return 이번 스텝의 kept/raw/filledUntil (호출자가 갭 walk 루프 지속 여부를 판단하는 데 사용)
+     * @return 이번 스텝의 kept/raw/filledUntil/oldest (호출자가 갭 walk 루프 지속 여부를 판단하는 데 사용)
      */
     public CoveredFillResult executeStep(
             BackfillStatus status, CoveredGapFiller filler, LocalDate cursor) {
@@ -64,6 +66,15 @@ public class CoveredRangeService {
                         BackfillStatus managed =
                                 backfillStatusRepository.findById(status.getId()).orElseThrow();
                         managed.advanceCoveredUntil(result.filledUntil());
+                        if (result.oldest() != null && result.oldest().isAfter(cursor)) {
+                            log.warn(
+                                    "[covered-range] 앞단 미도달 이상(REQ-CVR-076) — cursor={}, oldest={},"
+                                            + " filledUntil={} (전진은 비억제)",
+                                    cursor,
+                                    result.oldest(),
+                                    result.filledUntil());
+                            backfillMetrics.recordAnomalyFailed();
+                        }
                     } else if (result.raw() > 0) {
                         log.warn(
                                 "[covered-range] 검증 전량 실패 이상 — cursor={}, raw={}, kept=0",

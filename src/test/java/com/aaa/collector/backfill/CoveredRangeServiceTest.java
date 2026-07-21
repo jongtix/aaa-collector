@@ -208,6 +208,49 @@ class CoveredRangeServiceTest {
     }
 
     @Nested
+    @DisplayName("executeStep — 앞단 도달 검증 anomaly (REQ-CVR-076, 심층 방어)")
+    class FrontReachAnomaly {
+
+        @Test
+        @DisplayName(
+                "AC-21 — oldest > cursor(앞단 미도달) → anomaly 발생 + covered_until_date 그래도 전진(라이브락 없음)")
+        void oldestAfterCursor_raisesAnomalyButStillAdvances() {
+            // Arrange — 스텝 폭 산정이 잘못됐거나 API 반환 특성이 변한 잔여 상황을 stub으로 모사한다
+            BackfillStatus status = seed("FRONTGAP1", LocalDate.of(2026, 7, 1));
+            LocalDate cursor = LocalDate.of(2026, 7, 2);
+            LocalDate filledUntil = LocalDate.of(2026, 7, 5);
+            LocalDate oldest = LocalDate.of(2026, 7, 3); // cursor(07-02)보다 늦음 = 앞단 미도달
+            CoveredGapFiller filler = step -> new CoveredFillResult(5, 5, filledUntil, oldest);
+
+            // Act
+            CoveredFillResult result = coveredRangeService.executeStep(status, filler, cursor);
+
+            // Assert — 앞단 hole이 anomaly로 관측 가능하게 남되, covered_until_date 전진은 억제되지 않는다(동일 anchor
+            // 재호출 라이브락 방지)
+            assertThat(result.oldest()).isEqualTo(oldest);
+            assertThat(reload(status.getId()).getCoveredUntilDate()).isEqualTo(filledUntil);
+            verify(backfillMetrics, times(1)).recordAnomalyFailed();
+        }
+
+        @Test
+        @DisplayName("AC-21 — oldest <= cursor(정상 도달) → anomaly 미발생")
+        void oldestAtOrBeforeCursor_noAnomaly() {
+            // Arrange — 정상 케이스(TASK-010 스텝 폭 35일 정정 후 절대 발화하지 않아야 하는 tripwire)
+            BackfillStatus status = seed("FRONTOK1", LocalDate.of(2026, 7, 1));
+            LocalDate cursor = LocalDate.of(2026, 7, 2);
+            LocalDate filledUntil = LocalDate.of(2026, 7, 5);
+            CoveredGapFiller filler = step -> new CoveredFillResult(5, 5, filledUntil, cursor);
+
+            // Act
+            coveredRangeService.executeStep(status, filler, cursor);
+
+            // Assert
+            assertThat(reload(status.getId()).getCoveredUntilDate()).isEqualTo(filledUntil);
+            verify(backfillMetrics, never()).recordAnomalyFailed();
+        }
+    }
+
+    @Nested
     @DisplayName("executeStep 원자성 — 데이터 저장과 전진이 같은 트랜잭션에서 커밋/롤백된다 (결정 1)")
     class AtomicRollback {
 

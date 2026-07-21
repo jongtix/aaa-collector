@@ -60,6 +60,13 @@ import java.util.Set;
  * 독립적이다. investor_trend·credit_balance·short_sale_domestic은 {@link BackfillWindowResult}의 2-인자 생성자로
  * {@code rawRowCount := rowCount}가 항상 성립해(§2.6 실측), 이 3개 테이블에서는 REQ-CVR-031(raw>0 && kept==0
  * anomaly) 분기가 구조적으로 도달 불가능하다 — 검증 로직 결함이 아니라 원본 서비스가 raw/kept를 애초에 구분해 노출하지 않기 때문이다.
+ *
+ * <p><b>앞단 도달 검증(REQ-CVR-076, 심층 방어, TASK-012)</b> — {@link
+ * BackfillWindowResult#oldestTradeDate()}(각 수집 서비스의 {@code fetchWindow}/{@code persistWindow} 경로가
+ * 이미 계산하는 값 — {@code WindowCoverageChecker}가 내부적으로 쓰는 것과 동일한 최소 거래일 산출, 신규 병렬 메커니즘 아님)를 그대로 {@link
+ * CoveredFillResult#oldest()}에 실어 전달한다. {@link
+ * com.aaa.collector.backfill.CoveredRangeService#executeStep}이 {@code oldest > cursor}(앞단 미도달)를
+ * 게이트해 anomaly를 발생시키되 전진은 억제하지 않는다 — TASK-010의 스텝 폭 35일 정정 후 정상 케이스에서는 절대 발화하지 않는 tripwire다.
  */
 // @MX:NOTE: [AUTO] backward anchor 로직(resolveAnchor/nextAnchor)과 격리된 독립 경로 — 상세 근거는 클래스 Javadoc
 // @MX:SPEC: SPEC-COLLECTOR-BACKFILL-011
@@ -181,19 +188,22 @@ public class StockRangeCoveredGapFiller implements CoveredGapFiller {
             OverseasDailyOhlcvFetch fetch =
                     overseasOhlcvService.fetchWindow(stepAnchor, stock, session);
             BackfillWindowResult result = overseasOhlcvService.persistWindow(stock, fetch);
-            return new CoveredFillResult(result.rowCount(), result.rawRowCount(), stepAnchor);
+            return new CoveredFillResult(
+                    result.rowCount(), result.rawRowCount(), stepAnchor, result.oldestTradeDate());
         }
         DomesticDailyOhlcvFetch fetch =
                 domesticOhlcvService.fetchWindow(cursor, stepAnchor, stock, session);
         BackfillWindowResult result = domesticOhlcvService.persistWindow(stock, fetch);
-        return new CoveredFillResult(result.rowCount(), result.rawRowCount(), stepAnchor);
+        return new CoveredFillResult(
+                result.rowCount(), result.rawRowCount(), stepAnchor, result.oldestTradeDate());
     }
 
     private CoveredFillResult persistInvestorTrend(LocalDate stepAnchor)
             throws InterruptedException {
         InvestorTrendFetch fetch = investorTrendService.fetchWindow(stepAnchor, stock, session);
         BackfillWindowResult result = investorTrendService.persistWindow(stock, fetch);
-        return new CoveredFillResult(result.rowCount(), result.rawRowCount(), stepAnchor);
+        return new CoveredFillResult(
+                result.rowCount(), result.rawRowCount(), stepAnchor, result.oldestTradeDate());
     }
 
     private CoveredFillResult persistCreditBalance(LocalDate stepAnchor)
@@ -203,7 +213,8 @@ public class StockRangeCoveredGapFiller implements CoveredGapFiller {
                 creditBalanceService.fetchWindow(transientStatus, stock, session);
         BackfillWindowResult result =
                 creditBalanceService.persistWindow(transientStatus, stock, fetch);
-        return new CoveredFillResult(result.rowCount(), result.rawRowCount(), stepAnchor);
+        return new CoveredFillResult(
+                result.rowCount(), result.rawRowCount(), stepAnchor, result.oldestTradeDate());
     }
 
     private CoveredFillResult persistShortSaleDomestic(LocalDate stepAnchor)
@@ -211,7 +222,8 @@ public class StockRangeCoveredGapFiller implements CoveredGapFiller {
         BackfillStatus transientStatus = transientStatus(stepAnchor);
         ShortSaleFetch fetch = shortSaleService.fetchWindow(transientStatus, stock, session);
         BackfillWindowResult result = shortSaleService.persistWindow(transientStatus, stock, fetch);
-        return new CoveredFillResult(result.rowCount(), result.rawRowCount(), stepAnchor);
+        return new CoveredFillResult(
+                result.rowCount(), result.rawRowCount(), stepAnchor, result.oldestTradeDate());
     }
 
     /**
