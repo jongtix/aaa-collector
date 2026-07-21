@@ -218,9 +218,13 @@ class WatchlistWriterTest {
         }
 
         @Test
-        @DisplayName("비활성 기존 종목 (이름 동일) — 엔티티 active 필드가 true로 갱신됨")
-        void upsertAll_inactiveStock_activatesEntity() {
-            // Arrange
+        @DisplayName(
+                "비활성 기존 종목 + StockInfo 없음(조회 실패) — active 상태 유지, 판정 미수행"
+                        + " (REQ-WLSYNC-150, SPEC-COLLECTOR-WLSYNC-008)")
+        void upsertAll_inactiveStockWithoutStockInfo_preservesActiveState() {
+            // Arrange — stockInfo=null(graceful skip)이면 상폐/거래정지 판정을 내리지 않고 직전 active 상태를
+            // 그대로 유지한다. 과거(SPEC-COLLECTOR-WLSYNC-008 이전)에는 syncFromWatchlist가 무조건
+            // active=true로 되돌렸으나, 이는 상폐 종목이 조회 실패 시에도 재활성화되는 근본 원인이었다.
             ResolvedStock resolved = new ResolvedStock("005930", "삼성전자", Market.KOSPI, null);
             Stock existing = stockWith("005930", Market.KOSPI, "삼성전자", null, false);
             when(stockRepository.findAllBySymbolIn(any())).thenReturn(List.of(existing));
@@ -229,13 +233,14 @@ class WatchlistWriterTest {
             watchlistWriter.upsertAll(List.of(resolved), 0);
 
             // Assert
-            assertThat(existing.isActive()).isTrue();
+            assertThat(existing.isActive()).isFalse();
             verify(stockRepository, never()).save(any());
         }
 
         @Test
-        @DisplayName("nameKo 변경 + 비활성 종목 — nameKo와 active 모두 갱신됨")
-        void upsertAll_nameKoChangedAndInactive_updatesBothFields() {
+        @DisplayName(
+                "nameKo 변경 + 비활성 종목 + StockInfo 없음 — nameKo만 갱신, active는 유지" + " (REQ-WLSYNC-150)")
+        void upsertAll_nameKoChangedAndInactiveWithoutStockInfo_onlyNameUpdated() {
             // Arrange
             ResolvedStock resolved = new ResolvedStock("005930", "삼성전자 (신)", Market.KOSPI, null);
             Stock existing = stockWith("005930", Market.KOSPI, "삼성전자", null, false);
@@ -246,7 +251,7 @@ class WatchlistWriterTest {
 
             // Assert
             assertThat(existing.getNameKo()).isEqualTo("삼성전자 (신)");
-            assertThat(existing.isActive()).isTrue();
+            assertThat(existing.isActive()).isFalse();
             verify(stockRepository, never()).save(any());
         }
 

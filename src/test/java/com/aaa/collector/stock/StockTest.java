@@ -3,6 +3,8 @@ package com.aaa.collector.stock;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.aaa.collector.stock.enums.AssetType;
+import com.aaa.collector.stock.enums.DelistingReason;
+import com.aaa.collector.stock.enums.ListingStatus;
 import com.aaa.collector.stock.enums.Market;
 import java.time.LocalDate;
 import org.junit.jupiter.api.DisplayName;
@@ -227,6 +229,140 @@ class StockTest {
 
             assertThat(changed).isFalse();
             assertThat(stock.getListedDate()).isEqualTo(date);
+        }
+    }
+
+    @Nested
+    @DisplayName(
+            "reflectListingStatus — 상폐/거래정지 상태 전이 (SPEC-COLLECTOR-WLSYNC-008"
+                    + " REQ-WLSYNC-144~147,152)")
+    class ReflectListingStatus {
+
+        private static Stock activeStock() {
+            return Stock.builder()
+                    .symbol("010620")
+                    .nameKo("HD현대미포")
+                    .market(Market.KOSPI)
+                    .assetType(AssetType.STOCK)
+                    .active(true)
+                    .build();
+        }
+
+        @Test
+        @DisplayName("시나리오 6 — 상폐 최초 감지: active=false, delisted_at 설정, reason=UNKNOWN")
+        void delisted_firstDetection_setsActiveFalseAndDelistedAt() {
+            Stock stock = activeStock();
+            LocalDate delistedDate = LocalDate.of(2025, 12, 15);
+
+            boolean changed = stock.reflectListingStatus(ListingStatus.DELISTED, delistedDate);
+
+            assertThat(changed).isTrue();
+            assertThat(stock.isActive()).isFalse();
+            assertThat(stock.getDelistedAt()).isEqualTo(delistedDate);
+            assertThat(stock.getDelistingReason()).isEqualTo(DelistingReason.UNKNOWN);
+        }
+
+        @Test
+        @DisplayName("시나리오 6 — 상폐 재감지(set-only 비가역): delisted_at 최초값 유지, active 그대로")
+        void delisted_reDetection_isNoOpSetOnly() {
+            Stock stock = activeStock();
+            LocalDate firstDate = LocalDate.of(2025, 12, 15);
+            stock.reflectListingStatus(ListingStatus.DELISTED, firstDate);
+
+            boolean changed =
+                    stock.reflectListingStatus(ListingStatus.DELISTED, LocalDate.of(2026, 1, 1));
+
+            assertThat(changed).isFalse();
+            assertThat(stock.getDelistedAt()).isEqualTo(firstDate);
+            assertThat(stock.isActive()).isFalse();
+        }
+
+        @Test
+        @DisplayName("시나리오 7 — 거래정지: active=false, delisted_at은 NULL 유지(가역)")
+        void halted_setsActiveFalseWithoutDelistedAt() {
+            Stock stock = activeStock();
+
+            boolean changed = stock.reflectListingStatus(ListingStatus.HALTED, null);
+
+            assertThat(changed).isTrue();
+            assertThat(stock.isActive()).isFalse();
+            assertThat(stock.getDelistedAt()).isNull();
+        }
+
+        @Test
+        @DisplayName("시나리오 7 — 거래정지 해제 후 정상 재감지: active=true로 복구, delisted_at NULL 유지")
+        void halted_thenNormal_recoversActive() {
+            Stock stock = activeStock();
+            stock.reflectListingStatus(ListingStatus.HALTED, null);
+
+            boolean changed = stock.reflectListingStatus(ListingStatus.NORMAL, null);
+
+            assertThat(changed).isTrue();
+            assertThat(stock.isActive()).isTrue();
+            assertThat(stock.getDelistedAt()).isNull();
+        }
+
+        @Test
+        @DisplayName("REQ-WLSYNC-146 — 이미 active=true인 종목의 정상 재감지는 변경 없음")
+        void normal_alreadyActive_noChange() {
+            Stock stock = activeStock();
+
+            boolean changed = stock.reflectListingStatus(ListingStatus.NORMAL, null);
+
+            assertThat(changed).isFalse();
+            assertThat(stock.isActive()).isTrue();
+        }
+
+        @Test
+        @DisplayName("REQ-WLSYNC-152 — 상폐 확정 종목에 정상 재감지가 와도 active 복구 금지(비가역)")
+        void delisted_thenNormalDetected_neverRecovers() {
+            Stock stock = activeStock();
+            stock.reflectListingStatus(ListingStatus.DELISTED, LocalDate.of(2025, 12, 15));
+
+            boolean changed = stock.reflectListingStatus(ListingStatus.NORMAL, null);
+
+            assertThat(changed).isFalse();
+            assertThat(stock.isActive()).isFalse();
+            assertThat(stock.getDelistedAt()).isEqualTo(LocalDate.of(2025, 12, 15));
+        }
+
+        @Test
+        @DisplayName(
+                "Edge case — 상폐 확정 종목에 거래정지 응답 유입 — delisted_at·active 그대로(REQ-WLSYNC-145"
+                        + " 전제조건 미충족)")
+        void delisted_thenHaltedDetected_staysDelisted() {
+            Stock stock = activeStock();
+            stock.reflectListingStatus(ListingStatus.DELISTED, LocalDate.of(2025, 12, 15));
+
+            boolean changed = stock.reflectListingStatus(ListingStatus.HALTED, null);
+
+            assertThat(changed).isFalse();
+            assertThat(stock.isActive()).isFalse();
+            assertThat(stock.getDelistedAt()).isEqualTo(LocalDate.of(2025, 12, 15));
+        }
+
+        @Test
+        @DisplayName("REQ-WLSYNC-147 불변식 — 임의 입력 조합 후 delisted_at != null이면 항상 active == false")
+        void invariant_delistedAtNotNullImpliesActiveFalse() {
+            Stock stock = activeStock();
+
+            stock.reflectListingStatus(ListingStatus.DELISTED, LocalDate.of(2025, 12, 15));
+
+            if (stock.getDelistedAt() != null) {
+                assertThat(stock.isActive()).isFalse();
+            }
+        }
+
+        @Test
+        @DisplayName("해외 가설 케이스 — 상폐 감지됐으나 상폐일자 미확보(null): delisted_at 미설정, active=false(가역)")
+        void delistedWithoutDate_treatsLikeHaltedWithoutSettingDelistedAt() {
+            Stock stock = activeStock();
+
+            boolean changed = stock.reflectListingStatus(ListingStatus.DELISTED, null);
+
+            assertThat(changed).isTrue();
+            assertThat(stock.isActive()).isFalse();
+            assertThat(stock.getDelistedAt()).isNull();
         }
     }
 }
