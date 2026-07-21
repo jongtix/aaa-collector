@@ -54,30 +54,43 @@ class WatchlistEntryWriter {
         return existing != null ? existing.getId() : null;
     }
 
+    // @MX:SPEC: SPEC-COLLECTOR-WLSYNC-008
     private Stock buildStock(ResolvedStock resolved) {
         StockInfo info = resolved.stockInfo();
-        return Stock.builder()
-                .symbol(resolved.symbol())
-                .nameKo(resolved.nameKo())
-                .nameEn(info != null ? info.nameEn() : null)
-                .market(resolved.market())
-                .assetType(info != null ? info.assetType() : AssetType.STOCK)
-                .listedDate(info != null ? info.listedDate() : null)
-                .active(true)
-                .build();
+        Stock stock =
+                Stock.builder()
+                        .symbol(resolved.symbol())
+                        .nameKo(resolved.nameKo())
+                        .nameEn(info != null ? info.nameEn() : null)
+                        .market(resolved.market())
+                        .assetType(info != null ? info.assetType() : AssetType.STOCK)
+                        .listedDate(info != null ? info.listedDate() : null)
+                        .active(true)
+                        .build();
+
+        // 상폐/거래정지 상태 반영 (REQ-WLSYNC-147) — 빌더 파라미터를 늘리지 않고, active=true 기본 빌드 직후
+        // save() 전에 UPDATE 경로와 동일한 상태 전이 메서드를 1회 호출해 INSERT·UPDATE 두 경로를 단일 불변식
+        // 메서드로 수렴시킨다. info==null(신규 종목·조회 실패)이면 직전 상태가 없으므로 호출하지 않고
+        // active=true 기본값 그대로 INSERT한다(REQ-WLSYNC-150).
+        if (info != null) {
+            stock.reflectListingStatus(info.listingStatus(), info.delistedAt());
+        }
+        return stock;
     }
 
-    // @MX:SPEC: SPEC-COLLECTOR-STOCKMETA-001
+    // @MX:SPEC: SPEC-COLLECTOR-STOCKMETA-001, SPEC-COLLECTOR-WLSYNC-008
     private void updateIfNeeded(
             Stock existing, ResolvedStock resolved, WatchlistWriter.Counter counter) {
         StockInfo info = resolved.stockInfo();
         String nameEn = info != null ? info.nameEn() : null;
         boolean changed = existing.syncFromWatchlist(resolved.nameKo(), nameEn);
 
-        // 시장 교정 + 상장일 채우기 (REQ-STOCKMETA-004,011,012)
-        // StockInfo가 있을 때만 수행. null이면 교정 정보 없음.
+        // 시장 교정 + 상장일 채우기 (REQ-STOCKMETA-004,011,012) + 상폐/거래정지 상태 반영 (REQ-WLSYNC-144~147).
+        // StockInfo가 있을 때만 수행. null이면 조회 실패(graceful skip) — 상폐/거래정지 판정을 내리지 않고
+        // 직전 active/delistedAt 상태를 그대로 유지한다(REQ-WLSYNC-150).
         if (info != null) {
             changed |= existing.correctMetadata(info.market(), info.listedDate());
+            changed |= existing.reflectListingStatus(info.listingStatus(), info.delistedAt());
         }
 
         if (changed) {
