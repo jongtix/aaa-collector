@@ -30,6 +30,7 @@ import com.aaa.collector.stock.supply.ShortSaleCollectionService;
 import com.aaa.collector.stock.supply.ShortSaleFetch;
 import java.time.DayOfWeek;
 import java.time.LocalDate;
+import java.time.temporal.ChronoUnit;
 import java.util.List;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -375,6 +376,86 @@ class StockRangeCoveredGapFillerTest {
             assertThat(newSteps).isEqualTo(26);
             assertThat((double) newSteps / oldSteps)
                     .isCloseTo(oldStepDays / (double) newStepDays, within(0.05));
+        }
+    }
+
+    @Nested
+    @DisplayName("범위형 소스 스텝 폭 API 용량 마진 검증 (REQ-CVR-073, -075a, TASK-011)")
+    class RangeTypeStepWidthMarginVerification {
+
+        // daily_ohlcv 단일 콜 최대 반환 행수 — REQ-BACKFILL-013 100건-cap 종료 게이트와 동일 근거(GROUP_A).
+        private static final int DAILY_OHLCV_MAX_ROWS_PER_CALL = 100;
+
+        /** L 연속 달력일 중 공휴일 0(최대 밀도) worst case의 최대 평일(월~금) 수 — StepWidthSafetyInvariant와 동일 계산. */
+        private static int maxWeekdaysInSpan(LocalDate start, int calendarDays) {
+            int count = 0;
+            for (int i = 0; i < calendarDays; i++) {
+                DayOfWeek dow = start.plusDays(i).getDayOfWeek();
+                if (dow != DayOfWeek.SATURDAY && dow != DayOfWeek.SUNDAY) {
+                    count++;
+                }
+            }
+            return count;
+        }
+
+        @Test
+        @DisplayName(
+                "AC-20 — daily_ohlcv 스텝 폭 90일 불변 + 90달력일(worst case 거래일 수) < 100행 API cap 마진 명시 검증"
+                        + "(REQ-CVR-075a, 침묵 가정 아님)")
+        void dailyOhlcv_stepWidth90Unchanged_marginUnderApiCap() throws InterruptedException {
+            // Arrange — daily_ohlcv 스텝 폭(90일)을 실동작으로 재확인하고, 90달력일 worst case 거래일 수를 산정한다.
+            // daily_ohlcv는 GROUP_A 100건-cap 종료 게이트로 별도
+            // 관리되므로(StockRangeCoveredGapFiller.STEP_DAYS_WIDE
+            // Javadoc), 90달력일 구간의 최대 거래일 수가 이 100행 cap 미만이어야 over-claim이 없다.
+            Stock stock = buildStock("005930", Market.KOSPI);
+            BackfillStatus status = buildStatus("005930", "daily_ohlcv");
+            LocalDate cursor = LocalDate.of(2026, 1, 1);
+            LocalDate expectedAnchor = cursor.plusDays(90);
+            DomesticDailyOhlcvFetch fetch =
+                    new DomesticDailyOhlcvFetch(List.of(), expectedAnchor, 1, 1);
+            when(domesticOhlcvService.fetchWindow(cursor, expectedAnchor, stock, session))
+                    .thenReturn(fetch);
+            when(domesticOhlcvService.persistWindow(stock, fetch))
+                    .thenReturn(new BackfillWindowResult(expectedAnchor, 1, 1));
+
+            // Act
+            CoveredFillResult result = filler(status, stock).persistStep(cursor);
+            int actualStepDays = (int) ChronoUnit.DAYS.between(cursor, result.filledUntil());
+            int worstCaseTradingDays =
+                    maxWeekdaysInSpan(LocalDate.of(2026, 1, 5), actualStepDays + 1);
+
+            // Assert — ① daily_ohlcv 스텝 폭 90일 불변, ② 90달력일 worst case 거래일 수 < 100행 cap(마진 명시)
+            assertThat(actualStepDays).isEqualTo(90);
+            assertThat(worstCaseTradingDays).isLessThan(DAILY_OHLCV_MAX_ROWS_PER_CALL);
+        }
+
+        @Test
+        @DisplayName(
+                "AC-20 — short_sale_domestic 스텝 폭 90일 불변, 진짜 범위 조회(FID_INPUT_DATE_1+DATE_2)라 구조적으로"
+                        + " over-claim 불가(무cap, 실측 61행/90일은 참고용 경험치일 뿐 용량 한계 아님)")
+        void shortSaleDomestic_stepWidth90Unchanged_noCapStructurallySafe()
+                throws InterruptedException {
+            // Arrange — short_sale_domestic(TR FHPST04830000)은 [from,to] 범위 전체를 반환하는 진짜 범위 조회다.
+            // credit_balance·investor_trend처럼 "1콜당 고정 N행 상한"이 없으므로, claimed 구간(90달력일)과 반환 구간이
+            // 항상 일치해 REQ-CVR-073(스텝 폭 ≤ API 용량)을 구조적으로 자동 충족한다(over-claim 불가능). 90일 창에서
+            // 실측된 61행(api-specs/kis 실측)은 "용량 한계"가 아니라 해당 기간의 실제 거래일 수를 반영한 경험치일 뿐이다 —
+            // 이 구조적 근거를 침묵 가정하지 않고 테스트·주석으로 명시한다(REQ-CVR-075a).
+            Stock stock = buildStock("005930", Market.KOSPI);
+            BackfillStatus status = buildStatus("005930", "short_sale_domestic");
+            LocalDate cursor = LocalDate.of(2026, 1, 1);
+            LocalDate expectedAnchor = cursor.plusDays(90);
+            ShortSaleFetch fetch = new ShortSaleFetch(List.of(), expectedAnchor, 61);
+            when(shortSaleService.fetchWindow(any(), eq(stock), eq(session))).thenReturn(fetch);
+            when(shortSaleService.persistWindow(any(), eq(stock), eq(fetch)))
+                    .thenReturn(new BackfillWindowResult(expectedAnchor, 61));
+
+            // Act
+            CoveredFillResult result = filler(status, stock).persistStep(cursor);
+            int actualStepDays = (int) ChronoUnit.DAYS.between(cursor, result.filledUntil());
+
+            // Assert — ① 스텝 폭 90일 불변, ② claimed 구간 = 반환 구간(kept==실측 61 그대로 매핑, over-claim 없음의 근거)
+            assertThat(actualStepDays).isEqualTo(90);
+            assertThat(result.kept()).isEqualTo(61);
         }
     }
 }
