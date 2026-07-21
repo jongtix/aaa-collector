@@ -152,4 +152,71 @@ class ShortSaleRowMapperTest {
             assertThat(result).isEmpty();
         }
     }
+
+    @Nested
+    @DisplayName("SPEC-COLLECTOR-ASSETSCOPE-001 REQ-ASSETSCOPE-012 — ETN·COMMODITY 공매도 사실적 0 특성화")
+    class EtnCommodityFactualZero {
+
+        private Stock etnStock(String symbol) {
+            return Stock.builder()
+                    .symbol(symbol)
+                    .nameKo("테스트ETN_" + symbol)
+                    .market(Market.KOSPI)
+                    .assetType(AssetType.ETN)
+                    .listedDate(LocalDate.of(2015, 1, 1))
+                    .build();
+        }
+
+        private Stock commodityStock(String symbol) {
+            return Stock.builder()
+                    .symbol(symbol)
+                    .nameKo("테스트금현물_" + symbol)
+                    .market(Market.KOSPI)
+                    .assetType(AssetType.COMMODITY)
+                    .listedDate(LocalDate.of(2015, 1, 1))
+                    .build();
+        }
+
+        private KisShortSaleResponse.ShortSaleRow allZeroQuantityRow(String date) {
+            // 날짜·가격류는 유효(비-null)하되 공매도 수량·거래대금 축은 전부 사실적 0 —
+            // 제도상 공매도가 불가한 자산(ETN·COMMODITY)의 정상 응답 형태다(위조·쓰레기 행이 아님).
+            return new KisShortSaleResponse.ShortSaleRow(
+                    date, "0", "0.0", "0", "0.0", "0", "0.0", "0", "0.0");
+        }
+
+        @Test
+        @DisplayName("ETN(Q760009) 공매도 전량 0 행 — 정상 저장 경로로 매핑됨(위조·쓰레기 행으로 오판 안 함)")
+        void etn_allZeroShortSaleRow_mappedAsValidEntity() {
+            List<ShortSaleDomestic> result =
+                    mapper.collectValid(
+                            etnStock("Q760009"),
+                            "Q760009",
+                            response(List.of(allZeroQuantityRow("20260612"))),
+                            TODAY,
+                            WINDOW_START);
+
+            assertThat(result).hasSize(1);
+            ShortSaleDomestic row = result.get(0);
+            assertThat(row.getTradeDate()).isEqualTo(LocalDate.of(2026, 6, 12));
+            assertThat(row.getShortSellQty()).isZero();
+            assertThat(row.getShortSellAmt()).isZero();
+            assertThat(row.getShortSellAccQty()).isZero();
+            assertThat(row.getShortSellAccAmt()).isZero();
+        }
+
+        @Test
+        @DisplayName("COMMODITY(M04020000) 공매도 전량 0 행 — 정상 저장 경로로 매핑됨(제도상 공매도 불가 자산)")
+        void commodity_allZeroShortSaleRow_mappedAsValidEntity() {
+            List<ShortSaleDomestic> result =
+                    mapper.collectValid(
+                            commodityStock("M04020000"),
+                            "M04020000",
+                            response(List.of(allZeroQuantityRow("20260612"))),
+                            TODAY,
+                            WINDOW_START);
+
+            assertThat(result).hasSize(1);
+            assertThat(result.get(0).getShortSellQty()).isZero();
+        }
+    }
 }

@@ -127,6 +127,42 @@ class CoverageRefresherTest {
 
         @Test
         @DisplayName(
+                "REQ-ASSETSCOPE-008 — ETN·COMMODITY가 findAllActiveDomesticTradable() 유니버스에 포함되면"
+                        + " KRX 커버리지 분모·비율 계산에 그대로 반영된다(SPEC-COLLECTOR-ASSETSCOPE-001)")
+        void etnAndCommodity_includedInUniverse_reflectedInRatio() {
+            LocalDate expected = LocalDate.of(2026, 7, 3);
+            Stock stock = stock(1, Market.KOSPI);
+            Stock etn =
+                    Stock.builder()
+                            .symbol("Q760009")
+                            .nameKo("키움 CD금리투자 ETN")
+                            .market(Market.KOSPI)
+                            .assetType(AssetType.ETN)
+                            .listedDate(LocalDate.of(2015, 1, 1))
+                            .build();
+            Stock commodity =
+                    Stock.builder()
+                            .symbol("M04020000")
+                            .nameKo("금 99.99_1Kg")
+                            .market(Market.KOSPI)
+                            .assetType(AssetType.COMMODITY)
+                            .listedDate(LocalDate.of(2015, 1, 1))
+                            .build();
+            List<Stock> universe = List.of(stock, etn, commodity);
+            when(marketSessionGate.computeExpectedTradeDate()).thenReturn(expected);
+            when(stockRepository.findAllActiveDomesticTradable()).thenReturn(universe);
+            when(dailyOhlcvRepository.countDistinctStockIdsByTradeDateAndStockIdIn(
+                            eq(expected), anyCollection()))
+                    .thenReturn(3L);
+
+            refresher.refreshKrxCoverage();
+
+            // 유니버스 분모(3)에 ETN·COMMODITY가 포함되어 비율이 1.0으로 계산됨(회귀 없이 편입 반영)
+            verify(coverageMetrics).setRatio(WatermarkSeries.DAILY_OHLCV_KRX, 1.0);
+        }
+
+        @Test
+        @DisplayName(
                 "회귀 가드(T-003, REQ-WM2-004): KRX 경로는 usMarketSessionGate를 전혀 참조하지 않는다 — 국내 감시 불변")
         void krxPath_neverTouchesUsMarketSessionGate() {
             LocalDate expected = LocalDate.of(2026, 7, 3);
