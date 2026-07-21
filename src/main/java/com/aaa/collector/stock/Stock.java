@@ -2,6 +2,7 @@ package com.aaa.collector.stock;
 
 import com.aaa.collector.common.entity.BaseEntity;
 import com.aaa.collector.stock.enums.AssetType;
+import com.aaa.collector.stock.enums.DelistingReason;
 import com.aaa.collector.stock.enums.Market;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
@@ -59,6 +60,13 @@ public class Stock extends BaseEntity {
     @Column(name = "watchlist_removed_at")
     private LocalDateTime watchlistRemovedAt;
 
+    // @MX:SPEC: SPEC-COLLECTOR-WLSYNC-008
+    @Column(name = "delisted_at")
+    private LocalDate delistedAt; // set-only(비가역) — REQ-WLSYNC-144,147,152
+
+    @Column(name = "delisting_reason", length = 30)
+    private DelistingReason delistingReason;
+
     @Builder
     private Stock(
             String symbol,
@@ -68,7 +76,9 @@ public class Stock extends BaseEntity {
             AssetType assetType,
             LocalDate listedDate,
             boolean active,
-            LocalDateTime watchlistRemovedAt) {
+            LocalDateTime watchlistRemovedAt,
+            LocalDate delistedAt,
+            DelistingReason delistingReason) {
         super();
         this.symbol = symbol;
         this.nameKo = nameKo;
@@ -78,6 +88,8 @@ public class Stock extends BaseEntity {
         this.listedDate = listedDate;
         this.active = active;
         this.watchlistRemovedAt = watchlistRemovedAt;
+        this.delistedAt = delistedAt;
+        this.delistingReason = delistingReason;
     }
 
     /**
