@@ -54,6 +54,7 @@ class StockInfoParserTest {
                 trStopYn);
     }
 
+    /** 상폐/거래정지 필드는 정상 기본값(N/01)으로 채운 편의 오버로드 — 기존 호출부 전부 무변경. */
     private static KisOverseasStockInfoResponse.Output overseasOut(
             String dvsn,
             String riskCd,
@@ -61,8 +62,27 @@ class StockInfoParserTest {
             String lstgDt,
             String idxCode,
             String erngRt) {
+        return overseasOut(dvsn, riskCd, nameEn, lstgDt, idxCode, erngRt, "N", "01");
+    }
+
+    private static KisOverseasStockInfoResponse.Output overseasOut(
+            String dvsn,
+            String riskCd,
+            String nameEn,
+            String lstgDt,
+            String idxCode,
+            String erngRt,
+            String lstgAbolItemYn,
+            String ovrsStckTrStopDvsnCd) {
         return new KisOverseasStockInfoResponse.Output(
-                dvsn, riskCd, nameEn, lstgDt, idxCode, erngRt);
+                dvsn,
+                riskCd,
+                nameEn,
+                lstgDt,
+                idxCode,
+                erngRt,
+                lstgAbolItemYn,
+                ovrsStckTrStopDvsnCd);
     }
 
     @Nested
@@ -311,6 +331,47 @@ class StockInfoParserTest {
             assertThat(info.market()).isEqualTo(Market.KOSPI);
             assertThat(info.assetType()).isEqualTo(AssetType.ETF);
             assertThat(info.etfMetaInfo()).isNotNull();
+        }
+    }
+
+    @Nested
+    @DisplayName("parseOverseas — 상장폐지·거래정지 판정 (REQ-WLSYNC-143)")
+    class OverseasDelistingDetection {
+
+        @Test
+        @DisplayName("시나리오 5 — lstg_abol_item_yn=N, ovrs_stck_tr_stop_dvsn_cd=01 → 정상(실측 확인)")
+        void normalCase_confirmedByMeasurement() {
+            StockInfo info =
+                    parser.parseOverseas(
+                            overseasOut("01", "000", "Apple", "19801212", "", "", "N", "01"),
+                            Market.NASDAQ);
+
+            assertThat(info.listingStatus()).isEqualTo(ListingStatus.NORMAL);
+            assertThat(info.delistedAt()).isNull();
+        }
+
+        @Test
+        @DisplayName("(가설, §7) lstg_abol_item_yn=Y → 상장폐지 — 해외 상폐일자 필드 미확보로 delistedAt은 null")
+        void delistedHypothesis_yFlagReturnsDelistedWithoutDate() {
+            StockInfo info =
+                    parser.parseOverseas(
+                            overseasOut("01", "000", "Delisted Co", "19900101", "", "", "Y", "01"),
+                            Market.NYSE);
+
+            assertThat(info.listingStatus()).isEqualTo(ListingStatus.DELISTED);
+            assertThat(info.delistedAt()).isNull();
+        }
+
+        @Test
+        @DisplayName("(가설, §7) lstg_abol_item_yn=N + ovrs_stck_tr_stop_dvsn_cd≠01 → 거래정지(가역)")
+        void haltedHypothesis_nonNormalDvsnCode() {
+            StockInfo info =
+                    parser.parseOverseas(
+                            overseasOut("01", "000", "Halted Co", "19900101", "", "", "N", "03"),
+                            Market.NASDAQ);
+
+            assertThat(info.listingStatus()).isEqualTo(ListingStatus.HALTED);
+            assertThat(info.delistedAt()).isNull();
         }
     }
 

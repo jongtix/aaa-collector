@@ -109,8 +109,26 @@ public class StockInfoParser {
         if (assetType == AssetType.ETF) {
             etfMetaInfo = extractOverseasEtfMeta(out);
         }
+
+        // 상장폐지·거래정지 판정 (REQ-WLSYNC-143). 정상 케이스(N/01)만 실측 확인됐다 — 상폐/거래정지 분기는
+        // 명세 기반 가설이며, 해외 상폐일자 전용 필드가 미확보라 delistedAt은 채우지 않는다(§7 미해결 질문).
+        ListingStatus listingStatus;
+        if ("Y".equals(out.lstgAbolItemYn())) {
+            listingStatus = ListingStatus.DELISTED;
+        } else if (!"01".equals(out.ovrsStckTrStopDvsnCd())) {
+            listingStatus = ListingStatus.HALTED;
+        } else {
+            listingStatus = ListingStatus.NORMAL;
+        }
+
         return new StockInfo(
-                assetType, out.prdtEngName(), parseDate(out.lstgDt()), etfMetaInfo, market);
+                assetType,
+                out.prdtEngName(),
+                parseDate(out.lstgDt()),
+                etfMetaInfo,
+                market,
+                listingStatus,
+                null);
     }
 
     // @MX:WARN: [AUTO] ETF attribute derivation from undocumented KIS fields
