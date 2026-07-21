@@ -1,7 +1,6 @@
 package com.aaa.collector.watchlist;
 
 import com.aaa.collector.stock.enums.AssetType;
-import com.aaa.collector.stock.enums.ListingStatus;
 import com.aaa.collector.stock.enums.Market;
 import com.aaa.collector.stock.etf.EtfMetaInfo;
 import java.math.BigDecimal;
@@ -55,20 +54,11 @@ public class StockInfoParser {
             etfMetaInfo = extractDomesticEtfMeta(out);
         }
 
-        // 상장폐지·거래정지 판정 (REQ-WLSYNC-142). 상폐 종목도 rt_cd=0 정상 응답으로 온다 — rt_cd가 아닌
-        // lstg_abol_dt 채움 여부로 판정한다(실측 2026-07-20). "00000000"/공백 sentinel은 기존 parseDate가
-        // 이미 null로 정규화하므로 그대로 재사용한다.
-        // @MX:NOTE: [AUTO] 상폐 종목도 rt_cd=0 정상 응답 — lstg_abol_dt 채움 여부로 판정, tr_stop_yn 단독 판정 금지
-        // @MX:REASON: KIS CTPF1002R 실측(010620 HD현대미포, 2026-07-20) — rt_cd만으로는 상폐를 구분할 수 없음
-        LocalDate delistedAt = parseDate(out.lstgAbolDt());
-        ListingStatus listingStatus;
-        if (delistedAt != null) {
-            listingStatus = ListingStatus.DELISTED;
-        } else if ("Y".equals(out.trStopYn())) {
-            listingStatus = ListingStatus.HALTED;
-        } else {
-            listingStatus = ListingStatus.NORMAL;
-        }
+        // 상장폐지·거래정지 판정 (REQ-WLSYNC-142) — 판정 로직은 ListingStatusDetector로 위임(응집도).
+        // "00000000"/공백 sentinel은 이 클래스의 parseDate가 이미 null로 정규화하므로 그대로 재사용한다.
+        ListingStatusDetector.Detection detection =
+                ListingStatusDetector.detectDomestic(
+                        out.lstgAbolDt(), out.trStopYn(), this::parseDate);
 
         return new StockInfo(
                 assetType,
@@ -76,8 +66,8 @@ public class StockInfoParser {
                 parseDate(rawDate),
                 etfMetaInfo,
                 authoritative,
-                listingStatus,
-                listingStatus == ListingStatus.DELISTED ? delistedAt : null);
+                detection.status(),
+                detection.delistedAt());
     }
 
     /**
@@ -110,16 +100,10 @@ public class StockInfoParser {
             etfMetaInfo = extractOverseasEtfMeta(out);
         }
 
-        // 상장폐지·거래정지 판정 (REQ-WLSYNC-143). 정상 케이스(N/01)만 실측 확인됐다 — 상폐/거래정지 분기는
-        // 명세 기반 가설이며, 해외 상폐일자 전용 필드가 미확보라 delistedAt은 채우지 않는다(§7 미해결 질문).
-        ListingStatus listingStatus;
-        if ("Y".equals(out.lstgAbolItemYn())) {
-            listingStatus = ListingStatus.DELISTED;
-        } else if (!"01".equals(out.ovrsStckTrStopDvsnCd())) {
-            listingStatus = ListingStatus.HALTED;
-        } else {
-            listingStatus = ListingStatus.NORMAL;
-        }
+        // 상장폐지·거래정지 판정 (REQ-WLSYNC-143) — 판정 로직은 ListingStatusDetector로 위임(응집도).
+        ListingStatusDetector.Detection detection =
+                ListingStatusDetector.detectOverseas(
+                        out.lstgAbolItemYn(), out.ovrsStckTrStopDvsnCd());
 
         return new StockInfo(
                 assetType,
@@ -127,8 +111,8 @@ public class StockInfoParser {
                 parseDate(out.lstgDt()),
                 etfMetaInfo,
                 market,
-                listingStatus,
-                null);
+                detection.status(),
+                detection.delistedAt());
     }
 
     // @MX:WARN: [AUTO] ETF attribute derivation from undocumented KIS fields

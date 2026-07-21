@@ -2,6 +2,7 @@ package com.aaa.collector.watchlist;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.aaa.collector.stock.Stock;
@@ -10,7 +11,6 @@ import com.aaa.collector.stock.enums.AssetType;
 import com.aaa.collector.stock.enums.ListingStatus;
 import com.aaa.collector.stock.enums.Market;
 import java.time.LocalDate;
-import java.util.HashMap;
 import java.util.Map;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -69,10 +69,10 @@ class WatchlistEntryWriterTest {
             ResolvedStock resolved = new ResolvedStock("010620", "HD현대미포", Market.KOSPI, info);
             when(stockRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
 
-            entryWriter.upsertOne(resolved, new HashMap<>(), new WatchlistWriter.Counter());
+            entryWriter.upsertOne(resolved, Map.of(), new WatchlistWriter.Counter());
 
             ArgumentCaptor<Stock> captor = ArgumentCaptor.forClass(Stock.class);
-            org.mockito.Mockito.verify(stockRepository).save(captor.capture());
+            verify(stockRepository).save(captor.capture());
             Stock saved = captor.getValue();
             assertThat(saved.isActive()).isFalse();
             assertThat(saved.getDelistedAt()).isEqualTo(LocalDate.of(2025, 12, 15));
@@ -85,10 +85,10 @@ class WatchlistEntryWriterTest {
             ResolvedStock resolved = new ResolvedStock("005930", "삼성전자", Market.KOSPI, null);
             when(stockRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
 
-            entryWriter.upsertOne(resolved, new HashMap<>(), new WatchlistWriter.Counter());
+            entryWriter.upsertOne(resolved, Map.of(), new WatchlistWriter.Counter());
 
             ArgumentCaptor<Stock> captor = ArgumentCaptor.forClass(Stock.class);
-            org.mockito.Mockito.verify(stockRepository).save(captor.capture());
+            verify(stockRepository).save(captor.capture());
             assertThat(captor.getValue().isActive()).isTrue();
         }
 
@@ -100,10 +100,10 @@ class WatchlistEntryWriterTest {
             ResolvedStock resolved = new ResolvedStock("005930", "삼성전자", Market.KOSPI, info);
             when(stockRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
 
-            entryWriter.upsertOne(resolved, new HashMap<>(), new WatchlistWriter.Counter());
+            entryWriter.upsertOne(resolved, Map.of(), new WatchlistWriter.Counter());
 
             ArgumentCaptor<Stock> captor = ArgumentCaptor.forClass(Stock.class);
-            org.mockito.Mockito.verify(stockRepository).save(captor.capture());
+            verify(stockRepository).save(captor.capture());
             assertThat(captor.getValue().isActive()).isTrue();
         }
     }
@@ -127,8 +127,7 @@ class WatchlistEntryWriterTest {
                             ListingStatus.HALTED,
                             null);
             ResolvedStock resolved = new ResolvedStock("010620", "HD현대미포", Market.KOSPI, info);
-            Map<String, Stock> existingByKey = new HashMap<>();
-            existingByKey.put("010620:KOSPI", existing);
+            Map<String, Stock> existingByKey = Map.of("010620:KOSPI", existing);
 
             entryWriter.upsertOne(resolved, existingByKey, new WatchlistWriter.Counter());
 
@@ -152,8 +151,7 @@ class WatchlistEntryWriterTest {
                             ListingStatus.NORMAL,
                             null);
             ResolvedStock resolved = new ResolvedStock("010620", "HD현대미포", Market.KOSPI, info);
-            Map<String, Stock> existingByKey = new HashMap<>();
-            existingByKey.put("010620:KOSPI", existing);
+            Map<String, Stock> existingByKey = Map.of("010620:KOSPI", existing);
 
             entryWriter.upsertOne(resolved, existingByKey, new WatchlistWriter.Counter());
 
@@ -169,8 +167,7 @@ class WatchlistEntryWriterTest {
             setUp();
             Stock existing = existingStock(false, LocalDate.of(2025, 12, 15));
             ResolvedStock resolved = new ResolvedStock("010620", "HD현대미포", Market.KOSPI, null);
-            Map<String, Stock> existingByKey = new HashMap<>();
-            existingByKey.put("010620:KOSPI", existing);
+            Map<String, Stock> existingByKey = Map.of("010620:KOSPI", existing);
 
             entryWriter.upsertOne(resolved, existingByKey, new WatchlistWriter.Counter());
 
@@ -193,8 +190,7 @@ class WatchlistEntryWriterTest {
                             ListingStatus.NORMAL,
                             null);
             ResolvedStock resolved = new ResolvedStock("010620", "HD현대미포", Market.KOSPI, info);
-            Map<String, Stock> existingByKey = new HashMap<>();
-            existingByKey.put("010620:KOSPI", existing);
+            Map<String, Stock> existingByKey = Map.of("010620:KOSPI", existing);
 
             entryWriter.upsertOne(resolved, existingByKey, new WatchlistWriter.Counter());
 
