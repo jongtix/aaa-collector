@@ -54,10 +54,12 @@ public class InvestorTrendCollectionService {
     static final int LOOKBACK_CALENDAR_DAYS = 14;
 
     /**
-     * 백필 수집 윈도우 캘린더 일수 — API 단일 호출이 ~30행(≈45달력일)을 반환하므로 전부 포착.
+     * 검증 필터 windowStart 계산 전용 캘린더 일수 — API 단일 호출이 ~30행(≈45달력일)을 반환하므로 반환 행을 부당 폐기하지 않도록 충분히 크게
+     * 유지한다.
      *
-     * <p>{@code public} — {@link com.aaa.collector.stock.backfill.StockRangeCoveredGapFiller}(정방향 갭
-     * walk 스텝 폭)가 직접 참조한다(SPEC-COLLECTOR-BACKFILL-011). 이 상수가 바뀌면 스텝 폭도 자동으로 함께 바뀐다 — 리터럴 중복 금지.
+     * <p>[SPEC-COLLECTOR-BACKFILL-011 TASK-010] 정방향 갭 walk 스텝 폭과 더 이상 겸용되지 않는다(REQ-CVR-074) — 스텝 폭은
+     * {@code StockRangeCoveredGapFiller.SINGLE_ANCHOR_STEP_CALENDAR_DAYS}(35, API 반환 용량 이하로 축소된 전용
+     * 상수)로 물리 분리됐다. 이 필터 상수의 값·용도(windowStart 계산)는 불변이다.
      */
     public static final int BACKFILL_LOOKBACK_CALENDAR_DAYS = 45;
 

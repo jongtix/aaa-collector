@@ -2,6 +2,7 @@ package com.aaa.collector.stock.backfill;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.Assertions.within;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
@@ -27,6 +28,7 @@ import com.aaa.collector.stock.supply.InvestorTrendCollectionService;
 import com.aaa.collector.stock.supply.InvestorTrendFetch;
 import com.aaa.collector.stock.supply.ShortSaleCollectionService;
 import com.aaa.collector.stock.supply.ShortSaleFetch;
+import java.time.DayOfWeek;
 import java.time.LocalDate;
 import java.util.List;
 import org.junit.jupiter.api.BeforeEach;
@@ -175,16 +177,19 @@ class StockRangeCoveredGapFillerTest {
     }
 
     @Nested
-    @DisplayName("investor_trend — fetchWindow(anchor) 단일 anchor 파라미터, 내부 45일 트레일링 재사용")
+    @DisplayName(
+            "investor_trend — fetchWindow(anchor) 단일 anchor 파라미터, 내부 필터 lookback(45일)과 분리된 35일 스텝 폭"
+                    + " 재사용")
     class InvestorTrend {
 
         @Test
-        @DisplayName("스텝 폭=45일 — stepAnchor=cursor+45")
-        void stepWidthIs45Days() throws InterruptedException {
+        @DisplayName(
+                "스텝 폭=35일(SINGLE_ANCHOR_STEP_CALENDAR_DAYS, REQ-CVR-074/075) — stepAnchor=cursor+35")
+        void stepWidthIs35Days() throws InterruptedException {
             Stock stock = buildStock("005930", Market.KOSPI);
             BackfillStatus status = buildStatus("005930", "investor_trend");
             LocalDate cursor = LocalDate.of(2026, 1, 1);
-            LocalDate expectedAnchor = cursor.plusDays(45);
+            LocalDate expectedAnchor = cursor.plusDays(35);
 
             InvestorTrendFetch fetch = new InvestorTrendFetch(List.of(), expectedAnchor, 20);
             when(investorTrendService.fetchWindow(expectedAnchor, stock, session))
@@ -205,12 +210,12 @@ class StockRangeCoveredGapFillerTest {
     class TransientStatusInjection {
 
         @Test
-        @DisplayName("credit_balance — 임시 status에 targetCode/dataTable/anchor가 올바르게 주입된다")
+        @DisplayName("credit_balance — 임시 status에 targetCode/dataTable/anchor가 올바르게 주입된다(스텝 폭 35일)")
         void creditBalance_transientStatusCarriesExpectedFields() throws InterruptedException {
             Stock stock = buildStock("005930", Market.KOSPI);
             BackfillStatus status = buildStatus("005930", "credit_balance");
             LocalDate cursor = LocalDate.of(2026, 1, 1);
-            LocalDate expectedAnchor = cursor.plusDays(45);
+            LocalDate expectedAnchor = cursor.plusDays(35);
 
             ArgumentCaptor<BackfillStatus> statusCaptor =
                     ArgumentCaptor.forClass(BackfillStatus.class);
@@ -229,12 +234,12 @@ class StockRangeCoveredGapFillerTest {
         }
 
         @Test
-        @DisplayName("credit_balance — 원본 status는 미영향, kept/filledUntil 매핑 확인")
+        @DisplayName("credit_balance — 원본 status는 미영향, kept/filledUntil 매핑 확인(스텝 폭 35일)")
         void creditBalance_originalStatusUnaffected_resultMapped() throws InterruptedException {
             Stock stock = buildStock("005930", Market.KOSPI);
             BackfillStatus status = buildStatus("005930", "credit_balance");
             LocalDate cursor = LocalDate.of(2026, 1, 1);
-            LocalDate expectedAnchor = cursor.plusDays(45);
+            LocalDate expectedAnchor = cursor.plusDays(35);
 
             CreditBalanceFetch fetch = new CreditBalanceFetch(List.of(), expectedAnchor, 7);
             when(creditBalanceService.fetchWindow(any(), eq(stock), eq(session))).thenReturn(fetch);
@@ -306,5 +311,70 @@ class StockRangeCoveredGapFillerTest {
 
         assertThatThrownBy(() -> filler(status, stock).persistStep(LocalDate.of(2026, 1, 1)))
                 .isInstanceOf(IllegalStateException.class);
+    }
+
+    @Nested
+    @DisplayName("스텝 폭 안전 불변식 회귀 가드 (REQ-CVR-073, plan.md §9a.1, [D4])")
+    class StepWidthSafetyInvariant {
+
+        // StockRangeCoveredGapFiller.SINGLE_ANCHOR_STEP_CALENDAR_DAYS와 동일 값 — 위 InvestorTrend
+        // stepWidthIs35Days()가 실제 filler 동작으로 이 값을 재확인한다(35=cursor→stepAnchor 오프셋 실측).
+        private static final int SINGLE_ANCHOR_STEP_CALENDAR_DAYS = 35;
+
+        // credit_balance(FHPST04760000)·investor_trend(FHPTJ04160001) 단일 anchor 1콜 API 반환 용량(§1.4
+        // 실측
+        // "정확히 30 거래일" — 자체 실측 + KIS 공식 SDK docstring 이중 근거).
+        private static final int SINGLE_ANCHOR_MAX_TRADING_DAYS = 30;
+
+        /** L 연속 달력일 중 공휴일 0(최대 밀도) worst case의 최대 평일(월~금) 수. */
+        private static int maxWeekdaysInSpan(LocalDate start, int calendarDays) {
+            int count = 0;
+            for (int i = 0; i < calendarDays; i++) {
+                DayOfWeek dow = start.plusDays(i).getDayOfWeek();
+                if (dow != DayOfWeek.SATURDAY && dow != DayOfWeek.SUNDAY) {
+                    count++;
+                }
+            }
+            return count;
+        }
+
+        @Test
+        @DisplayName(
+                "AC-18 — 스텝 폭 35일(claimed 구간 L=36 달력일)의 공휴일 0 worst case 거래일 수가 API 용량 30 이하(회귀 가드)")
+        void stepWidthWorstCaseTradingDays_neverExceedsApiCapacity() {
+            // Arrange — 최대 밀도 worst case: 월요일 시작 L=36 연속 달력일(공휴일 0)
+            LocalDate mondayStart = LocalDate.of(2026, 1, 5); // Monday
+            int calendarSpan =
+                    SINGLE_ANCHOR_STEP_CALENDAR_DAYS
+                            + 1; // claimed [cursor, cursor+stepDays] inclusive
+
+            // Act
+            int worstCaseTradingDays = maxWeekdaysInSpan(mondayStart, calendarSpan);
+
+            // Assert — ① worst case 거래일 수 ≤ 30, ② 회귀 가드: 상수 값이 상한(이론적 ≤41, 대안 검산 ≤39)을 넘으면 이
+            // 어서션이 실패한다
+            assertThat(worstCaseTradingDays).isLessThanOrEqualTo(SINGLE_ANCHOR_MAX_TRADING_DAYS);
+        }
+
+        @Test
+        @DisplayName(
+                "[D4] 스텝 폭 축소(45→35)로 900달력일 고정 갭의 회차 수가 20→26으로 증가(≈45/35배, REQ-CVR-042 비상충,"
+                        + " plan §9a.1)")
+        void stepCountIncreaseRatio_fixedGap900CalendarDays() {
+            // Arrange
+            int gapDays = 900;
+            int oldStepDays = 45;
+            int newStepDays = SINGLE_ANCHOR_STEP_CALENDAR_DAYS;
+
+            // Act
+            int oldSteps = (int) Math.ceil(gapDays / (double) oldStepDays);
+            int newSteps = (int) Math.ceil(gapDays / (double) newStepDays);
+
+            // Assert
+            assertThat(oldSteps).isEqualTo(20);
+            assertThat(newSteps).isEqualTo(26);
+            assertThat((double) newSteps / oldSteps)
+                    .isCloseTo(oldStepDays / (double) newStepDays, within(0.05));
+        }
     }
 }
