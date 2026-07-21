@@ -153,4 +153,50 @@ class BackfillOrchestratorCoveredTrackingTest {
         // Assert
         verify(stockCoveredGapWalkRunner, times(1)).runFor(any(), eq(session));
     }
+
+    @Test
+    @DisplayName(
+            "REQ-ASSETSCOPE-006 — ETN·COMMODITY가 STOCK과 함께 활성 대상 맵에 포함되어 정방향 갭 walk에 자동"
+                    + " 편입된다(코드 변경 없이, SPEC-COLLECTOR-ASSETSCOPE-001)")
+    void etnAndCommodity_includedInActiveMapForForwardGapWalk() {
+        // Arrange — findAllActiveTradable()가 STOCK·ETN·COMMODITY 혼재 목록을 반환하면
+        // 오케스트레이터는 자산유형을 구분하지 않고 전부 활성 맵에 담아 갭 walk 러너에 전달한다.
+        Stock stock =
+                Stock.builder()
+                        .symbol("005930")
+                        .market(Market.KOSPI)
+                        .assetType(AssetType.STOCK)
+                        .active(true)
+                        .build();
+        Stock etn =
+                Stock.builder()
+                        .symbol("Q760009")
+                        .market(Market.KOSPI)
+                        .assetType(AssetType.ETN)
+                        .active(true)
+                        .build();
+        Stock commodity =
+                Stock.builder()
+                        .symbol("M04020000")
+                        .market(Market.KOSPI)
+                        .assetType(AssetType.COMMODITY)
+                        .active(true)
+                        .build();
+        when(stockRepository.findAllActiveTradable()).thenReturn(List.of(stock, etn, commodity));
+        when(stockRepository.findAllActiveOverseasTradable()).thenReturn(List.of());
+        when(backfillStatusRepository.findByStatusInAndTargetTypeOrderById(any(), anyString()))
+                .thenReturn(List.of());
+
+        // Act
+        orchestrator.run();
+
+        // Assert — STOCK·ETN·COMMODITY 전부 활성 맵에 포함되어 갭 walk 러너에 전달됨(회귀 없음)
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<Map<String, Stock>> mapCaptor = ArgumentCaptor.forClass(Map.class);
+        verify(stockCoveredGapWalkRunner, times(1)).runFor(mapCaptor.capture(), eq(session));
+        assertThat(mapCaptor.getValue())
+                .containsEntry("005930", stock)
+                .containsEntry("Q760009", etn)
+                .containsEntry("M04020000", commodity);
+    }
 }

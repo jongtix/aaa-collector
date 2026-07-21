@@ -796,6 +796,79 @@ class BackfillOrchestratorTest {
     }
 
     // -----------------------------------------------------------------------
+    // SPEC-COLLECTOR-ASSETSCOPE-001 — ETN/COMMODITY 백필 편입 특성화
+    // (REQ-ASSETSCOPE-005/006/007, AC-4)
+    // -----------------------------------------------------------------------
+
+    @Nested
+    @DisplayName("ASSETSCOPE: ETN/COMMODITY 백필 편입 특성화 (REQ-ASSETSCOPE-005/006/007)")
+    class AssetScopeEtnCommodityInclusion {
+
+        private Stock buildStock(String symbol, AssetType assetType) {
+            return Stock.builder()
+                    .symbol(symbol)
+                    .market(Market.KOSPI)
+                    .assetType(assetType)
+                    .active(true)
+                    .build();
+        }
+
+        @Test
+        @DisplayName(
+                "REQ-ASSETSCOPE-005 — ETN(Q760009)이 활성 대상 맵에 포함되면 데이터 존재 시 backward walk가 정상"
+                        + " 진행된다(다중 윈도우, 오케스트레이터는 자산유형을 구분하지 않음)")
+        void etn_includedInActiveMap_walksNormallyWhenDataExists() throws InterruptedException {
+            // Arrange — ETN도 STOCK/ETF와 동일하게 findAllActiveTradable() 반환 목록에 포함되면
+            // 오케스트레이터가 자산유형 구분 없이 동일 완성 루프를 적용한다.
+            Stock etn = buildStock("Q760009", AssetType.ETN);
+            BackfillStatus initial = buildPendingStatus("Q760009", "daily_ohlcv");
+            BackfillStatus inProg1 =
+                    buildInProgressStatus("Q760009", "daily_ohlcv", LocalDate.of(2024, 6, 1));
+            BackfillStatus completed = buildCompletedStatus("Q760009", "daily_ohlcv");
+
+            when(stockRepository.findAllActiveTradable()).thenReturn(List.of(etn));
+            when(stockRepository.findAllActiveOverseasTradable()).thenReturn(List.of());
+            when(backfillStatusRepository.findByStatusInAndTargetTypeOrderById(any(), anyString()))
+                    .thenReturn(List.of(initial));
+            when(backfillStatusRepository.findById(any()))
+                    .thenReturn(Optional.of(inProg1))
+                    .thenReturn(Optional.of(completed));
+
+            // Act
+            orchestrator.run();
+
+            // Assert — 데이터가 존재하는 종목처럼 다중 윈도우가 정상 실행됨(회귀 없음)
+            verify(windowExecutor, times(2)).fetchWindow(any(), eq(etn), eq(session));
+            verify(windowExecutor, times(2)).persistWindow(any(), eq(etn), any());
+        }
+
+        @Test
+        @DisplayName(
+                "REQ-ASSETSCOPE-007 — COMMODITY(M04020000)가 빈/무효 응답을 받으면 좀비 행·무한 워크 없이"
+                        + " 첫 윈도우에서 즉시 COMPLETED로 수렴, 헛호출 1회 상한")
+        void commodity_emptyResponse_convergesToCompletedOnFirstWindow()
+                throws InterruptedException {
+            // Arrange — GROUP_A(daily_ohlcv) 종료조건: 데이터 없는 신규 종목은 첫 윈도우에서 즉시 COMPLETED
+            Stock commodity = buildStock("M04020000", AssetType.COMMODITY);
+            BackfillStatus initial = buildPendingStatus("M04020000", "daily_ohlcv");
+            BackfillStatus completed = buildCompletedStatus("M04020000", "daily_ohlcv");
+
+            when(stockRepository.findAllActiveTradable()).thenReturn(List.of(commodity));
+            when(stockRepository.findAllActiveOverseasTradable()).thenReturn(List.of());
+            when(backfillStatusRepository.findByStatusInAndTargetTypeOrderById(any(), anyString()))
+                    .thenReturn(List.of(initial));
+            when(backfillStatusRepository.findById(any())).thenReturn(Optional.of(completed));
+
+            // Act
+            orchestrator.run();
+
+            // Assert — 종목-테이블당 헛호출 정확히 1회, 좀비 행·무한 워크 없음
+            verify(windowExecutor, times(1)).fetchWindow(any(), eq(commodity), eq(session));
+            verify(windowExecutor, times(1)).persistWindow(any(), eq(commodity), any());
+        }
+    }
+
+    // -----------------------------------------------------------------------
     // 기본 흐름 (회귀 유지)
     // -----------------------------------------------------------------------
 
