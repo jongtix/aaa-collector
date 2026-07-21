@@ -116,6 +116,7 @@ class OverseasSplitIntegrationTest {
                         .market(Market.NASDAQ)
                         .assetType(AssetType.STOCK)
                         .listedDate(LocalDate.of(2015, 1, 1))
+                        .active(true) // 2축 필터 부활(SPEC-COLLECTOR-WLSYNC-008) — 이 fixture는 시장 유효 종목
                         .build());
     }
 

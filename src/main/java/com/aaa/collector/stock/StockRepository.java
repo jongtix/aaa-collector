@@ -35,12 +35,21 @@ public interface StockRepository extends JpaRepository<Stock, Long> {
     void markWatchlistRemoved(@Param("ids") Set<Long> ids);
 
     /**
-     * 관심 목록에서 제거되지 않은 종목을 조회한다.
+     * 관심 목록에서 제거되지 않고 시장에 유효한(상폐·거래정지 아닌) 종목을 조회한다.
      *
-     * <p>"활성"의 기준: {@code watchlistRemovedAt IS NULL}. {@code active} 불리언 필드는 사용하지 않는다.
-     * watchlistRemovedAt이 null인 종목은 가장 최근 sync에서 제거 대상으로 마킹되지 않은 종목이다.
+     * <p>"활성"의 기준은 서로 독립인 두 게이트의 AND다(SPEC-COLLECTOR-WLSYNC-008 REQ-WLSYNC-141,148):
+     *
+     * <ul>
+     *   <li>{@code active = true} — 시장 유효성(상폐·거래정지 아님). {@code delisted_at}은 이 축의 필터 조건이 아니라 {@code
+     *       active=false}의 사유 메타데이터일 뿐이다(REQ-WLSYNC-149, 3축 추가 금지).
+     *   <li>{@code watchlistRemovedAt IS NULL} — 수집 의사(운영자가 관심그룹에 두고 있는가). 가장 최근 sync에서 제거 대상으로
+     *       마킹되지 않은 종목.
+     * </ul>
+     *
+     * <p>두 게이트는 하나의 필드로 합쳐지지 않고 항상 독립적으로 평가된다 — 상폐이면서 동시에 관심그룹에서도 제거된 종목도 각 축이 개별적으로 배제 사유가 될 뿐,
+     * 서로의 상태를 변경하지 않는다.
      */
-    @Query("SELECT s FROM Stock s WHERE s.watchlistRemovedAt IS NULL")
+    @Query("SELECT s FROM Stock s WHERE s.active = true AND s.watchlistRemovedAt IS NULL")
     List<Stock> findAllActive();
 
     /**
@@ -60,9 +69,13 @@ public interface StockRepository extends JpaRepository<Stock, Long> {
      *
      * <p>REQ-BATCH3-024: INDEX 종목을 J API로 헛호출(빈 응답·rate-limit 낭비)하는 비효율 제거. 지수는 U 전용 API(T3
      * SectorIndexCollectionService)로 수집하므로 per-stock 배치에서 제외한다.
+     *
+     * <p>2축 직교 필터(SPEC-COLLECTOR-WLSYNC-008 REQ-WLSYNC-141,148): {@code active = true}(시장 유효성) AND
+     * {@code watchlistRemovedAt IS NULL}(수집 범위). {@link #findAllActive()} 참조.
      */
     @Query(
-            "SELECT s FROM Stock s WHERE s.watchlistRemovedAt IS NULL AND s.assetType IN :assetTypes")
+            "SELECT s FROM Stock s WHERE s.active = true AND s.watchlistRemovedAt IS NULL"
+                    + " AND s.assetType IN :assetTypes")
     List<Stock> findAllActiveByAssetTypeIn(@Param("assetTypes") Collection<AssetType> assetTypes);
 
     /**
@@ -96,9 +109,12 @@ public interface StockRepository extends JpaRepository<Stock, Long> {
      *
      * <p>호출자는 시장·자산 유형 집합을 직접 구성하지 않고 {@link #findAllActiveOverseasTradable()}를 사용한다 — 미국 일봉 배치 대상
      * 집합은 이 레포지토리 계층에서만 관리한다.
+     *
+     * <p>2축 직교 필터(SPEC-COLLECTOR-WLSYNC-008 REQ-WLSYNC-141,148): {@code active = true}(시장 유효성) AND
+     * {@code watchlistRemovedAt IS NULL}(수집 범위). {@link #findAllActive()} 참조.
      */
     @Query(
-            "SELECT s FROM Stock s WHERE s.watchlistRemovedAt IS NULL"
+            "SELECT s FROM Stock s WHERE s.active = true AND s.watchlistRemovedAt IS NULL"
                     + " AND s.market IN :markets AND s.assetType IN :assetTypes")
     List<Stock> findAllActiveByMarketInAndAssetTypeIn(
             @Param("markets") Collection<Market> markets,
@@ -108,13 +124,16 @@ public interface StockRepository extends JpaRepository<Stock, Long> {
      * 종목 단위 펀더멘털 배치(재무비율/투자의견) 대상 종목을 조회한다 — {@code asset_type = STOCK} 한정
      * (SPEC-COLLECTOR-BATCH-004 REQ-BATCH4-013).
      *
-     * <p>재무비율·투자의견은 일반 주식 지표라 ETF/INDEX/ETN/COMMODITY엔 무의미·빈 응답이 온다. 따라서 활성({@code
-     * watchlistRemovedAt IS NULL}) 종목 중 {@code asset_type = STOCK}만 반환한다. BATCH-001/002(일봉/수급)의
-     * {@link #findAllActiveTradable()}({@code IN (STOCK, ETF)})와는 별개의 자체 필터다 — 기존 {@link
+     * <p>재무비율·투자의견은 일반 주식 지표라 ETF/INDEX/ETN/COMMODITY엔 무의미·빈 응답이 온다. 따라서 활성(2축 직교 필터, {@link
+     * #findAllActive()} 참조) 종목 중 {@code asset_type = STOCK}만 반환한다. BATCH-001/002(일봉/수급)의 {@link
+     * #findAllActiveTradable()}({@code IN (STOCK, ETF)})와는 별개의 자체 필터다 — 기존 {@link
      * #findAllActive()}·{@link #findAllActiveTradable()}는 변경하지 않는다.
+     *
+     * <p>2축 직교 필터(SPEC-COLLECTOR-WLSYNC-008 REQ-WLSYNC-141,148): {@code active = true}(시장 유효성) AND
+     * {@code watchlistRemovedAt IS NULL}(수집 범위).
      */
     @Query(
-            "SELECT s FROM Stock s WHERE s.watchlistRemovedAt IS NULL"
+            "SELECT s FROM Stock s WHERE s.active = true AND s.watchlistRemovedAt IS NULL"
                     + " AND s.assetType = com.aaa.collector.stock.enums.AssetType.STOCK")
     List<Stock> findAllActiveStock();
 
@@ -124,10 +143,14 @@ public interface StockRepository extends JpaRepository<Stock, Long> {
      *
      * <p>REQ-BATCH3-021: watchlist sync가 등록한 INDEX 행(0001/1001)을 SectorIndexCollectionService가
      * 활용한다. 신규 등록 없음(CR-02).
+     *
+     * <p>2축 직교 필터(SPEC-COLLECTOR-WLSYNC-008 REQ-WLSYNC-141,148): {@code active = true}(시장 유효성) AND
+     * {@code watchlistRemovedAt IS NULL}(수집 범위). {@link #findAllActive()} 참조.
      */
     @Query(
             "SELECT s FROM Stock s WHERE s.assetType = com.aaa.collector.stock.enums.AssetType.INDEX"
-                    + " AND s.market = :market AND s.symbol IN :symbols AND s.watchlistRemovedAt IS NULL")
+                    + " AND s.market = :market AND s.symbol IN :symbols"
+                    + " AND s.active = true AND s.watchlistRemovedAt IS NULL")
     List<Stock> findActiveIndexByMarketAndSymbolIn(
             @Param("market") Market market, @Param("symbols") Collection<String> symbols);
 }

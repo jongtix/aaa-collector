@@ -61,6 +61,7 @@ class StockRepositoryTest {
                         .market(market)
                         .assetType(assetType)
                         .listedDate(LocalDate.of(2015, 1, 1))
+                        .active(true) // 2축 필터 부활(SPEC-COLLECTOR-WLSYNC-008) — 이 fixture는 시장 유효 종목
                         .build());
     }
 
@@ -149,18 +150,93 @@ class StockRepositoryTest {
         }
 
         @Test
-        @DisplayName("기존 findAllActive()는 무필터 — STOCK 외 자산도 포함(메서드 동작 보존)")
+        @DisplayName("기존 findAllActive()는 자산 유형 무필터 — STOCK 외 자산도 포함(메서드 동작 보존)")
         void findAllActive_unchanged_includesNonStock() {
             // Arrange
             Stock stock = savedStock("FAS_ACT_STOCK", AssetType.STOCK);
             Stock etf = savedStock("FAS_ACT_ETF", AssetType.ETF);
 
-            // Act — 기존 무필터 메서드는 자산 유형을 제한하지 않는다(회귀 보존)
+            // Act — 자산 유형은 제한하지 않는다(회귀 보존). 2축(active·watchlist) 필터는 두 fixture 모두
+            // active=true·watchlistRemovedAt=null이므로 여전히 통과한다.
             List<Stock> result = stockRepository.findAllActive();
 
             // Assert
             List<Long> resultIds = result.stream().map(Stock::getId).toList();
             assertThat(resultIds).contains(stock.getId(), etf.getId());
+        }
+    }
+
+    @Nested
+    @DisplayName(
+            "findAllActive — 2축 직교 필터 (SPEC-COLLECTOR-WLSYNC-008 REQ-WLSYNC-141,148,149, AC-시나리오10)")
+    class ActiveWatchlistTwoAxisFilter {
+
+        @Test
+        @DisplayName("active=false(상폐) 종목 A — findAllActive에서 제외, delisted_at 아닌 active로 제외됨")
+        void delistedStock_excludedByActiveAxis() {
+            // Arrange — 상폐 종목: active=false, delisted_at 설정(사유 메타데이터일 뿐 필터 축 아님)
+            Stock delisted =
+                    stockRepository.save(
+                            Stock.builder()
+                                    .symbol("TWO_AXIS_A")
+                                    .nameKo("상폐종목")
+                                    .market(Market.KOSPI)
+                                    .assetType(AssetType.STOCK)
+                                    .active(false)
+                                    .delistedAt(LocalDate.of(2025, 12, 15))
+                                    .build());
+            Stock normal = savedStock("TWO_AXIS_C", AssetType.STOCK);
+
+            // Act
+            List<Stock> result = stockRepository.findAllActive();
+
+            // Assert
+            List<Long> resultIds = result.stream().map(Stock::getId).toList();
+            assertThat(resultIds).doesNotContain(delisted.getId());
+            assertThat(resultIds).contains(normal.getId());
+        }
+
+        @Test
+        @DisplayName("watchlist_removed_at NOT NULL 종목 B — findAllActive에서 제외(기존 축 보존)")
+        void watchlistRemovedStock_excludedByWatchlistAxis() {
+            // Arrange
+            Stock removed = savedStock("TWO_AXIS_B", AssetType.STOCK);
+            stockRepository.markWatchlistRemoved(Set.of(removed.getId()));
+
+            // Act
+            List<Stock> result = stockRepository.findAllActive();
+
+            // Assert
+            assertThat(result.stream().map(Stock::getId).toList()).doesNotContain(removed.getId());
+        }
+
+        @Test
+        @DisplayName(
+                "REQ-WLSYNC-141 직교성 — active=false + watchlist_removed_at 동시(종목 D) 여전히 제외,"
+                        + " 두 축은 독립 유지(단일 필드 병합 없음)")
+        void bothAxesSet_stillExcluded_axesRemainIndependent() {
+            // Arrange — 상폐이면서 관심그룹에서도 제거된 종목 D
+            Stock both =
+                    stockRepository.save(
+                            Stock.builder()
+                                    .symbol("TWO_AXIS_D")
+                                    .nameKo("상폐+제거종목")
+                                    .market(Market.KOSPI)
+                                    .assetType(AssetType.STOCK)
+                                    .active(false)
+                                    .delistedAt(LocalDate.of(2025, 12, 15))
+                                    .build());
+            stockRepository.markWatchlistRemoved(Set.of(both.getId()));
+
+            // Act
+            List<Stock> result = stockRepository.findAllActive();
+
+            // Assert — 제외됨(두 축 모두 배제 사유가 되지만 서로 병합되지 않고 독립적으로 반영됨)
+            assertThat(result.stream().map(Stock::getId).toList()).doesNotContain(both.getId());
+            Stock reloaded =
+                    stockRepository.findBySymbolAndMarket("TWO_AXIS_D", Market.KOSPI).orElseThrow();
+            assertThat(reloaded.isActive()).isFalse();
+            assertThat(reloaded.getWatchlistRemovedAt()).isNotNull();
         }
     }
 

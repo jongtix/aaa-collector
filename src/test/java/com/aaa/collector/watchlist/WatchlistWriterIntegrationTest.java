@@ -79,8 +79,13 @@ class WatchlistWriterIntegrationTest {
     class DirtyCheck {
 
         @Test
-        @DisplayName("비활성 종목 — upsertAll 후 DB 레코드 active=true")
-        void upsertAll_inactiveStock_activatedInDb() {
+        @DisplayName(
+                "비활성 종목 + StockInfo 없음(조회 실패) — upsertAll 후 DB 레코드 active 상태 유지"
+                        + " (REQ-WLSYNC-150, SPEC-COLLECTOR-WLSYNC-008)")
+        void upsertAll_inactiveStockWithoutStockInfo_preservesActiveStateInDb() {
+            // stockInfo=null(조회 실패)이면 상폐/거래정지 판정을 내리지 않고 직전 active 상태를 그대로
+            // 유지한다. 과거에는 syncFromWatchlist가 무조건 active=true로 되돌렸으나, 상폐 종목이 조회 실패
+            // 시에도 재활성화되는 근본 원인이었다.
             Stock saved = savedInactiveStock("005930", Market.KOSPI);
 
             watchlistWriter.upsertAll(
@@ -89,7 +94,7 @@ class WatchlistWriterIntegrationTest {
             em.clear();
 
             Stock result = stockRepository.findById(saved.getId()).orElseThrow();
-            assertThat(result.isActive()).isTrue();
+            assertThat(result.isActive()).isFalse();
         }
 
         @Test
