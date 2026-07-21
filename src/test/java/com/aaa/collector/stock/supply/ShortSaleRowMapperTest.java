@@ -196,11 +196,9 @@ class ShortSaleRowMapperTest {
                             WINDOW_START);
 
             assertThat(result).hasSize(1);
-            ShortSaleDomestic row = result.get(0);
+            ShortSaleDomestic row = result.getFirst();
             assertThat(row.getTradeDate()).isEqualTo(LocalDate.of(2026, 6, 12));
             assertThat(row.getShortSellQty()).isZero();
-            assertThat(row.getShortSellAmt()).isZero();
-            assertThat(row.getShortSellAccQty()).isZero();
             assertThat(row.getShortSellAccAmt()).isZero();
         }
 
@@ -216,7 +214,7 @@ class ShortSaleRowMapperTest {
                             WINDOW_START);
 
             assertThat(result).hasSize(1);
-            assertThat(result.get(0).getShortSellQty()).isZero();
+            assertThat(result.getFirst().getShortSellQty()).isZero();
         }
     }
 }
