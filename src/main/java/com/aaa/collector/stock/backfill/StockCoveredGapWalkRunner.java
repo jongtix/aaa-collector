@@ -7,13 +7,16 @@ import com.aaa.collector.kis.gate.KeyLeaseRegistry.LeaseSession;
 import com.aaa.collector.stock.Stock;
 import com.aaa.collector.stock.daily.DomesticDailyOhlcvCollectionService;
 import com.aaa.collector.stock.daily.OverseasDailyOhlcvCollectionService;
+import com.aaa.collector.stock.enums.Market;
 import com.aaa.collector.stock.supply.CreditBalanceCollectionService;
 import com.aaa.collector.stock.supply.InvestorTrendCollectionService;
 import com.aaa.collector.stock.supply.ShortSaleCollectionService;
+import java.time.Clock;
 import java.time.LocalDate;
 import java.time.ZoneId;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
@@ -39,6 +42,16 @@ public class StockCoveredGapWalkRunner {
 
     private static final ZoneId KST = ZoneId.of("Asia/Seoul");
 
+    /** 미국 동부시간(ET) — 해외 종목 상한 산출용(aaa-infra#112). */
+    private static final ZoneId ET = ZoneId.of("America/New_York");
+
+    /**
+     * 해외(NYSE/NASDAQ/AMEX) 시장 판정 — {@link StockRangeCoveredGapFiller#OVERSEAS_MARKETS}와 동일 패턴을 독립
+     * 상수로 유지한다(진입점에서 캡 산출에 필요, 두 클래스가 서로 참조하지 않도록 REQ-CVR-012 독립 경로 원칙을 지킨다).
+     */
+    private static final Set<Market> OVERSEAS_MARKETS =
+            Set.of(Market.NYSE, Market.NASDAQ, Market.AMEX);
+
     /** 커버-추적 대상 STOCK 범위형 data_table 4종. */
     private static final List<String> COVERED_DATA_TABLES =
             List.of("daily_ohlcv", "investor_trend", "credit_balance", "short_sale_domestic");
@@ -52,6 +65,7 @@ public class StockCoveredGapWalkRunner {
     private final InvestorTrendCollectionService investorTrendService;
     private final CreditBalanceCollectionService creditBalanceService;
     private final ShortSaleCollectionService shortSaleService;
+    private final Clock clock;
 
     /**
      * 4개 data_table 전체({@code COMPLETED} 포함)를 순회하며 정방향 갭 walk를 수행한다.
@@ -60,7 +74,6 @@ public class StockCoveredGapWalkRunner {
      * @param session per-run 고정 KIS 헬스 스냅샷 세션 (재오픈 금지, REQ-KISGATE-006a)
      */
     public void runFor(Map<String, Stock> activeStockBySymbol, LeaseSession session) {
-        LocalDate today = LocalDate.now(KST);
         for (String dataTable : COVERED_DATA_TABLES) {
             List<BackfillStatus> statuses =
                     backfillStatusRepository.findByTargetTypeAndDataTableOrderById(
@@ -70,26 +83,27 @@ public class StockCoveredGapWalkRunner {
                 if (stock == null) {
                     continue; // 비활성 종목 스킵
                 }
-                runOne(status, stock, today, session);
+                runOne(status, stock, session);
             }
         }
     }
 
     @SuppressWarnings("PMD.AvoidCatchingGenericException") // 대상 단위 예외 격리 — AC-7.1과 동일 정신
-    private void runOne(BackfillStatus status, Stock stock, LocalDate today, LeaseSession session) {
+    private void runOne(BackfillStatus status, Stock stock, LeaseSession session) {
         try {
+            LocalDate cap = resolveCap(stock);
             StockRangeCoveredGapFiller filler =
                     new StockRangeCoveredGapFiller(
                             status,
                             stock,
-                            today,
+                            cap,
                             session,
                             domesticOhlcvService,
                             overseasOhlcvService,
                             investorTrendService,
                             creditBalanceService,
                             shortSaleService);
-            coveredRangeService.walkGapForward(status, filler, today);
+            coveredRangeService.walkGapForward(status, filler, cap);
         } catch (Exception e) {
             log.error(
                     "[stock-covered-gap-walk] 예외 — symbol={}, table={}, 다음 회차 재개",
@@ -97,5 +111,18 @@ public class StockCoveredGapWalkRunner {
                     status.getDataTable(),
                     e);
         }
+    }
+
+    // @MX:NOTE: [AUTO] 해외 종목은 ET 전일을 상한으로 캡 — KST 벽시계를 그대로 쓰면 매일 02:00 KST 크론 발화 시점에
+    // 미국 장이 아직 전일(ET) 거래 중이라 KIS 미확정(장중) 부분바가 반환되고 INSERT IGNORE로 영구 저장되어 확정바 업데이트를
+    // 영구 차단한다(aaa-infra#112). 진입점(runOne)에서 산출해 filler 생성자·walkGapForward 양쪽에 동일 값으로 주입한다 —
+    // StockRangeCoveredGapFiller 내부 캡(구 후보 A)은 바깥 루프 today가 캡되지 않아 비종료 재요청 루프 위험이 있어 기각됨.
+    // @MX:REASON: aaa-infra#112 근본원인 대칭 조치, DP-1 확정안(진입점 캡). aaa-infra#91과 동일 정신(ET 대칭 처리).
+    // @MX:SPEC: SPEC-COLLECTOR-BACKFILL-012
+    LocalDate resolveCap(Stock stock) {
+        if (OVERSEAS_MARKETS.contains(stock.getMarket())) {
+            return LocalDate.now(clock.withZone(ET)).minusDays(1);
+        }
+        return LocalDate.now(clock.withZone(KST));
     }
 }
