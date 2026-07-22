@@ -89,7 +89,13 @@ class SharedContainerGuardTest {
                     // aaa-infra#89 — RedisHealthConfig 자동 구성 순서 회귀 테스트. 전체 컨텍스트를 띄워
                     // "redisHealthIndicator" 빈 등록 여부만 조회하고 비즈니스 데이터 행을 생성하지 않는다
                     // (읽기 전용 게이트, DatabaseMigrationIntegrationTest와 동일 사유).
-                    "com.aaa.collector.common.health.RedisHealthAutoConfigurationIntegrationTest");
+                    "com.aaa.collector.common.health.RedisHealthAutoConfigurationIntegrationTest",
+                    // SPEC-COLLECTOR-WLSYNC-009 M1 — 비트랜잭션 배치 스레드에서의 실제 COMMIT 후 detached
+                    // dirty-check 유실 회귀를 검증하는 것이 테스트 목적 자체라, 클래스 레벨 @Transactional로
+                    // 감싸면 loadExisting이 로드한 엔티티가 테스트 트랜잭션에 합류해 managed 상태가 되어 검증
+                    // 대상 결함이 재현되지 않는다(위양성). @AfterEach에서 RootFixtureCleaner.rootJdbcTemplate로
+                    // 자신이 생성한 stocks 행만 정리한다.
+                    "com.aaa.collector.watchlist.WatchlistWriterPersistenceIntegrationTest");
 
     @Test
     @DisplayName("규칙 A — 공유 컨테이너 참조 필드에 @Container를 붙이면 안 된다")

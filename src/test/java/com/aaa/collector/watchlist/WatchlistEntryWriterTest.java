@@ -2,6 +2,7 @@ package com.aaa.collector.watchlist;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -12,6 +13,7 @@ import com.aaa.collector.stock.enums.ListingStatus;
 import com.aaa.collector.stock.enums.Market;
 import java.time.LocalDate;
 import java.util.Map;
+import java.util.Optional;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
@@ -117,6 +119,7 @@ class WatchlistEntryWriterTest {
         void existingActiveStock_haltedDetected_deactivatesWithoutDelistedAt() {
             setUp();
             Stock existing = existingStock(true, null);
+            when(stockRepository.findById(existing.getId())).thenReturn(Optional.of(existing));
             StockInfo info =
                     new StockInfo(
                             AssetType.STOCK,
@@ -141,6 +144,7 @@ class WatchlistEntryWriterTest {
             setUp();
             LocalDate originalDelistedAt = LocalDate.of(2025, 12, 15);
             Stock existing = existingStock(false, originalDelistedAt);
+            when(stockRepository.findById(existing.getId())).thenReturn(Optional.of(existing));
             StockInfo info =
                     new StockInfo(
                             AssetType.STOCK,
@@ -166,6 +170,7 @@ class WatchlistEntryWriterTest {
         void stockInfoNull_preservesPriorState() {
             setUp();
             Stock existing = existingStock(false, LocalDate.of(2025, 12, 15));
+            when(stockRepository.findById(existing.getId())).thenReturn(Optional.of(existing));
             ResolvedStock resolved = new ResolvedStock("010620", "HD현대미포", Market.KOSPI, null);
             Map<String, Stock> existingByKey = Map.of("010620:KOSPI", existing);
 
@@ -180,6 +185,7 @@ class WatchlistEntryWriterTest {
         void haltedStock_normalDetected_recoversActive() {
             setUp();
             Stock existing = existingStock(false, null);
+            when(stockRepository.findById(existing.getId())).thenReturn(Optional.of(existing));
             StockInfo info =
                     new StockInfo(
                             AssetType.STOCK,
@@ -196,6 +202,24 @@ class WatchlistEntryWriterTest {
 
             assertThat(existing.isActive()).isTrue();
             assertThat(existing.getDelistedAt()).isNull();
+        }
+
+        @Test
+        @DisplayName("재조회(findById) 결과 없음(동시 삭제 추정) — WARN 후 skip, 예외 미발생 (REQ-WLSYNC-157)")
+        void managedEntityNotFound_skipsWithoutException() {
+            setUp();
+            Stock existing = existingStock(true, null);
+            when(stockRepository.findById(existing.getId())).thenReturn(Optional.empty());
+            ResolvedStock resolved = new ResolvedStock("010620", "HD현대미포", Market.KOSPI, null);
+            Map<String, Stock> existingByKey = Map.of("010620:KOSPI", existing);
+            WatchlistWriter.Counter counter = new WatchlistWriter.Counter();
+
+            Long touchedId = entryWriter.upsertOne(resolved, existingByKey, counter);
+
+            assertThat(touchedId).isEqualTo(existing.getId());
+            assertThat(counter.updated).isZero();
+            assertThat(counter.unchanged).isZero();
+            verify(etfMetadataWriter, never()).upsert(any(), any());
         }
     }
 }

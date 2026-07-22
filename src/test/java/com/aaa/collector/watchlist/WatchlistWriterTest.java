@@ -19,6 +19,7 @@ import com.aaa.collector.stock.etf.EtfMetaInfo;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Optional;
 import java.util.Set;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -191,6 +192,7 @@ class WatchlistWriterTest {
             ResolvedStock resolved = new ResolvedStock("005930", "삼성전자 (신)", Market.KOSPI, null);
             Stock existing = stockWith("005930", Market.KOSPI, "삼성전자", null, true);
             when(stockRepository.findAllBySymbolIn(any())).thenReturn(List.of(existing));
+            when(stockRepository.findById(existing.getId())).thenReturn(Optional.of(existing));
 
             // Act
             watchlistWriter.upsertAll(List.of(resolved), 0);
@@ -208,6 +210,7 @@ class WatchlistWriterTest {
             ResolvedStock resolved = new ResolvedStock("005930", "삼성전자", Market.KOSPI, info);
             Stock existing = stockWith("005930", Market.KOSPI, "삼성전자", "Samsung Electronics", true);
             when(stockRepository.findAllBySymbolIn(any())).thenReturn(List.of(existing));
+            when(stockRepository.findById(existing.getId())).thenReturn(Optional.of(existing));
 
             // Act
             watchlistWriter.upsertAll(List.of(resolved), 0);
@@ -245,6 +248,7 @@ class WatchlistWriterTest {
             ResolvedStock resolved = new ResolvedStock("005930", "삼성전자 (신)", Market.KOSPI, null);
             Stock existing = stockWith("005930", Market.KOSPI, "삼성전자", null, false);
             when(stockRepository.findAllBySymbolIn(any())).thenReturn(List.of(existing));
+            when(stockRepository.findById(existing.getId())).thenReturn(Optional.of(existing));
 
             // Act
             watchlistWriter.upsertAll(List.of(resolved), 0);
@@ -298,6 +302,7 @@ class WatchlistWriterTest {
                             true,
                             LocalDateTime.of(2026, 1, 1, 0, 0));
             when(stockRepository.findAllBySymbolIn(any())).thenReturn(List.of(existing));
+            when(stockRepository.findById(existing.getId())).thenReturn(Optional.of(existing));
 
             // Act
             watchlistWriter.upsertAll(
@@ -367,6 +372,7 @@ class WatchlistWriterTest {
             ResolvedStock resolved = new ResolvedStock("247540", "에코프로비엠", Market.KOSPI, info);
             Stock existing = stockWith("247540", Market.KOSPI, "에코프로비엠", "EcoPro BM", true);
             when(stockRepository.findAllBySymbolIn(any())).thenReturn(List.of(existing));
+            when(stockRepository.findById(existing.getId())).thenReturn(Optional.of(existing));
 
             // Act
             watchlistWriter.upsertAll(List.of(resolved), 0);
@@ -429,6 +435,7 @@ class WatchlistWriterTest {
             Stock existing = stockWith("005930", Market.KOSPI, "삼성전자", "Samsung Electronics", true);
             // existing.listedDate == null (stockWith에서 listedDate 미설정)
             when(stockRepository.findAllBySymbolIn(any())).thenReturn(List.of(existing));
+            when(stockRepository.findById(existing.getId())).thenReturn(Optional.of(existing));
 
             // Act
             watchlistWriter.upsertAll(List.of(resolved), 0);
@@ -532,6 +539,8 @@ class WatchlistWriterTest {
             ResolvedStock etfStock =
                     new ResolvedStock("069500", "KODEX 200", Market.KOSPI, etfInfo);
             when(stockRepository.findAllBySymbolIn(any())).thenReturn(List.of(existingEtf));
+            when(stockRepository.findById(existingEtf.getId()))
+                    .thenReturn(Optional.of(existingEtf));
             doThrow(new DataIntegrityViolationException("fk_etf_metadata_stock violated"))
                     .when(etfMetadataWriter)
                     .upsert(any(), any());

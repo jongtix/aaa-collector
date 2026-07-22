@@ -29,6 +29,12 @@ class WatchlistEntryWriter {
      *
      * @return 기존 종목의 ID (신규 INSERT 시 null)
      */
+    // @MX:ANCHOR: [AUTO] UPDATE 분기는 existingByKey의 detached 엔티티가 아니라 findById로 재조회한
+    // managed 엔티티에 변경을 적용해야 한다 — 종목별 @Transactional 트랜잭션 안에서 managed 상태가
+    // 되어야 flush 시 dirty check가 걸려 UPDATE SQL이 실제로 생성된다.
+    // @MX:REASON: SPEC-COLLECTOR-WLSYNC-009 REQ-WLSYNC-155,156 — WatchlistWriter.upsertAll(비트랜잭션,
+    // OSIV 없음)이 loadExisting으로 로드한 엔티티는 반환 즉시 detached되어, 여기서 그 필드를 직접
+    // 변경해도 dirty check가 발동하지 않아 UPDATE가 무음 유실됐다(EtfMetadataWriter.upsert 선례 적용).
     @Transactional
     Long upsertOne(
             ResolvedStock resolved,
@@ -41,8 +47,18 @@ class WatchlistEntryWriter {
             savedStock = stockRepository.save(buildStock(resolved));
             counter.inserted++;
         } else {
-            updateIfNeeded(existing, resolved, counter);
-            savedStock = existing;
+            Stock managed = stockRepository.findById(existing.getId()).orElse(null);
+            if (managed == null) {
+                // 동시 삭제(비현실적 경로) — 예외로 배치를 중단하지 않고 이 종목만 skip한다
+                // (REQ-WLSYNC-157). markRemoved 오인 마킹 방지를 위해 기존 ID는 그대로 반환한다.
+                log.warn(
+                        "UPDATE 대상 종목 재조회 실패(동시 삭제 추정) — skip, symbol={}, market={}",
+                        resolved.symbol(),
+                        resolved.market());
+                return existing.getId();
+            }
+            updateIfNeeded(managed, resolved, counter);
+            savedStock = managed;
         }
 
         // ETF 메타데이터 upsert (REQ-ETFMETA-002)
