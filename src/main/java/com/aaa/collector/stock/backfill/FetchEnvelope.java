@@ -1,5 +1,7 @@
 package com.aaa.collector.stock.backfill;
 
+import java.time.LocalDate;
+
 /**
  * 비트랜잭션 fetch 단계가 트랜잭션 persist 단계로 넘기는 봉투 (SPEC-COLLECTOR-BACKFILL-010 §4.1).
  *
@@ -14,18 +16,38 @@ package com.aaa.collector.stock.backfill;
  *     ProbeOutcome#NOT_APPLICABLE}
  * @param probeError 프로브 API 오류 메시지({@link ProbeOutcome#DEFERRED}일 때만 non-null)
  * @param retryable 프로브 오류의 재시도 가능 여부(REQ-BACKFILL-030 분류, DEFERRED일 때만 유효)
+ * @param probeAnchor 이 윈도우가 실제로 조회한 anchor(={@code resolveAnchor} 산정값). GROUP_B {@code
+ *     persistLegacy}가 probe 전진 anchor를 산정하는 데 사용한다(SPEC-COLLECTOR-BACKFILL-013 REQ-BACKFILL-164).
+ *     GROUP_A·GROUP_C·FAILED 단락 경로는 미사용({@code null} 허용).
  */
 public record FetchEnvelope(
-        Object serviceFetch, ProbeOutcome probeOutcome, String probeError, boolean retryable) {
+        Object serviceFetch,
+        ProbeOutcome probeOutcome,
+        String probeError,
+        boolean retryable,
+        LocalDate probeAnchor) {
 
     /**
-     * 게이트 비대상 봉투(GROUP_B·corporate_events*·{@code rawRowCount≥100}·FAILED 조기 단락).
+     * 게이트 비대상 봉투(corporate_events*·{@code rawRowCount≥100}·FAILED 조기 단락) — probeAnchor 미상.
      *
      * @param serviceFetch 서비스별 fetch DTO (null 허용)
      * @return NOT_APPLICABLE 봉투
      */
     public static FetchEnvelope notApplicable(Object serviceFetch) {
-        return new FetchEnvelope(serviceFetch, ProbeOutcome.NOT_APPLICABLE, null, false);
+        return new FetchEnvelope(serviceFetch, ProbeOutcome.NOT_APPLICABLE, null, false, null);
+    }
+
+    /**
+     * probe anchor를 포함하는 게이트 비대상 봉투(GROUP_B) — persistLegacy가 probe 전진 anchor 산정에 사용한다
+     * (SPEC-COLLECTOR-BACKFILL-013 REQ-BACKFILL-164).
+     *
+     * @param serviceFetch 서비스별 fetch DTO (null 허용)
+     * @param probeAnchor 이 윈도우가 실제로 조회한 anchor
+     * @return NOT_APPLICABLE 봉투 (probeAnchor 포함)
+     */
+    public static FetchEnvelope notApplicable(Object serviceFetch, LocalDate probeAnchor) {
+        return new FetchEnvelope(
+                serviceFetch, ProbeOutcome.NOT_APPLICABLE, null, false, probeAnchor);
     }
 
     /**
@@ -36,7 +58,7 @@ public record FetchEnvelope(
      * @return 판정 봉투
      */
     public static FetchEnvelope of(Object serviceFetch, ProbeOutcome probeOutcome) {
-        return new FetchEnvelope(serviceFetch, probeOutcome, null, false);
+        return new FetchEnvelope(serviceFetch, probeOutcome, null, false, null);
     }
 
     /**
@@ -49,6 +71,6 @@ public record FetchEnvelope(
      */
     public static FetchEnvelope deferred(
             Object serviceFetch, String probeError, boolean retryable) {
-        return new FetchEnvelope(serviceFetch, ProbeOutcome.DEFERRED, probeError, retryable);
+        return new FetchEnvelope(serviceFetch, ProbeOutcome.DEFERRED, probeError, retryable, null);
     }
 }

@@ -429,4 +429,123 @@ class BackfillWindowExecutorTest {
             assertThat(anchorCaptor.getValue()).isEqualTo(LocalDate.now().minusDays(1));
         }
     }
+
+    @Nested
+    @DisplayName(
+            "resolveAnchor — GROUP_B probe 재개 (SPEC-COLLECTOR-BACKFILL-013 REQ-BACKFILL-164, v0.4.0"
+                    + " 정정)")
+    class GroupBProbeResumeAnchor {
+
+        @Test
+        @DisplayName(
+                "last_collected_date!=null && last_row_count==null → probe 커서 그대로 재개(nextAnchor 재적용"
+                        + " 안 함)")
+        void probeCursorResumed_withoutReapplyingNextAnchor() throws InterruptedException {
+            LocalDate probeCursor = LocalDate.of(1995, 6, 1);
+            BackfillStatus status =
+                    BackfillStatus.builder()
+                            .targetType("STOCK")
+                            .targetCode("010620")
+                            .dataTable("investor_trend")
+                            .status(BackfillStatusType.IN_PROGRESS)
+                            .lastCollectedDate(probeCursor)
+                            .lastRowCount(null)
+                            .build();
+            Stock stock = stock("010620", Market.KOSPI);
+            ArgumentCaptor<LocalDate> anchorCaptor = ArgumentCaptor.forClass(LocalDate.class);
+            when(investorTrendService.fetchWindow(anchorCaptor.capture(), eq(stock), eq(session)))
+                    .thenReturn(new InvestorTrendFetch(List.of(), null, 0));
+
+            executor.fetchWindow(status, stock, session);
+
+            assertThat(anchorCaptor.getValue()).isEqualTo(probeCursor);
+            verify(windowAdvancer, never()).nextAnchor(any());
+        }
+
+        @Test
+        @DisplayName("last_row_count!=null(실데이터 확보) → 기존 nextAnchor(oldest−1일) walk-back으로 분기(무회귀)")
+        void realDataFound_usesExistingNextAnchor() throws InterruptedException {
+            LocalDate oldest = LocalDate.of(2020, 3, 1);
+            LocalDate nextAnchor = LocalDate.of(2020, 2, 29);
+            BackfillStatus status =
+                    BackfillStatus.builder()
+                            .targetType("STOCK")
+                            .targetCode("010620")
+                            .dataTable("investor_trend")
+                            .status(BackfillStatusType.IN_PROGRESS)
+                            .lastCollectedDate(oldest)
+                            .lastRowCount(30)
+                            .build();
+            Stock stock = stock("010620", Market.KOSPI);
+            when(windowAdvancer.nextAnchor(oldest)).thenReturn(nextAnchor);
+            ArgumentCaptor<LocalDate> anchorCaptor = ArgumentCaptor.forClass(LocalDate.class);
+            when(investorTrendService.fetchWindow(anchorCaptor.capture(), eq(stock), eq(session)))
+                    .thenReturn(new InvestorTrendFetch(List.of(), null, 0));
+
+            executor.fetchWindow(status, stock, session);
+
+            assertThat(anchorCaptor.getValue()).isEqualTo(nextAnchor);
+        }
+    }
+
+    @Nested
+    @DisplayName(
+            "persistLegacy — GROUP_B probe-continue anchor 전진 (SPEC-COLLECTOR-BACKFILL-013 REQ-BACKFILL-164)")
+    class GroupBProbeContinuePersist {
+
+        private BackfillStatus mockedGroupBStatus(
+                String symbol, String dataTable, LocalDate lastCollectedDate) {
+            BackfillStatus status = Mockito.mock(BackfillStatus.class);
+            when(status.getId()).thenReturn(1L);
+            when(status.getDataTable()).thenReturn(dataTable);
+            Mockito.lenient().when(status.getTargetCode()).thenReturn(symbol);
+            Mockito.lenient().when(status.getLastCollectedDate()).thenReturn(lastCollectedDate);
+            Mockito.lenient().when(status.getLastRowCount()).thenReturn(null);
+            Mockito.lenient().when(status.getStaleCount()).thenReturn(0);
+            when(backfillStatusRepository.findById(1L)).thenReturn(Optional.of(status));
+            return status;
+        }
+
+        @Test
+        @DisplayName(
+                "AC-4: probe-continue 결정 시 anchor를 stride 전진하고 last_collected_date에 겸용 persist,"
+                        + " IN_PROGRESS 유지")
+        void probeContinue_advancesAnchorAndPersistsToLastCollectedDate() {
+            Stock stock = stock("010620", Market.KOSPI);
+            LocalDate probedAnchor = LocalDate.of(2020, 1, 1);
+            BackfillStatus status =
+                    mockedGroupBStatus("010620", "short_sale_domestic", probedAnchor);
+            ShortSaleFetch fetch = Mockito.mock(ShortSaleFetch.class);
+            when(shortSaleService.persistWindow(eq(status), eq(stock), eq(fetch)))
+                    .thenReturn(BackfillWindowResult.EMPTY);
+            when(terminationPolicy.decide(any())).thenReturn(TerminationDecision.continueProbing());
+            LocalDate advanced = LocalDate.of(2019, 10, 3);
+            when(windowAdvancer.nextGroupBProbeAnchor(
+                            eq("short_sale_domestic"), eq(probedAnchor), any()))
+                    .thenReturn(advanced);
+
+            executor.persistWindow(status, stock, FetchEnvelope.notApplicable(fetch, probedAnchor));
+
+            verify(status).advance(BackfillStatusType.IN_PROGRESS, advanced, 0, null);
+        }
+
+        @Test
+        @DisplayName("음성: floor 도달로 COMPLETED 결정이면 probe 전진 로직 미호출(무한 걸음 방지)")
+        void floorReached_completed_doesNotAdvanceProbeAnchor() {
+            Stock stock = stock("010620", Market.KOSPI);
+            LocalDate probedAnchor = LocalDate.of(1985, 1, 4);
+            BackfillStatus status =
+                    mockedGroupBStatus("010620", "short_sale_domestic", probedAnchor);
+            ShortSaleFetch fetch = Mockito.mock(ShortSaleFetch.class);
+            when(shortSaleService.persistWindow(eq(status), eq(stock), eq(fetch)))
+                    .thenReturn(BackfillWindowResult.EMPTY);
+            when(terminationPolicy.decide(any()))
+                    .thenReturn(TerminationDecision.completed(0, false));
+
+            executor.persistWindow(status, stock, FetchEnvelope.notApplicable(fetch, probedAnchor));
+
+            verify(windowAdvancer, never()).nextGroupBProbeAnchor(any(), any(), any());
+            verify(status).advance(eq(BackfillStatusType.COMPLETED), any(), eq(0), any());
+        }
+    }
 }

@@ -30,6 +30,26 @@ public final class BackfillWindowAdvancer {
     private final int anchorSkipMax;
 
     /**
+     * GROUP_B {@code short_sale_domestic} lookback 달력일 — {@code
+     * ShortSaleCollectionService.BACKFILL_LOOKBACK_CALENDAR_DAYS}와 동일 값(REQ-BACKFILL-174, 재정의 아님).
+     */
+    private static final int SHORT_SALE_LOOKBACK_DAYS = 90;
+
+    /**
+     * GROUP_B {@code investor_trend} lookback 달력일 — {@code
+     * InvestorTrendCollectionService.BACKFILL_LOOKBACK_CALENDAR_DAYS}와 동일 값(REQ-BACKFILL-174, 재정의
+     * 아님).
+     */
+    private static final int INVESTOR_TREND_LOOKBACK_DAYS = 45;
+
+    /**
+     * GROUP_B {@code credit_balance} lookback 달력일 — {@code
+     * CreditBalanceCollectionService.BACKFILL_LOOKBACK_CALENDAR_DAYS}와 동일 값(REQ-BACKFILL-174, 재정의
+     * 아님).
+     */
+    private static final int CREDIT_BALANCE_LOOKBACK_DAYS = 45;
+
+    /**
      * @param floorDate 그룹 A 고정 플로어 from-date (기본 1950-01-01)
      * @param anchorSkipMax 그룹 B anchor 보정 한도(기본 10)
      */
@@ -75,5 +95,40 @@ public final class BackfillWindowAdvancer {
         int attempts = attemptsSoFar + 1;
         return new AnchorCorrectionResult(
                 rejectedAnchor.minusDays(1), attempts, attempts >= anchorSkipMax);
+    }
+
+    /**
+     * GROUP_B 첫 probe 구간 전용 backward advance — 아직 수집 이력이 없는 상태에서 0건 윈도우를 받았을 때, anchor를 테이블별
+     * lookback stride만큼 과거로 이동하고 floor로 clamp한다 (SPEC-COLLECTOR-BACKFILL-013 REQ-BACKFILL-164).
+     *
+     * <p>기존 {@link #nextAnchor}(데이터 발견 후 oldest−1일 walk-back, GROUP_A와 공유)는 변경하지 않고 별도 메서드로 분리한다
+     * (REQ-BACKFILL-174). GROUP_B per-window lookback 값(short_sale 90 / investor_trend 45 /
+     * credit_balance 45)은 각 수집 서비스의 {@code BACKFILL_LOOKBACK_CALENDAR_DAYS} 상수와 동일하게 미러링한다 — 값을
+     * 재정의하지 않는다. {@code backfill} 패키지가 {@code stock.supply} 패키지에 의존하는 역방향을 피하기 위해(기존 아키텍처: {@code
+     * stock} → {@code backfill} 단방향, {@link BackfillWindowExecutor} 클래스 Javadoc 참조) 상수를 참조가 아닌 값으로
+     * 미러링한다.
+     *
+     * @param dataTable 대상 GROUP_B data_table (short_sale_domestic / investor_trend /
+     *     credit_balance)
+     * @param currentAnchor 이번 윈도우가 조회한 anchor
+     * @param floor probe 하한(종목 listedDate 또는 GROUP_B 전역 플로어)
+     * @return 과거로 전진된 anchor, floor 미만이면 floor로 clamp
+     */
+    // @MX:NOTE: [AUTO] GROUP_B 전용 backward probe stride — floor로 clamp, 무한 walk-back 방지
+    // @MX:REASON: 상폐/장기중단 종목 "전결손 위장" 해소 — 첫 probe 구간이 floor까지 유계 전진
+    // @MX:SPEC: SPEC-COLLECTOR-BACKFILL-013
+    public LocalDate nextGroupBProbeAnchor(
+            String dataTable, LocalDate currentAnchor, LocalDate floor) {
+        LocalDate advanced = currentAnchor.minusDays(groupBLookbackStride(dataTable));
+        return advanced.isBefore(floor) ? floor : advanced;
+    }
+
+    /** GROUP_B data_table별 lookback 달력일 — 값의 단일 정의처는 각 수집 서비스 상수(REQ-BACKFILL-174). */
+    private static int groupBLookbackStride(String dataTable) {
+        return switch (dataTable) {
+            case "short_sale_domestic" -> SHORT_SALE_LOOKBACK_DAYS;
+            case "credit_balance" -> CREDIT_BALANCE_LOOKBACK_DAYS;
+            default -> INVESTOR_TREND_LOOKBACK_DAYS;
+        };
     }
 }

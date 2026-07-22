@@ -73,9 +73,26 @@ public final class BackfillTerminationPolicy {
         return TerminationDecision.completed(0, false);
     }
 
-    /** 그룹 B: 0건 즉시 종료 / 전진 시 리셋 / 연속 N회 무전진 종료(동일 oldest+행수면 클램프 의심). */
+    /**
+     * 그룹 B: 0건 처리는 수집 이력 유무로 분기 / 전진 시 리셋 / 연속 N회 무전진 종료(동일 oldest+행수면 클램프 의심).
+     *
+     * <ul>
+     *   <li>0건 + 아직 수집 이력 없음({@code previousRowCount == null}) — floor 도달 전이면 종료하지 않고 계속
+     *       probe(SPEC-COLLECTOR-BACKFILL-013 REQ-BACKFILL-164/-165/-167), floor 도달이면
+     *       COMPLETED(REQ-169).
+     *   <li>0건 + 이미 수집 이력 있음 — 기존 규칙 그대로 즉시 COMPLETED(REQ-168, 회귀 없음).
+     * </ul>
+     */
+    // @MX:NOTE: [AUTO] GROUP_B 첫 probe 구간 0행 — previousRowCount==null 판별로 즉시-COMPLETED 트랩 제거
+    // @MX:REASON: 상폐 종목 "전결손 위장" 해소. previousRowCount!=null(수집 이력 있음) 경로는 무변경(REQ-168).
+    // @MX:SPEC: SPEC-COLLECTOR-BACKFILL-013
     private TerminationDecision decideGroupB(BackfillWindowOutcome outcome) {
         if (outcome.rowCount() == 0) {
+            if (outcome.previousRowCount() == null) {
+                return outcome.probeFloorReached()
+                        ? TerminationDecision.completed(outcome.currentStaleCount(), false)
+                        : TerminationDecision.continueProbing();
+            }
             return TerminationDecision.completed(outcome.currentStaleCount(), false);
         }
         if (advanced(outcome)) {

@@ -410,6 +410,63 @@ class BackfillTerminationPolicyTest {
     }
 
     @Nested
+    @DisplayName(
+            "그룹 B — 첫 probe 구간 0행 처리 (SPEC-COLLECTOR-BACKFILL-013 REQ-BACKFILL-164/-165/-167/-168/-169)")
+    class GroupBProbeContinuation {
+
+        @Test
+        @DisplayName("AC-4: 첫 창 0행 + floor 위 + previousRowCount==null → PROBE_CONTINUE(비종료)")
+        void firstWindowZeroRows_previousRowCountNull_floorNotReached_probeContinues() {
+            BackfillWindowOutcome outcome =
+                    BackfillWindowOutcome.groupB(0, null, null, null, 0, false);
+
+            TerminationDecision decision = policy.decide(outcome);
+
+            assertThat(decision.completed()).isFalse();
+            assertThat(decision.probeContinue()).isTrue();
+        }
+
+        @Test
+        @DisplayName("AC-6: 첫 창 0행 + floor 도달 + previousRowCount==null → COMPLETED(유계 종결)")
+        void firstWindowZeroRows_previousRowCountNull_floorReached_completed() {
+            BackfillWindowOutcome outcome =
+                    BackfillWindowOutcome.groupB(0, null, null, null, 0, true);
+
+            TerminationDecision decision = policy.decide(outcome);
+
+            assertThat(decision.completed()).isTrue();
+            assertThat(decision.probeContinue()).isFalse();
+        }
+
+        @Test
+        @DisplayName("AC-5: 수집 후(previousRowCount!=null) 0행 → 기존 규칙 그대로 즉시 COMPLETED(회귀 없음)")
+        void afterDataCollected_zeroRows_completedUnchanged() {
+            BackfillWindowOutcome outcome =
+                    BackfillWindowOutcome.groupB(0, null, LocalDate.of(2019, 1, 4), 30, 0, false);
+
+            TerminationDecision decision = policy.decide(outcome);
+
+            assertThat(decision.completed()).isTrue();
+            assertThat(decision.probeContinue()).isFalse();
+        }
+
+        @Test
+        @DisplayName(
+                "AC-4 회귀가드(v0.4.0): probe 2회차 이상(last_collected_date!=null, previousRowCount==null)도"
+                        + " 여전히 PROBE_CONTINUE — previousOldest는 판별에 쓰이지 않는다")
+        void secondProbeWindow_previousOldestNonNull_stillProbeContinues() {
+            // last_collected_date가 probe 커서로 겸용되어 non-null이지만, previousRowCount는 여전히 null
+            BackfillWindowOutcome outcome =
+                    BackfillWindowOutcome.groupB(0, null, LocalDate.of(1990, 3, 1), null, 0, false);
+
+            TerminationDecision decision = policy.decide(outcome);
+
+            assertThat(decision.completed()).isFalse();
+            assertThat(decision.probeContinue()).isTrue();
+        }
+    }
+
+    @Nested
     @DisplayName("무전진 카운터 경계 (2=계속, 3=종료, 전진=리셋)")
     class StaleCounterBoundary {
 

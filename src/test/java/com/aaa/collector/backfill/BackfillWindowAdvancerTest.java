@@ -75,6 +75,57 @@ class BackfillWindowAdvancerTest {
     }
 
     @Nested
+    @DisplayName(
+            "그룹 B 첫 probe 구간 backward advance (SPEC-COLLECTOR-BACKFILL-013 AC-4/AC-6, REQ-BACKFILL-164)")
+    class NextGroupBProbeAnchor {
+
+        @Test
+        @DisplayName("short_sale_domestic — stride(90일)만큼 과거로 전진 — floor 미도달")
+        void advancesByStride_whenAboveFloor() {
+            LocalDate anchor = LocalDate.of(2020, 1, 1);
+            LocalDate floor = LocalDate.of(1985, 1, 4);
+
+            LocalDate next = advancer.nextGroupBProbeAnchor("short_sale_domestic", anchor, floor);
+
+            assertThat(next).isEqualTo(LocalDate.of(2019, 10, 3));
+        }
+
+        @Test
+        @DisplayName("investor_trend/credit_balance — stride(45일)만큼 과거로 전진 — floor 미도달")
+        void advancesByStride_investorAndCredit() {
+            LocalDate anchor = LocalDate.of(2020, 1, 1);
+            LocalDate floor = LocalDate.of(1985, 1, 4);
+            LocalDate expected = LocalDate.of(2019, 11, 17);
+
+            assertThat(advancer.nextGroupBProbeAnchor("investor_trend", anchor, floor))
+                    .isEqualTo(expected);
+            assertThat(advancer.nextGroupBProbeAnchor("credit_balance", anchor, floor))
+                    .isEqualTo(expected);
+        }
+
+        @Test
+        @DisplayName("전진 결과가 floor 미만이면 floor로 clamp")
+        void clampsToFloor_whenAdvanceCrossesFloor() {
+            LocalDate anchor = LocalDate.of(1985, 2, 1);
+            LocalDate floor = LocalDate.of(1985, 1, 4);
+
+            LocalDate next = advancer.nextGroupBProbeAnchor("credit_balance", anchor, floor);
+
+            assertThat(next).isEqualTo(floor);
+        }
+
+        @Test
+        @DisplayName("anchor가 이미 floor면 floor 유지(clamp)")
+        void anchorAlreadyAtFloor_staysAtFloor() {
+            LocalDate floor = LocalDate.of(1985, 1, 4);
+
+            LocalDate next = advancer.nextGroupBProbeAnchor("short_sale_domestic", floor, floor);
+
+            assertThat(next).isEqualTo(floor);
+        }
+    }
+
+    @Nested
     @DisplayName("그룹 B anchor 거부 보정 — rt_cd=2 (AC-3.3, REQ-016)")
     class RejectedAnchorCorrection {
 

@@ -101,6 +101,13 @@ public class BackfillWindowExecutor {
     private static final LocalDate US_DATA_WALL = LocalDate.of(2007, 8, 20);
 
     /**
+     * GROUP_B(short_sale_domestic·investor_trend·credit_balance) 공통 전역 플로어 — 종목 {@code listedDate}가
+     * 없을 때 backward probe의 하한(SPEC-COLLECTOR-BACKFILL-013 REQ-BACKFILL-162, KIS 라이브 실측 확정).
+     */
+    // @MX:SPEC: SPEC-COLLECTOR-BACKFILL-013
+    private static final LocalDate GROUP_B_GLOBAL_FLOOR = LocalDate.of(1985, 1, 4);
+
+    /**
      * daily_ohlcv 프로브 게이트(§4.1) 대상 테이블. corporate_events*는 이 게이트를 거치지 않는다 — BACKFILL-010 D4
      * 제외(SPEC-COLLECTOR-BACKFILL-GROUPC-001 REQ-GC-007로 override, verified_at은 {@link
      * #isVerifiedExhaustionEligible}이 담당하는 별도 경로).
@@ -225,7 +232,9 @@ public class BackfillWindowExecutor {
             Object dto)
             throws InterruptedException {
         if (!DAILY_OHLCV.equals(dataTable)) {
-            return FetchEnvelope.notApplicable(dto);
+            // SPEC-COLLECTOR-BACKFILL-013 REQ-BACKFILL-164: GROUP_B persistLegacy가 probe 전진 anchor를
+            // 산정할 수 있도록 이번 윈도우가 실제로 조회한 anchor를 함께 싣는다.
+            return FetchEnvelope.notApplicable(dto, resolved.getLastCollectedDate());
         }
         DailyGateInputs inputs = extractDailyGateInputs(dto);
         if (inputs.rawRowCount() >= SINGLE_CALL_ROW_CAP) {
@@ -397,21 +406,33 @@ public class BackfillWindowExecutor {
 
         ProbeOutcome outcome = envelope.probeOutcome();
         if (outcome == ProbeOutcome.NOT_APPLICABLE) {
-            return persistLegacy(status, stock, envelope.serviceFetch(), managed);
+            return persistLegacy(status, stock, envelope, managed);
         }
         return persistGated(status, stock, envelope, managed);
     }
 
-    /** 게이트 비대상(GROUP_B·corporate_events*·rawRowCount≥100) — 기존 decide 경로 무변경 [R5-MI-02]. */
+    /**
+     * 게이트 비대상(GROUP_B·corporate_events*·rawRowCount≥100) — 기존 decide 경로 무변경 [R5-MI-02].
+     *
+     * <p>GROUP_B는 SPEC-COLLECTOR-BACKFILL-013으로 probe-continue 분기가 추가됐다 — 첫 probe 구간(아직 수집 이력 없음)에서
+     * 0행 + floor 미도달이면 anchor를 stride만큼 전진시켜 {@code last_collected_date}에 겸용 persist하고 IN_PROGRESS를
+     * 유지한다(REQ-BACKFILL-164/-167).
+     */
+    // @MX:NOTE: [AUTO] GROUP_B probe-continue persist — anchor를 last_collected_date 컬럼에 겸용 영속
+    // @MX:REASON: BackfillOrchestrator.runInnerLoop이 매 윈도우 DB 재조회하므로 probe 커서는 이 컬럼 재사용만
+    // 유일하게 cron 재기동을 견딘다(GROUP_A 선례). 전결손 위장 COMPLETED 해소.
+    // @MX:SPEC: SPEC-COLLECTOR-BACKFILL-013
     private BackfillWindowResult persistLegacy(
-            BackfillStatus status, Stock stock, Object fetchDto, BackfillStatus managed) {
+            BackfillStatus status, Stock stock, FetchEnvelope envelope, BackfillStatus managed) {
         String dataTable = status.getDataTable();
         String symbol = status.getTargetCode();
+        Object fetchDto = envelope.serviceFetch();
 
         BackfillWindowResult result = routePersist(dataTable, status, stock, fetchDto);
 
         BackfillGroup group = BackfillGroup.ofDataTable(dataTable);
-        BackfillWindowOutcome outcome = buildOutcome(group, result, status);
+        BackfillWindowOutcome outcome =
+                buildOutcome(group, result, status, stock, envelope.probeAnchor());
         TerminationDecision decision = terminationPolicy.decide(outcome);
 
         if (decision.clampSuspected()) {
@@ -423,6 +444,24 @@ public class BackfillWindowExecutor {
             backfillMetrics.recordClampSuspected();
         }
         backfillMetrics.recordWindow(result.rowCount());
+
+        if (decision.probeContinue()) {
+            // SPEC-COLLECTOR-BACKFILL-013 REQ-BACKFILL-164/-167: 첫 probe 구간 0행 + floor 미도달 —
+            // anchor를 stride만큼 과거로 전진시켜 last_collected_date 컬럼에 겸용 persist(GROUP_A 선례),
+            // IN_PROGRESS 유지.
+            LocalDate probedAnchor = envelope.probeAnchor();
+            LocalDate floor =
+                    stock.getListedDate() != null ? stock.getListedDate() : GROUP_B_GLOBAL_FLOOR;
+            LocalDate advancedAnchor =
+                    windowAdvancer.nextGroupBProbeAnchor(dataTable, probedAnchor, floor);
+            managed.advance(BackfillStatusType.IN_PROGRESS, advancedAnchor, 0, null);
+            log.debug(
+                    "[backfill] GROUP_B probe 계속 — symbol={}, table={}, anchor={}",
+                    symbol,
+                    dataTable,
+                    advancedAnchor);
+            return result;
+        }
 
         BackfillStatusType newStatus =
                 decision.completed()
@@ -640,21 +679,25 @@ public class BackfillWindowExecutor {
                 // ET 기준 어제 — KST 어제는 미국 장중을 가리킬 수 있음 (aaa-infra#91)
                 return LocalDate.now(ET).minusDays(1);
             }
-            boolean groupB =
-                    BackfillGroup.ofDataTable(status.getDataTable()) == BackfillGroup.GROUP_B;
-            if (groupB && stock.getDelistedAt() != null) {
-                // SPEC-COLLECTOR-BACKFILL-013 REQ-BACKFILL-161/-163: 상폐 확정 GROUP_B 종목 —
-                // delistedAt(데이터 유효 종점)을 첫 윈도우 anchor로 사용해 즉시 데이터 구간을 잡는다.
-                return stock.getDelistedAt();
-            }
-            if (groupB) {
-                // SPEC-COLLECTOR-BACKFILL-013 REQ-BACKFILL-166: GROUP_B 미확정(활성·거래정지·WLSYNC 미sync)은
-                // 어제(KST) — 이후 walk-back probe(REQ-164/165)가 방어한다.
-                return LocalDate.now(KST).minusDays(1);
+            if (BackfillGroup.ofDataTable(status.getDataTable()) == BackfillGroup.GROUP_B) {
+                // SPEC-COLLECTOR-BACKFILL-013 REQ-BACKFILL-161/-163/-166: 상폐 확정 GROUP_B 종목은
+                // delistedAt(데이터 유효 종점), 그 외(활성·거래정지·WLSYNC 미sync)는 어제(KST) — 이후 walk-back
+                // probe(REQ-164/165)가 방어한다.
+                return stock.getDelistedAt() != null
+                        ? stock.getDelistedAt()
+                        : LocalDate.now(KST).minusDays(1);
             }
             // GROUP_A 분기 무변경 (SPEC-COLLECTOR-BACKFILL-013 REQ-BACKFILL-173)
             // 오늘 날짜는 KIS API TIME LIMIT(00:00~15:40) 대상 — 어제(과거)로 초기화 (REQ-BACKFILL-060)
             return LocalDate.now().minusDays(1);
+        }
+        if (status.getLastRowCount() == null
+                && BackfillGroup.ofDataTable(status.getDataTable()) == BackfillGroup.GROUP_B) {
+            // SPEC-COLLECTOR-BACKFILL-013 REQ-BACKFILL-164 (v0.4.0 정정): last_collected_date는 있지만
+            // last_row_count는 아직 null — GROUP_B probe 커서 재개 중(실데이터 미발견). persistLegacy가 이미
+            // stride 전진을 적용해 이 컬럼에 겸용 persist했으므로, nextAnchor(oldest−1일)를 다시 적용하지 않고
+            // 그대로 이어받는다(무한 재시작 방지, GROUP_A cron 재기동 선례와 동일 패턴).
+            return status.getLastCollectedDate();
         }
         return windowAdvancer.nextAnchor(status.getLastCollectedDate());
     }
@@ -690,21 +733,38 @@ public class BackfillWindowExecutor {
                 || (group == BackfillGroup.GROUP_A && CORPORATE_EVENTS_DIVIDEND.equals(dataTable));
     }
 
+    // @MX:NOTE: [AUTO] GROUP_B probeFloorReached 산정 — listedDate 또는 전역 플로어(1985-01-04) 대비
+    // probeAnchor
+    // @MX:REASON: SPEC-COLLECTOR-BACKFILL-013 REQ-BACKFILL-162/-164/-165 — decideGroupB의
+    // probe-continue
+    // 판정 입력을 여기서 계산해 전달한다.
+    // @MX:SPEC: SPEC-COLLECTOR-BACKFILL-013
     private BackfillWindowOutcome buildOutcome(
-            BackfillGroup group, BackfillWindowResult result, BackfillStatus status) {
+            BackfillGroup group,
+            BackfillWindowResult result,
+            BackfillStatus status,
+            Stock stock,
+            LocalDate probeAnchor) {
         return switch (group) {
             case GROUP_A ->
                     // SPEC-COLLECTOR-BACKFILL-006: GROUP_A 종료 입력 = rawRowCount(원본 행수).
                     // recordWindow / last_row_count는 rowCount(저장 행수) 그대로 사용(무변경).
                     BackfillWindowOutcome.groupA(
                             result.rowCount(), result.rawRowCount(), result.oldestTradeDate());
-            case GROUP_B ->
-                    BackfillWindowOutcome.groupB(
-                            result.rowCount(),
-                            result.oldestTradeDate(),
-                            status.getLastCollectedDate(),
-                            status.getLastRowCount(),
-                            status.getStaleCount());
+            case GROUP_B -> {
+                LocalDate floor =
+                        stock.getListedDate() != null
+                                ? stock.getListedDate()
+                                : GROUP_B_GLOBAL_FLOOR;
+                boolean floorReached = probeAnchor != null && !probeAnchor.isAfter(floor);
+                yield BackfillWindowOutcome.groupB(
+                        result.rowCount(),
+                        result.oldestTradeDate(),
+                        status.getLastCollectedDate(),
+                        status.getLastRowCount(),
+                        status.getStaleCount(),
+                        floorReached);
+            }
             // SPEC-COLLECTOR-BACKFILL-GROUPC-001 REQ-GC-001/004: decide()가 필드 미참조 — 무해값 팩토리
             case GROUP_C -> BackfillWindowOutcome.groupC();
         };

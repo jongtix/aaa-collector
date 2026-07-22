@@ -9,8 +9,12 @@ package com.aaa.collector.backfill;
  * @param completed {@code true}=COMPLETED 전이, {@code false}=IN_PROGRESS 유지
  * @param nextStaleCount 다음 윈도우로 넘길 연속 무전진 횟수(그룹 B). 전진 시 0. 그룹 A는 0
  * @param clampSuspected retention 클램프 의심 종료 여부(REQ-014a). {@code true}면 호출자가 WARN+메트릭 발행
+ * @param probeContinue GROUP_B 첫 probe 구간이 floor 미도달로 계속 진행 중임을 나타낸다 — {@code completed=false}와 별개
+ *     플래그(SPEC-COLLECTOR-BACKFILL-013 REQ-BACKFILL-164/-167). 호출자는 이 경우 anchor를 stride만큼 전진시켜
+ *     {@code last_collected_date}에 persist한다.
  */
-public record TerminationDecision(boolean completed, int nextStaleCount, boolean clampSuspected) {
+public record TerminationDecision(
+        boolean completed, int nextStaleCount, boolean clampSuspected, boolean probeContinue) {
 
     /**
      * IN_PROGRESS 유지 결정.
@@ -19,7 +23,7 @@ public record TerminationDecision(boolean completed, int nextStaleCount, boolean
      * @return 미종료 결정
      */
     public static TerminationDecision inProgress(int nextStaleCount) {
-        return new TerminationDecision(false, nextStaleCount, false);
+        return new TerminationDecision(false, nextStaleCount, false, false);
     }
 
     /**
@@ -30,6 +34,16 @@ public record TerminationDecision(boolean completed, int nextStaleCount, boolean
      * @return 종료 결정
      */
     public static TerminationDecision completed(int nextStaleCount, boolean clampSuspected) {
-        return new TerminationDecision(true, nextStaleCount, clampSuspected);
+        return new TerminationDecision(true, nextStaleCount, clampSuspected, false);
+    }
+
+    /**
+     * GROUP_B 첫 probe 구간 계속 결정 — floor 미도달 + 아직 수집 이력 없음 (SPEC-COLLECTOR-BACKFILL-013
+     * REQ-BACKFILL-164/-165/-167).
+     *
+     * @return probe 계속 결정 (미종료)
+     */
+    public static TerminationDecision continueProbing() {
+        return new TerminationDecision(false, 0, false, true);
     }
 }
