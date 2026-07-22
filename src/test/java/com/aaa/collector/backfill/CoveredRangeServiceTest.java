@@ -2,6 +2,7 @@ package com.aaa.collector.backfill;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
@@ -105,6 +106,7 @@ class CoveredRangeServiceTest {
             assertThat(result.kept()).isEqualTo(5);
             assertThat(reload(status.getId()).getCoveredUntilDate()).isEqualTo(cursor);
             verify(backfillMetrics, never()).recordAnomalyFailed();
+            verify(backfillMetrics, never()).recordCoveredWalkAnomaly(any());
         }
 
         @Test
@@ -123,6 +125,7 @@ class CoveredRangeServiceTest {
             assertThat(result.kept()).isZero();
             assertThat(reload(status.getId()).getCoveredUntilDate()).isEqualTo(initialCoveredUntil);
             verify(backfillMetrics, never()).recordAnomalyFailed();
+            verify(backfillMetrics, never()).recordCoveredWalkAnomaly(any());
         }
 
         @Test
@@ -141,12 +144,14 @@ class CoveredRangeServiceTest {
             assertThat(result.kept()).isZero();
             assertThat(result.raw()).isEqualTo(12);
             assertThat(reload(status.getId()).getCoveredUntilDate()).isEqualTo(initialCoveredUntil);
-            verify(backfillMetrics, times(1)).recordAnomalyFailed();
+            verify(backfillMetrics, never()).recordAnomalyFailed();
+            verify(backfillMetrics, times(1))
+                    .recordCoveredWalkAnomaly(CoveredWalkAnomalyKind.ALL_REJECTED);
         }
 
         @Test
         @DisplayName(
-                "AC-9/raw>0&&kept==0 — recordAnomalyFailed() 예외 발생해도 executeStep은 정상 반환한다(메트릭"
+                "AC-9/raw>0&&kept==0 — recordCoveredWalkAnomaly() 예외 발생해도 executeStep은 정상 반환한다(메트릭"
                         + " 실패가 트랜잭션을 흔들지 않아야 함)")
         void recordAnomalyFailedThrows_stepStillReturnsNormally() {
             // Arrange
@@ -156,7 +161,7 @@ class CoveredRangeServiceTest {
             CoveredGapFiller filler = step -> new CoveredFillResult(0, 12, step);
             doThrow(new RuntimeException("metrics registry 장애"))
                     .when(backfillMetrics)
-                    .recordAnomalyFailed();
+                    .recordCoveredWalkAnomaly(any());
 
             // Act — 메트릭 예외가 executeStep 밖으로 전파되지 않아야 한다
             CoveredFillResult result = coveredRangeService.executeStep(status, filler, cursor);
@@ -252,7 +257,9 @@ class CoveredRangeServiceTest {
             // 재호출 라이브락 방지)
             assertThat(result.oldest()).isEqualTo(oldest);
             assertThat(reload(status.getId()).getCoveredUntilDate()).isEqualTo(filledUntil);
-            verify(backfillMetrics, times(1)).recordAnomalyFailed();
+            verify(backfillMetrics, never()).recordAnomalyFailed();
+            verify(backfillMetrics, times(1))
+                    .recordCoveredWalkAnomaly(CoveredWalkAnomalyKind.FRONT_GAP);
         }
 
         @Test
@@ -270,11 +277,12 @@ class CoveredRangeServiceTest {
             // Assert
             assertThat(reload(status.getId()).getCoveredUntilDate()).isEqualTo(filledUntil);
             verify(backfillMetrics, never()).recordAnomalyFailed();
+            verify(backfillMetrics, never()).recordCoveredWalkAnomaly(any());
         }
 
         @Test
         @DisplayName(
-                "recordAnomalyFailed() 예외 발생해도 covered_until_date 전진은 롤백되지 않는다(REQ-CVR-076 관측 신호는"
+                "recordCoveredWalkAnomaly() 예외 발생해도 covered_until_date 전진은 롤백되지 않는다(REQ-CVR-076 관측 신호는"
                         + " 전진을 억제하지 않는다는 설계 의도가 메트릭 실패로 깨지면 안 됨)")
         void recordAnomalyFailedThrows_advanceStillCommits() {
             // Arrange — 앞단 미도달 anomaly 분기에서 메트릭 카운터 증가가 예외를 던지는 상황을 모사한다
@@ -285,7 +293,7 @@ class CoveredRangeServiceTest {
             CoveredGapFiller filler = step -> new CoveredFillResult(5, 5, filledUntil, oldest);
             doThrow(new RuntimeException("metrics registry 장애"))
                     .when(backfillMetrics)
-                    .recordAnomalyFailed();
+                    .recordCoveredWalkAnomaly(any());
 
             // Act — 메트릭 예외가 executeStep 밖으로 전파되지 않아야 한다
             CoveredFillResult result = coveredRangeService.executeStep(status, filler, cursor);

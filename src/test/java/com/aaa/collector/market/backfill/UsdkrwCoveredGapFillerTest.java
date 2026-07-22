@@ -13,6 +13,7 @@ import com.aaa.collector.backfill.BackfillStatusRepository;
 import com.aaa.collector.backfill.BackfillStatusType;
 import com.aaa.collector.backfill.CoveredFillResult;
 import com.aaa.collector.backfill.CoveredRangeService;
+import com.aaa.collector.backfill.CoveredWalkAnomalyKind;
 import com.aaa.collector.common.gate.MarketOpenGate;
 import com.aaa.collector.common.gate.UsMarketOpenGate;
 import com.aaa.collector.market.MarketIndicator;
@@ -196,7 +197,9 @@ class UsdkrwCoveredGapFillerTest {
             coveredRangeService.executeStep(status, filler, cursor);
 
             assertThat(status.getCoveredUntilDate()).isNull();
-            verify(backfillMetrics, times(1)).recordAnomalyFailed();
+            verify(backfillMetrics, never()).recordAnomalyFailed();
+            verify(backfillMetrics, times(1))
+                    .recordCoveredWalkAnomaly(CoveredWalkAnomalyKind.ALL_REJECTED);
         }
     }
 }

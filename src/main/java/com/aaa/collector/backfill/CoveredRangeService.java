@@ -42,14 +42,19 @@ public class CoveredRangeService {
      *   <li>{@code kept > 0} — 검증 통과 저장 확인됨. {@code covered_until_date}를 {@code
      *       result.filledUntil()}로 전진시키고 같은 트랜잭션에서 커밋한다(REQ-CVR-012/030). {@code
      *       filler.persistStep}이 던진 예외는 이 메서드 밖으로 전파되며, 트랜잭션 전체(데이터 저장 + 전진)가 롤백된다(결정 1 원자성). 추가로
-     *       {@code result.oldest() > cursor}(앞단 미도달)이면 기존 anomaly 경보 신호를 발생시킨다(REQ-CVR-076, 심층 방어)
-     *       — 단 전진은 억제하지 않는다(동일 anchor 재호출 라이브락 방지, 앞단 hole을 경보로 관측 가능하게 남긴다).
-     *   <li>{@code raw > 0 && kept == 0} — 원본 응답은 있으나 검증을 전량 통과하지 못한 이상(#77류 침묵 skip). 전진하지 않고 기존
-     *       anomaly 경보 신호({@link BackfillMetrics#recordAnomalyFailed()})를 발생시킨다(REQ-CVR-031) — 저장
-     *       실패가 "커버됨"으로 오판되는 것을 차단한다.
+     *       {@code result.oldest() > cursor}(앞단 미도달)이면 {@link
+     *       BackfillMetrics#recordCoveredWalkAnomaly(CoveredWalkAnomalyKind)}({@link
+     *       CoveredWalkAnomalyKind#FRONT_GAP})로 anomaly 경보 신호를 발생시킨다(REQ-CVR-076, 심층 방어) — 단 전진은
+     *       억제하지 않는다(동일 anchor 재호출 라이브락 방지, 앞단 hole을 경보로 관측 가능하게 남긴다). GROUP_A 전용 {@link
+     *       BackfillMetrics#recordAnomalyFailed()}와는 카운터가 분리되어 있다(SPEC-COLLECTOR-BACKFILL-011
+     *       TASK-014).
+     *   <li>{@code raw > 0 && kept == 0} — 원본 응답은 있으나 검증을 전량 통과하지 못한 이상(#77류 침묵 skip). 전진하지 않고
+     *       {@link BackfillMetrics#recordCoveredWalkAnomaly(CoveredWalkAnomalyKind)}({@link
+     *       CoveredWalkAnomalyKind#ALL_REJECTED})로 anomaly 경보 신호를 발생시킨다(REQ-CVR-031) — 저장 실패가
+     *       "커버됨"으로 오판되는 것을 차단한다.
      *   <li>{@code raw == 0 && kept == 0} — 원본 응답조차 없는 정상 빈 응답. REQ-CVR-030 원문("검증 통과 행수가 확인된 경우에만
-     *       전진을 수행한다")은 kept 확인을 전진의 필요조건으로 명시하므로, 이 분기도 kept==0인 이상 전진하지 않는다. anomaly도 아니므로 {@code
-     *       recordAnomalyFailed()}는 호출하지 않는다(원본 응답 자체가 없어 검증 실패로 볼 근거가 없다) — 조용한 no-op.
+     *       전진을 수행한다")은 kept 확인을 전진의 필요조건으로 명시하므로, 이 분기도 kept==0인 이상 전진하지 않는다. anomaly도 아니므로 신호를
+     *       발생시키지 않는다(원본 응답 자체가 없어 검증 실패로 볼 근거가 없다) — 조용한 no-op.
      * </ul>
      *
      * @param status 처리 대상 {@code backfill_status} 행(전진 시 id로 재조회해 관리 상태로 갱신한다)
@@ -73,14 +78,14 @@ public class CoveredRangeService {
                                     cursor,
                                     result.oldest(),
                                     result.filledUntil());
-                            recordAnomalyFailedSafely();
+                            recordCoveredWalkAnomalySafely(CoveredWalkAnomalyKind.FRONT_GAP);
                         }
                     } else if (result.raw() > 0) {
                         log.warn(
                                 "[covered-range] 검증 전량 실패 이상 — cursor={}, raw={}, kept=0",
                                 cursor,
                                 result.raw());
-                        recordAnomalyFailedSafely();
+                        recordCoveredWalkAnomalySafely(CoveredWalkAnomalyKind.ALL_REJECTED);
                     }
                     // raw == 0 && kept == 0: 정상 빈 응답 — 전진도 anomaly도 없음(REQ-CVR-030 kept 확인 필요조건)
                     return result;
@@ -183,17 +188,21 @@ public class CoveredRangeService {
     }
 
     /**
-     * {@link BackfillMetrics#recordAnomalyFailed()}를 호출하되, 예외가 트랜잭션 밖으로 전파되지 않도록 방어한다.
+     * {@link BackfillMetrics#recordCoveredWalkAnomaly(CoveredWalkAnomalyKind)}를 호출하되, 예외가 트랜잭션 밖으로
+     * 전파되지 않도록 방어한다(SPEC-COLLECTOR-BACKFILL-011 TASK-014 — GROUP_A {@code recordAnomalyFailed()}와
+     * 분리된 카운터로 전환).
      *
      * <p>이 메서드는 {@code executeStep}의 트랜잭션 람다 내부에서만 호출된다 — 메트릭 카운터 증가는 관측 신호일 뿐이므로, 여기서 예외가 나더라도 이미
      * 적용된 {@code covered_until_date} 전진(또는 데이터 저장)까지 롤백시켜서는 안 된다(REQ-CVR-076 설계 의도: anomaly는 전진을
      * 억제하지 않는다).
+     *
+     * @param kind anomaly 종류(앞단 미도달 또는 검증 전량 실패)
      */
     @SuppressWarnings(
             "PMD.AvoidCatchingGenericException") // 메트릭 실패가 트랜잭션 롤백을 유발하면 안 됨 — REQ-CVR-076
-    private void recordAnomalyFailedSafely() {
+    private void recordCoveredWalkAnomalySafely(CoveredWalkAnomalyKind kind) {
         try {
-            backfillMetrics.recordAnomalyFailed();
+            backfillMetrics.recordCoveredWalkAnomaly(kind);
         } catch (RuntimeException e) {
             log.error("[covered-range] anomaly 메트릭 기록 실패(트랜잭션에는 영향 없음)", e);
         }
