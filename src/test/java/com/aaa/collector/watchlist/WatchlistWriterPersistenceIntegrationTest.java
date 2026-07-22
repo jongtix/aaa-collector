@@ -238,6 +238,72 @@ class WatchlistWriterPersistenceIntegrationTest {
     }
 
     @Nested
+    @DisplayName("markRemoved 후보 확장·상한 캡 (REQ-WLSYNC-159~162, M2)")
+    class RemovalCandidateExpansion {
+
+        @Test
+        @DisplayName("관심그룹 완전 이탈 종목 — 인플로우에 전혀 등장하지 않아도 DB측 후보로 마킹됨 (시나리오 6)")
+        void stockAbsentFromInflow_stillMarkedRemoved() {
+            // Arrange — DB에는 있으나 이번 인플로우에는 전혀 등장하지 않는 이탈 종목
+            Stock departed = savedStock("999100", Market.KOSPI, "이탈종목", true, null);
+
+            // Act — 인플로우에는 이탈 종목과 무관한 다른 종목만 존재
+            watchlistWriter.upsertAll(
+                    List.of(new ResolvedStock("005930", "삼성전자", Market.KOSPI, null)), 0);
+            stockRepository
+                    .findBySymbolAndMarket("005930", Market.KOSPI)
+                    .ifPresent(s -> createdStockIds.add(s.getId()));
+
+            // Assert
+            Stock result = stockRepository.findById(departed.getId()).orElseThrow();
+            assertThat(result.getWatchlistRemovedAt()).isNotNull();
+        }
+
+        @Test
+        @DisplayName("당일 신규 INSERT 종목 — 같은 사이클의 제거 후보가 되지 않는다 (시나리오 7)")
+        void newlyInsertedStock_notMarkedRemovedInSameCycle() {
+            // Act
+            watchlistWriter.upsertAll(
+                    List.of(new ResolvedStock("999200", "신규종목", Market.KOSPI, null)), 0);
+
+            // Assert
+            Stock result =
+                    stockRepository.findBySymbolAndMarket("999200", Market.KOSPI).orElseThrow();
+            createdStockIds.add(result.getId());
+            assertThat(result.getWatchlistRemovedAt()).isNull();
+        }
+
+        @Test
+        @DisplayName("제거 후보 상한 캡 초과 — 이번 사이클 어떤 종목도 마킹되지 않음 (시나리오 8)")
+        void candidatesExceedCap_noneMarkedThisCycle() {
+            // Arrange — 공유 컨테이너에 남아있는 다른 테스트의 잔여 행 수와 무관하게 캡 초과를
+            // 재현하도록, 현재 기준집합 크기를 먼저 조회해 필요한 후보 수를 역산한다
+            // (REQ-WLSYNC-161: cap = max(floor(base*0.05), 3); N > B*0.05/0.95를 만족하면
+            // 최종 base(B+N) 기준으로도 항상 candidates(N) > cap가 보장된다).
+            long preexistingBase = stockRepository.findIdsByWatchlistRemovedAtIsNull().size();
+            int candidateCount = (int) Math.ceil(preexistingBase * 0.06) + 5;
+            List<Long> candidateIds = new ArrayList<>();
+            for (int i = 0; i < candidateCount; i++) {
+                Stock candidate = savedStock("998" + i, Market.NASDAQ, "후보종목" + i, true, null);
+                candidateIds.add(candidate.getId());
+            }
+
+            // Act — 인플로우에는 후보 종목들이 전혀 등장하지 않음
+            watchlistWriter.upsertAll(
+                    List.of(new ResolvedStock("005930", "삼성전자", Market.KOSPI, null)), 0);
+            stockRepository
+                    .findBySymbolAndMarket("005930", Market.KOSPI)
+                    .ifPresent(s -> createdStockIds.add(s.getId()));
+
+            // Assert — all-or-nothing이므로 캡 초과 시 후보 전체가 미마킹 상태로 유지된다
+            for (Long id : candidateIds) {
+                Stock result = stockRepository.findById(id).orElseThrow();
+                assertThat(result.getWatchlistRemovedAt()).isNull();
+            }
+        }
+    }
+
+    @Nested
     @DisplayName("캐시 갱신 — failedGroupCount 조건 검증 (WatchlistWriterIntegrationTest 이관)")
     class CacheUpdate {
 

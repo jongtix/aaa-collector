@@ -18,9 +18,15 @@ import com.aaa.collector.stock.enums.Market;
 import com.aaa.collector.stock.etf.EtfMetaInfo;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.function.Function;
+import java.util.stream.Collectors;
+import java.util.stream.LongStream;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -122,6 +128,7 @@ class WatchlistWriterTest {
             ResolvedStock resolved = new ResolvedStock("000660", "SK하이닉스", Market.KOSPI, null);
             Stock removedStock = stockWith("005930", Market.KOSPI, "삼성전자", null, true, null, 2L);
             when(stockRepository.findAllBySymbolIn(any())).thenReturn(List.of(removedStock));
+            when(stockRepository.findIdsByWatchlistRemovedAtIsNull()).thenReturn(Set.of(2L));
 
             watchlistWriter.upsertAll(List.of(resolved), 0);
 
@@ -281,6 +288,7 @@ class WatchlistWriterTest {
             ResolvedStock resolved = new ResolvedStock("000660", "SK하이닉스", Market.KOSPI, null);
             Stock removedStock = stockWith("005930", Market.KOSPI, "삼성전자", null, true, null, 2L);
             when(stockRepository.findAllBySymbolIn(any())).thenReturn(List.of(removedStock));
+            when(stockRepository.findIdsByWatchlistRemovedAtIsNull()).thenReturn(Set.of(2L));
 
             // Act
             watchlistWriter.upsertAll(List.of(resolved), 0);
@@ -336,6 +344,7 @@ class WatchlistWriterTest {
             ResolvedStock resolved = new ResolvedStock("ACME", "ACME Inc", Market.NASDAQ, null);
             Stock existingNyse = stockWith("ACME", Market.NYSE, "ACME Inc", null, true, null, 10L);
             when(stockRepository.findAllBySymbolIn(any())).thenReturn(List.of(existingNyse));
+            when(stockRepository.findIdsByWatchlistRemovedAtIsNull()).thenReturn(Set.of(10L));
 
             // Act
             watchlistWriter.upsertAll(List.of(resolved), 0);
@@ -405,6 +414,7 @@ class WatchlistWriterTest {
             Stock existingKosdaq =
                     stockWith("035420", Market.KOSDAQ, "NAVER", "NAVER Corp", true, null, 7L);
             when(stockRepository.findAllBySymbolIn(any())).thenReturn(List.of(existingKosdaq));
+            when(stockRepository.findIdsByWatchlistRemovedAtIsNull()).thenReturn(Set.of(7L));
 
             // Act
             watchlistWriter.upsertAll(List.of(resolved), 0);
@@ -485,6 +495,84 @@ class WatchlistWriterTest {
 
             // Assert
             verify(stockRepository).findAllBySymbolIn(any());
+        }
+    }
+
+    @Nested
+    @DisplayName("markRemoved 캡 산식 — 정수 내림 + 하한 3 (REQ-WLSYNC-161, 162)")
+    class RemovalCapArithmetic {
+
+        @Test
+        @DisplayName("소규모 기준집합 — 하한 3이 지배, 후보==캡(3)이면 전체 마킹")
+        void smallBase_lowerBoundThreeDominates_marksAtBoundary() {
+            // Arrange — base=3(전부 미터치): floor(3*0.05)=0, max(0,3)=3, candidates=3(==cap)
+            Set<Long> base = Set.of(1L, 2L, 3L);
+            when(stockRepository.findIdsByWatchlistRemovedAtIsNull()).thenReturn(base);
+            when(stockRepository.findAllBySymbolIn(any())).thenReturn(List.of());
+
+            // Act
+            watchlistWriter.upsertAll(
+                    List.of(new ResolvedStock("999999", "신규", Market.KOSPI, null)), 0);
+
+            // Assert
+            verify(stockRepository).markWatchlistRemoved(base);
+        }
+
+        @Test
+        @DisplayName("소규모 기준집합 — 후보(4) > 캡(3) 전체 skip")
+        void smallBase_candidatesExceedLowerBound_skipsAll() {
+            // Arrange — base=4: floor(4*0.05)=0, max(0,3)=3, candidates=4(>cap)
+            Set<Long> base = Set.of(1L, 2L, 3L, 4L);
+            when(stockRepository.findIdsByWatchlistRemovedAtIsNull()).thenReturn(base);
+            when(stockRepository.findAllBySymbolIn(any())).thenReturn(List.of());
+
+            // Act
+            watchlistWriter.upsertAll(
+                    List.of(new ResolvedStock("999999", "신규", Market.KOSPI, null)), 0);
+
+            // Assert
+            verify(stockRepository, never()).markWatchlistRemoved(any());
+        }
+
+        @Test
+        @DisplayName("정수 내림 — base=80(5%=4.0)에서 하한 3이 아닌 floor 4가 캡으로 적용, 후보==4면 전체 마킹")
+        void largeBase_floorExceedsLowerBound_marksAtBoundary() {
+            // Arrange — base 80개 중 76개는 인플로우로 touch, 4개(캡==floor(80*0.05)=4)만 후보로 남긴다.
+            // 만약 구현이 하한 3만 적용했다면 4개 후보는 캡(3) 초과로 전체 skip됐을 것이다 — 이 테스트는
+            // floor(base*0.05)가 하한 3보다 클 때 그 값이 실제로 캡으로 쓰이는지 검증한다.
+            List<Long> baseIds = LongStream.rangeClosed(1, 80).boxed().toList();
+            Set<Long> base = new HashSet<>(baseIds);
+            List<Long> touchedTargetIds = baseIds.subList(0, 76);
+            Set<Long> untouchedCandidateIds = new HashSet<>(baseIds.subList(76, 80));
+
+            List<ResolvedStock> inflow = new ArrayList<>();
+            for (Long id : touchedTargetIds) {
+                inflow.add(new ResolvedStock("T" + id, "종목" + id, Market.KOSPI, null));
+            }
+            Map<Long, Stock> byId =
+                    touchedTargetIds.stream()
+                            .collect(
+                                    Collectors.toMap(
+                                            Function.identity(),
+                                            id ->
+                                                    stockWith(
+                                                            "T" + id,
+                                                            Market.KOSPI,
+                                                            "종목" + id,
+                                                            null,
+                                                            true,
+                                                            null,
+                                                            id)));
+            when(stockRepository.findIdsByWatchlistRemovedAtIsNull()).thenReturn(base);
+            when(stockRepository.findAllBySymbolIn(any())).thenReturn(List.copyOf(byId.values()));
+            when(stockRepository.findById(any()))
+                    .thenAnswer(inv -> Optional.ofNullable(byId.get((Long) inv.getArgument(0))));
+
+            // Act
+            watchlistWriter.upsertAll(inflow, 0);
+
+            // Assert
+            verify(stockRepository).markWatchlistRemoved(untouchedCandidateIds);
         }
     }
 

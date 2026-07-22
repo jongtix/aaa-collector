@@ -32,6 +32,17 @@ public interface StockRepository extends JpaRepository<Stock, Long> {
 
     List<Stock> findAllBySymbolIn(Collection<String> symbols);
 
+    /**
+     * 관심목록에서 제거되지 않은(active 무관) 종목 ID 전체를 조회한다 — {@code markRemoved} 후보 기준집합
+     * (SPEC-COLLECTOR-WLSYNC-009 REQ-WLSYNC-159).
+     *
+     * <p>{@link #findAllActive()} 등 기존 조회 메서드는 {@code active = true}도 함께 걸러 이 용도에 부적합하다 —
+     * 상폐·거래정지(active=false)라도 관심그룹에서 아직 제거되지 않은 종목은 이 기준집합에 포함되어야 후보 산정이 정확하다(active 축과 watchlist
+     * 제거 축은 서로 독립, {@link #findAllActive()} Javadoc 참조).
+     */
+    @Query("SELECT s.id FROM Stock s WHERE s.watchlistRemovedAt IS NULL")
+    Set<Long> findIdsByWatchlistRemovedAtIsNull();
+
     @Transactional
     @Modifying(flushAutomatically = true, clearAutomatically = true)
     @Query(
