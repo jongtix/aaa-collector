@@ -57,6 +57,14 @@ public class BackfillMetrics {
      */
     static final String CAP_SATURATED_NAME = "aaa_collector_backfill_cap_saturated_total";
 
+    /**
+     * 정방향 갭 walk anomaly 전용 태그 카운터 (SPEC-COLLECTOR-BACKFILL-011 TASK-013). {@code kind} 태그로 {@link
+     * CoveredWalkAnomalyKind#FRONT_GAP}/{@link CoveredWalkAnomalyKind#ALL_REJECTED}를 구분한다 — {@link
+     * #ANOMALY_FAILED_NAME}(GROUP_A 전용)와는 완전히 분리된 신호다(카디널리티 2, per-stock 라벨 아님).
+     */
+    static final String COVERED_WALK_ANOMALY_NAME =
+            "aaa_collector_backfill_covered_walk_anomaly_total";
+
     private final MeterRegistry registry;
 
     /** 진행률(완료/전체) gauge가 지연 조회하는 가변 상태. */
@@ -74,6 +82,11 @@ public class BackfillMetrics {
         Counter.builder(EARLY_COMPLETION_SUSPECT_NAME).register(registry);
         Counter.builder(ANOMALY_FAILED_NAME).register(registry);
         Counter.builder(CAP_SATURATED_NAME).register(registry);
+        for (CoveredWalkAnomalyKind kind : CoveredWalkAnomalyKind.values()) {
+            Counter.builder(COVERED_WALK_ANOMALY_NAME)
+                    .tag("kind", kind.tagValue())
+                    .register(registry);
+        }
         registry.gauge(PROGRESS_NAME, progressHolder, DoubleAdder::doubleValue);
         registry.gauge(PENDING_SLOTS_NAME, pendingSlotsHolder, AtomicLong::doubleValue);
     }
@@ -125,6 +138,20 @@ public class BackfillMetrics {
     /** 국내 액면교체 백필 100행 캡 포화 안전밸브 발동 시 호출한다 (SPEC-COLLECTOR-BACKFILL-GROUPC-001 REQ-GC-013). */
     public void recordCapSaturated() {
         Counter.builder(CAP_SATURATED_NAME).register(registry).increment();
+    }
+
+    /**
+     * 정방향 갭 walk anomaly 발생 시 호출한다 (SPEC-COLLECTOR-BACKFILL-011 TASK-013/014). {@link
+     * #recordAnomalyFailed()}(GROUP_A 전용)와 카운터가 완전히 분리되어 있다 — {@link
+     * CoveredRangeService#executeStep} 내부에서만 호출된다.
+     *
+     * @param kind anomaly 종류(앞단 미도달 또는 검증 전량 실패)
+     */
+    public void recordCoveredWalkAnomaly(CoveredWalkAnomalyKind kind) {
+        Counter.builder(COVERED_WALK_ANOMALY_NAME)
+                .tag("kind", kind.tagValue())
+                .register(registry)
+                .increment();
     }
 
     /**

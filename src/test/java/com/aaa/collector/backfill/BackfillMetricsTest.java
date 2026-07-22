@@ -17,6 +17,9 @@ class BackfillMetricsTest {
     private static final String WINDOWS_TOTAL = "aaa_collector_backfill_windows_total";
     private static final String PENDING_SLOTS = "aaa_collector_backfill_pending_slots";
     private static final String CAP_SATURATED = "aaa_collector_backfill_cap_saturated_total";
+    private static final String ANOMALY_FAILED = "aaa_collector_backfill_anomaly_failed_total";
+    private static final String COVERED_WALK_ANOMALY =
+            "aaa_collector_backfill_covered_walk_anomaly_total";
 
     @Nested
     @DisplayName("@PostConstruct 사전 등록")
@@ -34,6 +37,18 @@ class BackfillMetricsTest {
             assertThat(registry.get(CLAMP_SUSPECTED).counter().count()).isEqualTo(0.0);
             assertThat(registry.get(WINDOWS_TOTAL).counter().count()).isEqualTo(0.0);
             assertThat(registry.get(CAP_SATURATED).counter().count()).isEqualTo(0.0);
+            assertThat(
+                            registry.get(COVERED_WALK_ANOMALY)
+                                    .tag("kind", "front_gap")
+                                    .counter()
+                                    .count())
+                    .isEqualTo(0.0);
+            assertThat(
+                            registry.get(COVERED_WALK_ANOMALY)
+                                    .tag("kind", "all_rejected")
+                                    .counter()
+                                    .count())
+                    .isEqualTo(0.0);
             Gauge gauge = registry.get(PROGRESS).gauge();
             assertThat(gauge.value()).isEqualTo(0.0);
             Gauge pendingGauge = registry.get(PENDING_SLOTS).gauge();
@@ -151,6 +166,83 @@ class BackfillMetricsTest {
             metrics.recordCapSaturated();
 
             assertThat(registry.get(CAP_SATURATED).counter().count()).isEqualTo(1.0);
+        }
+    }
+
+    @Nested
+    @DisplayName(
+            "정방향 갭 walk anomaly 태그 카운터 (recordCoveredWalkAnomaly, SPEC-COLLECTOR-BACKFILL-011"
+                    + " TASK-013)")
+    class RecordCoveredWalkAnomaly {
+
+        @Test
+        @DisplayName("recordAnomalyFailed() 호출은 신규 태그 카운터를 증가시키지 않는다(카운터 완전 분리)")
+        void recordAnomalyFailed_doesNotIncrementNewCounter() {
+            SimpleMeterRegistry registry = new SimpleMeterRegistry();
+            BackfillMetrics metrics = new BackfillMetrics(registry);
+            metrics.initCounters();
+
+            metrics.recordAnomalyFailed();
+
+            assertThat(registry.get(ANOMALY_FAILED).counter().count()).isEqualTo(1.0);
+            assertThat(
+                            registry.get(COVERED_WALK_ANOMALY)
+                                    .tag("kind", "front_gap")
+                                    .counter()
+                                    .count())
+                    .isEqualTo(0.0);
+            assertThat(
+                            registry.get(COVERED_WALK_ANOMALY)
+                                    .tag("kind", "all_rejected")
+                                    .counter()
+                                    .count())
+                    .isEqualTo(0.0);
+        }
+
+        @Test
+        @DisplayName("recordCoveredWalkAnomaly(FRONT_GAP) 호출 시 front_gap kind만 증가한다")
+        void recordCoveredWalkAnomaly_frontGap_incrementsOnlyFrontGap() {
+            SimpleMeterRegistry registry = new SimpleMeterRegistry();
+            BackfillMetrics metrics = new BackfillMetrics(registry);
+            metrics.initCounters();
+
+            metrics.recordCoveredWalkAnomaly(CoveredWalkAnomalyKind.FRONT_GAP);
+
+            assertThat(
+                            registry.get(COVERED_WALK_ANOMALY)
+                                    .tag("kind", "front_gap")
+                                    .counter()
+                                    .count())
+                    .isEqualTo(1.0);
+            assertThat(
+                            registry.get(COVERED_WALK_ANOMALY)
+                                    .tag("kind", "all_rejected")
+                                    .counter()
+                                    .count())
+                    .isEqualTo(0.0);
+        }
+
+        @Test
+        @DisplayName("recordCoveredWalkAnomaly(ALL_REJECTED) 호출 시 all_rejected kind만 증가한다")
+        void recordCoveredWalkAnomaly_allRejected_incrementsOnlyAllRejected() {
+            SimpleMeterRegistry registry = new SimpleMeterRegistry();
+            BackfillMetrics metrics = new BackfillMetrics(registry);
+            metrics.initCounters();
+
+            metrics.recordCoveredWalkAnomaly(CoveredWalkAnomalyKind.ALL_REJECTED);
+
+            assertThat(
+                            registry.get(COVERED_WALK_ANOMALY)
+                                    .tag("kind", "all_rejected")
+                                    .counter()
+                                    .count())
+                    .isEqualTo(1.0);
+            assertThat(
+                            registry.get(COVERED_WALK_ANOMALY)
+                                    .tag("kind", "front_gap")
+                                    .counter()
+                                    .count())
+                    .isEqualTo(0.0);
         }
     }
 
