@@ -24,6 +24,7 @@ import com.aaa.collector.stock.RevSplitBackfillFetch;
 import com.aaa.collector.stock.RevSplitCollectionService;
 import com.aaa.collector.stock.Stock;
 import com.aaa.collector.stock.daily.DomesticDailyOhlcvCollectionService;
+import com.aaa.collector.stock.daily.DomesticDailyOhlcvFetch;
 import com.aaa.collector.stock.daily.OverseasDailyOhlcvCollectionService;
 import com.aaa.collector.stock.enums.AssetType;
 import com.aaa.collector.stock.enums.Market;
@@ -31,9 +32,11 @@ import com.aaa.collector.stock.rights.OverseasSplitBackfillFetch;
 import com.aaa.collector.stock.rights.OverseasSplitCollectionService;
 import com.aaa.collector.stock.supply.CreditBalanceCollectionService;
 import com.aaa.collector.stock.supply.InvestorTrendCollectionService;
+import com.aaa.collector.stock.supply.InvestorTrendFetch;
 import com.aaa.collector.stock.supply.ShortSaleCollectionService;
 import com.aaa.collector.stock.supply.ShortSaleFetch;
 import java.time.LocalDate;
+import java.time.ZoneId;
 import java.util.List;
 import java.util.Optional;
 import org.junit.jupiter.api.BeforeEach;
@@ -41,6 +44,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.Mockito;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -344,6 +348,85 @@ class BackfillWindowExecutorTest {
             executor.persistWindow(status, samsung, FetchEnvelope.notApplicable(fetch));
 
             verify(status, never()).markVerified(any());
+        }
+    }
+
+    @Nested
+    @DisplayName(
+            "resolveAnchor — GROUP_B 초기 anchor delisted_at floor (SPEC-COLLECTOR-BACKFILL-013"
+                    + " AC-1/AC-2/AC-3)")
+    class GroupBInitialAnchor {
+
+        private static final ZoneId KST = ZoneId.of("Asia/Seoul");
+
+        private BackfillStatus groupBStatus(String symbol, String dataTable) {
+            return BackfillStatus.builder()
+                    .targetType("STOCK")
+                    .targetCode(symbol)
+                    .dataTable(dataTable)
+                    .status(BackfillStatusType.PENDING)
+                    .build();
+        }
+
+        @Test
+        @DisplayName("AC-1: 상폐 확정 종목(delistedAt!=null) → anchor=delistedAt")
+        void delistedStock_anchorIsDelistedAt() throws InterruptedException {
+            LocalDate delistedAt = LocalDate.of(2025, 12, 1);
+            Stock delisted =
+                    Stock.builder()
+                            .symbol("010620")
+                            .nameKo("HD현대미포")
+                            .market(Market.KOSPI)
+                            .assetType(AssetType.STOCK)
+                            .active(false)
+                            .delistedAt(delistedAt)
+                            .build();
+            ArgumentCaptor<LocalDate> anchorCaptor = ArgumentCaptor.forClass(LocalDate.class);
+            when(investorTrendService.fetchWindow(
+                            anchorCaptor.capture(), eq(delisted), eq(session)))
+                    .thenReturn(new InvestorTrendFetch(List.of(), null, 0));
+
+            executor.fetchWindow(groupBStatus("010620", "investor_trend"), delisted, session);
+
+            assertThat(anchorCaptor.getValue()).isEqualTo(delistedAt);
+        }
+
+        @Test
+        @DisplayName("AC-2: 활성 종목(delistedAt==null) → anchor=어제(KST) — 비회귀")
+        void activeStock_anchorIsYesterdayKst() throws InterruptedException {
+            Stock active = stock("005930", Market.KOSPI);
+            ArgumentCaptor<LocalDate> anchorCaptor = ArgumentCaptor.forClass(LocalDate.class);
+            when(investorTrendService.fetchWindow(anchorCaptor.capture(), eq(active), eq(session)))
+                    .thenReturn(new InvestorTrendFetch(List.of(), null, 0));
+
+            executor.fetchWindow(groupBStatus("005930", "investor_trend"), active, session);
+
+            assertThat(anchorCaptor.getValue()).isEqualTo(LocalDate.now(KST).minusDays(1));
+        }
+
+        @Test
+        @DisplayName("AC-3: GROUP_A(daily_ohlcv)는 delistedAt 분기 미적용 — 무변경(어제)")
+        void groupA_delistedAt_notApplied() throws InterruptedException {
+            LocalDate delistedAt = LocalDate.of(2025, 12, 1);
+            Stock delisted =
+                    Stock.builder()
+                            .symbol("010620")
+                            .nameKo("HD현대미포")
+                            .market(Market.KOSPI)
+                            .assetType(AssetType.STOCK)
+                            .active(false)
+                            .delistedAt(delistedAt)
+                            .build();
+            when(windowAdvancer.groupAFromDate()).thenReturn(floor);
+            ArgumentCaptor<LocalDate> anchorCaptor = ArgumentCaptor.forClass(LocalDate.class);
+            when(domesticOhlcvService.fetchWindow(
+                            eq(floor), anchorCaptor.capture(), eq(delisted), eq(session)))
+                    .thenReturn(new DomesticDailyOhlcvFetch(List.of(), null, 0, 0));
+
+            executor.fetchWindow(groupBStatus("010620", "daily_ohlcv"), delisted, session);
+
+            // GROUP_A 분기는 delistedAt을 반영하지 않고 "어제"를 그대로 사용한다(REQ-BACKFILL-173).
+            assertThat(anchorCaptor.getValue()).isEqualTo(LocalDate.now().minusDays(1));
         }
     }
 }

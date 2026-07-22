@@ -631,12 +631,28 @@ public class BackfillWindowExecutor {
         };
     }
 
+    // @MX:NOTE: [AUTO] GROUP_B 초기 anchor — delisted_at 데이터 종점 우선, 미확정은 어제(KST)
+    // @MX:REASON: 상폐 종목 첫 창이 데이터 종점을 즉시 포함하도록 유도 — "전결손 위장" COMPLETED 해소
+    // @MX:SPEC: SPEC-COLLECTOR-BACKFILL-013
     private LocalDate resolveAnchor(BackfillStatus status, Stock stock) {
         if (status.getLastCollectedDate() == null) {
             if (OVERSEAS_MARKETS.contains(stock.getMarket())) {
                 // ET 기준 어제 — KST 어제는 미국 장중을 가리킬 수 있음 (aaa-infra#91)
                 return LocalDate.now(ET).minusDays(1);
             }
+            boolean groupB =
+                    BackfillGroup.ofDataTable(status.getDataTable()) == BackfillGroup.GROUP_B;
+            if (groupB && stock.getDelistedAt() != null) {
+                // SPEC-COLLECTOR-BACKFILL-013 REQ-BACKFILL-161/-163: 상폐 확정 GROUP_B 종목 —
+                // delistedAt(데이터 유효 종점)을 첫 윈도우 anchor로 사용해 즉시 데이터 구간을 잡는다.
+                return stock.getDelistedAt();
+            }
+            if (groupB) {
+                // SPEC-COLLECTOR-BACKFILL-013 REQ-BACKFILL-166: GROUP_B 미확정(활성·거래정지·WLSYNC 미sync)은
+                // 어제(KST) — 이후 walk-back probe(REQ-164/165)가 방어한다.
+                return LocalDate.now(KST).minusDays(1);
+            }
+            // GROUP_A 분기 무변경 (SPEC-COLLECTOR-BACKFILL-013 REQ-BACKFILL-173)
             // 오늘 날짜는 KIS API TIME LIMIT(00:00~15:40) 대상 — 어제(과거)로 초기화 (REQ-BACKFILL-060)
             return LocalDate.now().minusDays(1);
         }
