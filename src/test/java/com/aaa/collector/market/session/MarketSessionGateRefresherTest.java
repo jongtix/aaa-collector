@@ -228,7 +228,8 @@ class MarketSessionGateRefresherTest {
             LocalDate upperBound = today.plusDays(20);
             SimpleMeterRegistry registry = new SimpleMeterRegistry();
             KisMarketSchedule schedule = new KisMarketSchedule(clock);
-            MarketSessionGate realGate = new MarketSessionGate(registry, schedule, clock);
+            MarketSessionGate realGate =
+                    new MarketSessionGate(registry, schedule, clock, marketCalendarRepository);
 
             when(marketCalendarRepository.findByCalendarCodeAndCalDateBetween(
                             CalendarCode.KRX, lowerBound, upperBound))
@@ -252,7 +253,8 @@ class MarketSessionGateRefresherTest {
             Clock clock = Clock.fixed(REFRESH_INSTANT, KST);
             SimpleMeterRegistry registry = new SimpleMeterRegistry();
             KisMarketSchedule schedule = new KisMarketSchedule(clock);
-            MarketSessionGate realGate = new MarketSessionGate(registry, schedule, clock);
+            MarketSessionGate realGate =
+                    new MarketSessionGate(registry, schedule, clock, marketCalendarRepository);
 
             when(marketCalendarRepository.findByCalendarCodeAndCalDateBetween(
                             eq(CalendarCode.KRX), any(), any()))

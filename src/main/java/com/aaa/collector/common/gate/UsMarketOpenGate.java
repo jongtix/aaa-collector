@@ -1,6 +1,7 @@
 package com.aaa.collector.common.gate;
 
 import java.time.LocalDate;
+import java.util.Optional;
 
 /**
  * 미국 시장 개장일·장중 판정 인터페이스 (SPEC-COLLECTOR-USMKT-001).
@@ -32,4 +33,16 @@ public interface UsMarketOpenGate {
      * @return 미장 운영 중이면 {@code true}
      */
     boolean isMarketOpenNow();
+
+    /**
+     * {@code market_calendar}(NYSE) 전체 시딩 범위(1985~오늘+20)를 검증 전용으로 조회한다(SPEC-COLLECTOR-CALENDAR-001
+     * REQ-CAL-033/-038, TASK-009).
+     *
+     * <p>{@link #isOpenDay(LocalDate)}와 달리 게이트 캐시(REQ-CAL-037 — 현재+다음 연도 좁은 범위)가 아니라 리포지토리를 직접
+     * 조회하며, fail-open을 적용하지 않는다 — 값이 없으면 "모름"({@link Optional#empty()})을 명시적으로 반환한다.
+     *
+     * @param date 판정할 날짜(제한 없음 — 게이트 캐시 범위 밖도 조회 가능)
+     * @return 행이 있으면 {@code Optional.of(is_open)}, 없으면 {@link Optional#empty()}("모름")
+     */
+    Optional<Boolean> isOpenDayStrict(LocalDate date);
 }

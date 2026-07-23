@@ -20,6 +20,7 @@ import java.time.LocalDate;
 import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 import java.util.Set;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -787,6 +788,90 @@ class UsMarketSessionGateTest {
             assertThat(sharedGauge.value()).isEqualTo((double) expectedShared);
             assertThat(dailyGauge.value()).isEqualTo((double) expectedDaily);
             assertThat(sharedGauge.value()).isNotEqualTo(dailyGauge.value());
+        }
+    }
+
+    @Nested
+    @DisplayName(
+            "isOpenDayStrict — 전체 범위 검증 전용 조회 (SPEC-COLLECTOR-CALENDAR-001"
+                    + " REQ-CAL-033/-038, TASK-009, AC-20/AC-21/EC-6)")
+    class IsOpenDayStrict {
+
+        @Test
+        @DisplayName("행이 있으면 Optional.of(is_open)을 반환한다 — 게이트 캐시 범위 밖 과거 날짜도 성립 (AC-20)")
+        void rowExists_returnsOptionalOfIsOpen_evenOutsideGateRange() {
+            // Arrange — 게이트 캐시(현재+다음 연도) 범위 밖의 먼 과거 날짜
+            Clock clock = Clock.fixed(MON_TRADING_INSTANT, NEW_YORK);
+            MarketCalendarRepository repository = mock(MarketCalendarRepository.class);
+            LocalDate farPast = LocalDate.of(2000, 1, 1);
+            when(repository.findByCalendarCodeAndCalDate(CalendarCode.NYSE, farPast))
+                    .thenReturn(
+                            Optional.of(
+                                    MarketCalendar.builder()
+                                            .calendarCode(CalendarCode.NYSE)
+                                            .calDate(farPast)
+                                            .open(false)
+                                            .source(CalendarSource.MANUAL)
+                                            .build()));
+            UsMarketSessionGate gate =
+                    new UsMarketSessionGate(
+                            new SimpleMeterRegistry(),
+                            new KisMarketSchedule(clock),
+                            clock,
+                            new UsMarketProperties(),
+                            repository);
+
+            // Act & Assert — init() 미호출 상태에서도 성립(리포지토리 직접 조회, 게이트 캐시 무관)
+            assertThat(gate.isOpenDayStrict(farPast)).contains(false);
+        }
+
+        @Test
+        @DisplayName("행이 없으면 Optional.empty()(모름)을 반환한다 — fail-open이 아니다 (AC-21)")
+        void rowAbsent_returnsEmpty_notFailOpen() {
+            Clock clock = Clock.fixed(MON_TRADING_INSTANT, NEW_YORK);
+            MarketCalendarRepository repository = mock(MarketCalendarRepository.class);
+            LocalDate unseeded = LocalDate.of(1900, 1, 1);
+            when(repository.findByCalendarCodeAndCalDate(CalendarCode.NYSE, unseeded))
+                    .thenReturn(Optional.empty());
+            UsMarketSessionGate gate =
+                    new UsMarketSessionGate(
+                            new SimpleMeterRegistry(),
+                            new KisMarketSchedule(clock),
+                            clock,
+                            new UsMarketProperties(),
+                            repository);
+
+            assertThat(gate.isOpenDayStrict(unseeded)).isEmpty();
+        }
+
+        @Test
+        @DisplayName("게이트 범위 내부 날짜에서는 isOpenDay와 isOpenDayStrict 결과가 일치한다 (EC-6)")
+        void withinGateRange_isOpenDayAndStrictAgree() {
+            // Arrange — 2026-07-06(월, 평일 비휴장)
+            LocalDate weekday = LocalDate.of(2026, 7, 6);
+            Clock clock = Clock.fixed(MON_TRADING_INSTANT, NEW_YORK);
+            MarketCalendarRepository repository = nyseRepositoryStub();
+            when(repository.findByCalendarCodeAndCalDate(CalendarCode.NYSE, weekday))
+                    .thenReturn(
+                            Optional.of(
+                                    MarketCalendar.builder()
+                                            .calendarCode(CalendarCode.NYSE)
+                                            .calDate(weekday)
+                                            .open(true)
+                                            .source(CalendarSource.ALGORITHM)
+                                            .build()));
+            UsMarketSessionGate gate =
+                    new UsMarketSessionGate(
+                            new SimpleMeterRegistry(),
+                            new KisMarketSchedule(clock),
+                            clock,
+                            new UsMarketProperties(),
+                            repository);
+            gate.init();
+
+            // Act & Assert
+            assertThat(gate.isOpenDay(weekday)).isTrue();
+            assertThat(gate.isOpenDayStrict(weekday)).contains(true);
         }
     }
 }

@@ -2,6 +2,9 @@ package com.aaa.collector.market.session;
 
 import com.aaa.collector.common.gate.MarketOpenGate;
 import com.aaa.collector.kis.websocket.KisMarketSchedule;
+import com.aaa.collector.market.calendar.CalendarCode;
+import com.aaa.collector.market.calendar.MarketCalendar;
+import com.aaa.collector.market.calendar.MarketCalendarRepository;
 import io.micrometer.core.instrument.Gauge;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Tags;
@@ -11,6 +14,7 @@ import java.time.LocalTime;
 import java.time.ZoneId;
 import java.time.ZonedDateTime;
 import java.util.Map;
+import java.util.Optional;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 import lombok.extern.slf4j.Slf4j;
@@ -67,6 +71,7 @@ public class MarketSessionGate implements MarketOpenGate {
     private final MeterRegistry registry;
     private final KisMarketSchedule marketSchedule;
     private final Clock clock;
+    private final MarketCalendarRepository marketCalendarRepository;
 
     /**
      * KIS opnd_yn 캘린더 캐시. null = boot-unset(미로드). 로드 후 실패 시 이전 캐시 유지(REQ-OBSV-033). LocalDate →
@@ -93,12 +98,18 @@ public class MarketSessionGate implements MarketOpenGate {
      * @param registry Micrometer 레지스트리
      * @param marketSchedule 장중 시간 판정 컴포넌트
      * @param clock 시계 (테스트 고정 시계 주입용)
+     * @param marketCalendarRepository {@code market_calendar}(KRX) 조회용 리포지토리({@code
+     *     isOpenDayStrict} 전용, SPEC-COLLECTOR-CALENDAR-001 TASK-009)
      */
     public MarketSessionGate(
-            MeterRegistry registry, KisMarketSchedule marketSchedule, Clock clock) {
+            MeterRegistry registry,
+            KisMarketSchedule marketSchedule,
+            Clock clock,
+            MarketCalendarRepository marketCalendarRepository) {
         this.registry = registry;
         this.marketSchedule = marketSchedule;
         this.clock = clock;
+        this.marketCalendarRepository = marketCalendarRepository;
 
         Gauge.builder(MARKET_OPEN_NAME, this, MarketSessionGate::computeMarketOpen)
                 .description("시장 세션 게이트 — 장중 1, 휴장·장외 0 (REQ-OBSV-030)")
@@ -206,6 +217,21 @@ public class MarketSessionGate implements MarketOpenGate {
     public boolean isOpenDay(LocalDate date) {
         Map<LocalDate, Boolean> calendar = calendarRef.get();
         return calendar == null || calendar.getOrDefault(date, Boolean.TRUE);
+    }
+
+    /**
+     * {@code market_calendar}(KRX)를 게이트 캐시가 아니라 직접 조회한다(SPEC-COLLECTOR-CALENDAR-001
+     * REQ-CAL-032/-038, TASK-009). 게이트 캐시 범위(오늘−14~오늘+20) 밖의 과거·미래 날짜도 조회 가능하며, 행이 없으면 fail-open이
+     * 아니라 "모름"({@link Optional#empty()})을 반환한다 — {@link #isOpenDay(LocalDate)}와는 계약이 다르다.
+     *
+     * @param date 판정할 날짜(제한 없음)
+     * @return 행이 있으면 {@code Optional.of(is_open)}, 없으면 {@link Optional#empty()}
+     */
+    @Override
+    public Optional<Boolean> isOpenDayStrict(LocalDate date) {
+        return marketCalendarRepository
+                .findByCalendarCodeAndCalDate(CalendarCode.KRX, date)
+                .map(MarketCalendar::isOpen);
     }
 
     /**

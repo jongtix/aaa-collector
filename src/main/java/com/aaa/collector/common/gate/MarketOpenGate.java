@@ -1,6 +1,7 @@
 package com.aaa.collector.common.gate;
 
 import java.time.LocalDate;
+import java.util.Optional;
 
 /**
  * 국내 시장 개장일·장중 판정 인터페이스.
@@ -33,4 +34,18 @@ public interface MarketOpenGate {
      * @return 장중이면 {@code true}, 장외·주말·휴장이면 {@code false}
      */
     boolean isMarketOpenNow();
+
+    /**
+     * {@code market_calendar}(KRX) 전체 시딩 범위(1985~오늘+20)를 검증 전용으로 조회한다(SPEC-COLLECTOR-CALENDAR-001
+     * REQ-CAL-032/-038, TASK-009).
+     *
+     * <p>{@link #isOpenDay(LocalDate)}와 달리 게이트 캐시(REQ-CAL-036 — 오늘−14~오늘+20 좁은 범위)가 아니라 리포지토리를 직접
+     * 조회하며, fail-open을 적용하지 않는다 — 값이 없으면 "모름"({@link Optional#empty()})을 명시적으로 반환한다. 과거 정확도가 필요한 신규
+     * 소비처(예: 후속 SPEC의 {@code CoveredRangeService} 개정)만 이 메서드를 사용해야 한다 — 기존 {@link
+     * #isOpenDay(LocalDate)}는 이 목적으로 재활용하지 않는다(REQ-CAL-038).
+     *
+     * @param date 판정할 날짜(제한 없음 — 게이트 캐시 범위 밖도 조회 가능)
+     * @return 행이 있으면 {@code Optional.of(is_open)}, 없으면 {@link Optional#empty()}("모름")
+     */
+    Optional<Boolean> isOpenDayStrict(LocalDate date);
 }

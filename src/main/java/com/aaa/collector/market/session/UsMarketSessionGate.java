@@ -18,6 +18,7 @@ import java.time.ZoneId;
 import java.time.ZonedDateTime;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicReference;
 import lombok.extern.slf4j.Slf4j;
@@ -270,6 +271,21 @@ public class UsMarketSessionGate implements UsMarketOpenGate {
             return false;
         }
         return !holidays.contains(date);
+    }
+
+    /**
+     * {@code market_calendar}(NYSE)를 게이트 캐시가 아니라 직접 조회한다(SPEC-COLLECTOR-CALENDAR-001
+     * REQ-CAL-033/-038, TASK-009). 게이트 캐시 범위(현재+다음 연도) 밖의 과거·미래 날짜도 조회 가능하며, 행이 없으면 fail-open이 아니라
+     * "모름"({@link Optional#empty()})을 반환한다 — {@link #isOpenDay(LocalDate)}와는 계약이 다르다.
+     *
+     * @param date 판정할 날짜(제한 없음)
+     * @return 행이 있으면 {@code Optional.of(is_open)}, 없으면 {@link Optional#empty()}
+     */
+    @Override
+    public Optional<Boolean> isOpenDayStrict(LocalDate date) {
+        return marketCalendarRepository
+                .findByCalendarCodeAndCalDate(CalendarCode.NYSE, date)
+                .map(MarketCalendar::isOpen);
     }
 
     /**

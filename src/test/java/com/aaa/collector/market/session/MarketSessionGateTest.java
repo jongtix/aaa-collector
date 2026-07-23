@@ -6,6 +6,10 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 import com.aaa.collector.kis.websocket.KisMarketSchedule;
+import com.aaa.collector.market.calendar.CalendarCode;
+import com.aaa.collector.market.calendar.CalendarSource;
+import com.aaa.collector.market.calendar.MarketCalendar;
+import com.aaa.collector.market.calendar.MarketCalendarRepository;
 import io.micrometer.core.instrument.Gauge;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.time.Clock;
@@ -14,6 +18,7 @@ import java.time.LocalDate;
 import java.time.ZoneId;
 import java.time.ZonedDateTime;
 import java.util.Map;
+import java.util.Optional;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
@@ -22,6 +27,14 @@ import org.junit.jupiter.api.Test;
 class MarketSessionGateTest {
 
     private static final ZoneId KST = ZoneId.of("Asia/Seoul");
+
+    /**
+     * {@code market_calendar}(KRX) 리포지토리 스텁 — {@code isOpenDay}/{@code updateCalendar} 테스트는 게이트 캐시만
+     * 사용하므로 이 리포지토리를 호출하지 않는다. TASK-009 {@code isOpenDayStrict} 케이스만 개별적으로 스터빙한다.
+     */
+    private static MarketCalendarRepository stubCalendarRepository() {
+        return mock(MarketCalendarRepository.class);
+    }
 
     // 2026-06-19 10:00 KST — 평일 장중 (domestic open: 08:55~15:35)
     private static final Instant TRADING_HOURS_INSTANT = Instant.parse("2026-06-19T01:00:00Z");
@@ -44,7 +57,7 @@ class MarketSessionGateTest {
             Clock clock = clockAt(TRADING_HOURS_INSTANT);
             KisMarketSchedule schedule = new KisMarketSchedule(clock);
             SimpleMeterRegistry registry = new SimpleMeterRegistry();
-            new MarketSessionGate(registry, schedule, clock);
+            new MarketSessionGate(registry, schedule, clock, stubCalendarRepository());
 
             Gauge g = registry.get(MarketSessionGate.MARKET_OPEN_NAME).gauge();
             assertThat(g.value()).isEqualTo(1.0);
@@ -56,7 +69,7 @@ class MarketSessionGateTest {
             Clock clock = clockAt(AFTER_HOURS_INSTANT);
             KisMarketSchedule schedule = new KisMarketSchedule(clock);
             SimpleMeterRegistry registry = new SimpleMeterRegistry();
-            new MarketSessionGate(registry, schedule, clock);
+            new MarketSessionGate(registry, schedule, clock, stubCalendarRepository());
 
             Gauge g = registry.get(MarketSessionGate.MARKET_OPEN_NAME).gauge();
             assertThat(g.value()).isEqualTo(0.0);
@@ -68,7 +81,7 @@ class MarketSessionGateTest {
             Clock clock = clockAt(WEEKEND_INSTANT);
             KisMarketSchedule schedule = new KisMarketSchedule(clock);
             SimpleMeterRegistry registry = new SimpleMeterRegistry();
-            new MarketSessionGate(registry, schedule, clock);
+            new MarketSessionGate(registry, schedule, clock, stubCalendarRepository());
 
             Gauge g = registry.get(MarketSessionGate.MARKET_OPEN_NAME).gauge();
             assertThat(g.value()).isEqualTo(0.0);
@@ -79,7 +92,8 @@ class MarketSessionGateTest {
         void noCalendar_lastUpdateGaugeIsZero() {
             Clock clock = clockAt(TRADING_HOURS_INSTANT);
             SimpleMeterRegistry registry = new SimpleMeterRegistry();
-            new MarketSessionGate(registry, new KisMarketSchedule(clock), clock);
+            new MarketSessionGate(
+                    registry, new KisMarketSchedule(clock), clock, stubCalendarRepository());
 
             Gauge g = registry.get(MarketSessionGate.GATE_LAST_UPDATE_NAME).gauge();
             assertThat(g.value()).isEqualTo(0.0);
@@ -97,7 +111,8 @@ class MarketSessionGateTest {
             Clock clock = clockAt(TRADING_HOURS_INSTANT);
             KisMarketSchedule schedule = new KisMarketSchedule(clock);
             SimpleMeterRegistry registry = new SimpleMeterRegistry();
-            MarketSessionGate gate = new MarketSessionGate(registry, schedule, clock);
+            MarketSessionGate gate =
+                    new MarketSessionGate(registry, schedule, clock, stubCalendarRepository());
             LocalDate today = ZonedDateTime.now(clock).toLocalDate();
 
             // Act — 오늘이 개장일인 캘린더 로드
@@ -115,7 +130,8 @@ class MarketSessionGateTest {
             Clock clock = clockAt(TRADING_HOURS_INSTANT);
             KisMarketSchedule schedule = new KisMarketSchedule(clock);
             SimpleMeterRegistry registry = new SimpleMeterRegistry();
-            MarketSessionGate gate = new MarketSessionGate(registry, schedule, clock);
+            MarketSessionGate gate =
+                    new MarketSessionGate(registry, schedule, clock, stubCalendarRepository());
             LocalDate today = ZonedDateTime.now(clock).toLocalDate();
 
             // Act — 오늘이 증시 휴장인 캘린더 로드 (공휴일 등)
@@ -133,7 +149,8 @@ class MarketSessionGateTest {
             Clock clock = clockAt(AFTER_HOURS_INSTANT);
             KisMarketSchedule schedule = new KisMarketSchedule(clock);
             SimpleMeterRegistry registry = new SimpleMeterRegistry();
-            MarketSessionGate gate = new MarketSessionGate(registry, schedule, clock);
+            MarketSessionGate gate =
+                    new MarketSessionGate(registry, schedule, clock, stubCalendarRepository());
             LocalDate today = ZonedDateTime.now(clock).toLocalDate();
 
             // Act
@@ -151,7 +168,8 @@ class MarketSessionGateTest {
             Clock clock = clockAt(TRADING_HOURS_INSTANT);
             KisMarketSchedule schedule = new KisMarketSchedule(clock);
             SimpleMeterRegistry registry = new SimpleMeterRegistry();
-            MarketSessionGate gate = new MarketSessionGate(registry, schedule, clock);
+            MarketSessionGate gate =
+                    new MarketSessionGate(registry, schedule, clock, stubCalendarRepository());
             LocalDate tomorrow = ZonedDateTime.now(clock).toLocalDate().plusDays(1);
 
             // Act — 내일 날짜만 있는 캘린더 로드 (오늘 absent)
@@ -174,7 +192,11 @@ class MarketSessionGateTest {
             Clock clock = clockAt(TRADING_HOURS_INSTANT);
             SimpleMeterRegistry registry = new SimpleMeterRegistry();
             MarketSessionGate gate =
-                    new MarketSessionGate(registry, new KisMarketSchedule(clock), clock);
+                    new MarketSessionGate(
+                            registry,
+                            new KisMarketSchedule(clock),
+                            clock,
+                            stubCalendarRepository());
 
             // Act
             gate.updateCalendar(Map.of());
@@ -195,7 +217,11 @@ class MarketSessionGateTest {
             when(clock.getZone()).thenReturn(KST);
             SimpleMeterRegistry registry = new SimpleMeterRegistry();
             MarketSessionGate gate =
-                    new MarketSessionGate(registry, new KisMarketSchedule(clock), clock);
+                    new MarketSessionGate(
+                            registry,
+                            new KisMarketSchedule(clock),
+                            clock,
+                            stubCalendarRepository());
 
             // Act & Assert
             gate.updateCalendar(Map.of());
@@ -218,7 +244,7 @@ class MarketSessionGateTest {
             Clock clock = clockAt(TRADING_HOURS_INSTANT);
             KisMarketSchedule schedule = new KisMarketSchedule(clock);
             SimpleMeterRegistry registry = new SimpleMeterRegistry();
-            new MarketSessionGate(registry, schedule, clock);
+            new MarketSessionGate(registry, schedule, clock, stubCalendarRepository());
 
             // 갱신 없이 2회 조회 — 일관성 보장
             double v1 = registry.get(MarketSessionGate.MARKET_OPEN_NAME).gauge().value();
@@ -233,7 +259,8 @@ class MarketSessionGateTest {
             Clock clock = clockAt(TRADING_HOURS_INSTANT);
             KisMarketSchedule schedule = new KisMarketSchedule(clock);
             SimpleMeterRegistry registry = new SimpleMeterRegistry();
-            MarketSessionGate gate = new MarketSessionGate(registry, schedule, clock);
+            MarketSessionGate gate =
+                    new MarketSessionGate(registry, schedule, clock, stubCalendarRepository());
             LocalDate today = ZonedDateTime.now(clock).toLocalDate();
 
             // Act — 휴장 캘린더 로드 후 "실패" (updateCalendar 미호출로 시뮬레이션)
@@ -255,7 +282,10 @@ class MarketSessionGateTest {
             Clock clock = clockAt(TRADING_HOURS_INSTANT);
             MarketSessionGate gate =
                     new MarketSessionGate(
-                            new SimpleMeterRegistry(), new KisMarketSchedule(clock), clock);
+                            new SimpleMeterRegistry(),
+                            new KisMarketSchedule(clock),
+                            clock,
+                            stubCalendarRepository());
 
             assertThat(gate.isMarketOpenNow()).isTrue();
         }
@@ -266,7 +296,10 @@ class MarketSessionGateTest {
             Clock clock = clockAt(AFTER_HOURS_INSTANT);
             MarketSessionGate gate =
                     new MarketSessionGate(
-                            new SimpleMeterRegistry(), new KisMarketSchedule(clock), clock);
+                            new SimpleMeterRegistry(),
+                            new KisMarketSchedule(clock),
+                            clock,
+                            stubCalendarRepository());
 
             assertThat(gate.isMarketOpenNow()).isFalse();
         }
@@ -277,7 +310,10 @@ class MarketSessionGateTest {
             Clock clock = clockAt(WEEKEND_INSTANT);
             MarketSessionGate gate =
                     new MarketSessionGate(
-                            new SimpleMeterRegistry(), new KisMarketSchedule(clock), clock);
+                            new SimpleMeterRegistry(),
+                            new KisMarketSchedule(clock),
+                            clock,
+                            stubCalendarRepository());
 
             assertThat(gate.isMarketOpenNow()).isFalse();
         }
@@ -289,7 +325,10 @@ class MarketSessionGateTest {
             Clock clock = clockAt(TRADING_HOURS_INSTANT);
             MarketSessionGate gate =
                     new MarketSessionGate(
-                            new SimpleMeterRegistry(), new KisMarketSchedule(clock), clock);
+                            new SimpleMeterRegistry(),
+                            new KisMarketSchedule(clock),
+                            clock,
+                            stubCalendarRepository());
             LocalDate today = ZonedDateTime.now(clock).toLocalDate();
 
             // Act — 오늘이 휴장인 캘린더 로드
@@ -308,7 +347,10 @@ class MarketSessionGateTest {
             // calendarRef == null (updateCalendar 미호출)
             MarketSessionGate gate =
                     new MarketSessionGate(
-                            new SimpleMeterRegistry(), new KisMarketSchedule(clock), clock);
+                            new SimpleMeterRegistry(),
+                            new KisMarketSchedule(clock),
+                            clock,
+                            stubCalendarRepository());
 
             assertThat(gate.isMarketOpenNow()).isTrue();
         }
@@ -320,7 +362,11 @@ class MarketSessionGateTest {
             Clock clock = clockAt(TRADING_HOURS_INSTANT);
             SimpleMeterRegistry registry = new SimpleMeterRegistry();
             MarketSessionGate gate =
-                    new MarketSessionGate(registry, new KisMarketSchedule(clock), clock);
+                    new MarketSessionGate(
+                            registry,
+                            new KisMarketSchedule(clock),
+                            clock,
+                            stubCalendarRepository());
 
             // Act & Assert
             boolean open = gate.isMarketOpenNow();
@@ -337,7 +383,11 @@ class MarketSessionGateTest {
             Clock clock = clockAt(AFTER_HOURS_INSTANT);
             SimpleMeterRegistry registry = new SimpleMeterRegistry();
             MarketSessionGate gate =
-                    new MarketSessionGate(registry, new KisMarketSchedule(clock), clock);
+                    new MarketSessionGate(
+                            registry,
+                            new KisMarketSchedule(clock),
+                            clock,
+                            stubCalendarRepository());
 
             // Act & Assert
             boolean open = gate.isMarketOpenNow();
@@ -357,7 +407,8 @@ class MarketSessionGateTest {
         void bothGaugesRegisteredAtConstruction() {
             Clock clock = clockAt(TRADING_HOURS_INSTANT);
             SimpleMeterRegistry registry = new SimpleMeterRegistry();
-            new MarketSessionGate(registry, new KisMarketSchedule(clock), clock);
+            new MarketSessionGate(
+                    registry, new KisMarketSchedule(clock), clock, stubCalendarRepository());
 
             // market-open gauge 존재 확인
             assertThat(registry.get(MarketSessionGate.MARKET_OPEN_NAME).gauge()).isNotNull();
@@ -375,7 +426,7 @@ class MarketSessionGateTest {
             // Act — 생성자만 호출 (KisHolidayClient 미포함: 게이트 생성자에 KisHolidayClient 의존 없음)
             Clock clock = clockAt(TRADING_HOURS_INSTANT);
             SimpleMeterRegistry registry = new SimpleMeterRegistry();
-            new MarketSessionGate(registry, schedule, clock);
+            new MarketSessionGate(registry, schedule, clock, stubCalendarRepository());
 
             // Assert — isDomesticOpen은 gauge 조회 시 호출됨, 생성자에서 schedule 사용 여부는 gauge value로 간접 확인
             // 핵심: 생성자에서 RestClient/HTTP 호출 없음 (KisHolidayClient 의존 부재로 보장)
@@ -392,7 +443,8 @@ class MarketSessionGateTest {
         void beforeFirstUpdateCalendar_gaugeIsAbsent() {
             Clock clock = clockAt(TRADING_HOURS_INSTANT);
             SimpleMeterRegistry registry = new SimpleMeterRegistry();
-            new MarketSessionGate(registry, new KisMarketSchedule(clock), clock);
+            new MarketSessionGate(
+                    registry, new KisMarketSchedule(clock), clock, stubCalendarRepository());
 
             Gauge gauge = registry.find(MarketSessionGate.EXPECTED_WATERMARK_NAME).gauge();
             assertThat(gauge).isNull();
@@ -404,7 +456,11 @@ class MarketSessionGateTest {
             Clock clock = clockAt(TRADING_HOURS_INSTANT);
             SimpleMeterRegistry registry = new SimpleMeterRegistry();
             MarketSessionGate gate =
-                    new MarketSessionGate(registry, new KisMarketSchedule(clock), clock);
+                    new MarketSessionGate(
+                            registry,
+                            new KisMarketSchedule(clock),
+                            clock,
+                            stubCalendarRepository());
 
             gate.updateCalendar(Map.of());
 
@@ -423,7 +479,11 @@ class MarketSessionGateTest {
             LocalDate d3 = today.minusDays(3);
             SimpleMeterRegistry registry = new SimpleMeterRegistry();
             MarketSessionGate gate =
-                    new MarketSessionGate(registry, new KisMarketSchedule(clock), clock);
+                    new MarketSessionGate(
+                            registry,
+                            new KisMarketSchedule(clock),
+                            clock,
+                            stubCalendarRepository());
 
             // d1·d2 휴장, d3 개장 → d3가 expected
             gate.updateCalendar(Map.of(d1, Boolean.FALSE, d2, Boolean.FALSE, d3, Boolean.TRUE));
@@ -441,13 +501,98 @@ class MarketSessionGateTest {
             LocalDate today = LocalDate.of(2026, 6, 19);
             SimpleMeterRegistry registry = new SimpleMeterRegistry();
             MarketSessionGate gate =
-                    new MarketSessionGate(registry, new KisMarketSchedule(clock), clock);
+                    new MarketSessionGate(
+                            registry,
+                            new KisMarketSchedule(clock),
+                            clock,
+                            stubCalendarRepository());
 
             gate.updateCalendar(Map.of(today, Boolean.TRUE));
 
             Gauge gauge = registry.get(MarketSessionGate.EXPECTED_WATERMARK_NAME).gauge();
             long expected = today.atStartOfDay(KST).toEpochSecond();
             assertThat(gauge.value()).isEqualTo((double) expected);
+        }
+    }
+
+    @Nested
+    @DisplayName(
+            "isOpenDayStrict — 전체 범위 검증 전용 조회 (SPEC-COLLECTOR-CALENDAR-001"
+                    + " REQ-CAL-032/-038, TASK-009, AC-20/AC-21/EC-6)")
+    class IsOpenDayStrict {
+
+        @Test
+        @DisplayName("행이 있으면 Optional.of(is_open)을 반환한다 — 게이트 캐시 범위 밖 과거 날짜도 성립 (AC-20)")
+        void rowExists_returnsOptionalOfIsOpen_evenOutsideGateRange() {
+            // Arrange — 게이트 캐시(오늘−14~오늘+20) 범위 밖의 먼 과거 날짜
+            Clock clock = clockAt(TRADING_HOURS_INSTANT);
+            MarketCalendarRepository repository = mock(MarketCalendarRepository.class);
+            LocalDate farPast = LocalDate.of(2000, 1, 1);
+            when(repository.findByCalendarCodeAndCalDate(CalendarCode.KRX, farPast))
+                    .thenReturn(
+                            Optional.of(
+                                    MarketCalendar.builder()
+                                            .calendarCode(CalendarCode.KRX)
+                                            .calDate(farPast)
+                                            .open(false)
+                                            .source(CalendarSource.MANUAL)
+                                            .build()));
+            MarketSessionGate gate =
+                    new MarketSessionGate(
+                            new SimpleMeterRegistry(),
+                            new KisMarketSchedule(clock),
+                            clock,
+                            repository);
+
+            // Act & Assert
+            assertThat(gate.isOpenDayStrict(farPast)).contains(false);
+        }
+
+        @Test
+        @DisplayName("행이 없으면 Optional.empty()(모름)을 반환한다 — fail-open이 아니다 (AC-21)")
+        void rowAbsent_returnsEmpty_notFailOpen() {
+            Clock clock = clockAt(TRADING_HOURS_INSTANT);
+            MarketCalendarRepository repository = mock(MarketCalendarRepository.class);
+            LocalDate unseeded = LocalDate.of(1900, 1, 1);
+            when(repository.findByCalendarCodeAndCalDate(CalendarCode.KRX, unseeded))
+                    .thenReturn(Optional.empty());
+            MarketSessionGate gate =
+                    new MarketSessionGate(
+                            new SimpleMeterRegistry(),
+                            new KisMarketSchedule(clock),
+                            clock,
+                            repository);
+
+            assertThat(gate.isOpenDayStrict(unseeded)).isEmpty();
+        }
+
+        @Test
+        @DisplayName("게이트 범위 내부 날짜에서는 isOpenDay와 isOpenDayStrict 결과가 일치한다 (EC-6)")
+        void withinGateRange_isOpenDayAndStrictAgree() {
+            // Arrange
+            Clock clock = clockAt(TRADING_HOURS_INSTANT);
+            LocalDate today = ZonedDateTime.now(clock).toLocalDate();
+            MarketCalendarRepository repository = mock(MarketCalendarRepository.class);
+            when(repository.findByCalendarCodeAndCalDate(CalendarCode.KRX, today))
+                    .thenReturn(
+                            Optional.of(
+                                    MarketCalendar.builder()
+                                            .calendarCode(CalendarCode.KRX)
+                                            .calDate(today)
+                                            .open(true)
+                                            .source(CalendarSource.KIS_API)
+                                            .build()));
+            MarketSessionGate gate =
+                    new MarketSessionGate(
+                            new SimpleMeterRegistry(),
+                            new KisMarketSchedule(clock),
+                            clock,
+                            repository);
+            gate.updateCalendar(Map.of(today, Boolean.TRUE));
+
+            // Act & Assert
+            assertThat(gate.isOpenDay(today)).isTrue();
+            assertThat(gate.isOpenDayStrict(today)).contains(true);
         }
     }
 }
