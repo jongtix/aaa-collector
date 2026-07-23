@@ -30,7 +30,8 @@ class DbGrantVerifierTest {
                                                     "stock_grades",
                                                     "short_sale_overseas",
                                                     "etf_metadata",
-                                                    "backfill_status")))
+                                                    "backfill_status",
+                                                    "market_calendar")))
                     .doesNotThrowAnyException();
         }
 
@@ -82,7 +83,7 @@ class DbGrantVerifierTest {
     class Tier2TablePrivileges {
 
         @Test
-        @DisplayName("5개 Tier-2 테이블 모두 존재하면 예외 없음")
+        @DisplayName("6개 Tier-2 테이블 모두 존재하면 예외 없음")
         void passes_when_all_tier2_tables_present() {
             assertThatCode(
                             () ->
@@ -93,7 +94,8 @@ class DbGrantVerifierTest {
                                                     "stock_grades",
                                                     "short_sale_overseas",
                                                     "etf_metadata",
-                                                    "backfill_status")))
+                                                    "backfill_status",
+                                                    "market_calendar")))
                     .doesNotThrowAnyException();
         }
 
@@ -142,26 +144,29 @@ class DbGrantVerifierTest {
     @DisplayName("backfill_status Tier-2 등재 (SPEC-COLLECTOR-BACKFILL-001 CR-01)")
     class BackfillStatusTier2 {
 
-        // 5개 Tier-2 테이블 완전 집합 (기존 4개 + backfill_status).
-        private static final Set<String> ALL_FIVE =
+        // 6개 Tier-2 테이블 완전 집합 (기존 4개 + backfill_status + market_calendar).
+        private static final Set<String> ALL_SIX =
                 Set.of(
                         "stocks",
                         "stock_grades",
                         "short_sale_overseas",
                         "etf_metadata",
-                        "backfill_status");
+                        "backfill_status",
+                        "market_calendar");
 
         @Test
-        @DisplayName("AC-9.5 — TIER2_TABLES는 정확히 5개(기존 4개 + backfill_status)를 포함한다")
-        void tier2TablesContainsExactlyFiveExpected() {
-            // 회귀 가드: backfill_status 누락 또는 임의 테이블 추가를 빌드 단계에서 차단한다.
+        @DisplayName(
+                "AC-9.5 — TIER2_TABLES는 정확히 6개(기존 4개 + backfill_status + market_calendar)를 포함한다")
+        void tier2TablesContainsExactlySixExpected() {
+            // 회귀 가드: backfill_status/market_calendar 누락 또는 임의 테이블 추가를 빌드 단계에서 차단한다.
             assertThat(DbGrantVerifier.TIER2_TABLES)
                     .containsExactlyInAnyOrder(
                             "stocks",
                             "stock_grades",
                             "short_sale_overseas",
                             "etf_metadata",
-                            "backfill_status");
+                            "backfill_status",
+                            "market_calendar");
         }
 
         @Test
@@ -170,7 +175,12 @@ class DbGrantVerifierTest {
             // Arrange — backfill_status만 UPDATE 권한이 없는 상태 (root 수동 GRANT 누락 시나리오)
             Set<String> schemaPrivs = Set.of("SELECT", "INSERT");
             Set<String> tier2Tables =
-                    Set.of("stocks", "stock_grades", "short_sale_overseas", "etf_metadata");
+                    Set.of(
+                            "stocks",
+                            "stock_grades",
+                            "short_sale_overseas",
+                            "etf_metadata",
+                            "market_calendar");
 
             // Act & Assert — 침묵 무한루프 대신 기동 실패로 전환
             assertThatThrownBy(() -> verifier.verify(schemaPrivs, tier2Tables))
@@ -179,9 +189,27 @@ class DbGrantVerifierTest {
         }
 
         @Test
-        @DisplayName("5개 Tier-2 테이블 모두 존재하면 예외 없음")
-        void passes_when_all_five_tier2_tables_present() {
-            assertThatCode(() -> verifier.verify(Set.of("SELECT", "INSERT"), ALL_FIVE))
+        @DisplayName("market_calendar UPDATE 권한 누락 시 fail-fast(예외) + 테이블명 포함 (REQ-CAL-021)")
+        void failsFast_when_marketCalendar_update_missing() {
+            // Arrange — market_calendar만 UPDATE 권한이 없는 상태 (root 수동 GRANT 누락 시나리오)
+            Set<String> schemaPrivs = Set.of("SELECT", "INSERT");
+            Set<String> tier2Tables =
+                    Set.of(
+                            "stocks",
+                            "stock_grades",
+                            "short_sale_overseas",
+                            "etf_metadata",
+                            "backfill_status");
+
+            assertThatThrownBy(() -> verifier.verify(schemaPrivs, tier2Tables))
+                    .isInstanceOf(DbGrantMissingException.class)
+                    .hasMessageContaining("market_calendar");
+        }
+
+        @Test
+        @DisplayName("6개 Tier-2 테이블 모두 존재하면 예외 없음")
+        void passes_when_all_six_tier2_tables_present() {
+            assertThatCode(() -> verifier.verify(Set.of("SELECT", "INSERT"), ALL_SIX))
                     .doesNotThrowAnyException();
         }
     }

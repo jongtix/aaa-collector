@@ -29,6 +29,9 @@ public class DbGrantVerifier {
      * <p>{@code backfill_status}는 SPEC-COLLECTOR-BACKFILL-001(CR-01)에서 추가됐다. 시딩은 INSERT
      * IGNORE(Tier-1로 충분)지만 백필 진행점 전진은 {@code UPDATE}를 사용하므로 Tier-2다. 이 집합에서 누락하면 root 수동 GRANT가 빠져도
      * 기동 self-check가 통과(PASS)하고 진행점 UPDATE만 SQL 1142로 침묵 실패해 침묵 무한루프가 발생한다(REQ-BACKFILL-035a).
+     *
+     * <p>{@code market_calendar}는 SPEC-COLLECTOR-CALENDAR-001(REQ-CAL-020/-021)에서 추가됐다. 일일 갱신 배치가
+     * 우선순위 판정 후 기존 행을 in-place UPDATE하므로(REQ-CAL-004) Tier-2다.
      */
     static final Set<String> TIER2_TABLES =
             Set.of(
@@ -36,7 +39,8 @@ public class DbGrantVerifier {
                     "stock_grades",
                     "short_sale_overseas",
                     "etf_metadata",
-                    "backfill_status");
+                    "backfill_status",
+                    "market_calendar");
 
     private static final Set<String> REQUIRED_SCHEMA_PRIVS = Set.of("SELECT", "INSERT");
 
