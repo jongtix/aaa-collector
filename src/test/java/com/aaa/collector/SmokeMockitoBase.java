@@ -21,6 +21,7 @@ import com.aaa.collector.macro.fred.FredCollectionService;
 import com.aaa.collector.market.MarketIndicatorRepository;
 import com.aaa.collector.market.backfill.MarketIndicatorBackfillOrchestrator;
 import com.aaa.collector.market.backfill.MarketIndicatorBackfillScheduler;
+import com.aaa.collector.market.calendar.MarketCalendarRepository;
 import com.aaa.collector.market.indicator.MarketIndicatorLastSuccessRepository;
 import com.aaa.collector.market.indicator.MarketIndicatorMetrics;
 import com.aaa.collector.market.indicator.YahooFinanceClient;
@@ -172,7 +173,9 @@ import org.springframework.transaction.support.TransactionTemplate;
             // BackfillDensityMetricsWarmStarter가 ApplicationRunner라 컨텍스트 기동 시 자동 실행되며 find*()를
             // 호출하므로, 위 리포지토리들과 동일 이유로 리포지토리 자체를 모킹해야 한다(smoke 회귀 방지). mock은 기본적으로
             // find*()에서 Optional.empty()를 반환 — 게이지를 0(사전 등록값) 그대로 두고 seed를 생략한다.
-            BackfillDensityRepository.class
+            BackfillDensityRepository.class,
+            // SPEC-COLLECTOR-CALENDAR-001: market_calendar 신규 JpaRepository 빈 모킹 (smoke 회귀 방지).
+            MarketCalendarRepository.class
         })
 class SmokeMockitoBase {
 
