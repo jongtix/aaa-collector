@@ -874,4 +874,67 @@ class UsMarketSessionGateTest {
             assertThat(gate.isOpenDayStrict(weekday)).contains(true);
         }
     }
+
+    @Nested
+    @DisplayName(
+            "게이트 범위(현재+다음 연도) 경계 — 연도 경계 밖 특별 휴장 미인식 (SPEC-COLLECTOR-CALENDAR-001"
+                    + " REQ-CAL-037, TASK-011, AC-18)")
+    class GateRangeBoundary {
+
+        @Test
+        @DisplayName("재작년(범위 밖) 특별 휴장(MANUAL)은 init() 이후에도 인식되지 않는다 — isOpenDay는 평일 기본값(true) 반환")
+        void specialHolidayOutsideRange_notRecognized_afterInit() {
+            // Arrange — 2026년 기준 게이트 범위는 [2026, 2027]. 2024년(재작년) 평일에 MANUAL 특별 휴장을 시딩해도
+            // init()의 조회 범위 밖이라 반영되지 않아야 한다.
+            Clock clock = Clock.fixed(MON_TRADING_INSTANT, NEW_YORK);
+            LocalDate outsideRangeWeekday = LocalDate.of(2024, 9, 11); // 2024-09-11(수), 평일
+            MarketCalendarRepository repository = mock(MarketCalendarRepository.class);
+            when(repository.findByCalendarCodeAndCalDateBetween(
+                            eq(CalendarCode.NYSE),
+                            eq(LocalDate.of(2026, 1, 1)),
+                            eq(LocalDate.of(2027, 12, 31))))
+                    .thenReturn(List.of()); // 범위 쿼리는 2024년 행을 포함하지 않음(리포지토리 계약상 당연히 빈 결과)
+            when(repository.findByCalendarCodeAndCalDate(CalendarCode.NYSE, outsideRangeWeekday))
+                    .thenReturn(
+                            Optional.of(
+                                    MarketCalendar.builder()
+                                            .calendarCode(CalendarCode.NYSE)
+                                            .calDate(outsideRangeWeekday)
+                                            .open(false)
+                                            .source(CalendarSource.MANUAL)
+                                            .build()));
+            UsMarketSessionGate gate =
+                    new UsMarketSessionGate(
+                            new SimpleMeterRegistry(),
+                            new KisMarketSchedule(clock),
+                            clock,
+                            new UsMarketProperties(),
+                            repository);
+
+            // Act
+            gate.init();
+
+            // Assert — isOpenDay는 게이트 캐시(빈 Set, fail-open)만 참조하므로 특별 휴장을 인식하지 못하고 true를 반환
+            assertThat(gate.isOpenDay(outsideRangeWeekday)).isTrue();
+            // isOpenDayStrict는 리포지토리를 직접 조회하므로 정확한 값을 반환한다(대조, AC-20)
+            assertThat(gate.isOpenDayStrict(outsideRangeWeekday)).contains(false);
+        }
+
+        @Test
+        @DisplayName("재작년(범위 밖)의 토·일은 요일 순수 계산이라 항상 정확하다 — 테이블 백엔드 전환과 무관")
+        void weekendOutsideRange_alwaysAccurate() {
+            Clock clock = Clock.fixed(MON_TRADING_INSTANT, NEW_YORK);
+            LocalDate outsideRangeSaturday = LocalDate.of(2024, 9, 14); // 2024-09-14(토)
+            UsMarketSessionGate gate =
+                    new UsMarketSessionGate(
+                            new SimpleMeterRegistry(),
+                            new KisMarketSchedule(clock),
+                            clock,
+                            new UsMarketProperties(),
+                            nyseRepositoryStub());
+            gate.init();
+
+            assertThat(gate.isOpenDay(outsideRangeSaturday)).isFalse();
+        }
+    }
 }
