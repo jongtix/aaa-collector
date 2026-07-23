@@ -23,6 +23,7 @@ import com.aaa.collector.stock.enums.AssetType;
 import com.aaa.collector.stock.enums.Market;
 import com.aaa.collector.stock.rights.OverseasSplitCollectionService;
 import com.aaa.collector.stock.supply.CreditBalanceCollectionService;
+import com.aaa.collector.stock.supply.CreditBalanceFetch;
 import com.aaa.collector.stock.supply.InvestorTrendCollectionService;
 import com.aaa.collector.stock.supply.InvestorTrendFetch;
 import com.aaa.collector.stock.supply.ShortSaleCollectionService;
@@ -183,5 +184,108 @@ class GroupBProbeToWalkBackIntegrationTest {
 
         assertThat(status.getLastRowCount()).isNotNull().isPositive();
         assertThat(status.getLastCollectedDate()).isEqualTo(realOldest);
+    }
+
+    @Test
+    @DisplayName(
+            "AC-6: credit_balance 전용 — listedDate 부재 + 실데이터는 2007-07-12부터만 존재하는 종목이 다회(약 100회+)"
+                    + " 빈 probe 윈도우를 거쳐 GROUP_B 전역 플로어(1985-01-04) 도달 전에 실데이터 구간으로 전환됨(단일 전역 플로어"
+                    + " 트레이드오프 회귀 방지, §5.5)")
+    @SuppressWarnings(
+            "PMD.UnitTestContainsTooManyAsserts") // 반복 루프 매 회차 불변식(null 유지·IN_PROGRESS 유지·
+    // floor 미도달·과거 전진) + 종료 후 전환 검증(a)(d)을 한 테스트에서 수행 — SPEC-COLLECTOR-BACKFILL-013 AC-6
+    void creditBalance_manyEmptyProbeWindows_transitionsToRealDataBeforeGlobalFloor()
+            throws InterruptedException {
+        // Arrange — listedDate 부재(전역 플로어 1985-01-04 적용 대상), delistedAt도 부재(WLSYNC 미sync 시나리오,
+        // AC-7과 동일 전제). 실데이터는 2007-07-12까지만 존재(그 이전 구간은 진짜로 데이터 없음) — probe anchor가
+        // 이 날짜보다 미래(이후)인 동안은 0행, 이 날짜 이하로 내려가면 실데이터를 발견한다.
+        LocalDate dataStart = LocalDate.of(2007, 7, 12);
+        LocalDate globalFloor =
+                LocalDate.of(1985, 1, 4); // GROUP_B_GLOBAL_FLOOR 값 미러링(값 자체는 비공개 상수)
+        Stock stock =
+                Stock.builder()
+                        .symbol("091810")
+                        .nameKo("테스트신용잔고종목")
+                        .market(Market.KOSPI)
+                        .assetType(AssetType.STOCK)
+                        .active(false)
+                        .listedDate(null)
+                        .delistedAt(null)
+                        .build();
+
+        // probe 커서가 이미 실데이터 구간보다 한참 미래에서 재개 중인 상태(REQ-BACKFILL-165 커서 재개 분기,
+        // last_collected_date 있음·last_row_count 아직 null)를 시뮬레이션 — 182줄 언롤 대신 Answer 기반 loop로
+        // "anchor > dataStart면 0행, 그 이하면 실데이터" 규칙만 표현한다.
+        LocalDate probeResumeAnchor = LocalDate.of(2025, 1, 1);
+        BackfillStatus status =
+                BackfillStatus.builder()
+                        .targetType("STOCK")
+                        .targetCode("091810")
+                        .dataTable("credit_balance")
+                        .status(BackfillStatusType.IN_PROGRESS)
+                        .lastCollectedDate(probeResumeAnchor)
+                        .lastRowCount(null)
+                        .staleCount(0)
+                        .build();
+        when(backfillStatusRepository.findById(any())).thenReturn(Optional.of(status));
+
+        when(creditBalanceService.fetchWindow(any(), eq(stock), eq(session)))
+                .thenAnswer(
+                        invocation -> {
+                            BackfillStatus resolved = invocation.getArgument(0);
+                            LocalDate anchor = resolved.getLastCollectedDate();
+                            return anchor.isAfter(dataStart)
+                                    ? new CreditBalanceFetch(List.of(), null, 0)
+                                    : new CreditBalanceFetch(List.of(), dataStart, 12);
+                        });
+        when(creditBalanceService.persistWindow(eq(status), eq(stock), any()))
+                .thenAnswer(
+                        invocation -> {
+                            CreditBalanceFetch fetch = invocation.getArgument(2);
+                            return fetch.rowCount() == 0
+                                    ? BackfillWindowResult.EMPTY
+                                    : new BackfillWindowResult(
+                                            fetch.oldestTradeDate(), fetch.rowCount());
+                        });
+
+        // Act — 실데이터를 발견할 때까지 loop로 윈도우를 반복 실행(안전상한 300회, 예상 반복 수는 훨씬 적음)
+        int windows = 0;
+        int safetyLimit = 300;
+        while (status.getLastRowCount() == null && windows < safetyLimit) {
+            LocalDate anchorBefore = status.getLastCollectedDate();
+
+            // (b) 실데이터 발견 전까지 last_row_count는 계속 null 유지
+            assertThat(status.getLastRowCount()).as("실데이터 발견 전 last_row_count는 null 유지").isNull();
+            // status는 floor 도달 전까지 IN_PROGRESS 유지(COMPLETED로 오종료되지 않음)
+            assertThat(status.getStatus()).isEqualTo(BackfillStatusType.IN_PROGRESS);
+            // (d) floor(1985-01-04)에 도달하기 전에 실데이터를 찾는다는 전제 — 루프 중 매 anchor가 floor보다 미래
+            assertThat(anchorBefore).as("floor 도달 전 상태").isAfter(globalFloor);
+
+            executeWindow(status, stock);
+            windows++;
+
+            if (status.getLastRowCount() == null) {
+                // (c) last_collected_date가 매 회 과거로 전진
+                assertThat(status.getLastCollectedDate())
+                        .as("probe 커서가 매 윈도우 과거로 전진")
+                        .isBefore(anchorBefore);
+            }
+        }
+
+        // Assert — 안전 상한이 아니라 실데이터 발견으로 loop가 정상 종료됐음을 확인
+        assertThat(windows)
+                .as("다회(수십~백회대) 반복 후 종료 — 안전 상한 도달로 종료된 것이 아님")
+                .isGreaterThan(1)
+                .isLessThan(safetyLimit);
+        // (a) 실데이터 도달 시 last_row_count가 non-null로 전환
+        assertThat(status.getLastRowCount())
+                .as("실데이터 발견 후 last_row_count 비-NULL 전환")
+                .isNotNull()
+                .isPositive();
+        // 실데이터 구간(dataStart) 도달 확인 — floor(1985-01-04)보다 훨씬 이후 지점
+        assertThat(status.getLastCollectedDate())
+                .as("실데이터 발견 지점이 floor보다 미래")
+                .isEqualTo(dataStart)
+                .isAfter(globalFloor);
     }
 }

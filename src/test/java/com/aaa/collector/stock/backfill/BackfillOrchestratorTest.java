@@ -1,5 +1,6 @@
 package com.aaa.collector.stock.backfill;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyString;
@@ -292,6 +293,49 @@ class BackfillOrchestratorTest {
             // Assert — 정확히 3회(하드 캡 도달)
             verify(windowExecutor, times(3)).fetchWindow(any(), eq(stock), eq(session));
             verify(windowExecutor, times(3)).persistWindow(any(), eq(stock), any());
+        }
+
+        @Test
+        @DisplayName(
+                "AC-6(SPEC-COLLECTOR-BACKFILL-013) — GROUP_B(credit_balance) probe-continue 반복 중 floor"
+                        + " 도달 전 공통 하드 캡(maxWindowsPerTarget=3) 먼저 도달 시 IN_PROGRESS 유지, COMPLETED 오종료 없음")
+        void ac6_groupBProbeContinue_hardCapReachedBeforeFloor_staysInProgress()
+                throws InterruptedException {
+            // Arrange — maxWindowsPerTarget=3. GROUP_B(credit_balance)의 첫 probe 구간(0행, floor 미도달)이
+            // persistLegacy의 probe-continue 분기(REQ-BACKFILL-164/-167)로 매 윈도우 IN_PROGRESS·anchor 전진만
+            // 반환하는 상황을 재현한다 — floor(listedDate 부재 시 GROUP_B 전역 플로어 1985-01-04)에는 한참 못 미친
+            // anchor 값들이라, 도달 전에 공통 하드 캡(REQ-BACKFILL-053a)이 먼저 루프를 끊어야 한다.
+            when(properties.getMaxWindowsPerTarget()).thenReturn(3);
+
+            Stock stock = buildDomesticStock("005930");
+            BackfillStatus initial = buildPendingStatus("005930", "credit_balance");
+            BackfillStatus probe1 =
+                    buildInProgressStatus("005930", "credit_balance", LocalDate.of(2020, 6, 1));
+            BackfillStatus probe2 =
+                    buildInProgressStatus("005930", "credit_balance", LocalDate.of(2020, 4, 17));
+            BackfillStatus probe3 =
+                    buildInProgressStatus("005930", "credit_balance", LocalDate.of(2020, 3, 3));
+
+            when(stockRepository.findAllActiveTradable()).thenReturn(List.of(stock));
+            when(stockRepository.findAllActiveOverseasTradable()).thenReturn(List.of());
+            when(backfillStatusRepository.findByStatusInAndTargetTypeOrderById(any(), anyString()))
+                    .thenReturn(List.of(initial));
+            when(backfillStatusRepository.findById(any()))
+                    .thenReturn(Optional.of(probe1))
+                    .thenReturn(Optional.of(probe2))
+                    .thenReturn(Optional.of(probe3));
+
+            // Act
+            orchestrator.run();
+
+            // Assert — 정확히 3회(하드 캡 도달)에서 중단되고, 마지막 조회 status(probe3)는 COMPLETED로 오종료되지
+            // 않고 IN_PROGRESS를 유지한다(probe-continue는 completed()를 반환하지 않으므로 오케스트레이터가 별도로
+            // COMPLETED 전이를 만들지 않음 — 회귀 방지).
+            verify(windowExecutor, times(3)).fetchWindow(any(), eq(stock), eq(session));
+            verify(windowExecutor, times(3)).persistWindow(any(), eq(stock), any());
+            assertThat(probe3.getStatus())
+                    .as("floor 도달 전 하드 캡 도달 — COMPLETED로 오종료되지 않고 IN_PROGRESS 유지")
+                    .isEqualTo(BackfillStatusType.IN_PROGRESS);
         }
 
         @Test
