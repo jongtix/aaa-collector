@@ -1,14 +1,24 @@
 package com.aaa.collector.market.session;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 import com.aaa.collector.kis.websocket.KisMarketSchedule;
+import com.aaa.collector.market.calendar.CalendarCode;
+import com.aaa.collector.market.calendar.CalendarSource;
+import com.aaa.collector.market.calendar.MarketCalendar;
+import com.aaa.collector.market.calendar.MarketCalendarRepository;
+import com.aaa.collector.market.calendar.NyseHolidayAlgorithm;
 import io.micrometer.core.instrument.Gauge;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.ZoneId;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
 import org.junit.jupiter.api.DisplayName;
@@ -17,6 +27,40 @@ import org.junit.jupiter.api.Test;
 
 @DisplayName("UsMarketSessionGate — 미국 시장 세션 게이트 (SPEC-COLLECTOR-USMKT-001)")
 class UsMarketSessionGateTest {
+
+    /**
+     * {@code market_calendar}(NYSE) 리포지토리 스텁 — TASK-008 백엔드 교체 이후 테스트에서 {@link
+     * UsMarketSessionGate#init()}이 조회할 데이터 소스. 요청 범위와 겹치는 연도의 {@link
+     * NyseHolidayAlgorithm#computeObservedHolidays(int)} 결과만 {@code is_open=false} 행으로 반환한다 — 기존
+     * 알고리즘 직접 계산과 동일한 결과 집합을 재현해, 이 테스트 파일의 기존 단언(예: holiday_count>=20)이 무수정으로 성립한다(D10, 배포 전후 값
+     * 동일성).
+     */
+    private static MarketCalendarRepository nyseRepositoryStub() {
+        MarketCalendarRepository repo = mock(MarketCalendarRepository.class);
+        when(repo.findByCalendarCodeAndCalDateBetween(eq(CalendarCode.NYSE), any(), any()))
+                .thenAnswer(
+                        invocation -> {
+                            LocalDate start = invocation.getArgument(1);
+                            LocalDate end = invocation.getArgument(2);
+                            List<MarketCalendar> rows = new ArrayList<>();
+                            for (int y = start.getYear(); y <= end.getYear(); y++) {
+                                for (LocalDate d :
+                                        NyseHolidayAlgorithm.computeObservedHolidays(y)) {
+                                    if (!d.isBefore(start) && !d.isAfter(end)) {
+                                        rows.add(
+                                                MarketCalendar.builder()
+                                                        .calendarCode(CalendarCode.NYSE)
+                                                        .calDate(d)
+                                                        .open(false)
+                                                        .source(CalendarSource.ALGORITHM)
+                                                        .build());
+                                    }
+                                }
+                            }
+                            return rows;
+                        });
+        return repo;
+    }
 
     private static final ZoneId NEW_YORK = ZoneId.of("America/New_York");
 
@@ -35,7 +79,8 @@ class UsMarketSessionGateTest {
         UsMarketProperties props = new UsMarketProperties();
         props.setExtraHolidays(extraHolidays);
         UsMarketSessionGate gate =
-                new UsMarketSessionGate(new SimpleMeterRegistry(), schedule, clock, props);
+                new UsMarketSessionGate(
+                        new SimpleMeterRegistry(), schedule, clock, props, nyseRepositoryStub());
         gate.init();
         return gate;
     }
@@ -101,7 +146,12 @@ class UsMarketSessionGateTest {
             UsMarketProperties props = new UsMarketProperties();
             // init() 미호출 → observedHolidays = Set.of()
             UsMarketSessionGate gate =
-                    new UsMarketSessionGate(new SimpleMeterRegistry(), schedule, clock, props);
+                    new UsMarketSessionGate(
+                            new SimpleMeterRegistry(),
+                            schedule,
+                            clock,
+                            props,
+                            nyseRepositoryStub());
 
             // 2026-07-03(금) = observed Independence Day 이지만, fail-open이므로 true
             assertThat(gate.isOpenDay(LocalDate.of(2026, 7, 3))).isTrue();
@@ -189,7 +239,12 @@ class UsMarketSessionGateTest {
             UsMarketProperties props = new UsMarketProperties();
             props.setEarlyCloseDays(List.of(BLACK_FRIDAY_2026));
             UsMarketSessionGate gate =
-                    new UsMarketSessionGate(new SimpleMeterRegistry(), schedule, clock, props);
+                    new UsMarketSessionGate(
+                            new SimpleMeterRegistry(),
+                            schedule,
+                            clock,
+                            props,
+                            nyseRepositoryStub());
             gate.init();
             return gate;
         }
@@ -223,7 +278,11 @@ class UsMarketSessionGateTest {
             KisMarketSchedule schedule = new KisMarketSchedule(clock);
             UsMarketSessionGate gate =
                     new UsMarketSessionGate(
-                            new SimpleMeterRegistry(), schedule, clock, new UsMarketProperties());
+                            new SimpleMeterRegistry(),
+                            schedule,
+                            clock,
+                            new UsMarketProperties(),
+                            nyseRepositoryStub());
             gate.init();
 
             assertThat(gate.isMarketOpenNow()).isTrue();
@@ -248,7 +307,8 @@ class UsMarketSessionGateTest {
                             new SimpleMeterRegistry(),
                             new KisMarketSchedule(clock),
                             clock,
-                            new UsMarketProperties());
+                            new UsMarketProperties(),
+                            nyseRepositoryStub());
 
             gate.init();
 
@@ -283,7 +343,8 @@ class UsMarketSessionGateTest {
                             new SimpleMeterRegistry(),
                             new KisMarketSchedule(clock),
                             clock,
-                            new UsMarketProperties());
+                            new UsMarketProperties(),
+                            nyseRepositoryStub());
 
             assertThat(gate.computeObservedHolidays(2025))
                     .contains(LocalDate.of(2025, 4, 18)); // Good Friday 2025
@@ -299,7 +360,8 @@ class UsMarketSessionGateTest {
                             new SimpleMeterRegistry(),
                             new KisMarketSchedule(clock),
                             clock,
-                            new UsMarketProperties());
+                            new UsMarketProperties(),
+                            nyseRepositoryStub());
 
             // Jul 4, 2026 is Saturday → observed Fri Jul 3, 2026
             Set<LocalDate> holidays2026 = gate.computeObservedHolidays(2026);
@@ -317,7 +379,8 @@ class UsMarketSessionGateTest {
                             new SimpleMeterRegistry(),
                             new KisMarketSchedule(clock),
                             clock,
-                            new UsMarketProperties());
+                            new UsMarketProperties(),
+                            nyseRepositoryStub());
 
             // Christmas 2022: Dec 25, 2022 = Sunday → observed Mon Dec 26, 2022
             Set<LocalDate> holidays2022 = gate.computeObservedHolidays(2022);
@@ -378,7 +441,8 @@ class UsMarketSessionGateTest {
                             registry,
                             new KisMarketSchedule(clock),
                             clock,
-                            new UsMarketProperties());
+                            new UsMarketProperties(),
+                            nyseRepositoryStub());
             gate.init();
 
             assertThat(registry.get(UsMarketSessionGate.US_MARKET_OPEN_NAME).gauge()).isNotNull();
@@ -396,7 +460,8 @@ class UsMarketSessionGateTest {
                             registry,
                             new KisMarketSchedule(clock),
                             clock,
-                            new UsMarketProperties());
+                            new UsMarketProperties(),
+                            nyseRepositoryStub());
             gate.init();
 
             Gauge g = registry.get(UsMarketSessionGate.US_MARKET_OPEN_NAME).gauge();
@@ -413,7 +478,8 @@ class UsMarketSessionGateTest {
                             registry,
                             new KisMarketSchedule(clock),
                             clock,
-                            new UsMarketProperties());
+                            new UsMarketProperties(),
+                            nyseRepositoryStub());
             gate.init();
 
             Gauge g = registry.get(UsMarketSessionGate.US_MARKET_HOLIDAY_COUNT_NAME).gauge();
@@ -438,7 +504,11 @@ class UsMarketSessionGateTest {
             Clock clock = Clock.fixed(MON_TRADING_INSTANT, NEW_YORK);
             SimpleMeterRegistry registry = new SimpleMeterRegistry();
             new UsMarketSessionGate(
-                    registry, new KisMarketSchedule(clock), clock, new UsMarketProperties());
+                    registry,
+                    new KisMarketSchedule(clock),
+                    clock,
+                    new UsMarketProperties(),
+                    nyseRepositoryStub());
 
             Gauge gauge = registry.find(UsMarketSessionGate.EXPECTED_WATERMARK_NAME).gauge();
             assertThat(gauge).isNull();
@@ -454,7 +524,8 @@ class UsMarketSessionGateTest {
                             registry,
                             new KisMarketSchedule(clock),
                             clock,
-                            new UsMarketProperties());
+                            new UsMarketProperties(),
+                            nyseRepositoryStub());
 
             gate.init();
 
@@ -474,7 +545,8 @@ class UsMarketSessionGateTest {
                             registry,
                             new KisMarketSchedule(clock),
                             clock,
-                            new UsMarketProperties());
+                            new UsMarketProperties(),
+                            nyseRepositoryStub());
             gate.init();
 
             Gauge gauge = registry.get(UsMarketSessionGate.EXPECTED_WATERMARK_NAME).gauge();
@@ -492,7 +564,8 @@ class UsMarketSessionGateTest {
                             registry,
                             new KisMarketSchedule(clock),
                             clock,
-                            new UsMarketProperties());
+                            new UsMarketProperties(),
+                            nyseRepositoryStub());
             gate.init();
 
             Gauge gauge = registry.get(UsMarketSessionGate.EXPECTED_WATERMARK_NAME).gauge();
@@ -564,7 +637,11 @@ class UsMarketSessionGateTest {
             KisMarketSchedule schedule = new KisMarketSchedule(clock);
             UsMarketSessionGate gate =
                     new UsMarketSessionGate(
-                            new SimpleMeterRegistry(), schedule, clock, new UsMarketProperties());
+                            new SimpleMeterRegistry(),
+                            schedule,
+                            clock,
+                            new UsMarketProperties(),
+                            nyseRepositoryStub());
             // init() 미호출 → holiday_count=0 → computeExpectedTradeDate()=null
 
             assertThat(gate.computePriorTradeDate()).isNull();
@@ -587,7 +664,11 @@ class UsMarketSessionGateTest {
             Clock clock = Clock.fixed(MON_TRADING_INSTANT, NEW_YORK);
             SimpleMeterRegistry registry = new SimpleMeterRegistry();
             new UsMarketSessionGate(
-                    registry, new KisMarketSchedule(clock), clock, new UsMarketProperties());
+                    registry,
+                    new KisMarketSchedule(clock),
+                    clock,
+                    new UsMarketProperties(),
+                    nyseRepositoryStub());
 
             Gauge gauge = registry.find(UsMarketSessionGate.EXPECTED_WATERMARK_DAILY_NAME).gauge();
             assertThat(gauge).isNull();
@@ -603,7 +684,8 @@ class UsMarketSessionGateTest {
                             registry,
                             new KisMarketSchedule(clock),
                             clock,
-                            new UsMarketProperties());
+                            new UsMarketProperties(),
+                            nyseRepositoryStub());
 
             gate.init();
 
@@ -621,7 +703,8 @@ class UsMarketSessionGateTest {
                             registry,
                             new KisMarketSchedule(clock),
                             clock,
-                            new UsMarketProperties());
+                            new UsMarketProperties(),
+                            nyseRepositoryStub());
             gate.init();
 
             Gauge gauge = registry.get(UsMarketSessionGate.EXPECTED_WATERMARK_DAILY_NAME).gauge();
@@ -635,7 +718,11 @@ class UsMarketSessionGateTest {
             Clock clock = Clock.fixed(MON_TRADING_INSTANT, NEW_YORK);
             SimpleMeterRegistry registry = new SimpleMeterRegistry();
             new UsMarketSessionGate(
-                    registry, new KisMarketSchedule(clock), clock, new UsMarketProperties());
+                    registry,
+                    new KisMarketSchedule(clock),
+                    clock,
+                    new UsMarketProperties(),
+                    nyseRepositoryStub());
             // init() 미호출 → holiday_count=0 < 20
 
             Gauge gauge = registry.find(UsMarketSessionGate.EXPECTED_WATERMARK_DAILY_NAME).gauge();
@@ -662,7 +749,8 @@ class UsMarketSessionGateTest {
                             registry,
                             new KisMarketSchedule(clock),
                             clock,
-                            new UsMarketProperties());
+                            new UsMarketProperties(),
+                            nyseRepositoryStub());
             gate.init();
 
             // 두 게이지 이름 모두 registry에서 각각 정확히 1개씩만 조회된다 — many-to-one 위반 없음
@@ -683,7 +771,8 @@ class UsMarketSessionGateTest {
                             registry,
                             new KisMarketSchedule(clock),
                             clock,
-                            new UsMarketProperties());
+                            new UsMarketProperties(),
+                            nyseRepositoryStub());
             gate.init();
 
             Gauge sharedGauge = registry.get(UsMarketSessionGate.EXPECTED_WATERMARK_NAME).gauge();

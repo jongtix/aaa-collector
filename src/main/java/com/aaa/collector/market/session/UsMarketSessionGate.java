@@ -2,6 +2,9 @@ package com.aaa.collector.market.session;
 
 import com.aaa.collector.common.gate.UsMarketOpenGate;
 import com.aaa.collector.kis.websocket.KisMarketSchedule;
+import com.aaa.collector.market.calendar.CalendarCode;
+import com.aaa.collector.market.calendar.MarketCalendar;
+import com.aaa.collector.market.calendar.MarketCalendarRepository;
 import com.aaa.collector.market.calendar.NyseHolidayAlgorithm;
 import io.micrometer.core.instrument.Gauge;
 import io.micrometer.core.instrument.MeterRegistry;
@@ -30,10 +33,13 @@ import org.springframework.stereotype.Component;
  *   <li>{@value #US_MARKET_HOLIDAY_COUNT_NAME} — 로드된 NYSE 휴장일 수
  * </ul>
  *
- * <h3>휴장일 알고리즘</h3>
+ * <h3>휴장일 백엔드 (SPEC-COLLECTOR-CALENDAR-001 TASK-008, REQ-CAL-018/-030/-031/-037)</h3>
  *
- * <p>NYSE 표준 10개 휴장일을 Meeus/Jones/Butcher 등 결정론적 알고리즘으로 계산한다(REQ-001~005). 외부 API 호출 없음. 토요일 → 직전
- * 금요일, 일요일 → 다음 월요일로 준수일(observed)을 산출한다(REQ-004/005).
+ * <p>{@code market_calendar}(NYSE) 테이블에서 게이트 유효 범위(REQ-CAL-037 — <b>현재 연도 + 다음 연도</b>, 롤링 일수 개념이
+ * 아님)를 재조회하여 관측 휴장일 Set을 구성한다. 이 범위는 기존 {@link #init()}이 알고리즘으로 직접 계산해온 것과 정확히 같다 — 실제 계산(NYSE 표준
+ * 10개 휴장일, Meeus/Jones/Butcher 등 결정론적 알고리즘, 토요일 → 직전 금요일·일요일 → 다음 월요일 관측일 산출, REQ-001~005)은 {@link
+ * NyseHolidayAlgorithm}으로 추출됐고, 그 결과를 채우는 것은 일일 갱신 배치({@code MarketCalendarRefreshScheduler},
+ * TASK-006)의 책임이다. 요일(토·일) 기반 주말 판정은 이 범위와 무관하게 항상 순수 계산으로 정확하다(D10 — 테이블 백엔드 전환의 영향을 받지 않음).
  *
  * <h3>fail-open 정책</h3>
  *
@@ -84,6 +90,7 @@ public class UsMarketSessionGate implements UsMarketOpenGate {
     private final MeterRegistry registry;
     private final KisMarketSchedule marketSchedule;
     private final Clock clock;
+    private final MarketCalendarRepository marketCalendarRepository;
 
     /** 오버라이드 날짜 목록 — 불변 복사본으로 보관 (EI_EXPOSE_REP2 방지). */
     private final List<LocalDate> extraHolidays;
@@ -126,15 +133,18 @@ public class UsMarketSessionGate implements UsMarketOpenGate {
      * @param marketSchedule ET 장 시간 판정 컴포넌트
      * @param clock 시계 (테스트 고정 시계 주입용)
      * @param properties 오버라이드 설정
+     * @param marketCalendarRepository {@code market_calendar}(NYSE) 조회용 리포지토리(TASK-008)
      */
     public UsMarketSessionGate(
             MeterRegistry registry,
             KisMarketSchedule marketSchedule,
             Clock clock,
-            UsMarketProperties properties) {
+            UsMarketProperties properties,
+            MarketCalendarRepository marketCalendarRepository) {
         this.registry = registry;
         this.marketSchedule = marketSchedule;
         this.clock = clock;
+        this.marketCalendarRepository = marketCalendarRepository;
         // 불변 복사본으로 보관 — EI_EXPOSE_REP2 방지 (SpotBugs)
         this.extraHolidays = List.copyOf(properties.getExtraHolidays());
         this.earlyCloseDays = Set.copyOf(properties.getEarlyCloseDays());
@@ -149,16 +159,32 @@ public class UsMarketSessionGate implements UsMarketOpenGate {
     }
 
     /**
-     * 현재+익년도 NYSE 휴장일을 계산하고 오버라이드를 합산하여 불변 Set으로 저장한다(REQ-009).
+     * {@code market_calendar}(NYSE)에서 현재+익년도 범위(REQ-CAL-037)를 조회하여 관측 휴장일 Set을 구성하고, 오버라이드를 합산하여 불변
+     * Set으로 저장한다(REQ-009, TASK-008).
+     *
+     * <p>조회 결과 중 {@code is_open=false}인 행만 반영하되, 주말(토·일)은 제외한다 — 일일 갱신 배치({@code
+     * MarketCalendarRefreshScheduler})가 주말도 {@code is_open=false}로 채우므로(순수 요일 계산이라 별도 판정 불필요), 이
+     * Set은 "NYSE 개별 휴장일"만 담는다는 기존 의미론(REQ-USMKT-010 게이지 이름 그대로)을 그대로 유지한다.
      *
      * <p>package-private: 단위 테스트에서 직접 호출 가능.
      */
     @PostConstruct
     void init() {
         int year = ZonedDateTime.now(clock).withZoneSameInstant(NEW_YORK).getYear();
+        LocalDate rangeStart = LocalDate.of(year, 1, 1);
+        LocalDate rangeEnd = LocalDate.of(year + 1, 12, 31);
+        List<MarketCalendar> rows =
+                marketCalendarRepository.findByCalendarCodeAndCalDateBetween(
+                        CalendarCode.NYSE, rangeStart, rangeEnd);
         Set<LocalDate> holidays = new HashSet<>();
-        holidays.addAll(computeObservedHolidays(year));
-        holidays.addAll(computeObservedHolidays(year + 1));
+        for (MarketCalendar row : rows) {
+            LocalDate date = row.getCalDate();
+            DayOfWeek dow = date.getDayOfWeek();
+            boolean weekend = dow == DayOfWeek.SATURDAY || dow == DayOfWeek.SUNDAY;
+            if (!row.isOpen() && !weekend) {
+                holidays.add(date);
+            }
+        }
         holidays.addAll(extraHolidays);
         observedHolidaysRef.set(Set.copyOf(holidays));
         syncExpectedWatermarkRegistration();
