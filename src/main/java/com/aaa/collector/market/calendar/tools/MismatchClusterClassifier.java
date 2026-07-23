@@ -98,6 +98,7 @@ public final class MismatchClusterClassifier {
         return count >= CLUSTER_THRESHOLD ? Classification.CLUSTERED : Classification.ISOLATED;
     }
 
+    @SuppressWarnings("PMD.UseConcurrentHashMap") // 단일 스레드 집계 전용, 공유 없음
     private static Map<GroupKey, Integer> countByGroup(List<Mismatch> mismatches) {
         Map<GroupKey, Integer> counts = new HashMap<>();
         for (Mismatch mismatch : mismatches) {

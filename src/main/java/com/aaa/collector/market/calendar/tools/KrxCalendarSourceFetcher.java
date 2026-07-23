@@ -38,6 +38,7 @@ class KrxCalendarSourceFetcher {
      * @param seedEnd 조회 상한(포함)
      * @return 날짜 → 개장 여부 맵(응답 실패 지점까지만 채워짐)
      */
+    @SuppressWarnings("PMD.UseConcurrentHashMap") // 단일 스레드 순차 체이닝 전용, 공유 없음
     Map<LocalDate, Boolean> fetch(LocalDate seedStart, LocalDate seedEnd) {
         Map<LocalDate, Boolean> source = new LinkedHashMap<>();
         LocalDate baseDate = seedStart;

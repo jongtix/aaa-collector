@@ -62,6 +62,10 @@ class MarketCalendarSeedService {
      *
      * @param outputPath 산출 SQL 파일 절대경로(레포 밖, REQ-CAL-048)
      */
+    @SuppressWarnings({
+        "PMD.UseConcurrentHashMap", // 단일 스레드 시딩 절차 전용, 공유 없음
+        "PMD.AvoidInstantiatingObjectsInLoops" // extraHolidays 날짜별 Row 1개는 구조적으로 불가피
+    })
     void seed(Path outputPath) throws IOException {
         LocalDate today = LocalDate.now(clock);
         LocalDate seedEnd = today.plusDays(FORWARD_DAYS);
@@ -112,6 +116,7 @@ class MarketCalendarSeedService {
     }
 
     /** NYSE는 외부 호출 없이 {@link NyseHolidayAlgorithm}으로 전 범위를 순수 계산한다. */
+    @SuppressWarnings("PMD.UseConcurrentHashMap") // 단일 스레드 빌드 전용, 공유 없음
     private Map<LocalDate, Boolean> buildNyseSourceMap(LocalDate seedEnd) {
         Map<LocalDate, Boolean> source = new LinkedHashMap<>();
         for (LocalDate date = SEED_START; !date.isAfter(seedEnd); date = date.plusDays(1)) {
@@ -138,6 +143,7 @@ class MarketCalendarSeedService {
      * @param sourceLabel 불일치 없는 날짜에 부여할 원본 source 라벨
      * @param mismatchSink 발견된 불일치를 누적할 목록(호출자가 그룹 요약 로그 출력에 재사용)
      */
+    @SuppressWarnings("PMD.UseConcurrentHashMap") // 단일 스레드 대사 전용, 공유 없음
     private List<Row> resolveMarket(
             CalendarCode calendarCode,
             Map<LocalDate, Boolean> sourceByDate,
