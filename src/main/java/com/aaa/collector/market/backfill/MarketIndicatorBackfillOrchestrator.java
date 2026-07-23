@@ -7,6 +7,7 @@ import com.aaa.collector.backfill.CoveredRangeService;
 import com.aaa.collector.market.MarketIndicatorRepository;
 import com.aaa.collector.market.enums.IndicatorCode;
 import com.aaa.collector.market.indicator.MarketIndicatorRow;
+import com.aaa.collector.market.indicator.usdkrw.KoreaeximBackfillRateLimiter;
 import com.aaa.collector.market.indicator.usdkrw.KoreaeximExchangeRateClient;
 import com.aaa.collector.market.indicator.usdkrw.KoreaeximQuotaExhaustedException;
 import com.aaa.collector.market.indicator.usdkrw.UsdkrwCollectionService;
@@ -64,6 +65,7 @@ public class MarketIndicatorBackfillOrchestrator {
     private final TransactionTemplate transactionTemplate;
     private final CoveredRangeService coveredRangeService;
     private final KoreaeximExchangeRateClient koreaeximExchangeRateClient;
+    private final KoreaeximBackfillRateLimiter koreaeximBackfillRateLimiter;
 
     /**
      * 백필 시딩: USDKRW, VIX 2행 {@code insertIgnoreSeed} (REQ-050~052).
@@ -95,7 +97,6 @@ public class MarketIndicatorBackfillOrchestrator {
     // walkGapForward/UsdkrwCoveredGapFiller
     // 내부 로직은 이 회차 제어와 무관하며 절대 수정하지 않는다(diff 0 불변식).
     // @MX:SPEC: SPEC-COLLECTOR-MARKETIND-004 REQ-MARKETIND4-028, REQ-MARKETIND4-031
-    @SuppressWarnings("PMD.AvoidCatchingGenericException") // 지표 단위 예외 격리 (REQ-045)
     public void runBackfill() {
         List<BackfillStatus> targets =
                 backfillStatusRepository.findByStatusInAndTargetTypeOrderById(
@@ -108,24 +109,8 @@ public class MarketIndicatorBackfillOrchestrator {
             log.info("[market-ind-backfill] 처리 대상 없음");
         } else {
             for (BackfillStatus target : targets) {
-                try {
-                    if (processTarget(target)) {
-                        usdkrwQuotaDeadThisRun = true;
-                    }
-                } catch (Exception e) {
-                    log.error(
-                            "[market-ind-backfill] 지표 예외 — code={}, 다음 회차 재개",
-                            target.getTargetCode(),
-                            e);
-                    final String errMsg = truncate(e.getMessage(), 512);
-                    transactionTemplate.executeWithoutResult(
-                            tx -> {
-                                BackfillStatus managed =
-                                        backfillStatusRepository
-                                                .findById(target.getId())
-                                                .orElseThrow();
-                                managed.fail(BackfillStatusType.IN_PROGRESS, errMsg);
-                            });
+                if (processTargetSafely(target)) {
+                    usdkrwQuotaDeadThisRun = true;
                 }
             }
         }
@@ -135,6 +120,43 @@ public class MarketIndicatorBackfillOrchestrator {
         } else {
             runUsdkrwCoveredGapWalk();
         }
+    }
+
+    /**
+     * 지표 단위 예외 격리(REQ-045) — {@link #processTarget}을 감싸 인터럽트(REQ-008)와 일반 예외를 분리 처리한다.
+     * runBackfill()의 순환 복잡도를 낮추기 위해 별도 메서드로 추출됐다(동작 변경 없음).
+     *
+     * @return USDKRW 처리가 이번 회차 캡/쿼터 예외로 종료됐으면 {@code true}
+     */
+    @SuppressWarnings("PMD.AvoidCatchingGenericException") // 지표 단위 예외 격리 (REQ-045)
+    private boolean processTargetSafely(BackfillStatus target) {
+        try {
+            return processTarget(target);
+        } catch (InterruptedException e) {
+            // REQ-008/AC-10: rate limiter 토큰 대기 중 인터럽트 — 인터럽트 상태 복원 후 표면화(조용히 삼키지 않음).
+            // 진행점 저장 분기는 기존 그대로(consume() 미성공 시 별도 IN_PROGRESS 저장 로직을 타지 않음).
+            Thread.currentThread().interrupt();
+            log.warn(
+                    "[market-ind-backfill] rate limiter 대기 중 인터럽트 — code={}, 다음 회차 재개",
+                    target.getTargetCode(),
+                    e);
+            markTargetFailed(target, e);
+            return false;
+        } catch (Exception e) {
+            log.error("[market-ind-backfill] 지표 예외 — code={}, 다음 회차 재개", target.getTargetCode(), e);
+            markTargetFailed(target, e);
+            return false;
+        }
+    }
+
+    private void markTargetFailed(BackfillStatus target, Exception e) {
+        final String errMsg = truncate(e.getMessage(), 512);
+        transactionTemplate.executeWithoutResult(
+                tx -> {
+                    BackfillStatus managed =
+                            backfillStatusRepository.findById(target.getId()).orElseThrow();
+                    managed.fail(BackfillStatusType.IN_PROGRESS, errMsg);
+                });
     }
 
     /**
@@ -166,7 +188,7 @@ public class MarketIndicatorBackfillOrchestrator {
      * @return USDKRW 처리가 이번 회차 회차 캡(REQ-022) 또는 쿼터 예외(REQ-023)로 종료됐으면 {@code true}(run-scoped 쿼터 사망
      *     — REQ-028 갭 walk skip 신호). VIX·미지 코드는 항상 {@code false}.
      */
-    private boolean processTarget(BackfillStatus target) {
+    private boolean processTarget(BackfillStatus target) throws InterruptedException {
         String code = target.getTargetCode();
         log.info("[market-ind-backfill] 처리 시작 — code={}, status={}", code, target.getStatus());
 
@@ -224,7 +246,7 @@ public class MarketIndicatorBackfillOrchestrator {
     // @MX:REASON: [AUTO] 캡 도달(REQ-022)·쿼터 예외(REQ-023)·stale 임계(REQ-027) 3가지 종료 조건이 서로 다른 진행점
     // 저장·갭 walk skip 신호(REQ-028)를 요구 — 병합 시 그 밤 갭 walk가 미확정 Yahoo 부분바를 저장할 회귀 위험 > 복잡도 비용.
     // @MX:SPEC: SPEC-COLLECTOR-MARKETIND-004 REQ-MARKETIND4-020~028
-    private boolean processUsdkrw(BackfillStatus target) {
+    private boolean processUsdkrw(BackfillStatus target) throws InterruptedException {
         LocalDate cursor = determineUsdkrwStartCursor(target);
         UsdkrwBackfillState state = new UsdkrwBackfillState(target.getLastCollectedDate());
 
@@ -253,8 +275,15 @@ public class MarketIndicatorBackfillOrchestrator {
      * @return 쿼터 예외(REQ-023) 또는 회차 캡(REQ-022)으로 이번 회차 backward walk를 즉시 종료해야 하면 {@code true}(진행점은 이
      *     메서드 안에서 이미 IN_PROGRESS로 저장됨)
      */
+    // @MX:NOTE: [AUTO] consume()/release() 배선 — 페이싱은 호출 분포만 변경, 회차 캡·커서·stale 로직 무변경(REQ-007).
+    // aaa-infra#113 버스트 근본 수정.
+    // @MX:SPEC: SPEC-COLLECTOR-MARKETIND-007
     private boolean processUsdkrwDay(
-            BackfillStatus target, LocalDate cursor, UsdkrwBackfillState state) {
+            BackfillStatus target, LocalDate cursor, UsdkrwBackfillState state)
+            throws InterruptedException {
+        // REQ-005: 백필 발행 호출 직전에 rate-limit 토큰을 먼저 획득한다(aaa-infra#113 버스트 평탄화).
+        // consume()이 인터럽트로 실패하면 세마포어를 획득하지 못한 상태이므로 release()를 호출하지 않는다(AC-02/AC-10).
+        koreaeximBackfillRateLimiter.consume();
         List<MarketIndicatorRow> rows;
         try {
             rows = koreaeximExchangeRateClient.fetchDailyForBackfill(cursor);
@@ -266,6 +295,9 @@ public class MarketIndicatorBackfillOrchestrator {
             updateUsdkrwProgress(
                     target, BackfillStatusType.IN_PROGRESS, state.anchor, state.totalSaved);
             return true;
+        } finally {
+            // REQ-006: 결과(행 수신/빈 결과/쿼터 예외/I/O 예외) 무관 finally 보장 반환 — 정확히 1회.
+            koreaeximBackfillRateLimiter.release();
         }
         state.callsThisRun++;
 

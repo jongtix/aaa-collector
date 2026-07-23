@@ -8,6 +8,7 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -20,6 +21,7 @@ import com.aaa.collector.backfill.CoveredRangeService;
 import com.aaa.collector.market.MarketIndicatorRepository;
 import com.aaa.collector.market.enums.IndicatorCode;
 import com.aaa.collector.market.indicator.MarketIndicatorRow;
+import com.aaa.collector.market.indicator.usdkrw.KoreaeximBackfillRateLimiter;
 import com.aaa.collector.market.indicator.usdkrw.KoreaeximExchangeRateClient;
 import com.aaa.collector.market.indicator.usdkrw.KoreaeximQuotaExhaustedException;
 import com.aaa.collector.market.indicator.usdkrw.UsdkrwCollectionService;
@@ -36,6 +38,7 @@ import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
+import org.mockito.InOrder;
 import org.mockito.Mock;
 import org.mockito.Mockito;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -60,6 +63,7 @@ class MarketIndicatorBackfillOrchestratorTest {
     @Mock private TransactionTemplate transactionTemplate;
     @Mock private CoveredRangeService coveredRangeService;
     @Mock private KoreaeximExchangeRateClient koreaeximExchangeRateClient;
+    @Mock private KoreaeximBackfillRateLimiter koreaeximBackfillRateLimiter;
 
     private MarketIndicatorBackfillOrchestrator orchestrator;
 
@@ -77,7 +81,8 @@ class MarketIndicatorBackfillOrchestratorTest {
                         usdkrwCollectionService,
                         transactionTemplate,
                         coveredRangeService,
-                        koreaeximExchangeRateClient);
+                        koreaeximExchangeRateClient,
+                        koreaeximBackfillRateLimiter);
         // @Value 필드는 DI가 없으므로 테스트용 값 직접 주입
         ReflectionTestUtils.setField(orchestrator, "staleWeekdayThreshold", 3);
         ReflectionTestUtils.setField(orchestrator, "maxCallsPerRunUsdkrw", 500);
@@ -560,6 +565,154 @@ class MarketIndicatorBackfillOrchestratorTest {
                     .walkGapForward(any(), any(), any());
 
             assertThatCode(orchestrator::runBackfill).doesNotThrowAnyException();
+        }
+    }
+
+    @Nested
+    @DisplayName(
+            "USDKRW 백필 rate limiter 통합 (SPEC-COLLECTOR-MARKETIND-007 AC-02, AC-03, AC-07, AC-10)")
+    class RateLimiterIntegration {
+
+        @Test
+        @DisplayName(
+                "매 발행 호출 전 consume() → fetchDailyForBackfill 순서·횟수 일치 (AC-03, REQ-005, REQ-007)")
+        void backfillLoop_consumesTokenBeforeEachFetch_inOrderAndMatchingCount()
+                throws InterruptedException {
+            // staleWeekdayThreshold=1 — 첫 연속 1회 빈 결과로 즉시 종료해 주말 skip과 무관하게 발행 호출 수를
+            // 결정론적으로 3회(data, data, empty)로 고정한다.
+            ReflectionTestUtils.setField(orchestrator, "staleWeekdayThreshold", 1);
+            BackfillStatus status = buildStatus(2L, "USDKRW", BackfillStatusType.PENDING);
+            LocalDate today = LocalDate.now(KST);
+            when(backfillStatusRepository.findByStatusInAndTargetTypeOrderById(any(), anyString()))
+                    .thenReturn(List.of(status));
+            when(koreaeximExchangeRateClient.fetchDailyForBackfill(any(LocalDate.class)))
+                    .thenReturn(List.of(sampleRow(today)))
+                    .thenReturn(List.of(sampleRow(today)))
+                    .thenReturn(List.of()); // 3회째 빈 결과 — threshold=1 즉시 종료
+            when(usdkrwCollectionService.saveBackfillRows(any())).thenReturn(1);
+            when(backfillStatusRepository.findById(2L)).thenReturn(Optional.of(mockManaged));
+
+            orchestrator.runBackfill();
+
+            // 발행 호출 수(3) = consume() 호출 수(3)
+            verify(koreaeximBackfillRateLimiter, times(3)).consume();
+            verify(koreaeximExchangeRateClient, times(3))
+                    .fetchDailyForBackfill(any(LocalDate.class));
+            // 순서: 매 회 consume() 이후 fetchDailyForBackfill
+            InOrder inOrder = inOrder(koreaeximBackfillRateLimiter, koreaeximExchangeRateClient);
+            for (int i = 0; i < 3; i++) {
+                inOrder.verify(koreaeximBackfillRateLimiter).consume();
+                inOrder.verify(koreaeximExchangeRateClient)
+                        .fetchDailyForBackfill(any(LocalDate.class));
+            }
+        }
+
+        @Test
+        @DisplayName("데이터 수신 케이스 — 결과 무관 release() 정확히 1회 finally 반환 (AC-02, REQ-006)")
+        void dataReceived_releasesTokenExactlyOnce() throws InterruptedException {
+            // staleWeekdayThreshold=1 — 주말 skip과 무관하게 발행 호출 수를 결정론적으로 2회로 고정.
+            ReflectionTestUtils.setField(orchestrator, "staleWeekdayThreshold", 1);
+            BackfillStatus status = buildStatus(2L, "USDKRW", BackfillStatusType.PENDING);
+            LocalDate today = LocalDate.now(KST);
+            when(backfillStatusRepository.findByStatusInAndTargetTypeOrderById(any(), anyString()))
+                    .thenReturn(List.of(status));
+            when(koreaeximExchangeRateClient.fetchDailyForBackfill(any(LocalDate.class)))
+                    .thenReturn(List.of(sampleRow(today)))
+                    .thenReturn(List.of());
+            when(usdkrwCollectionService.saveBackfillRows(any())).thenReturn(1);
+            when(backfillStatusRepository.findById(2L)).thenReturn(Optional.of(mockManaged));
+
+            orchestrator.runBackfill();
+
+            verify(koreaeximBackfillRateLimiter, times(2)).consume();
+            verify(koreaeximBackfillRateLimiter, times(2)).release();
+        }
+
+        @Test
+        @DisplayName(
+                "쿼터 예외 케이스 — release() 정확히 1회 finally 반환, backward walk 즉시 중단 (AC-02, REQ-006)")
+        void quotaException_releasesTokenExactlyOnce() throws InterruptedException {
+            BackfillStatus status = buildStatus(2L, "USDKRW", BackfillStatusType.PENDING);
+            LocalDate today = LocalDate.now(KST);
+            when(backfillStatusRepository.findByStatusInAndTargetTypeOrderById(any(), anyString()))
+                    .thenReturn(List.of(status));
+            when(koreaeximExchangeRateClient.fetchDailyForBackfill(any(LocalDate.class)))
+                    .thenReturn(List.of(sampleRow(today)))
+                    .thenThrow(new KoreaeximQuotaExhaustedException("쿼터 소진(result:4)"));
+            when(usdkrwCollectionService.saveBackfillRows(any())).thenReturn(1);
+            when(backfillStatusRepository.findById(2L)).thenReturn(Optional.of(mockManaged));
+
+            orchestrator.runBackfill();
+
+            // 정상 1회 + 예외 1회 = consume/release 각 2회
+            verify(koreaeximBackfillRateLimiter, times(2)).consume();
+            verify(koreaeximBackfillRateLimiter, times(2)).release();
+        }
+
+        @Test
+        @DisplayName("VIX 백필 — limiter 전혀 관여하지 않음(diff 0) (AC-07, REQ-015)")
+        void vixBackfill_neverTouchesUsdkrwLimiter() throws InterruptedException {
+            BackfillStatus vixStatus = buildStatus(1L, "VIX", BackfillStatusType.PENDING);
+            when(backfillStatusRepository.findByStatusInAndTargetTypeOrderById(any(), anyString()))
+                    .thenReturn(List.of(vixStatus));
+            when(vixCollectionService.collectHistory()).thenReturn(0);
+            when(marketIndicatorRepository.findMinTradeDateByIndicatorCode(IndicatorCode.VIX))
+                    .thenReturn(Optional.empty());
+            when(backfillStatusRepository.findById(1L)).thenReturn(Optional.of(mockManaged));
+
+            orchestrator.runBackfill();
+
+            verify(koreaeximBackfillRateLimiter, never()).consume();
+            verify(koreaeximBackfillRateLimiter, never()).release();
+        }
+
+        @Test
+        @DisplayName(
+                "토큰 대기 중 인터럽트 — fetchDailyForBackfill·release() 모두 미호출, IN_PROGRESS로 실패 기록 (AC-10, REQ-008)")
+        void tokenWaitInterrupted_doesNotFetchOrReleaseAndMarksFailed()
+                throws InterruptedException {
+            BackfillStatus status = buildStatus(2L, "USDKRW", BackfillStatusType.PENDING);
+            when(backfillStatusRepository.findByStatusInAndTargetTypeOrderById(any(), anyString()))
+                    .thenReturn(List.of(status));
+            Mockito.doThrow(new InterruptedException("토큰 대기 중 인터럽트"))
+                    .when(koreaeximBackfillRateLimiter)
+                    .consume();
+            when(backfillStatusRepository.findById(2L)).thenReturn(Optional.of(mockManaged));
+
+            try {
+                assertThatCode(orchestrator::runBackfill).doesNotThrowAnyException();
+
+                // consume() 실패 — fetchDailyForBackfill·release() 모두 도달하지 않음
+                verify(koreaeximExchangeRateClient, never()).fetchDailyForBackfill(any());
+                verify(koreaeximBackfillRateLimiter, never()).release();
+                // 인터럽트가 조용히 삼켜지지 않고 실패로 표면화됨(IN_PROGRESS로 기록)
+                verify(mockManaged).fail(eq(BackfillStatusType.IN_PROGRESS), anyString());
+            } finally {
+                // 이후 테스트에 인터럽트 상태가 새지 않도록 정리
+                Thread.interrupted();
+            }
+        }
+
+        @Test
+        @DisplayName("토큰 대기 중 인터럽트 — 스레드 인터럽트 상태 복원 (AC-10, REQ-008)")
+        void tokenWaitInterrupted_restoresInterruptFlag() throws InterruptedException {
+            BackfillStatus status = buildStatus(2L, "USDKRW", BackfillStatusType.PENDING);
+            when(backfillStatusRepository.findByStatusInAndTargetTypeOrderById(any(), anyString()))
+                    .thenReturn(List.of(status));
+            Mockito.doThrow(new InterruptedException("토큰 대기 중 인터럽트"))
+                    .when(koreaeximBackfillRateLimiter)
+                    .consume();
+            when(backfillStatusRepository.findById(2L)).thenReturn(Optional.of(mockManaged));
+
+            try {
+                orchestrator.runBackfill();
+
+                // 인터럽트 상태 복원(REQ-008) — KisRateLimiter 계약과 동일하게 조용히 삼키지 않는다.
+                assertThat(Thread.currentThread().isInterrupted()).isTrue();
+            } finally {
+                // 이후 테스트에 인터럽트 상태가 새지 않도록 정리
+                Thread.interrupted();
+            }
         }
     }
 }
