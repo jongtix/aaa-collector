@@ -111,7 +111,6 @@ public class MarketCalendarRefreshScheduler {
 
     private void refreshKrx() {
         LocalDate today = today();
-        LocalDate target = today.plusDays(FORWARD_DAYS);
         Optional<LocalDate> lastCovered = findLastCoveredDate(CalendarCode.KRX, today);
 
         boolean normal = lastCovered.isPresent() && !lastCovered.get().isBefore(today.minusDays(1));
@@ -129,6 +128,7 @@ public class MarketCalendarRefreshScheduler {
             gapStart = capBoundary;
         }
 
+        LocalDate target = today.plusDays(FORWARD_DAYS);
         LocalDate baseDate = gapStart;
         int calls = 0;
         while (!baseDate.isAfter(target) && calls < MAX_GAP_CALLS) {
@@ -169,7 +169,7 @@ public class MarketCalendarRefreshScheduler {
 
         LocalDate firstBassDt;
         try {
-            firstBassDt = LocalDate.parse(rows.get(0).bassDt(), DATE_FORMAT);
+            firstBassDt = LocalDate.parse(rows.getFirst().bassDt(), DATE_FORMAT);
         } catch (DateTimeParseException e) {
             log.warn("KRX 캘린더 첫 행 bass_dt 파싱 실패 — baseDate={}", baseDate);
             return null;
