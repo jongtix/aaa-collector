@@ -28,14 +28,6 @@ class MarketSessionGateTest {
 
     private static final ZoneId KST = ZoneId.of("Asia/Seoul");
 
-    /**
-     * {@code market_calendar}(KRX) 리포지토리 스텁 — {@code isOpenDay}/{@code updateCalendar} 테스트는 게이트 캐시만
-     * 사용하므로 이 리포지토리를 호출하지 않는다. TASK-009 {@code isOpenDayStrict} 케이스만 개별적으로 스터빙한다.
-     */
-    private static MarketCalendarRepository stubCalendarRepository() {
-        return mock(MarketCalendarRepository.class);
-    }
-
     // 2026-06-19 10:00 KST — 평일 장중 (domestic open: 08:55~15:35)
     private static final Instant TRADING_HOURS_INSTANT = Instant.parse("2026-06-19T01:00:00Z");
     // 2026-06-20 10:00 KST — 토요일 (domestic closed: weekend)
@@ -45,6 +37,14 @@ class MarketSessionGateTest {
 
     private Clock clockAt(Instant instant) {
         return Clock.fixed(instant, KST);
+    }
+
+    /**
+     * {@code market_calendar}(KRX) 리포지토리 스텁 — {@code isOpenDay}/{@code updateCalendar} 테스트는 게이트 캐시만
+     * 사용하므로 이 리포지토리를 호출하지 않는다. TASK-009 {@code isOpenDayStrict} 케이스만 개별적으로 스터빙한다.
+     */
+    private static MarketCalendarRepository stubCalendarRepository() {
+        return mock(MarketCalendarRepository.class);
     }
 
     @Nested

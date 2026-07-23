@@ -29,6 +29,17 @@ import org.junit.jupiter.api.Test;
 @DisplayName("UsMarketSessionGate — 미국 시장 세션 게이트 (SPEC-COLLECTOR-USMKT-001)")
 class UsMarketSessionGateTest {
 
+    private static final ZoneId NEW_YORK = ZoneId.of("America/New_York");
+
+    /** 2026-07-06 10:00 ET (Monday) — 평일 장중. UTC: 2026-07-06 14:00Z (EDT = UTC-4) */
+    private static final Instant MON_TRADING_INSTANT = Instant.parse("2026-07-06T14:00:00Z");
+
+    /** 2026-07-04 10:00 ET (Saturday) — 주말. UTC: 2026-07-04 14:00Z */
+    private static final Instant SAT_INSTANT = Instant.parse("2026-07-04T14:00:00Z");
+
+    /** 2026-07-06 08:00 ET (Monday) — 평일 장외(09:25 전). UTC: 2026-07-06 12:00Z */
+    private static final Instant BEFORE_OPEN_INSTANT = Instant.parse("2026-07-06T12:00:00Z");
+
     /**
      * {@code market_calendar}(NYSE) 리포지토리 스텁 — TASK-008 백엔드 교체 이후 테스트에서 {@link
      * UsMarketSessionGate#init()}이 조회할 데이터 소스. 요청 범위와 겹치는 연도의 {@link
@@ -62,17 +73,6 @@ class UsMarketSessionGateTest {
                         });
         return repo;
     }
-
-    private static final ZoneId NEW_YORK = ZoneId.of("America/New_York");
-
-    /** 2026-07-06 10:00 ET (Monday) — 평일 장중. UTC: 2026-07-06 14:00Z (EDT = UTC-4) */
-    private static final Instant MON_TRADING_INSTANT = Instant.parse("2026-07-06T14:00:00Z");
-
-    /** 2026-07-04 10:00 ET (Saturday) — 주말. UTC: 2026-07-04 14:00Z */
-    private static final Instant SAT_INSTANT = Instant.parse("2026-07-04T14:00:00Z");
-
-    /** 2026-07-06 08:00 ET (Monday) — 평일 장외(09:25 전). UTC: 2026-07-06 12:00Z */
-    private static final Instant BEFORE_OPEN_INSTANT = Instant.parse("2026-07-06T12:00:00Z");
 
     private UsMarketSessionGate createGate(List<LocalDate> extraHolidays, Instant now) {
         Clock clock = Clock.fixed(now, NEW_YORK);
