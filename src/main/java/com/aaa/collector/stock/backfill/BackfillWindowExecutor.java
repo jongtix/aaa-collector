@@ -455,11 +455,13 @@ public class BackfillWindowExecutor {
             LocalDate advancedAnchor =
                     windowAdvancer.nextGroupBProbeAnchor(dataTable, probedAnchor, floor);
             managed.advance(BackfillStatusType.IN_PROGRESS, advancedAnchor, 0, null);
-            log.debug(
-                    "[backfill] GROUP_B probe 계속 — symbol={}, table={}, anchor={}",
+            log.info(
+                    "[backfill] GROUP_B probe 계속 — symbol={}, table={}, anchor={}, attempt={}/{}",
                     symbol,
                     dataTable,
-                    advancedAnchor);
+                    advancedAnchor,
+                    managed.getAttemptCount(),
+                    backfillProperties.getMaxWindowsPerTarget());
             return result;
         }
 
