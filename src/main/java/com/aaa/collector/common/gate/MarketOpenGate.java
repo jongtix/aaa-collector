@@ -47,5 +47,6 @@ public interface MarketOpenGate {
      * @param date 판정할 날짜(제한 없음 — 게이트 캐시 범위 밖도 조회 가능)
      * @return 행이 있으면 {@code Optional.of(is_open)}, 없으면 {@link Optional#empty()}("모름")
      */
+    @SuppressWarnings("PMD.LinguisticNaming") // REQ-CAL-032가 명시한 이름 — Optional<Boolean> 반환은 의도된 계약
     Optional<Boolean> isOpenDayStrict(LocalDate date);
 }
