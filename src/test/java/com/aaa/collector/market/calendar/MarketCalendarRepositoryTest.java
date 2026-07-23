@@ -101,12 +101,20 @@ class MarketCalendarRepositoryTest {
             // MarketCalendarService의 조회-후-분기 upsert가 이를 전제로 설계됐다) — 그래서 PK 유일성 자체는 DB 레벨
             // 원시 INSERT로 직접 검증한다.
             LocalDate date = LocalDate.of(2026, 3, 2);
-            String insertSql =
-                    "INSERT INTO market_calendar (calendar_code, cal_date, is_open, source, created_at,"
-                            + " updated_at) VALUES ('KRX', ?, true, 'KIS_API', NOW(), NOW())";
-            jdbcTemplate.update(insertSql, date);
+            jdbcTemplate.update(
+                    "INSERT INTO market_calendar (calendar_code, cal_date, is_open, source,"
+                            + " created_at, updated_at) VALUES ('KRX', ?, true, 'KIS_API', NOW(),"
+                            + " NOW())",
+                    date);
 
-            assertThatThrownBy(() -> jdbcTemplate.update(insertSql, date))
+            assertThatThrownBy(
+                            () ->
+                                    jdbcTemplate.update(
+                                            "INSERT INTO market_calendar (calendar_code, cal_date,"
+                                                    + " is_open, source, created_at, updated_at)"
+                                                    + " VALUES ('KRX', ?, true, 'KIS_API', NOW(),"
+                                                    + " NOW())",
+                                            date))
                     .isInstanceOf(DataIntegrityViolationException.class);
         }
 
@@ -208,8 +216,8 @@ class MarketCalendarRepositoryTest {
     class EntityMapping {
 
         @Test
-        @DisplayName("모든 필드 round-trip 저장·조회 일치 + 감사 필드 채워짐")
-        void allFields_roundTrip() {
+        @DisplayName("비즈니스 필드 round-trip 저장·조회 일치")
+        void businessFields_roundTrip() {
             MarketCalendar saved =
                     marketCalendarRepository.saveAndFlush(
                             row(
@@ -228,6 +236,20 @@ class MarketCalendarRepositoryTest {
             assertThat(found.getCalDate()).isEqualTo(saved.getCalDate());
             assertThat(found.isOpen()).isFalse();
             assertThat(found.getSource()).isEqualTo(CalendarSource.DERIVED);
+        }
+
+        @Test
+        @DisplayName("BaseEntity 감사 필드가 채워진다")
+        void auditingFields_populated() {
+            marketCalendarRepository.saveAndFlush(
+                    row(CalendarCode.KRX, LocalDate.of(2026, 2, 17), true, CalendarSource.MANUAL));
+
+            MarketCalendar found =
+                    marketCalendarRepository
+                            .findByCalendarCodeAndCalDate(
+                                    CalendarCode.KRX, LocalDate.of(2026, 2, 17))
+                            .orElseThrow();
+
             assertThat(found.getCreatedAt()).isNotNull();
             assertThat(found.getUpdatedAt()).isNotNull();
         }
