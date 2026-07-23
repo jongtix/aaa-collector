@@ -89,6 +89,7 @@ public class MarketCalendarRefreshScheduler {
     @Scheduled(cron = REFRESH_CRON, zone = "Asia/Seoul")
     public void refresh() {
         refreshKrx();
+        refreshNyse();
     }
 
     private LocalDate today() {
@@ -196,6 +197,36 @@ public class MarketCalendarRefreshScheduler {
             }
         }
         return maxDate.plusDays(1);
+    }
+
+    /**
+     * NYSE 캘린더를 {@link NyseHolidayAlgorithm}으로 계산해 upsert한다(REQ-CAL-011) — 외부 API 호출 없음. 갭이 있어도
+     * KIS와 달리 호출 비용이 없으므로 단순히 더 넓은 범위를 계산하기만 하면 된다(순차 체이닝·bass_dt 검증 불필요).
+     */
+    private void refreshNyse() {
+        LocalDate today = today();
+        LocalDate target = today.plusDays(FORWARD_DAYS);
+        Optional<LocalDate> lastCovered = findLastCoveredDate(CalendarCode.NYSE, today);
+
+        boolean normal = lastCovered.isPresent() && !lastCovered.get().isBefore(today.minusDays(1));
+        LocalDate start;
+        if (normal) {
+            start = today.minusDays(NORMAL_LOOKBACK_DAYS);
+        } else {
+            LocalDate capBoundary = today.minusDays(GAP_HEALING_HORIZON_DAYS);
+            LocalDate gapStart = lastCovered.map(d -> d.plusDays(1)).orElse(capBoundary);
+            boolean capExceeded = lastCovered.isEmpty() || gapStart.isBefore(capBoundary);
+            if (capExceeded) {
+                alertGapCapExceeded(CalendarCode.NYSE);
+                gapStart = capBoundary;
+            }
+            start = gapStart;
+        }
+
+        for (LocalDate date = start; !date.isAfter(target); date = date.plusDays(1)) {
+            boolean isOpen = NyseHolidayAlgorithm.isOpenDay(date);
+            marketCalendarService.upsert(CalendarCode.NYSE, date, isOpen, CalendarSource.ALGORITHM);
+        }
     }
 
     private void alertGapCapExceeded(CalendarCode calendarCode) {

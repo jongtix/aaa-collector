@@ -19,6 +19,7 @@ import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.stream.IntStream;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
@@ -194,10 +195,10 @@ class MarketCalendarRefreshSchedulerTest {
             // Act
             makeScheduler(registry).refresh();
 
-            // Assert
+            // Assert — KRX upsert만 미호출(NYSE는 이 시나리오와 무관하게 독립 진행되므로 KRX로 한정해 검증)
             verify(marketCalendarService, never())
                     .upsert(
-                            any(CalendarCode.class),
+                            eq(CalendarCode.KRX),
                             any(),
                             any(Boolean.class),
                             any(CalendarSource.class));
@@ -228,6 +229,116 @@ class MarketCalendarRefreshSchedulerTest {
                             .counter()
                             .count();
             assertThat(mismatchCount).isZero();
+        }
+    }
+
+    @Nested
+    @DisplayName("NYSE 일일 갱신 — 알고리즘 계산, 외부 호출 없음 (AC-5)")
+    class NyseRefresh {
+
+        @Test
+        @DisplayName("평시 — NyseHolidayAlgorithm으로 today-3~today+20을 계산해 upsert, 외부 호출 0회(NYSE)")
+        void normalState_computesRangeWithoutExternalCalls() {
+            // Arrange — KRX/NYSE 둘 다 평시(마지막 연속 커버일=어제)로 맞춰 KRX 호출 횟수를 예측 가능하게 고정
+            LocalDate yesterday = TODAY.minusDays(1);
+            when(marketCalendarRepository.findByCalendarCodeAndCalDateBetween(
+                            eq(CalendarCode.KRX), any(), eq(TODAY)))
+                    .thenReturn(List.of(krxRow(yesterday)));
+            when(marketCalendarRepository.findByCalendarCodeAndCalDateBetween(
+                            eq(CalendarCode.NYSE), any(), eq(TODAY)))
+                    .thenReturn(
+                            List.of(
+                                    MarketCalendar.builder()
+                                            .calendarCode(CalendarCode.NYSE)
+                                            .calDate(yesterday)
+                                            .open(true)
+                                            .source(CalendarSource.ALGORITHM)
+                                            .build()));
+            LocalDate krxBase = TODAY.minusDays(3);
+            when(kisHolidayClient.fetchCalendar(krxBase)).thenReturn(responseFrom(krxBase));
+
+            // Act
+            makeScheduler(new SimpleMeterRegistry()).refresh();
+
+            // Assert — KIS 호출은 KRX 몫 1회뿐(NYSE는 0회)
+            verify(kisHolidayClient, times(1)).fetchCalendar(any(LocalDate.class));
+
+            ArgumentCaptor<LocalDate> dateCaptor = ArgumentCaptor.forClass(LocalDate.class);
+            ArgumentCaptor<Boolean> openCaptor = ArgumentCaptor.forClass(Boolean.class);
+            verify(marketCalendarService, times(24))
+                    .upsert(
+                            eq(CalendarCode.NYSE),
+                            dateCaptor.capture(),
+                            openCaptor.capture(),
+                            eq(CalendarSource.ALGORITHM));
+
+            List<LocalDate> capturedDates = dateCaptor.getAllValues();
+            List<Boolean> capturedOpen = openCaptor.getAllValues();
+            assertThat(capturedDates)
+                    .containsExactlyInAnyOrderElementsOf(
+                            IntStream.rangeClosed(0, 23).mapToObj(krxBase::plusDays).toList());
+            for (int i = 0; i < capturedDates.size(); i++) {
+                assertThat(capturedOpen.get(i))
+                        .isEqualTo(NyseHolidayAlgorithm.isOpenDay(capturedDates.get(i)));
+            }
+        }
+
+        @Test
+        @DisplayName("연도 경계를 넘는 창(EC-5) — 12월 말 갱신도 정확히 계산한다")
+        void yearBoundary_computesAcrossYearsCorrectly() {
+            // Arrange — 2026-12-28(월) 08:10 KST, today+20 = 2027-01-17로 연도 경계를 넘는다
+            Instant yearEndInstant = Instant.parse("2026-12-27T23:10:00Z");
+            LocalDate yearEndToday = LocalDate.of(2026, 12, 28);
+            LocalDate yesterday = yearEndToday.minusDays(1);
+            when(marketCalendarRepository.findByCalendarCodeAndCalDateBetween(
+                            eq(CalendarCode.NYSE), any(), eq(yearEndToday)))
+                    .thenReturn(
+                            List.of(
+                                    MarketCalendar.builder()
+                                            .calendarCode(CalendarCode.NYSE)
+                                            .calDate(yesterday)
+                                            .open(true)
+                                            .source(CalendarSource.ALGORITHM)
+                                            .build()));
+            when(marketCalendarRepository.findByCalendarCodeAndCalDateBetween(
+                            eq(CalendarCode.KRX), any(), eq(yearEndToday)))
+                    .thenReturn(
+                            List.of(
+                                    MarketCalendar.builder()
+                                            .calendarCode(CalendarCode.KRX)
+                                            .calDate(yesterday)
+                                            .open(true)
+                                            .source(CalendarSource.KIS_API)
+                                            .build()));
+            LocalDate krxBase = yearEndToday.minusDays(3);
+            when(kisHolidayClient.fetchCalendar(krxBase)).thenReturn(responseFrom(krxBase));
+
+            Clock clock = Clock.fixed(yearEndInstant, KST);
+            MarketCalendarRefreshScheduler scheduler =
+                    new MarketCalendarRefreshScheduler(
+                            marketCalendarRepository,
+                            marketCalendarService,
+                            kisHolidayClient,
+                            new SimpleMeterRegistry(),
+                            clock);
+            scheduler.initAlertCounters();
+
+            // Act
+            scheduler.refresh();
+
+            // Assert — 12/31(개장)·1/1(New Year's Day, 휴장) 등 연도 경계 값이 정확히 반영됨
+            verify(marketCalendarService)
+                    .upsert(
+                            CalendarCode.NYSE,
+                            LocalDate.of(2026, 12, 31),
+                            NyseHolidayAlgorithm.isOpenDay(LocalDate.of(2026, 12, 31)),
+                            CalendarSource.ALGORITHM);
+            verify(marketCalendarService)
+                    .upsert(
+                            CalendarCode.NYSE,
+                            LocalDate.of(2027, 1, 1),
+                            NyseHolidayAlgorithm.isOpenDay(LocalDate.of(2027, 1, 1)),
+                            CalendarSource.ALGORITHM);
         }
     }
 
