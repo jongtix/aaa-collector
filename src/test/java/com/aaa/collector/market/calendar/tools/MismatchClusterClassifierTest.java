@@ -14,6 +14,8 @@ import java.util.List;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * {@link MismatchClusterClassifier} 군집/산발 판정 단위 테스트 (SPEC-COLLECTOR-CALENDAR-001 REQ-CAL-043~046,
@@ -21,6 +23,8 @@ import org.junit.jupiter.api.Test;
  */
 @DisplayName("MismatchClusterClassifier — 군집/산발 판정 (REQ-CAL-043~046, DP-1)")
 class MismatchClusterClassifierTest {
+
+    private static final Logger LOG = LoggerFactory.getLogger(MismatchClusterClassifierTest.class);
 
     private final MismatchClusterClassifier classifier = new MismatchClusterClassifier();
 
@@ -231,7 +235,7 @@ class MismatchClusterClassifierTest {
                     List.of(
                             new Mismatch(CalendarCode.NYSE, LocalDate.of(2000, 1, 1), true, false),
                             new Mismatch(CalendarCode.KRX, LocalDate.of(2000, 1, 8), true, false));
-            List<Mismatch> reversed = List.of(forward.get(1), forward.get(0));
+            List<Mismatch> reversed = List.of(forward.get(1), forward.getFirst());
 
             List<GroupSummary> result1 = classifier.summarize(forward);
             List<GroupSummary> result2 = classifier.summarize(reversed);
@@ -296,13 +300,11 @@ class MismatchClusterClassifierTest {
             assertThat(classified).allMatch(cm -> cm.classification() == Classification.CLUSTERED);
 
             // 완료 노트용 근거 로그 — 요일별 건수 분포
-            System.out.println(
-                    "[calendar-seed][representative-run] group="
-                            + saturdayGroup.key()
-                            + ", count="
-                            + saturdayGroup.count()
-                            + ", classification="
-                            + saturdayGroup.classification());
+            LOG.info(
+                    "[calendar-seed][representative-run] group={}, count={}, classification={}",
+                    saturdayGroup.key(),
+                    saturdayGroup.count(),
+                    saturdayGroup.classification());
         }
     }
 }
