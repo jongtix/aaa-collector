@@ -2,15 +2,16 @@ package com.aaa.collector.market.session;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-import com.aaa.collector.kis.KisApiBusinessException;
-import com.aaa.collector.kis.KisRateLimitException;
-import com.aaa.collector.kis.holiday.KisHolidayClient;
-import com.aaa.collector.kis.holiday.KisHolidayResponse.HolidayRow;
 import com.aaa.collector.kis.websocket.KisMarketSchedule;
+import com.aaa.collector.market.calendar.CalendarCode;
+import com.aaa.collector.market.calendar.CalendarSource;
+import com.aaa.collector.market.calendar.MarketCalendar;
+import com.aaa.collector.market.calendar.MarketCalendarRepository;
 import com.aaa.collector.observability.WatermarkProperties;
 import io.micrometer.core.instrument.Gauge;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
@@ -27,17 +28,19 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.web.client.ResourceAccessException;
+import org.springframework.dao.QueryTimeoutException;
 
 @ExtendWith(MockitoExtension.class)
-@DisplayName("MarketSessionGateRefresher — 일 1회 cron 갱신 (REQ-OBSV-031/032/033, REQ-WM-007)")
+@DisplayName(
+        "MarketSessionGateRefresher — 일 1회 cron 갱신 (SPEC-COLLECTOR-CALENDAR-001 TASK-007,"
+                + " REQ-CAL-018/-030/-031/-036)")
 class MarketSessionGateRefresherTest {
 
     private static final ZoneId KST = ZoneId.of("Asia/Seoul");
     // 2026-06-19 08:10 KST (refresh cron 시각 전후) — 평일
     private static final Instant REFRESH_INSTANT = Instant.parse("2026-06-18T23:10:00Z");
 
-    @Mock private KisHolidayClient kisHolidayClient;
+    @Mock private MarketCalendarRepository marketCalendarRepository;
     @Mock private MarketSessionGate gate;
 
     private static WatermarkProperties defaultProperties() {
@@ -49,7 +52,16 @@ class MarketSessionGateRefresherTest {
     }
 
     private MarketSessionGateRefresher makeRefresher(Clock clock, WatermarkProperties properties) {
-        return new MarketSessionGateRefresher(kisHolidayClient, gate, clock, properties);
+        return new MarketSessionGateRefresher(marketCalendarRepository, gate, clock, properties);
+    }
+
+    private static MarketCalendar row(LocalDate date, boolean open) {
+        return MarketCalendar.builder()
+                .calendarCode(CalendarCode.KRX)
+                .calDate(date)
+                .open(open)
+                .source(CalendarSource.KIS_API)
+                .build();
     }
 
     @Nested
@@ -57,21 +69,23 @@ class MarketSessionGateRefresherTest {
     class SuccessfulRefresh {
 
         @Test
-        @DisplayName("fetchCalendar 결과를 opnd_yn 기준으로 변환하여 gate에 전달한다")
-        void refresh_normalResponse_updateCalendarWithOpndYn() {
+        @DisplayName("리포지토리 조회 결과를 is_open 기준으로 변환하여 gate에 전달한다")
+        void refresh_normalResponse_updateCalendarWithIsOpen() {
             // Arrange
             Clock clock = Clock.fixed(REFRESH_INSTANT, KST);
             LocalDate today = LocalDate.of(2026, 6, 19);
-            LocalDate baseDate = today.minusDays(14);
+            LocalDate lowerBound = today.minusDays(14);
+            LocalDate upperBound = today.plusDays(20);
             LocalDate tomorrow = LocalDate.of(2026, 6, 20);
 
-            when(kisHolidayClient.fetchCalendar(baseDate))
+            when(marketCalendarRepository.findByCalendarCodeAndCalDateBetween(
+                            CalendarCode.KRX, lowerBound, upperBound))
                     .thenReturn(
                             List.of(
-                                    row("20260619", "Y"),
-                                    row("20260620", "N"),
-                                    row("20260621", "N"),
-                                    row("20260622", "Y")));
+                                    row(today, true),
+                                    row(tomorrow, false),
+                                    row(LocalDate.of(2026, 6, 21), false),
+                                    row(LocalDate.of(2026, 6, 22), true)));
 
             // Act
             makeRefresher(clock).refresh();
@@ -87,30 +101,13 @@ class MarketSessionGateRefresherTest {
         }
 
         @Test
-        @DisplayName("bass_dt 파싱 불가 행은 무시하고 나머지 행은 정상 처리한다")
-        void refresh_invalidBassDt_rowSkipped() {
+        @DisplayName("빈 조회 결과 — 빈 맵으로 gate.updateCalendar 호출한다")
+        void refresh_emptyResult_updateWithEmptyMap() {
             Clock clock = Clock.fixed(REFRESH_INSTANT, KST);
-            LocalDate today = LocalDate.of(2026, 6, 19);
-            LocalDate baseDate = today.minusDays(14);
 
-            when(kisHolidayClient.fetchCalendar(baseDate))
-                    .thenReturn(List.of(row("INVALID", "Y"), row("20260619", "Y")));
-
-            makeRefresher(clock).refresh();
-
-            ArgumentCaptor<Map<LocalDate, Boolean>> captor = ArgumentCaptor.captor();
-            verify(gate).updateCalendar(captor.capture());
-            assertThat(captor.getValue()).containsEntry(today, Boolean.TRUE);
-            assertThat(captor.getValue()).hasSize(1);
-        }
-
-        @Test
-        @DisplayName("빈 응답 — 빈 맵으로 gate.updateCalendar 호출한다")
-        void refresh_emptyResponse_updateWithEmptyMap() {
-            Clock clock = Clock.fixed(REFRESH_INSTANT, KST);
-            LocalDate baseDate = LocalDate.of(2026, 6, 19).minusDays(14);
-
-            when(kisHolidayClient.fetchCalendar(baseDate)).thenReturn(List.of());
+            when(marketCalendarRepository.findByCalendarCodeAndCalDateBetween(
+                            eq(CalendarCode.KRX), any(), any()))
+                    .thenReturn(List.of());
 
             makeRefresher(clock).refresh();
 
@@ -120,48 +117,56 @@ class MarketSessionGateRefresherTest {
         }
 
         @Test
-        @DisplayName("today − N일(N=기본 14)로 fetchCalendar를 호출한다 (REQ-WM-007, CR-01)")
-        void refresh_callsClientWithLookbackBaseDate() {
+        @DisplayName("today − N일(N=기본 14) ~ today + 20일 범위로 조회한다 (REQ-CAL-036)")
+        void refresh_queriesGateRangeWithDefaultLookback() {
             Clock clock = Clock.fixed(REFRESH_INSTANT, KST);
             LocalDate today = LocalDate.of(2026, 6, 19);
-            LocalDate baseDate = today.minusDays(14);
+            LocalDate lowerBound = today.minusDays(14);
+            LocalDate upperBound = today.plusDays(20);
 
-            when(kisHolidayClient.fetchCalendar(baseDate)).thenReturn(List.of());
+            when(marketCalendarRepository.findByCalendarCodeAndCalDateBetween(
+                            CalendarCode.KRX, lowerBound, upperBound))
+                    .thenReturn(List.of());
 
             makeRefresher(clock).refresh();
 
-            verify(kisHolidayClient).fetchCalendar(baseDate);
+            verify(marketCalendarRepository)
+                    .findByCalendarCodeAndCalDateBetween(CalendarCode.KRX, lowerBound, upperBound);
         }
 
         @Test
-        @DisplayName("lookback 설정값을 그대로 반영해 baseDate를 계산한다 (커스텀 N=7)")
+        @DisplayName("lookback 설정값을 그대로 반영해 하한을 계산한다 (커스텀 N=7) — 상한은 항상 오늘+20일")
         void refresh_customLookback_usesConfiguredOffset() {
             Clock clock = Clock.fixed(REFRESH_INSTANT, KST);
             LocalDate today = LocalDate.of(2026, 6, 19);
-            LocalDate baseDate = today.minusDays(7);
+            LocalDate lowerBound = today.minusDays(7);
+            LocalDate upperBound = today.plusDays(20);
             WatermarkProperties properties = defaultProperties();
             properties.setKrxCalendarLookbackDays(7);
 
-            when(kisHolidayClient.fetchCalendar(baseDate)).thenReturn(List.of());
+            when(marketCalendarRepository.findByCalendarCodeAndCalDateBetween(
+                            CalendarCode.KRX, lowerBound, upperBound))
+                    .thenReturn(List.of());
 
             makeRefresher(clock, properties).refresh();
 
-            verify(kisHolidayClient).fetchCalendar(baseDate);
+            verify(marketCalendarRepository)
+                    .findByCalendarCodeAndCalDateBetween(CalendarCode.KRX, lowerBound, upperBound);
         }
     }
 
     @Nested
-    @DisplayName("API 호출 실패 시 예외 격리 (REQ-OBSV-033)")
+    @DisplayName("리포지토리 조회 실패 시 예외 격리 (REQ-OBSV-033)")
     class FailureIsolation {
 
         @Test
-        @DisplayName("KIS API 호출 실패 — gate.updateCalendar를 호출하지 않는다 (이전 상태 유지)")
-        void refresh_clientThrows_gateNotUpdated() {
+        @DisplayName("리포지토리 조회 실패 — gate.updateCalendar를 호출하지 않는다 (이전 상태 유지)")
+        void refresh_repositoryThrows_gateNotUpdated() {
             Clock clock = Clock.fixed(REFRESH_INSTANT, KST);
-            LocalDate baseDate = LocalDate.of(2026, 6, 19).minusDays(14);
 
-            when(kisHolidayClient.fetchCalendar(baseDate))
-                    .thenThrow(new ResourceAccessException("connection refused"));
+            when(marketCalendarRepository.findByCalendarCodeAndCalDateBetween(
+                            eq(CalendarCode.KRX), any(), any()))
+                    .thenThrow(new QueryTimeoutException("db timeout"));
 
             // Act — 예외가 전파되지 않아야 한다
             makeRefresher(clock).refresh();
@@ -171,32 +176,17 @@ class MarketSessionGateRefresherTest {
         }
 
         @Test
-        @DisplayName("KIS 비즈니스 오류 — gate.updateCalendar를 호출하지 않는다")
-        void refresh_kisApiBusinessException_gateNotUpdated() {
-            Clock clock = Clock.fixed(REFRESH_INSTANT, KST);
-            LocalDate baseDate = LocalDate.of(2026, 6, 19).minusDays(14);
-
-            when(kisHolidayClient.fetchCalendar(baseDate))
-                    .thenThrow(new KisApiBusinessException("1", "MSG001", "오류"));
-
-            makeRefresher(clock).refresh();
-
-            verify(gate, never()).updateCalendar(any());
-        }
-
-        @Test
         @DisplayName("예외 발생 시 메서드가 정상 반환한다 — 메트릭 노출 경로 중단 없음")
         void refresh_anyException_methodReturnsNormally() {
             Clock clock = Clock.fixed(REFRESH_INSTANT, KST);
-            LocalDate baseDate = LocalDate.of(2026, 6, 19).minusDays(14);
 
-            when(kisHolidayClient.fetchCalendar(baseDate))
-                    .thenThrow(new KisRateLimitException("alias", "rate limit"));
+            when(marketCalendarRepository.findByCalendarCodeAndCalDateBetween(
+                            eq(CalendarCode.KRX), any(), any()))
+                    .thenThrow(new QueryTimeoutException("db timeout"));
 
             // 예외 전파 없이 정상 반환 검증 (예외가 전파되면 테스트 자체가 실패)
             makeRefresher(clock).refresh();
 
-            // gate.updateCalendar 미호출 확인 — 예외 격리 후 상태 변경 없음
             verify(gate, never()).updateCalendar(any());
         }
     }
@@ -206,15 +196,20 @@ class MarketSessionGateRefresherTest {
     class BootRefresh {
 
         @Test
-        @DisplayName("refreshOnStartup 호출 시 refresh()와 동일하게 lookback baseDate로 조회한다")
-        void refreshOnStartup_callsFetchCalendarWithLookback() {
+        @DisplayName("refreshOnStartup 호출 시 refresh()와 동일하게 게이트 범위로 조회한다")
+        void refreshOnStartup_queriesGateRange() {
             Clock clock = Clock.fixed(REFRESH_INSTANT, KST);
-            LocalDate baseDate = LocalDate.of(2026, 6, 19).minusDays(14);
-            when(kisHolidayClient.fetchCalendar(baseDate)).thenReturn(List.of());
+            LocalDate today = LocalDate.of(2026, 6, 19);
+            LocalDate lowerBound = today.minusDays(14);
+            LocalDate upperBound = today.plusDays(20);
+            when(marketCalendarRepository.findByCalendarCodeAndCalDateBetween(
+                            CalendarCode.KRX, lowerBound, upperBound))
+                    .thenReturn(List.of());
 
             makeRefresher(clock).refreshOnStartup();
 
-            verify(kisHolidayClient).fetchCalendar(baseDate);
+            verify(marketCalendarRepository)
+                    .findByCalendarCodeAndCalDateBetween(CalendarCode.KRX, lowerBound, upperBound);
             verify(gate).updateCalendar(any());
         }
     }
@@ -228,17 +223,20 @@ class MarketSessionGateRefresherTest {
         void refresh_success_gateLastUpdateNonZero() {
             // Arrange — 실제 gate 객체 사용
             Clock clock = Clock.fixed(REFRESH_INSTANT, KST);
-            LocalDate baseDate = LocalDate.of(2026, 6, 19).minusDays(14);
+            LocalDate today = LocalDate.of(2026, 6, 19);
+            LocalDate lowerBound = today.minusDays(14);
+            LocalDate upperBound = today.plusDays(20);
             SimpleMeterRegistry registry = new SimpleMeterRegistry();
             KisMarketSchedule schedule = new KisMarketSchedule(clock);
             MarketSessionGate realGate = new MarketSessionGate(registry, schedule, clock);
 
-            when(kisHolidayClient.fetchCalendar(baseDate))
-                    .thenReturn(List.of(row("20260619", "Y")));
+            when(marketCalendarRepository.findByCalendarCodeAndCalDateBetween(
+                            CalendarCode.KRX, lowerBound, upperBound))
+                    .thenReturn(List.of(row(today, true)));
 
             MarketSessionGateRefresher refresher =
                     new MarketSessionGateRefresher(
-                            kisHolidayClient, realGate, clock, defaultProperties());
+                            marketCalendarRepository, realGate, clock, defaultProperties());
 
             // Act
             refresher.refresh();
@@ -252,24 +250,20 @@ class MarketSessionGateRefresherTest {
         @DisplayName("실패한 refresh 후 gate last-update는 0으로 유지된다 (미갱신)")
         void refresh_failure_gateLastUpdateRemainsZero() {
             Clock clock = Clock.fixed(REFRESH_INSTANT, KST);
-            LocalDate baseDate = LocalDate.of(2026, 6, 19).minusDays(14);
             SimpleMeterRegistry registry = new SimpleMeterRegistry();
             KisMarketSchedule schedule = new KisMarketSchedule(clock);
             MarketSessionGate realGate = new MarketSessionGate(registry, schedule, clock);
 
-            when(kisHolidayClient.fetchCalendar(baseDate))
-                    .thenThrow(new ResourceAccessException("refused"));
+            when(marketCalendarRepository.findByCalendarCodeAndCalDateBetween(
+                            eq(CalendarCode.KRX), any(), any()))
+                    .thenThrow(new QueryTimeoutException("db timeout"));
 
-            new MarketSessionGateRefresher(kisHolidayClient, realGate, clock, defaultProperties())
+            new MarketSessionGateRefresher(
+                            marketCalendarRepository, realGate, clock, defaultProperties())
                     .refresh();
 
             Gauge g = registry.get(MarketSessionGate.GATE_LAST_UPDATE_NAME).gauge();
             assertThat(g.value()).isEqualTo(0.0);
         }
-    }
-
-    /** 테스트용 HolidayRow 팩토리. */
-    private static HolidayRow row(String bassDt, String opndYn) {
-        return new HolidayRow(bassDt, "05", "Y", "Y", opndYn, "Y");
     }
 }
