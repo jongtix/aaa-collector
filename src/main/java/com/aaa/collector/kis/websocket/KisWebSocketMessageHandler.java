@@ -361,6 +361,9 @@ public class KisWebSocketMessageHandler extends TextWebSocketHandler {
         }
         subscriptionFailureCount.set(0);
         webSocketSafeModeManager.resetBackoff(alias);
+        if (webSocketSafeModeManager.isActive(alias)) {
+            webSocketSafeModeManager.exit(alias);
+        }
     }
 
     /** PINGPONG 메시지에 PongMessage로 응답. */

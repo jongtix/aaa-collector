@@ -509,6 +509,38 @@ class KisWebSocketSessionTest {
         }
 
         @Test
+        @DisplayName("REQ-WSEXIT-004: 세이프모드 활성 상태에서 재연결 성공 시 exit(alias) 호출")
+        void reconnectSuccess_whileSafeModeActive_callsExit() throws Exception {
+            // Arrange
+            when(webSocketSafeModeManager.isActive(ALIAS)).thenReturn(true);
+            arrangeReconnectSuccess();
+            ZonedDateTime marketOpen =
+                    ZonedDateTime.of(2025, 1, 6, 10, 0, 0, 0, ZoneId.of("Asia/Seoul"));
+
+            // Act
+            session.handleDisconnect(marketOpen);
+
+            // Assert
+            verify(webSocketSafeModeManager, times(1)).exit(ALIAS);
+        }
+
+        @Test
+        @DisplayName("REQ-WSEXIT-002: 세이프모드 비활성 상태에서 재연결 성공 시 exit(alias) 미호출(no-op)")
+        void reconnectSuccess_whileSafeModeInactive_neverCallsExit() throws Exception {
+            // Arrange
+            when(webSocketSafeModeManager.isActive(ALIAS)).thenReturn(false);
+            arrangeReconnectSuccess();
+            ZonedDateTime marketOpen =
+                    ZonedDateTime.of(2025, 1, 6, 10, 0, 0, 0, ZoneId.of("Asia/Seoul"));
+
+            // Act
+            session.handleDisconnect(marketOpen);
+
+            // Assert
+            verify(webSocketSafeModeManager, never()).exit(any());
+        }
+
+        @Test
         @DisplayName("AC-9: 재구독 리플레이도 방향 기록(recordPending)을 거쳐 신규 구독과 동일한 상관 경로에 편입된다")
         void resubscribeReplay_recordsSubscribeDirectionForEachKey() throws Exception {
             // Arrange

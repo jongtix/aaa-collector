@@ -6,6 +6,7 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 import ch.qos.logback.classic.Level;
 import ch.qos.logback.classic.Logger;
@@ -204,6 +205,84 @@ class KisWebSocketMessageHandlerTest {
 
             // Assert
             verify(webSocketSafeModeManager).resetBackoff(ALIAS);
+        }
+
+        @Test
+        @DisplayName(
+                "REQ-WSEXIT-001: 세이프모드 활성 상태에서 구독 성공 시 webSocketSafeModeManager.exit(alias) 호출")
+        void subscriptionSuccess_whileSafeModeActive_callsExit() {
+            // Arrange
+            when(webSocketSafeModeManager.isActive(ALIAS)).thenReturn(true);
+            String json =
+                    """
+                    {
+                      "header": {"tr_id": "H0STCNT0", "tr_key": "005930"},
+                      "body": {
+                        "rt_cd": "0",
+                        "msg1": "SUBSCRIBE SUCCESS",
+                        "output": {"iv": "testiv1234567890", "key": "testkey1234567890123456789012345"}
+                      }
+                    }
+                    """;
+
+            // Act
+            handler.handleTextMessage(session, new TextMessage(json));
+
+            // Assert
+            verify(webSocketSafeModeManager, times(1)).exit(ALIAS);
+        }
+
+        @Test
+        @DisplayName("REQ-WSEXIT-002: 세이프모드 비활성 상태에서 구독 성공 시 exit(alias) 미호출(no-op)")
+        void subscriptionSuccess_whileSafeModeInactive_neverCallsExit() {
+            // Arrange
+            when(webSocketSafeModeManager.isActive(ALIAS)).thenReturn(false);
+            String json =
+                    """
+                    {
+                      "header": {"tr_id": "H0STCNT0", "tr_key": "005930"},
+                      "body": {
+                        "rt_cd": "0",
+                        "msg1": "SUBSCRIBE SUCCESS",
+                        "output": {"iv": "testiv1234567890", "key": "testkey1234567890123456789012345"}
+                      }
+                    }
+                    """;
+
+            // Act
+            handler.handleTextMessage(session, new TextMessage(json));
+
+            // Assert
+            verify(webSocketSafeModeManager, never()).exit(any());
+        }
+
+        @Test
+        @DisplayName("REQ-WSEXIT-003 회귀 방지: 세이프모드 활성/비활성 여부와 무관하게 resetBackoff(alias)는 항상 호출된다")
+        void subscriptionSuccess_alwaysCallsResetBackoffRegardlessOfSafeModeState() {
+            String json =
+                    """
+                    {
+                      "header": {"tr_id": "H0STCNT0", "tr_key": "005930"},
+                      "body": {
+                        "rt_cd": "0",
+                        "msg1": "SUBSCRIBE SUCCESS",
+                        "output": {"iv": "testiv1234567890", "key": "testkey1234567890123456789012345"}
+                      }
+                    }
+                    """;
+            TextMessage message = new TextMessage(json);
+
+            // Act & Assert — isActive=true인 경우
+            when(webSocketSafeModeManager.isActive(ALIAS)).thenReturn(true);
+            handler.handleTextMessage(session, message);
+            verify(webSocketSafeModeManager, times(1)).resetBackoff(ALIAS);
+
+            // Act & Assert — isActive=false인 경우(신규 handler 인스턴스로 상태 초기화)
+            KisWebSocketMessageHandler freshHandler =
+                    new KisWebSocketMessageHandler(ALIAS, tickPublisher, webSocketSafeModeManager);
+            when(webSocketSafeModeManager.isActive(ALIAS)).thenReturn(false);
+            freshHandler.handleTextMessage(session, message);
+            verify(webSocketSafeModeManager, times(2)).resetBackoff(ALIAS);
         }
 
         @Test

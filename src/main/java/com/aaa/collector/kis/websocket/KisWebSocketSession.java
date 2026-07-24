@@ -333,6 +333,12 @@ public class KisWebSocketSession {
                     attempt,
                     resubscribed);
             reconnectAttempt.set(0);
+            // @MX:NOTE: [AUTO] 이 exit는 '구독-실패 진입 후 실제 재연결' 경로에서만 도달. '재연결-실패 5회 진입' 동일
+            // 세션은 handleDisconnect 재발생 불가로 여기 재도달 못 함 — 그 케이스는 TTL 만료+익일 openAll 재편입(AR-1)이
+            // 담당(SPEC-COLLECTOR-WS-SAFEMODE-EXIT-001 §5.2).
+            if (webSocketSafeModeManager.isActive(alias)) {
+                webSocketSafeModeManager.exit(alias);
+            }
         } catch (Exception e) {
             int currentAttempt = reconnectAttempt.get();
             // connect()는 RuntimeException("WebSocket 연결 실패: alias", cause)을 던짐 —
