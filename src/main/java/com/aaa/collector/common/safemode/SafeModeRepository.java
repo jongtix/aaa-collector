@@ -73,6 +73,16 @@ public class SafeModeRepository {
     }
 
     /**
+     * 안전 모드 키를 Redis에서 삭제(DEL)한다. {@code setSafeMode(alias, false)}(값 "OFF" 저장)와 달리 키 자체를 제거하여, TTL
+     * 만료로 자연 삭제된 것과 동일한 상태로 즉시 되돌린다(REQ-WSEXIT-007).
+     *
+     * @param alias 계정/연결 식별자
+     */
+    public void deleteSafeMode(String alias) {
+        redisTemplate.delete(safeModeKey(alias));
+    }
+
+    /**
      * 재진입 백오프 수준을 별도 키에 TTL 없이 저장한다. 안전 모드 "ON" 값이 TTL 만료로 소멸해도 이 값은 유지된다(REQ-SAFEMODE-004).
      *
      * @param alias 계정 식별자

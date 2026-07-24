@@ -97,7 +97,7 @@ public class SafeModeManager {
      * @param alias 계정/연결 식별자
      */
     public void exit(String alias) {
-        safeModeRepository.setSafeMode(alias, false);
+        safeModeRepository.deleteSafeMode(alias);
         log.info("[{}] 안전 모드 해제", alias);
     }
 

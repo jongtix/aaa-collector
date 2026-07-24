@@ -180,4 +180,32 @@ class SafeModeRepositoryTest {
 
         verify(redisTemplate).delete("safe_mode:collector:token:backoff:" + alias);
     }
+
+    // ── REQ-WSEXIT-007: 안전 모드 키 삭제(DEL) ──────────────────────────────
+
+    @Test
+    @DisplayName(
+            "deleteSafeMode — safeModeKey({keyPrefix}{alias})에 대해 DEL 호출, \"OFF\" 값 저장은 하지 않는다")
+    void deleteSafeMode_callsDeleteOnSafeModeKey() {
+        String alias = "test-alias";
+
+        repository.deleteSafeMode(alias);
+
+        verify(redisTemplate).delete("safe_mode:collector:token:" + alias);
+    }
+
+    @Test
+    @DisplayName("deleteSafeMode — ws 프리픽스에서도 동일 키 패턴({keyPrefix}{alias})으로 DEL 호출")
+    void deleteSafeMode_withWsPrefix_usesWsKeyPattern() {
+        // Arrange
+        SafeModeRepository wsRepository =
+                new SafeModeRepository(redisTemplate, "safe_mode:collector:ws:");
+        String alias = "test-alias";
+
+        // Act
+        wsRepository.deleteSafeMode(alias);
+
+        // Assert
+        verify(redisTemplate).delete("safe_mode:collector:ws:" + alias);
+    }
 }

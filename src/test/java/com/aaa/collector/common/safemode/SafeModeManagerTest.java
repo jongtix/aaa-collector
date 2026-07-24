@@ -59,14 +59,15 @@ class SafeModeManagerTest {
         }
 
         @Test
-        @DisplayName("exit — setSafeMode(alias, false) 호출, 백오프 삭제 없음")
-        void exit_withoutPolicy_callsSetSafeModeFalseWithoutBackoffDelete() {
+        @DisplayName("exit — deleteSafeMode(alias) 호출(키 삭제), setSafeMode/백오프 삭제 없음(REQ-WSEXIT-007)")
+        void exit_withoutPolicy_callsDeleteSafeModeWithoutSetOrBackoffDelete() {
             SafeModeManager manager = legacyManager();
             String alias = "ws-alias";
 
             manager.exit(alias);
 
-            verify(safeModeRepository).setSafeMode(alias, false);
+            verify(safeModeRepository).deleteSafeMode(alias);
+            verify(safeModeRepository, never()).setSafeMode(alias, false);
             verify(safeModeRepository, never()).deleteBackoffLevel(alias);
         }
 
@@ -214,14 +215,34 @@ class SafeModeManagerTest {
         }
 
         @Test
-        @DisplayName("exit — setSafeMode(alias, false) 호출 (백오프 리셋은 exit()에서 하지 않음, D-F)")
-        void exit_callsSetSafeModeFalse() {
+        @DisplayName(
+                "exit — deleteSafeMode(alias) 호출(키 삭제), setSafeMode 미호출 (백오프 리셋은 exit()에서 하지 않음, D-F,"
+                        + " REQ-WSEXIT-007)")
+        void exit_callsDeleteSafeMode() {
             SafeModeManager manager = tokenManager();
             String alias = "isa";
 
             manager.exit(alias);
 
-            verify(safeModeRepository).setSafeMode(alias, false);
+            verify(safeModeRepository).deleteSafeMode(alias);
+            verify(safeModeRepository, never()).setSafeMode(alias, false);
+        }
+
+        @Test
+        @DisplayName(
+                "exit — 공유 컴포넌트 회귀 테스트: token 컨텍스트(KisTokenService 경유)에서도 deleteSafeMode로 키 삭제가"
+                        + " 일어난다(REQ-WSEXIT-007, SafeModeManager는 token/ws 컨텍스트가 공유)")
+        void exit_tokenContext_regressionDeletesKeyInsteadOfWritingOff() {
+            SafeModeManager manager = tokenManager();
+            String alias = "isa";
+
+            manager.exit(alias);
+
+            verify(safeModeRepository).deleteSafeMode(alias);
+            verify(safeModeRepository, never())
+                    .setSafeMode(
+                            org.mockito.ArgumentMatchers.eq(alias),
+                            org.mockito.ArgumentMatchers.anyBoolean());
         }
 
         @Test
