@@ -344,10 +344,16 @@ public class KisWebSocketMessageHandler extends TextWebSocketHandler {
     }
 
     /**
-     * 구독 성공(UNSUB 제외) 처리 — AES 키 저장, 연속 실패 카운터 초기화, WS 세이프모드 백오프 리셋(REQ-WSRES-014).
+     * 구독 성공(UNSUB 제외) 처리 — AES 키 저장, 연속 실패 카운터 초기화, WS 세이프모드 백오프 리셋(REQ-WSRES-014), 안전 모드 능동
+     * 해제(REQ-WSEXIT-001~003, SPEC-COLLECTOR-WS-SAFEMODE-EXIT-001).
      *
      * <p>{@code webSocketSafeModeManager.resetBackoff(alias)}는 세이프모드 활성 여부와 무관하게 항상 호출된다 — TTL 자연
      * 만료 후 재성공하는 가장 흔한 회복 경로에서도 stale 백오프 레벨을 리셋하기 위함이다(SafeModeManager D-F 패턴 미러링).
+     *
+     * <p>이어서 세이프모드가 활성 상태일 때만(REQ-WSEXIT-002 게이트) {@code webSocketSafeModeManager.exit(alias)}를 호출해
+     * 안전 모드를 능동 해제한다(REQ-WSEXIT-001) — TTL 만료를 기다리지 않고 구독 성공(복구 확인) 즉시 해제한다. 단일 심볼 구독 성공만으로도
+     * 발화하며(false-positive 해제 위험 수용, spec.md §8 AR-2), 이 지점은 {@code assignSubscription}의 안전모드 세션 배제
+     * 필터 때문에 이미 안전모드로 표시된 채 {@code openAll} 시점에 배제된 세션에는 닿지 않는다(그 경로는 REQ-WSEXIT-006/AR-1이 담당).
      */
     private void handleSubscriptionSuccess(String trId, JsonNode body) {
         JsonNode output = body.path("output");

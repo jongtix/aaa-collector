@@ -16,8 +16,12 @@ import lombok.extern.slf4j.Slf4j;
  * 등록되어 서로 다른 네임스페이스를 사용한다. {@link SafeModeConfig} 참조.
  *
  * <p><b>TTL·백오프 라이프사이클(SPEC-COLLECTOR-SAFEMODE-001, D-B 옵션 A)</b>: {@link SafeModeBackoffPolicy} 정책
- * 협력자가 주입된 인스턴스(token 컨텍스트)만 SafeMode "ON"에 유한 TTL을 부여하고 재진입 백오프(1h→2h→4h 상한)를 적용한다. 정책이 {@code
- * null}인 인스턴스(WebSocket 컨텍스트)는 TTL 없이 영구 저장하는 현행 동작을 그대로 유지한다(REQ-SAFEMODE-016).
+ * 협력자가 주입된 인스턴스만 SafeMode "ON"에 유한 TTL을 부여하고 재진입 백오프(1h→2h→4h 상한)를 적용한다. 정책이 {@code null}인 인스턴스(레거시
+ * 생성자 경로)는 TTL 없이 영구 저장한다(REQ-SAFEMODE-016). WebSocket 컨텍스트는 더 이상 이 레거시 경로가 아니다 —
+ * WS-RESILIENCE-001(#99, v1.59.0)부터 {@link SafeModeConfig}가 WebSocket Bean에도 {@link
+ * SafeModeBackoffPolicy}를 주입하므로, 현재 코드 경로에서 생성되는 WS 안전모드 키는 token 컨텍스트와 동일하게 TTL·백오프를 갖는다. 아울러
+ * SPEC-COLLECTOR-WS-SAFEMODE-EXIT-001(REQ-WSEXIT-001~004)부터는 WS 복구 확인(구독 성공·재연결 성공) 시점에 {@link
+ * #exit(String)}를 능동 호출해 TTL 만료를 기다리지 않고도 안전 모드를 즉시 해제한다.
  *
  * <p>진입 시 {@code aaa_collector_safe_mode_enter_total} 메트릭을 계측한다. {@code enter_total}은 실제 진입(비활성→활성
  * 전이)에서만 증가하며, 활성 중 재진입 no-op(REQ-SAFEMODE-008)은 카운트하지 않는다. 해제 관측은 별도의 상태형 게이지 {@code
