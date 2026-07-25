@@ -72,7 +72,41 @@ jobs:
         if: ${{ steps.tag.outputs.valid == 'true' }}
         uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
 
-      - name: Build and push
+      # CVE 스캔 게이트 계약: 1) 로컬 적재만 수행(push 아님) 2) Trivy로 스캔
+      # 3) 스캔 통과 시에만 아래 Push 스텝에서 GHCR로 올린다.
+      # Build/Push 스텝이 각각 별도의 build-push-action 호출이라 이미지가 두 번 빌드되지만
+      # (GHA 캐시로 재빌드 비용은 작음), 스캔 대상 이미지와 실제 push 이미지의 동일성을
+      # 빌드 단계 자체로 보장하기 위한 의도된 트레이드오프다.
+      - name: Build (load for scan)
+        if: ${{ steps.tag.outputs.valid == 'true' }}
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          context: .
+          load: true
+          platforms: linux/amd64
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # CVE 스캔 게이트: CRITICAL/HIGH(fix-available) 발견 시 exit-code 1로 push를 차단한다
+      # ignore-unfixed로 수정판 없는 finding은 차단 판정에서 제외한다(REQ-CVE-021)
+      # trivyignores를 명시하지 않음 — Trivy CLI가 레포 루트의 .trivyignore를 있으면 자동 소비한다(REQ-CVE-017)
+      # continue-on-error/|| true 금지 — DB 다운로드 실패 등도 위장 없이 그대로 실패해야 한다(REQ-CVE-008)
+      - name: Scan image for CVEs (Trivy)
+        if: ${{ steps.tag.outputs.valid == 'true' }}
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: ghcr.io/${{ github.repository }}:${{ steps.tag.outputs.tag }}
+          scan-type: image
+          scanners: vuln
+          vuln-type: os,library
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          exit-code: '1'
+
+      # 스캔 통과 시에만 GHCR로 push
+      - name: Push
         if: ${{ steps.tag.outputs.valid == 'true' }}
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
         with:
