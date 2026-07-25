@@ -16,7 +16,7 @@ RUN ./gradlew build -x check --no-daemon
 
 # === Runtime stage ===
 # digest pin: 이미지 변경 시 docker manifest inspect로 AMD64 digest 재조회 필요
-FROM eclipse-temurin:21-jre-alpine@sha256:693c22ea458d62395bac47a2da405d0d18c77b205211ceec4846a550a37684b6
+FROM eclipse-temurin:21-jre-alpine@sha256:426401268a42785be73823f6115ee0e721bdb59c12c779947b83fcead1a66645
 
 # 비루트 유저 생성 + 로그 디렉토리 준비 (read_only 컨테이너에서 collector 유저 쓰기 권한 보장)
 RUN addgroup -S -g 1004 collector && adduser -S -u 1004 collector -G collector \
