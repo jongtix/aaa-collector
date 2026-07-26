@@ -24,6 +24,20 @@ management:
     health:
       validate-group-membership: false
 
+# DbGrantCheckConfig는 기본 활성(matchIfMissing=true, aaa-infra#120)이지만,
+# InformationSchemaGrantLoader의 스키마명은 프로덕션 단일 스키마("aaa")로 고정 상수 처리되어 있다
+# (의도된 설계, 그 클래스 Javadoc 참고). 이 프로젝트의 Testcontainers MySQLContainer는(계정 미러
+# 스크립트를 쓰는 SharedMySqlContainer 포함) 기본적으로 스키마명 "test"를 쓰므로, DbGrantCheckRunner가
+# ApplicationRunner로 자동 실행되면 information_schema 조회가 항상 빈 결과를 반환해 기동 시
+# DbGrantMissingException을 던진다 — "test" 프로파일이 활성인 모든 기존 통합/smoke 테스트가
+# 컨텍스트 로드 실패로 깨진다(실측 확인: db-integration/smoke 조합은 물론
+# RedisHealthAutoConfigurationIntegrationTest처럼 "test" 프로파일 단독인 케이스도 포함).
+# DbGrantCheckWiringIntegrationTest(SCHEMA_NAME과 일치하는 전용 컨테이너 사용)만
+# @TestPropertySource로 이 값을 다시 true로 재활성화한다.
+collector:
+  db-grant-check:
+    enabled: false
+
 # 프로덕션은 환경변수 필수, 테스트는 아래 값으로 오버라이드
 spring:
   flyway:

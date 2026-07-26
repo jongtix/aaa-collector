@@ -138,4 +138,22 @@
         <Method name="applyTier2Grants"/>
         <Bug pattern="SQL_INJECTION_JDBC"/>
     </Match>
+
+    <!--
+        SQL_INJECTION_JDBC: DbGrantCheckWiringIntegrationTest$DefaultAccountTier2GrantStrategy
+        .applyTier2Grants(DataSource)는 aaa-infra#120 회귀 방지 통합 테스트의 전용 컨테이너 부트스트랩으로,
+        Flyway migrate 직후 root 커넥션으로 Tier-2 테이블에 UPDATE GRANT를 적용한다(Tier2GrantMigrationStrategy와
+        동일 목적·동일 구조 — 대상 계정만 이 전용 컨테이너의 기본 계정으로 다르다). GRANT 문의 테이블/스키마
+        식별자는 JDBC 바인드 변수로 파라미터화할 수 없다(값이 아닌 식별자이므로 PreparedStatement 불가). 여기
+        흐르는 동적 값은 두 가지뿐이다: (1) DbGrantVerifier.TIER2_TABLES — 외부 입력 경로가 전혀 없는 고정
+        상수 집합, (2) JDBC 커넥션 자신의 catalog(schema)명 — Testcontainers가 결정하는 환경값이며 공격자가
+        제어할 수 없다. 위 Tier2GrantMigrationStrategy 항목과 동일 이유로 클래스 전체가 아니라
+        applyTier2Grants 메서드 하나로만 범위를 좁힌다. user-approved 2026-07-26, aaa-infra#120.
+    -->
+    <Match>
+        <Class
+                name="com.aaa.collector.common.startup.DbGrantCheckWiringIntegrationTest$DefaultAccountTier2GrantStrategy"/>
+        <Method name="applyTier2Grants"/>
+        <Bug pattern="SQL_INJECTION_JDBC"/>
+    </Match>
 </FindBugsFilter>
