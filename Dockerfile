@@ -1,6 +1,6 @@
 # === Build stage ===
 # digest pin: 이미지 변경 시 docker manifest inspect로 AMD64 digest 재조회 필요
-FROM eclipse-temurin:21-jdk-alpine@sha256:fd10ef3691adde33aa57cd1070eedd4ecbe7eff025e0bc82503fdd15e0e70f47 AS build
+FROM eclipse-temurin:25-jdk-alpine@sha256:5ecfde8e5ecde5954ea3721155b345ef56c1d579b940c761318ad4c05959a151 AS build
 WORKDIR /collector
 
 # Gradle wrapper + 빌드 설정 (의존성 레이어 캐시용 — src 변경 시 재다운로드 방지)
@@ -16,7 +16,7 @@ RUN ./gradlew build -x check --no-daemon
 
 # === Runtime stage ===
 # digest pin: 이미지 변경 시 docker manifest inspect로 AMD64 digest 재조회 필요
-FROM eclipse-temurin:21-jre-alpine@sha256:426401268a42785be73823f6115ee0e721bdb59c12c779947b83fcead1a66645
+FROM eclipse-temurin:25-jre-alpine@sha256:28db6fdf60e38945e43d840c0333aeaec66c15943070104f7586fd3c9d1665b0
 
 # OS 패키지 업그레이드: base digest 자체는 최신이나 상류 이미지가 재빌드되지 않아
 # alpine 패키지(libexpat, p11-kit 등)가 배포판 최신 패치를 반영하지 못한 상태로 남을 수 있다.
