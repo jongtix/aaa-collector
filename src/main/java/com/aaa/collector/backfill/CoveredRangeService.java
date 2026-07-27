@@ -86,7 +86,7 @@ public class CoveredRangeService {
                         BackfillStatus managed =
                                 backfillStatusRepository.findById(status.getId()).orElseThrow();
                         managed.advanceCoveredUntil(result.filledUntil());
-                        evaluateFrontGap(cursor, result, domain);
+                        evaluateFrontGap(status, cursor, result, domain);
                     } else if (result.raw() > 0) {
                         log.warn(
                                 "[covered-range] 검증 전량 실패 이상 — cursor={}, raw={}, kept=0",
@@ -209,16 +209,27 @@ public class CoveredRangeService {
      * UsMarketOpenGate#isOpenDayStrict(LocalDate)}로 개장(발화, {@link
      * CoveredWalkAnomalyKind#FRONT_GAP}) 또는 모름(발화, {@link CoveredWalkAnomalyKind#CALENDAR_UNKNOWN},
      * REQ-CVR-085)에서 조기 단축한다. 구간 전체가 휴장으로 확인되면 억제하되 별도 카운터로 양의 증거를 남긴다(REQ-CVR-087).
+     *
+     * <p>WARN 로그에는 조사 대상을 특정할 수 있는 {@code targetCode}·{@code dataTable}을 포함한다(REQ-CVR-089,
+     * TASK-019) — 억제 케이스는 정상 소음이므로 WARN이 아니라 DEBUG로 남긴다.
      */
     private void evaluateFrontGap(
-            LocalDate cursor, CoveredFillResult result, CoveredCalendarDomain domain) {
+            BackfillStatus status,
+            LocalDate cursor,
+            CoveredFillResult result,
+            CoveredCalendarDomain domain) {
         LocalDate oldest = result.oldest();
         if (oldest == null || !oldest.isAfter(cursor)) {
             return; // 정상 도달 — 판정 자체 미수행(REQ-CVR-081 전제 조건)
         }
+        String targetCode = status.getTargetCode();
+        String dataTable = status.getDataTable();
         if (ChronoUnit.DAYS.between(cursor, oldest) > FRONT_GAP_SEARCH_LIMIT_CALENDAR_DAYS) {
             log.warn(
-                    "[covered-range] 앞단 미도달 판정 불가(REQ-CVR-086) — 구간 길이 탐색 상한 초과. cursor={}, oldest={}",
+                    "[covered-range] 앞단 미도달 판정 불가(REQ-CVR-086) — 구간 길이 탐색 상한 초과. targetCode={},"
+                            + " dataTable={}, cursor={}, oldest={}",
+                    targetCode,
+                    dataTable,
                     cursor,
                     oldest);
             recordCoveredWalkAnomalySafely(CoveredWalkAnomalyKind.CALENDAR_UNKNOWN);
@@ -228,8 +239,10 @@ public class CoveredRangeService {
             Optional<Boolean> openState = openDayStrictState(domain, d);
             if (openState.isEmpty()) {
                 log.warn(
-                        "[covered-range] 앞단 미도달 판정 불가(REQ-CVR-085) — 캘린더 정보 부족. cursor={}, oldest={},"
-                                + " unknownDate={}",
+                        "[covered-range] 앞단 미도달 판정 불가(REQ-CVR-085) — 캘린더 정보 부족. targetCode={},"
+                                + " dataTable={}, cursor={}, oldest={}, unknownDate={}",
+                        targetCode,
+                        dataTable,
                         cursor,
                         oldest,
                         d);
@@ -238,8 +251,10 @@ public class CoveredRangeService {
             }
             if (Boolean.TRUE.equals(openState.get())) {
                 log.warn(
-                        "[covered-range] 앞단 미도달 이상(REQ-CVR-081) — cursor={}, oldest={}, filledUntil={}"
-                                + " (전진은 비억제)",
+                        "[covered-range] 앞단 미도달 이상(REQ-CVR-081) — targetCode={}, dataTable={}, cursor={},"
+                                + " oldest={}, filledUntil={} (전진은 비억제)",
+                        targetCode,
+                        dataTable,
                         cursor,
                         oldest,
                         result.filledUntil());
@@ -248,7 +263,13 @@ public class CoveredRangeService {
             }
         }
         // 구간 [cursor, oldest) 전체가 휴장으로 확인됨 — 억제(anomaly 아님, 별도 카운터로 양의 증거만 남김)
-        log.debug("[covered-range] 앞단 미도달 억제 — 구간 전체 휴장 확인. cursor={}, oldest={}", cursor, oldest);
+        log.debug(
+                "[covered-range] 앞단 미도달 억제 — 구간 전체 휴장 확인. targetCode={}, dataTable={}, cursor={},"
+                        + " oldest={}",
+                targetCode,
+                dataTable,
+                cursor,
+                oldest);
         recordFrontGapSuppressedSafely();
     }
 

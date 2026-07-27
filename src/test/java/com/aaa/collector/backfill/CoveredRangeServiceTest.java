@@ -9,6 +9,10 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import ch.qos.logback.classic.Level;
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
 import com.aaa.collector.market.indicator.MarketIndicatorLastSuccessRepository;
 import com.aaa.collector.market.session.MarketSessionGate;
 import com.aaa.collector.market.session.UsMarketSessionGate;
@@ -18,12 +22,15 @@ import com.aaa.collector.observability.CoverageRatioRepository;
 import com.aaa.collector.support.RootFixtureCleaner;
 import java.sql.SQLException;
 import java.time.LocalDate;
+import java.util.List;
 import java.util.Optional;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
@@ -428,6 +435,114 @@ class CoveredRangeServiceTest {
             // Assert — 트랜잭션이 롤백되지 않고 covered_until_date 전진이 그대로 커밋된다
             assertThat(result.filledUntil()).isEqualTo(filledUntil);
             assertThat(reload(status.getId()).getCoveredUntilDate()).isEqualTo(filledUntil);
+        }
+    }
+
+    @Nested
+    @DisplayName("앞단 미도달 로그 — 조사 대상 식별자 (SPEC-COLLECTOR-BACKFILL-011 TASK-019, REQ-CVR-089)")
+    class FrontGapLogIdentifiers {
+
+        private Logger coveredRangeLogger;
+        private ListAppender<ILoggingEvent> listAppender;
+
+        @BeforeEach
+        void attachLogAppender() {
+            coveredRangeLogger = (Logger) LoggerFactory.getLogger(CoveredRangeService.class);
+            coveredRangeLogger.setLevel(Level.DEBUG);
+            listAppender = new ListAppender<>();
+            listAppender.start();
+            coveredRangeLogger.addAppender(listAppender);
+        }
+
+        @AfterEach
+        void detachLogAppender() {
+            coveredRangeLogger.detachAppender(listAppender);
+            listAppender.stop();
+        }
+
+        private List<ILoggingEvent> warnLogs() {
+            return listAppender.list.stream().filter(e -> e.getLevel() == Level.WARN).toList();
+        }
+
+        private List<ILoggingEvent> debugLogs() {
+            return listAppender.list.stream().filter(e -> e.getLevel() == Level.DEBUG).toList();
+        }
+
+        @Test
+        @DisplayName(
+                "AC-33① — front_gap WARN 로그에 targetCode·dataTable·cursor·oldest·filledUntil 포함")
+        void frontGapWarn_includesTargetIdentifiers() {
+            // Arrange
+            BackfillStatus status = seed("WARNLOG1", LocalDate.of(2026, 7, 1));
+            LocalDate cursor = LocalDate.of(2026, 7, 2);
+            LocalDate filledUntil = LocalDate.of(2026, 7, 5);
+            LocalDate oldest = LocalDate.of(2026, 7, 3);
+            CoveredGapFiller filler = step -> new CoveredFillResult(5, 5, filledUntil, oldest);
+            when(marketSessionGate.isOpenDayStrict(cursor)).thenReturn(Optional.of(true));
+
+            // Act
+            coveredRangeService.executeStep(status, filler, cursor, CoveredCalendarDomain.DOMESTIC);
+
+            // Assert
+            List<ILoggingEvent> warnLogs = warnLogs();
+            assertThat(warnLogs).hasSize(1);
+            String message = warnLogs.getFirst().getFormattedMessage();
+            assertThat(message)
+                    .contains("WARNLOG1")
+                    .contains("daily_ohlcv")
+                    .contains(cursor.toString())
+                    .contains(oldest.toString())
+                    .contains(filledUntil.toString());
+        }
+
+        @Test
+        @DisplayName("AC-33② — calendar_unknown WARN 로그에도 targetCode·dataTable 포함(판정 사유 구분 가능)")
+        void calendarUnknownWarn_includesTargetIdentifiers() {
+            // Arrange
+            BackfillStatus status = seed("WARNLOG2", LocalDate.of(2026, 7, 1));
+            LocalDate cursor = LocalDate.of(2026, 7, 2);
+            LocalDate oldest = LocalDate.of(2026, 7, 3);
+            LocalDate filledUntil = LocalDate.of(2026, 7, 5);
+            CoveredGapFiller filler = step -> new CoveredFillResult(5, 5, filledUntil, oldest);
+            when(marketSessionGate.isOpenDayStrict(cursor)).thenReturn(Optional.empty());
+
+            // Act
+            coveredRangeService.executeStep(status, filler, cursor, CoveredCalendarDomain.DOMESTIC);
+
+            // Assert
+            List<ILoggingEvent> warnLogs = warnLogs();
+            assertThat(warnLogs).hasSize(1);
+            String message = warnLogs.getFirst().getFormattedMessage();
+            assertThat(message).contains("WARNLOG2").contains("daily_ohlcv");
+        }
+
+        @Test
+        @DisplayName("AC-33④ — 억제 케이스는 WARN이 아니라 DEBUG로 남고 targetCode·dataTable을 포함한다")
+        void suppressedCase_logsAtDebugWithIdentifiers() {
+            // Arrange — 토요일 커서, oldest=월요일(구간 전체 휴장)
+            BackfillStatus status = seed("WARNLOG3", LocalDate.of(2026, 7, 1));
+            LocalDate saturday = LocalDate.of(2026, 7, 4);
+            LocalDate sunday = LocalDate.of(2026, 7, 5);
+            LocalDate monday = LocalDate.of(2026, 7, 6);
+            LocalDate filledUntil = LocalDate.of(2026, 7, 10);
+            CoveredGapFiller filler = step -> new CoveredFillResult(5, 5, filledUntil, monday);
+            when(marketSessionGate.isOpenDayStrict(saturday)).thenReturn(Optional.of(false));
+            when(marketSessionGate.isOpenDayStrict(sunday)).thenReturn(Optional.of(false));
+
+            // Act
+            coveredRangeService.executeStep(
+                    status, filler, saturday, CoveredCalendarDomain.DOMESTIC);
+
+            // Assert — WARN 없음, DEBUG에 대상 식별자 포함
+            assertThat(warnLogs()).isEmpty();
+            List<ILoggingEvent> debugLogs =
+                    debugLogs().stream()
+                            .filter(e -> e.getFormattedMessage().contains("억제"))
+                            .toList();
+            assertThat(debugLogs).hasSize(1);
+            assertThat(debugLogs.getFirst().getFormattedMessage())
+                    .contains("WARNLOG3")
+                    .contains("daily_ohlcv");
         }
     }
 
