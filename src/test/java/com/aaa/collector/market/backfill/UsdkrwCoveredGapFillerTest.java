@@ -11,6 +11,7 @@ import com.aaa.collector.backfill.BackfillMetrics;
 import com.aaa.collector.backfill.BackfillStatus;
 import com.aaa.collector.backfill.BackfillStatusRepository;
 import com.aaa.collector.backfill.BackfillStatusType;
+import com.aaa.collector.backfill.CoveredCalendarDomain;
 import com.aaa.collector.backfill.CoveredFillResult;
 import com.aaa.collector.backfill.CoveredRangeService;
 import com.aaa.collector.backfill.CoveredWalkAnomalyKind;
@@ -175,7 +176,7 @@ class UsdkrwCoveredGapFillerTest {
             when(usdkrwChain.fetchDaily(cursor)).thenReturn(List.of(validRow(cursor)));
             UsdkrwCoveredGapFiller filler = new UsdkrwCoveredGapFiller(usdkrwCollectionService);
 
-            coveredRangeService.executeStep(status, filler, cursor);
+            coveredRangeService.executeStep(status, filler, cursor, CoveredCalendarDomain.DOMESTIC);
 
             assertThat(status.getCoveredUntilDate()).isEqualTo(cursor);
         }
@@ -194,7 +195,7 @@ class UsdkrwCoveredGapFillerTest {
             when(usdkrwChain.fetchDaily(cursor)).thenReturn(List.of(invalidRow(cursor)));
             UsdkrwCoveredGapFiller filler = new UsdkrwCoveredGapFiller(usdkrwCollectionService);
 
-            coveredRangeService.executeStep(status, filler, cursor);
+            coveredRangeService.executeStep(status, filler, cursor, CoveredCalendarDomain.DOMESTIC);
 
             assertThat(status.getCoveredUntilDate()).isNull();
             verify(backfillMetrics, never()).recordAnomalyFailed();

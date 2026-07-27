@@ -100,7 +100,9 @@ class CoveredRangeServiceTest {
             CoveredGapFiller filler = step -> new CoveredFillResult(5, 5, step); // kept>0, 성공적으로 채움
 
             // Act
-            CoveredFillResult result = coveredRangeService.executeStep(status, filler, cursor);
+            CoveredFillResult result =
+                    coveredRangeService.executeStep(
+                            status, filler, cursor, CoveredCalendarDomain.DOMESTIC);
 
             // Assert
             assertThat(result.kept()).isEqualTo(5);
@@ -119,7 +121,9 @@ class CoveredRangeServiceTest {
             CoveredGapFiller filler = step -> new CoveredFillResult(0, 0, step);
 
             // Act
-            CoveredFillResult result = coveredRangeService.executeStep(status, filler, cursor);
+            CoveredFillResult result =
+                    coveredRangeService.executeStep(
+                            status, filler, cursor, CoveredCalendarDomain.DOMESTIC);
 
             // Assert — REQ-CVR-030 원문("kept가 확인된 경우에만 전진")에 따라 kept==0이면 raw 값과 무관하게 미전진
             assertThat(result.kept()).isZero();
@@ -138,7 +142,9 @@ class CoveredRangeServiceTest {
             CoveredGapFiller filler = step -> new CoveredFillResult(0, 12, step);
 
             // Act
-            CoveredFillResult result = coveredRangeService.executeStep(status, filler, cursor);
+            CoveredFillResult result =
+                    coveredRangeService.executeStep(
+                            status, filler, cursor, CoveredCalendarDomain.DOMESTIC);
 
             // Assert
             assertThat(result.kept()).isZero();
@@ -164,7 +170,9 @@ class CoveredRangeServiceTest {
                     .recordCoveredWalkAnomaly(any());
 
             // Act — 메트릭 예외가 executeStep 밖으로 전파되지 않아야 한다
-            CoveredFillResult result = coveredRangeService.executeStep(status, filler, cursor);
+            CoveredFillResult result =
+                    coveredRangeService.executeStep(
+                            status, filler, cursor, CoveredCalendarDomain.DOMESTIC);
 
             // Assert — 기존 미전진 동작은 그대로 유지된다
             assertThat(result.kept()).isZero();
@@ -251,7 +259,9 @@ class CoveredRangeServiceTest {
             CoveredGapFiller filler = step -> new CoveredFillResult(5, 5, filledUntil, oldest);
 
             // Act
-            CoveredFillResult result = coveredRangeService.executeStep(status, filler, cursor);
+            CoveredFillResult result =
+                    coveredRangeService.executeStep(
+                            status, filler, cursor, CoveredCalendarDomain.DOMESTIC);
 
             // Assert — 앞단 hole이 anomaly로 관측 가능하게 남되, covered_until_date 전진은 억제되지 않는다(동일 anchor
             // 재호출 라이브락 방지)
@@ -272,7 +282,7 @@ class CoveredRangeServiceTest {
             CoveredGapFiller filler = step -> new CoveredFillResult(5, 5, filledUntil, cursor);
 
             // Act
-            coveredRangeService.executeStep(status, filler, cursor);
+            coveredRangeService.executeStep(status, filler, cursor, CoveredCalendarDomain.DOMESTIC);
 
             // Assert
             assertThat(reload(status.getId()).getCoveredUntilDate()).isEqualTo(filledUntil);
@@ -296,7 +306,9 @@ class CoveredRangeServiceTest {
                     .recordCoveredWalkAnomaly(any());
 
             // Act — 메트릭 예외가 executeStep 밖으로 전파되지 않아야 한다
-            CoveredFillResult result = coveredRangeService.executeStep(status, filler, cursor);
+            CoveredFillResult result =
+                    coveredRangeService.executeStep(
+                            status, filler, cursor, CoveredCalendarDomain.DOMESTIC);
 
             // Assert — 트랜잭션이 롤백되지 않고 covered_until_date 전진이 그대로 커밋된다
             assertThat(result.filledUntil()).isEqualTo(filledUntil);
@@ -331,7 +343,12 @@ class CoveredRangeServiceTest {
 
             // Act & Assert — 예외가 executeStep 밖으로 전파된다
             assertThatThrownBy(
-                            () -> coveredRangeService.executeStep(status, throwingFiller, cursor))
+                            () ->
+                                    coveredRangeService.executeStep(
+                                            status,
+                                            throwingFiller,
+                                            cursor,
+                                            CoveredCalendarDomain.DOMESTIC))
                     .isInstanceOf(IllegalStateException.class)
                     .hasMessage("stub persistStep 실패");
 

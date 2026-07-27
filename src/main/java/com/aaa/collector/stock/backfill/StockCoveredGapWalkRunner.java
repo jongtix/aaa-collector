@@ -2,6 +2,7 @@ package com.aaa.collector.stock.backfill;
 
 import com.aaa.collector.backfill.BackfillStatus;
 import com.aaa.collector.backfill.BackfillStatusRepository;
+import com.aaa.collector.backfill.CoveredCalendarDomain;
 import com.aaa.collector.backfill.CoveredRangeService;
 import com.aaa.collector.kis.gate.KeyLeaseRegistry.LeaseSession;
 import com.aaa.collector.stock.Stock;
@@ -103,7 +104,11 @@ public class StockCoveredGapWalkRunner {
                             investorTrendService,
                             creditBalanceService,
                             shortSaleService);
-            coveredRangeService.walkGapForward(status, filler, cap);
+            CoveredCalendarDomain domain =
+                    OVERSEAS_MARKETS.contains(stock.getMarket())
+                            ? CoveredCalendarDomain.OVERSEAS
+                            : CoveredCalendarDomain.DOMESTIC;
+            coveredRangeService.walkGapForward(status, filler, cap, domain);
         } catch (Exception e) {
             log.error(
                     "[stock-covered-gap-walk] 예외 — symbol={}, table={}, 다음 회차 재개",

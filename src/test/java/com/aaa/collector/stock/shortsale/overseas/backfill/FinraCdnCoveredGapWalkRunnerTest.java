@@ -9,6 +9,7 @@ import static org.mockito.Mockito.when;
 
 import com.aaa.collector.backfill.BackfillStatus;
 import com.aaa.collector.backfill.BackfillStatusType;
+import com.aaa.collector.backfill.CoveredCalendarDomain;
 import com.aaa.collector.backfill.CoveredRangeService;
 import com.aaa.collector.stock.Stock;
 import java.time.LocalDate;
@@ -66,7 +67,9 @@ class FinraCdnCoveredGapWalkRunnerTest {
 
             runner.runFor(anchor, today, loader, symbolMap);
 
-            verify(coveredRangeService).walkGapForward(eq(anchor), any(), eq(today));
+            verify(coveredRangeService)
+                    .walkGapForward(
+                            eq(anchor), any(), eq(today), eq(CoveredCalendarDomain.OVERSEAS));
         }
 
         @Test
@@ -81,7 +84,11 @@ class FinraCdnCoveredGapWalkRunnerTest {
             runner.runFor(anchor, today, loader, symbolMap);
 
             verify(coveredRangeService)
-                    .walkGapForward(eq(anchor), fillerCaptor.capture(), eq(today));
+                    .walkGapForward(
+                            eq(anchor),
+                            fillerCaptor.capture(),
+                            eq(today),
+                            eq(CoveredCalendarDomain.OVERSEAS));
             LocalDate cursor = LocalDate.of(2026, 7, 10);
             when(client.fetch(cursor))
                     .thenReturn(
@@ -98,7 +105,7 @@ class FinraCdnCoveredGapWalkRunnerTest {
             LocalDate today = LocalDate.of(2026, 7, 15);
             doThrow(new RuntimeException("gap walk 실패"))
                     .when(coveredRangeService)
-                    .walkGapForward(any(), any(), any());
+                    .walkGapForward(any(), any(), any(), any());
 
             assertThatCode(() -> runner.runFor(anchor, today, loader, Map.of()))
                     .doesNotThrowAnyException();

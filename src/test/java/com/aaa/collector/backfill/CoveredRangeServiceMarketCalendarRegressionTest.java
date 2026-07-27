@@ -150,7 +150,8 @@ class CoveredRangeServiceMarketCalendarRegressionTest {
             RecordingFiller filler = new RecordingFiller();
 
             // Act
-            coveredRangeService.walkGapForward(status, filler, yearsAgo);
+            coveredRangeService.walkGapForward(
+                    status, filler, yearsAgo, CoveredCalendarDomain.DOMESTIC);
 
             // Assert — fail-open(true)이므로 "비거래일 skip" 조건(!isOpenDay)이 성립하지 않아 필러가 호출된다
             assertThat(filler.cursorsCalled).containsExactly(yearsAgo);
@@ -212,7 +213,8 @@ class CoveredRangeServiceMarketCalendarRegressionTest {
             RecordingFiller filler = new RecordingFiller();
 
             // Act
-            coveredRangeService.walkGapForward(status, filler, dayAfterHoliday);
+            coveredRangeService.walkGapForward(
+                    status, filler, dayAfterHoliday, CoveredCalendarDomain.DOMESTIC);
 
             // Assert — holiday(휴장)는 skip되고 dayAfterHoliday만 필러 호출
             assertThat(filler.cursorsCalled).containsExactly(dayAfterHoliday);

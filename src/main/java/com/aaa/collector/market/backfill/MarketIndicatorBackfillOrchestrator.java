@@ -3,6 +3,7 @@ package com.aaa.collector.market.backfill;
 import com.aaa.collector.backfill.BackfillStatus;
 import com.aaa.collector.backfill.BackfillStatusRepository;
 import com.aaa.collector.backfill.BackfillStatusType;
+import com.aaa.collector.backfill.CoveredCalendarDomain;
 import com.aaa.collector.backfill.CoveredRangeService;
 import com.aaa.collector.market.MarketIndicatorRepository;
 import com.aaa.collector.market.enums.IndicatorCode;
@@ -178,7 +179,8 @@ public class MarketIndicatorBackfillOrchestrator {
             }
             BackfillStatus status = maybeUsdkrw.get();
             UsdkrwCoveredGapFiller filler = new UsdkrwCoveredGapFiller(usdkrwCollectionService);
-            coveredRangeService.walkGapForward(status, filler, LocalDate.now(KST));
+            coveredRangeService.walkGapForward(
+                    status, filler, LocalDate.now(KST), CoveredCalendarDomain.DOMESTIC);
         } catch (Exception e) {
             log.error("[market-ind-backfill] USDKRW 갭 walk 예외 — 다음 회차 재개", e);
         }

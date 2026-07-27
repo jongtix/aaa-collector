@@ -13,6 +13,7 @@ import com.aaa.collector.backfill.BackfillMetrics;
 import com.aaa.collector.backfill.BackfillStatus;
 import com.aaa.collector.backfill.BackfillStatusRepository;
 import com.aaa.collector.backfill.BackfillStatusType;
+import com.aaa.collector.backfill.CoveredCalendarDomain;
 import com.aaa.collector.backfill.CoveredFillResult;
 import com.aaa.collector.backfill.CoveredRangeService;
 import com.aaa.collector.backfill.CoveredWalkAnomalyKind;
@@ -212,7 +213,7 @@ class FinraCdnCoveredGapFillerTest {
                     .thenReturn(new FinraCdnDailyLoadOutcome(1, 1, 0, 0));
 
             // Act
-            coveredRangeService.executeStep(status, filler, cursor);
+            coveredRangeService.executeStep(status, filler, cursor, CoveredCalendarDomain.OVERSEAS);
 
             // Assert
             assertThat(status.getCoveredUntilDate()).isEqualTo(cursor);
@@ -240,7 +241,7 @@ class FinraCdnCoveredGapFillerTest {
                     .thenReturn(new FinraCdnDailyLoadOutcome(0, 1, 0, 1));
 
             // Act — kept==0 분기는 backfillStatusRepository.findById를 호출하지 않는다(전진 없음)
-            coveredRangeService.executeStep(status, filler, cursor);
+            coveredRangeService.executeStep(status, filler, cursor, CoveredCalendarDomain.OVERSEAS);
 
             // Assert
             assertThat(status.getCoveredUntilDate()).isNull();

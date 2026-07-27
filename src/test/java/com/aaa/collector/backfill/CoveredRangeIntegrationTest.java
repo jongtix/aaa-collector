@@ -142,7 +142,8 @@ class CoveredRangeIntegrationTest {
                     };
 
             // Act
-            coveredRangeService.walkGapForward(status, filler, today);
+            coveredRangeService.walkGapForward(
+                    status, filler, today, CoveredCalendarDomain.DOMESTIC);
 
             // Assert
             assertThat(cursorsCalled.getFirst()).isEqualTo(lastCollected.plusDays(1));
@@ -158,11 +159,14 @@ class CoveredRangeIntegrationTest {
             BackfillStatus status = seedUsdkrw(lastCollected, null);
 
             // Act — Run 1~3: 회차당 캡 3(신규 캡 아님 — 테스트 시뮬레이션 값일 뿐, 프로덕션 캡은 BackfillProperties 소유)
-            coveredRangeService.walkGapForward(status, cappedFiller(3), today);
+            coveredRangeService.walkGapForward(
+                    status, cappedFiller(3), today, CoveredCalendarDomain.DOMESTIC);
             LocalDate afterRun1 = reload(status.getId()).getCoveredUntilDate();
-            coveredRangeService.walkGapForward(reload(status.getId()), cappedFiller(3), today);
+            coveredRangeService.walkGapForward(
+                    reload(status.getId()), cappedFiller(3), today, CoveredCalendarDomain.DOMESTIC);
             LocalDate afterRun2 = reload(status.getId()).getCoveredUntilDate();
-            coveredRangeService.walkGapForward(reload(status.getId()), cappedFiller(3), today);
+            coveredRangeService.walkGapForward(
+                    reload(status.getId()), cappedFiller(3), today, CoveredCalendarDomain.DOMESTIC);
             LocalDate afterRun3 = reload(status.getId()).getCoveredUntilDate();
 
             // Assert — 매 회차 엄격히 전진, 최종 today 도달
@@ -203,7 +207,8 @@ class CoveredRangeIntegrationTest {
             UsdkrwCoveredGapFiller filler = new UsdkrwCoveredGapFiller(usdkrwCollectionService);
 
             // Act
-            coveredRangeService.walkGapForward(status, filler, today);
+            coveredRangeService.walkGapForward(
+                    status, filler, today, CoveredCalendarDomain.DOMESTIC);
 
             // Assert — 실 market_indicators 테이블에 3영업일치(06-02~06-04) 실 데이터가 적재됨
             assertThat(marketIndicatorRepository.countByIndicatorCode(USDKRW)).isEqualTo(3);
@@ -226,7 +231,8 @@ class CoveredRangeIntegrationTest {
             UsdkrwCoveredGapFiller filler = new UsdkrwCoveredGapFiller(usdkrwCollectionService);
 
             // Act
-            coveredRangeService.walkGapForward(status, filler, today);
+            coveredRangeService.walkGapForward(
+                    status, filler, today, CoveredCalendarDomain.DOMESTIC);
 
             // Assert — MARKET_INDICATOR/USDKRW 행 수 불변(기존 1행)
             List<BackfillStatus> usdkrwRows =
@@ -257,7 +263,8 @@ class CoveredRangeIntegrationTest {
             UsdkrwCoveredGapFiller filler = new UsdkrwCoveredGapFiller(usdkrwCollectionService);
 
             // Act
-            coveredRangeService.walkGapForward(status, filler, today);
+            coveredRangeService.walkGapForward(
+                    status, filler, today, CoveredCalendarDomain.DOMESTIC);
 
             // Assert — 하단 경계·backward walk 상태 필드 전부 불변, 오직 상단 경계만 전진
             BackfillStatus after = reload(status.getId());

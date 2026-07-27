@@ -1,6 +1,7 @@
 package com.aaa.collector.stock.shortsale.overseas.backfill;
 
 import com.aaa.collector.backfill.BackfillStatus;
+import com.aaa.collector.backfill.CoveredCalendarDomain;
 import com.aaa.collector.backfill.CoveredRangeService;
 import com.aaa.collector.stock.Stock;
 import java.time.LocalDate;
@@ -48,7 +49,8 @@ public class FinraCdnCoveredGapWalkRunner {
         try {
             FinraCdnCoveredGapFiller filler =
                     new FinraCdnCoveredGapFiller(client, loader, symbolMap);
-            coveredRangeService.walkGapForward(anchor, filler, today);
+            coveredRangeService.walkGapForward(
+                    anchor, filler, today, CoveredCalendarDomain.OVERSEAS);
         } catch (Exception e) {
             log.error("[finra-cdn-backfill] 갭 walk 예외 — 다음 회차 재개", e);
         }

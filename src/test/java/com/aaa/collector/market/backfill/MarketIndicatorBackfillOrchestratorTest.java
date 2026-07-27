@@ -17,6 +17,7 @@ import static org.mockito.Mockito.when;
 import com.aaa.collector.backfill.BackfillStatus;
 import com.aaa.collector.backfill.BackfillStatusRepository;
 import com.aaa.collector.backfill.BackfillStatusType;
+import com.aaa.collector.backfill.CoveredCalendarDomain;
 import com.aaa.collector.backfill.CoveredRangeService;
 import com.aaa.collector.market.MarketIndicatorRepository;
 import com.aaa.collector.market.enums.IndicatorCode;
@@ -266,7 +267,10 @@ class MarketIndicatorBackfillOrchestratorTest {
 
             verify(coveredRangeService)
                     .walkGapForward(
-                            eq(status), any(UsdkrwCoveredGapFiller.class), any(LocalDate.class));
+                            eq(status),
+                            any(UsdkrwCoveredGapFiller.class),
+                            any(LocalDate.class),
+                            eq(CoveredCalendarDomain.DOMESTIC));
         }
     }
 
@@ -366,7 +370,7 @@ class MarketIndicatorBackfillOrchestratorTest {
             verify(mockManaged, never())
                     .advance(eq(BackfillStatusType.COMPLETED), any(), anyInt(), anyInt());
             // REQ-028: 캡 도달 회차는 그 밤 갭 walk를 실행하지 않는다
-            verify(coveredRangeService, never()).walkGapForward(any(), any(), any());
+            verify(coveredRangeService, never()).walkGapForward(any(), any(), any(), any());
         }
     }
 
@@ -402,7 +406,7 @@ class MarketIndicatorBackfillOrchestratorTest {
             verify(mockManaged, never())
                     .advance(eq(BackfillStatusType.COMPLETED), any(), anyInt(), anyInt());
             // REQ-028: 쿼터 예외 회차는 그 밤 갭 walk를 실행하지 않는다
-            verify(coveredRangeService, never()).walkGapForward(any(), any(), any());
+            verify(coveredRangeService, never()).walkGapForward(any(), any(), any(), any());
         }
 
         @Test
@@ -483,7 +487,8 @@ class MarketIndicatorBackfillOrchestratorTest {
                     .walkGapForward(
                             eq(existingUsdkrw),
                             any(UsdkrwCoveredGapFiller.class),
-                            any(LocalDate.class));
+                            any(LocalDate.class),
+                            eq(CoveredCalendarDomain.DOMESTIC));
         }
 
         @Test
@@ -505,7 +510,10 @@ class MarketIndicatorBackfillOrchestratorTest {
                     ArgumentCaptor.forClass(UsdkrwCoveredGapFiller.class);
             verify(coveredRangeService)
                     .walkGapForward(
-                            eq(existingUsdkrw), fillerCaptor.capture(), any(LocalDate.class));
+                            eq(existingUsdkrw),
+                            fillerCaptor.capture(),
+                            any(LocalDate.class),
+                            eq(CoveredCalendarDomain.DOMESTIC));
             fillerCaptor.getValue().persistStep(cursor);
             // filler가 결국 usdkrwCollectionService의 기존 백필 경로를 호출함을 확인 — 신규 fetch 메서드가 아니다.
             verify(usdkrwCollectionService).collectDailyForBackfillWithRaw(cursor);
@@ -529,12 +537,13 @@ class MarketIndicatorBackfillOrchestratorTest {
             orchestrator.runBackfill();
 
             verify(coveredRangeService, times(1))
-                    .walkGapForward(any(), any(), any(LocalDate.class));
+                    .walkGapForward(any(), any(), any(LocalDate.class), any());
             verify(coveredRangeService)
                     .walkGapForward(
                             eq(existingUsdkrw),
                             any(UsdkrwCoveredGapFiller.class),
-                            any(LocalDate.class));
+                            any(LocalDate.class),
+                            eq(CoveredCalendarDomain.DOMESTIC));
         }
 
         @Test
@@ -548,7 +557,7 @@ class MarketIndicatorBackfillOrchestratorTest {
 
             assertThatCode(orchestrator::runBackfill).doesNotThrowAnyException();
 
-            verify(coveredRangeService, never()).walkGapForward(any(), any(), any());
+            verify(coveredRangeService, never()).walkGapForward(any(), any(), any(), any());
         }
 
         @Test
@@ -562,7 +571,7 @@ class MarketIndicatorBackfillOrchestratorTest {
                     .thenReturn(Optional.of(existingUsdkrw));
             Mockito.doThrow(new RuntimeException("gap walk 실패"))
                     .when(coveredRangeService)
-                    .walkGapForward(any(), any(), any());
+                    .walkGapForward(any(), any(), any(), any());
 
             assertThatCode(orchestrator::runBackfill).doesNotThrowAnyException();
         }

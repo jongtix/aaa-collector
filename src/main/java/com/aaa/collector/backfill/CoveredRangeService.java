@@ -60,10 +60,14 @@ public class CoveredRangeService {
      * @param status 처리 대상 {@code backfill_status} 행(전진 시 id로 재조회해 관리 상태로 갱신한다)
      * @param filler 소스별 저장 실행체(TASK-005~008)
      * @param cursor 이번 스텝의 시작 지점({@code covered_until_date} 다음 날짜)
+     * @param domain 판정에 사용할 시장 캘린더 도메인(SPEC-COLLECTOR-BACKFILL-011 TASK-017, REQ-CVR-083/084)
      * @return 이번 스텝의 kept/raw/filledUntil/oldest (호출자가 갭 walk 루프 지속 여부를 판단하는 데 사용)
      */
     public CoveredFillResult executeStep(
-            BackfillStatus status, CoveredGapFiller filler, LocalDate cursor) {
+            BackfillStatus status,
+            CoveredGapFiller filler,
+            LocalDate cursor,
+            CoveredCalendarDomain domain) {
         return transactionTemplate.execute(
                 tx -> {
                     CoveredFillResult result = filler.persistStep(cursor);
@@ -148,12 +152,18 @@ public class CoveredRangeService {
      * @param status 처리 대상 {@code backfill_status} 행(추적 대상 판별·id 조회에만 사용, 최신 커서는 내부에서 재조회한다)
      * @param filler 소스별 저장 실행체(TASK-005~008)
      * @param today 갭 walk 목표 상한(오늘)
+     * @param domain 판정에 사용할 시장 캘린더 도메인 — 호출처가 이미 알고 있는 시장 소속을 명시 공급한다(SPEC-COLLECTOR-BACKFILL-011
+     *     TASK-017, REQ-CVR-083/084)
      */
     // @MX:ANCHOR: [AUTO] 정방향 갭 walk 진입점 — 실측 fan_in=3(FinraCdnCoveredGapWalkRunner,
     // MarketIndicatorBackfillOrchestrator, StockCoveredGapWalkRunner)
     // @MX:REASON: 클래스 레벨 태그가 이 메서드의 원자성 근거를 이미 서술함(SPEC-COLLECTOR-BACKFILL-011) — 여기서는
     // 실제 fan_in 호출처 3곳만 정확히 고정한다(executeStep은 이 메서드 내부에서만 호출되어 외부 fan_in 없음).
-    public void walkGapForward(BackfillStatus status, CoveredGapFiller filler, LocalDate today) {
+    public void walkGapForward(
+            BackfillStatus status,
+            CoveredGapFiller filler,
+            LocalDate today,
+            CoveredCalendarDomain domain) {
         if (!CoveredTrackingEligibility.isTracked(
                 status.getTargetType(), status.getTargetCode(), status.getDataTable())) {
             if (log.isDebugEnabled()) {
@@ -174,12 +184,11 @@ public class CoveredRangeService {
         LocalDate cursor = startCursor(fresh);
 
         while (!cursor.isAfter(today)) {
-            if (mode == CoveredTrackingEligibility.Mode.SINGLE_DATE
-                    && !isOpenDay(status.getTargetType(), cursor)) {
+            if (mode == CoveredTrackingEligibility.Mode.SINGLE_DATE && !isOpenDay(domain, cursor)) {
                 cursor = cursor.plusDays(1);
                 continue;
             }
-            CoveredFillResult result = executeStep(fresh, filler, cursor);
+            CoveredFillResult result = executeStep(fresh, filler, cursor, domain);
             if (result.kept() == 0) {
                 break; // 이번 회차 종료 — 다음 회차가 covered_until_date+1부터 재개(REQ-CVR-013, 라이브락 없음)
             }
@@ -214,9 +223,12 @@ public class CoveredRangeService {
         return (coveredUntil != null ? coveredUntil : fresh.getLastCollectedDate()).plusDays(1);
     }
 
-    /** 단일 날짜형 대상의 기존 시장 캘린더 게이트를 소스별로 선택한다(신규 캘린더 로직 없음). */
-    private boolean isOpenDay(String targetType, LocalDate date) {
-        return "OVERSEAS_SHORTSALE".equals(targetType)
+    /**
+     * 단일 날짜형 대상의 기존 시장 캘린더 게이트를 도메인 기반으로 선택한다(신규 캘린더 로직 없음, TASK-017 — {@code target_type} 문자열 비교를
+     * 대체).
+     */
+    private boolean isOpenDay(CoveredCalendarDomain domain, LocalDate date) {
+        return domain == CoveredCalendarDomain.OVERSEAS
                 ? usMarketOpenGate.isOpenDay(date)
                 : marketOpenGate.isOpenDay(date);
     }

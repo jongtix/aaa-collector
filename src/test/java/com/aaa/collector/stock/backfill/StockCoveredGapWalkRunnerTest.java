@@ -10,6 +10,7 @@ import static org.mockito.Mockito.when;
 import com.aaa.collector.backfill.BackfillStatus;
 import com.aaa.collector.backfill.BackfillStatusRepository;
 import com.aaa.collector.backfill.BackfillStatusType;
+import com.aaa.collector.backfill.CoveredCalendarDomain;
 import com.aaa.collector.backfill.CoveredRangeService;
 import com.aaa.collector.kis.gate.KeyLeaseRegistry.LeaseSession;
 import com.aaa.collector.stock.Stock;
@@ -197,12 +198,14 @@ class StockCoveredGapWalkRunnerTest {
                     .walkGapForward(
                             any(),
                             any(),
-                            org.mockito.ArgumentMatchers.eq(LocalDate.of(2026, 7, 19)));
+                            org.mockito.ArgumentMatchers.eq(LocalDate.of(2026, 7, 19)),
+                            org.mockito.ArgumentMatchers.eq(CoveredCalendarDomain.OVERSEAS));
             verify(coveredRangeService, never())
                     .walkGapForward(
                             any(),
                             any(),
-                            org.mockito.ArgumentMatchers.eq(LocalDate.of(2026, 7, 20)));
+                            org.mockito.ArgumentMatchers.eq(LocalDate.of(2026, 7, 20)),
+                            any());
         }
 
         @Test
@@ -229,7 +232,36 @@ class StockCoveredGapWalkRunnerTest {
                     .walkGapForward(
                             any(),
                             any(),
-                            org.mockito.ArgumentMatchers.eq(LocalDate.of(2026, 7, 21)));
+                            org.mockito.ArgumentMatchers.eq(LocalDate.of(2026, 7, 21)),
+                            org.mockito.ArgumentMatchers.eq(CoveredCalendarDomain.DOMESTIC));
+        }
+
+        @Test
+        @DisplayName("AMEX 종목도 해외 도메인으로 공급된다(신규 매핑 상수 없이 OVERSEAS_MARKETS 재사용)")
+        void amexStock_suppliesOverseasDomain() {
+            Stock stock = buildStock("SPY", Market.AMEX);
+            BackfillStatus status = buildStatus("SPY", "daily_ohlcv");
+            when(backfillStatusRepository.findByTargetTypeAndDataTableOrderById(
+                            "STOCK", "daily_ohlcv"))
+                    .thenReturn(List.of(status));
+            when(backfillStatusRepository.findByTargetTypeAndDataTableOrderById(
+                            "STOCK", "investor_trend"))
+                    .thenReturn(List.of());
+            when(backfillStatusRepository.findByTargetTypeAndDataTableOrderById(
+                            "STOCK", "credit_balance"))
+                    .thenReturn(List.of());
+            when(backfillStatusRepository.findByTargetTypeAndDataTableOrderById(
+                            "STOCK", "short_sale_domestic"))
+                    .thenReturn(List.of());
+
+            runner(clock).runFor(Map.of("SPY", stock), session);
+
+            verify(coveredRangeService)
+                    .walkGapForward(
+                            any(),
+                            any(),
+                            any(LocalDate.class),
+                            org.mockito.ArgumentMatchers.eq(CoveredCalendarDomain.OVERSEAS));
         }
     }
 

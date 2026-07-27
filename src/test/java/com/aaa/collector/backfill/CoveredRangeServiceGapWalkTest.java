@@ -199,7 +199,8 @@ class CoveredRangeServiceGapWalkTest {
             RecordingSingleDateFiller filler = new RecordingSingleDateFiller(status.getId());
 
             // Act
-            coveredRangeService.walkGapForward(status, filler, today);
+            coveredRangeService.walkGapForward(
+                    status, filler, today, CoveredCalendarDomain.DOMESTIC);
 
             // Assert
             assertThat(filler.cursorsCalled.getFirst()).isEqualTo(coveredUntil.plusDays(1));
@@ -216,7 +217,8 @@ class CoveredRangeServiceGapWalkTest {
             RecordingSingleDateFiller filler = new RecordingSingleDateFiller(status.getId());
 
             // Act
-            coveredRangeService.walkGapForward(status, filler, today);
+            coveredRangeService.walkGapForward(
+                    status, filler, today, CoveredCalendarDomain.DOMESTIC);
 
             // Assert — 각 스텝 시작 시점에 관측된 covered_until_date가 이전 스텝의 커밋을 이미 반영해 단조 증가한다
             List<LocalDate> observed = filler.observedCoveredUntilBeforeStep;
@@ -237,7 +239,8 @@ class CoveredRangeServiceGapWalkTest {
             RangeWindowFiller filler = new RangeWindowFiller(15, today);
 
             // Act
-            coveredRangeService.walkGapForward(status, filler, today);
+            coveredRangeService.walkGapForward(
+                    status, filler, today, CoveredCalendarDomain.OVERSEAS);
 
             // Assert
             assertThat(filler.cursorsCalled).hasSizeGreaterThan(1);
@@ -265,7 +268,8 @@ class CoveredRangeServiceGapWalkTest {
             RecordingSingleDateFiller filler = new RecordingSingleDateFiller(status.getId());
 
             // Act
-            coveredRangeService.walkGapForward(status, filler, today);
+            coveredRangeService.walkGapForward(
+                    status, filler, today, CoveredCalendarDomain.DOMESTIC);
 
             // Assert — 주말(07-04 토, 07-05 일)은 필러 호출 대상에서 제외되지만 covered_until_date는 today까지 도달
             assertThat(filler.cursorsCalled)
@@ -290,17 +294,24 @@ class CoveredRangeServiceGapWalkTest {
             BackfillStatus status = seedUsdkrw(LocalDate.of(2020, 1, 1), coveredUntil);
 
             // Act — Run 1: 캡 10
-            coveredRangeService.walkGapForward(status, new CappedSingleDateFiller(10), today);
+            coveredRangeService.walkGapForward(
+                    status, new CappedSingleDateFiller(10), today, CoveredCalendarDomain.DOMESTIC);
             LocalDate afterRun1 = reload(status.getId()).getCoveredUntilDate();
 
             // Act — Run 2: 캡 10 (재조회한 status로 재개)
             coveredRangeService.walkGapForward(
-                    reload(status.getId()), new CappedSingleDateFiller(10), today);
+                    reload(status.getId()),
+                    new CappedSingleDateFiller(10),
+                    today,
+                    CoveredCalendarDomain.DOMESTIC);
             LocalDate afterRun2 = reload(status.getId()).getCoveredUntilDate();
 
             // Act — Run 3: 캡 20(잔여 전부)
             coveredRangeService.walkGapForward(
-                    reload(status.getId()), new CappedSingleDateFiller(20), today);
+                    reload(status.getId()),
+                    new CappedSingleDateFiller(20),
+                    today,
+                    CoveredCalendarDomain.DOMESTIC);
             LocalDate afterRun3 = reload(status.getId()).getCoveredUntilDate();
 
             // Assert — 회차마다 엄격히 전진(라이브락 부재), 최종 today 도달
@@ -318,13 +329,15 @@ class CoveredRangeServiceGapWalkTest {
             BackfillStatus status = seedUsdkrw(LocalDate.of(2020, 1, 1), coveredUntil);
 
             // Act — Run 1: 캡 7 → covered_until_date == coveredUntil+7
-            coveredRangeService.walkGapForward(status, new CappedSingleDateFiller(7), today);
+            coveredRangeService.walkGapForward(
+                    status, new CappedSingleDateFiller(7), today, CoveredCalendarDomain.DOMESTIC);
             LocalDate resumePoint = reload(status.getId()).getCoveredUntilDate();
             assertThat(resumePoint).isEqualTo(coveredUntil.plusDays(7));
 
             // Act — Run 2: 재조회 상태로 재개, 호출된 커서 기록
             RecordingSingleDateFiller run2Filler = new RecordingSingleDateFiller(status.getId());
-            coveredRangeService.walkGapForward(reload(status.getId()), run2Filler, today);
+            coveredRangeService.walkGapForward(
+                    reload(status.getId()), run2Filler, today, CoveredCalendarDomain.DOMESTIC);
 
             // Assert
             assertThat(run2Filler.cursorsCalled.getFirst()).isEqualTo(resumePoint.plusDays(1));
@@ -340,7 +353,8 @@ class CoveredRangeServiceGapWalkTest {
             LocalDate today = coveredUntil.plusDays(5);
             BackfillStatus status = seedUsdkrw(lastCollected, coveredUntil);
 
-            coveredRangeService.walkGapForward(status, new CappedSingleDateFiller(5), today);
+            coveredRangeService.walkGapForward(
+                    status, new CappedSingleDateFiller(5), today, CoveredCalendarDomain.DOMESTIC);
 
             BackfillStatus result = reload(status.getId());
             assertThat(result.getLastCollectedDate()).isEqualTo(lastCollected);
@@ -370,7 +384,8 @@ class CoveredRangeServiceGapWalkTest {
             RecordingSingleDateFiller filler = new RecordingSingleDateFiller(status.getId());
 
             // Act
-            coveredRangeService.walkGapForward(status, filler, LocalDate.of(2026, 7, 15));
+            coveredRangeService.walkGapForward(
+                    status, filler, LocalDate.of(2026, 7, 15), CoveredCalendarDomain.DOMESTIC);
 
             // Assert
             assertThat(filler.cursorsCalled).isEmpty();
@@ -390,7 +405,8 @@ class CoveredRangeServiceGapWalkTest {
                                     .build());
             RecordingSingleDateFiller filler = new RecordingSingleDateFiller(status.getId());
 
-            coveredRangeService.walkGapForward(status, filler, LocalDate.of(2026, 7, 15));
+            coveredRangeService.walkGapForward(
+                    status, filler, LocalDate.of(2026, 7, 15), CoveredCalendarDomain.DOMESTIC);
 
             assertThat(filler.cursorsCalled).isEmpty();
             assertThat(reload(status.getId()).getCoveredUntilDate()).isNull();
