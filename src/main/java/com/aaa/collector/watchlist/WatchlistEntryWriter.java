@@ -118,16 +118,8 @@ class WatchlistEntryWriter {
             // correctListedDateDownTo는 하향 전용 가드라 null 입력·상향 시도는 자동 no-op이다(REQ-SSOG-005,010).
             if (overseas) {
                 changed |= existing.correctListedDateDownTo(info.listedDate());
-                // 변경 기록(REQ-SSOG-012) — NULL 채움(correctMetadata)·하향 정정(correctListedDateDownTo)
-                // 두 경로 모두 여기서 단일 지점으로 로깅한다.
-                LocalDate listedDateAfter = existing.getListedDate();
-                if (!Objects.equals(listedDateBefore, listedDateAfter)) {
-                    log.info(
-                            "해외 상장일 갱신 — symbol={}, before={}, after={}",
-                            resolved.symbol(),
-                            listedDateBefore,
-                            listedDateAfter);
-                }
+                logOverseasListedDateChange(
+                        resolved.symbol(), listedDateBefore, existing.getListedDate());
             }
 
             changed |= existing.reflectListingStatus(info.listingStatus(), info.delistedAt());
@@ -137,6 +129,15 @@ class WatchlistEntryWriter {
             counter.updated++;
         } else {
             counter.unchanged++;
+        }
+    }
+
+    // 변경 기록(REQ-SSOG-012) — NULL 채움(correctMetadata)·하향 정정(correctListedDateDownTo) 두 경로 모두
+    // 여기서 단일 지점으로 로깅한다. updateIfNeeded()의 중첩 깊이를 줄이기 위해 추출(PMD
+    // AvoidDeeplyNestedIfStmts) — 로직·로그 메시지는 추출 전과 동일하다.
+    private void logOverseasListedDateChange(String symbol, LocalDate before, LocalDate after) {
+        if (!Objects.equals(before, after)) {
+            log.info("해외 상장일 갱신 — symbol={}, before={}, after={}", symbol, before, after);
         }
     }
 }
