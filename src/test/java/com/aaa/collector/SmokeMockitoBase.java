@@ -64,6 +64,7 @@ import com.aaa.collector.stock.shortsale.overseas.backfill.FinraCdnDailyFileClie
 import com.aaa.collector.stock.shortsale.overseas.backfill.FinraCdnFileParser;
 import com.aaa.collector.stock.shortsale.overseas.backfill.FinraCdnShortSaleBackfillOrchestrator;
 import com.aaa.collector.stock.shortsale.overseas.backfill.FinraCdnShortSaleBackfillScheduler;
+import com.aaa.collector.watchlist.OverseasListedDateProvider;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
@@ -175,7 +176,10 @@ import org.springframework.transaction.support.TransactionTemplate;
             // find*()에서 Optional.empty()를 반환 — 게이지를 0(사전 등록값) 그대로 두고 seed를 생략한다.
             BackfillDensityRepository.class,
             // SPEC-COLLECTOR-CALENDAR-001: market_calendar 신규 JpaRepository 빈 모킹 (smoke 회귀 방지).
-            MarketCalendarRepository.class
+            MarketCalendarRepository.class,
+            // SPEC-COLLECTOR-SHORTSALE-OVERSEAS-002 T1: 해외 상장일(firstTradeDate) 취득 신규 빈 모킹
+            // (smoke 회귀 방지).
+            OverseasListedDateProvider.class
         })
 class SmokeMockitoBase {
 
