@@ -67,6 +67,51 @@ public interface StockRepository extends JpaRepository<Stock, Long> {
     @Query("SELECT s FROM Stock s WHERE s.active = true AND s.watchlistRemovedAt IS NULL")
     List<Stock> findAllActive();
 
+    // @MX:NOTE: [AUTO] 백필 후보 선정 기준 = 관심종목(watchlistRemovedAt IS NULL), active 무관 — 상폐되었지만
+    // 관심그룹에 남은 종목도 ML 학습 가치(생존 편향 방지)가 있어 백필 후보에 포함한다.
+    // @MX:REASON: SPEC-COLLECTOR-BACKFILL-014 REQ-BACKFILL-176/177/180 — active 축·watchlist 축은
+    // 독립(REQ-WLSYNC-149). 기존 findAllActive*(라이브 수집 서비스 공유)는 절대 무변경, 본 신규 메서드만 백필
+    // 오케스트레이터(BackfillOrchestrator.buildActiveStockMap)가 소비한다.
+    // @MX:SPEC: SPEC-COLLECTOR-BACKFILL-014
+
+    /**
+     * 백필 전용 후보 조회 — 관심그룹에서 제거되지 않은({@code watchlistRemovedAt IS NULL}) 종목 중 per-stock 배치 대상
+     * 자산유형({@code asset_type IN (STOCK, ETF, ETN, COMMODITY)})만 반환한다.
+     *
+     * <p>{@link #findAllActiveTradable()}과 달리 {@code active} 조건을 포함하지 않는다 — 상폐(active=false)되었어도
+     * 관심그룹에 남아 있는 종목은 백필 후보로 정상 취급한다(SPEC-COLLECTOR-BACKFILL-014 REQ-BACKFILL-176~178). 라이브 수집 서비스가
+     * 쓰는 {@link #findAllActiveTradable()}은 이 메서드 추가로 전혀 영향받지 않는다(REQ-BACKFILL-183).
+     */
+    default List<Stock> findAllWatchlistTradable() {
+        return findAllByWatchlistRemovedAtIsNullAndAssetTypeIn(TRADABLE_ASSET_TYPES);
+    }
+
+    @Query(
+            "SELECT s FROM Stock s WHERE s.watchlistRemovedAt IS NULL"
+                    + " AND s.assetType IN :assetTypes")
+    List<Stock> findAllByWatchlistRemovedAtIsNullAndAssetTypeIn(
+            @Param("assetTypes") Collection<AssetType> assetTypes);
+
+    /**
+     * 백필 전용 후보 조회(해외 한정) — 관심그룹에서 제거되지 않은 종목 중 해외 시장({@code market IN (NYSE, NASDAQ, AMEX)}) ∩
+     * per-stock 배치 대상 자산유형에 속한 종목만 반환한다.
+     *
+     * <p>{@link #findAllActiveOverseasTradable()}과 달리 {@code active} 조건을 포함하지 않는다 — 해외 상폐 종목도 관심그룹에
+     * 남아 있으면 백필 후보로 취급한다(SPEC-COLLECTOR-BACKFILL-014 REQ-BACKFILL-176~178). 해외 시장·자산유형 필터는 대응 기존
+     * 메서드와 동일하게 유지해 INDEX·국내 종목 유입을 방지한다(A7, REQ-BATCH3-024 회귀 방지).
+     */
+    default List<Stock> findAllWatchlistOverseasTradable() {
+        return findAllByWatchlistRemovedAtIsNullAndMarketInAndAssetTypeIn(
+                OVERSEAS_TRADABLE_MARKETS, TRADABLE_ASSET_TYPES);
+    }
+
+    @Query(
+            "SELECT s FROM Stock s WHERE s.watchlistRemovedAt IS NULL"
+                    + " AND s.market IN :markets AND s.assetType IN :assetTypes")
+    List<Stock> findAllByWatchlistRemovedAtIsNullAndMarketInAndAssetTypeIn(
+            @Param("markets") Collection<Market> markets,
+            @Param("assetTypes") Collection<AssetType> assetTypes);
+
     /**
      * per-stock J-API 배치(일봉/수급) 대상 종목을 조회한다 — {@code asset_type IN (STOCK, ETF, ETN, COMMODITY)}
      * 한정.

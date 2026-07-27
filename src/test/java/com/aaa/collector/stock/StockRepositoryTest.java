@@ -314,6 +314,149 @@ class StockRepositoryTest {
     }
 
     @Nested
+    @DisplayName(
+            "findAllWatchlistTradable — 관심종목 기준 백필 후보 (SPEC-COLLECTOR-BACKFILL-014 REQ-176/177/180,"
+                    + " AC-9, EC-6)")
+    class FindAllWatchlistTradable {
+
+        @Test
+        @DisplayName(
+                "AC-9 조건①/AC-1 근거 — active=false(상폐) + watchlistRemovedAt=NULL 종목 반환(활성 조건 미포함 증명)")
+        void includesDelistedStock_watchlistRemovedAtNull() {
+            // Arrange — 상폐 종목: active=false, watchlist는 유지(NULL)
+            Stock delisted =
+                    stockRepository.save(
+                            Stock.builder()
+                                    .symbol("WL_DELISTED_001")
+                                    .nameKo("상폐관심유지종목")
+                                    .market(Market.KOSPI)
+                                    .assetType(AssetType.STOCK)
+                                    .active(false)
+                                    .delistedAt(LocalDate.of(2025, 12, 15))
+                                    .build());
+
+            // Act
+            List<Stock> result = stockRepository.findAllWatchlistTradable();
+
+            // Assert
+            assertThat(result.stream().map(Stock::getId).toList()).contains(delisted.getId());
+        }
+
+        @Test
+        @DisplayName("AC-9 조건②/AC-2 근거 — watchlistRemovedAt != null이면 active 값과 무관하게 미반환")
+        void excludesWatchlistRemoved_regardlessOfActive() {
+            // Arrange — (a) 활성+관심제거, (b) 상폐+관심제거
+            Stock activeRemoved = savedStock("WL_ACT_REM", AssetType.STOCK);
+            Stock delistedRemoved =
+                    stockRepository.save(
+                            Stock.builder()
+                                    .symbol("WL_DEL_REM")
+                                    .nameKo("상폐관심제거종목")
+                                    .market(Market.KOSPI)
+                                    .assetType(AssetType.STOCK)
+                                    .active(false)
+                                    .delistedAt(LocalDate.of(2025, 12, 15))
+                                    .build());
+            stockRepository.markWatchlistRemoved(
+                    Set.of(activeRemoved.getId(), delistedRemoved.getId()));
+
+            // Act
+            List<Stock> result = stockRepository.findAllWatchlistTradable();
+
+            // Assert
+            List<Long> resultIds = result.stream().map(Stock::getId).toList();
+            assertThat(resultIds).doesNotContain(activeRemoved.getId(), delistedRemoved.getId());
+        }
+
+        @Test
+        @DisplayName("AC-9 조건③/EC-6 — 비-TRADABLE(INDEX) 자산유형은 제외(REQ-BATCH3-024 비회귀)")
+        void excludesNonTradableAssetType() {
+            // Arrange
+            Stock stock = savedStock("WL_STOCK_001", AssetType.STOCK);
+            Stock index = savedStock("WL_IDX_001", AssetType.INDEX);
+
+            // Act
+            List<Stock> result = stockRepository.findAllWatchlistTradable();
+
+            // Assert
+            List<Long> resultIds = result.stream().map(Stock::getId).toList();
+            assertThat(resultIds).contains(stock.getId());
+            assertThat(resultIds).doesNotContain(index.getId());
+        }
+
+        @Test
+        @DisplayName("EC-4 근거 — 활성+관심유지 정상군은 변경 전과 동일하게 포함(비회귀)")
+        void includesActiveNormalStock_regression() {
+            // Arrange
+            Stock active = savedStock("WL_NORMAL_001", AssetType.STOCK);
+
+            // Act
+            List<Stock> result = stockRepository.findAllWatchlistTradable();
+
+            // Assert
+            assertThat(result.stream().map(Stock::getId).toList()).contains(active.getId());
+        }
+
+        @Test
+        @DisplayName("AC-6 근거 — 기존 findAllActiveTradable()은 상폐 종목을 계속 제외(라이브 수집 무영향)")
+        void findAllActiveTradable_stillExcludesDelisted_regression() {
+            // Arrange
+            Stock delisted =
+                    stockRepository.save(
+                            Stock.builder()
+                                    .symbol("WL_ACT_REGR")
+                                    .nameKo("상폐종목")
+                                    .market(Market.KOSPI)
+                                    .assetType(AssetType.STOCK)
+                                    .active(false)
+                                    .delistedAt(LocalDate.of(2025, 12, 15))
+                                    .build());
+
+            // Act — 기존 활성 기준 조회는 무변경이어야 한다(REQ-183)
+            List<Stock> result = stockRepository.findAllActiveTradable();
+
+            // Assert
+            assertThat(result.stream().map(Stock::getId).toList()).doesNotContain(delisted.getId());
+        }
+    }
+
+    @Nested
+    @DisplayName(
+            "findAllWatchlistOverseasTradable — 관심종목 기준 해외 백필 후보 (SPEC-COLLECTOR-BACKFILL-014"
+                    + " REQ-177, AC-9 해외 단언, EC-5)")
+    class FindAllWatchlistOverseasTradable {
+
+        @Test
+        @DisplayName("해외 상폐 종목(active=false, watchlistRemovedAt=NULL) 포함 + 국내·관심제거·INDEX 제외")
+        void includesDelistedOverseasStock_excludesDomesticAndRemovedAndIndex() {
+            // Arrange
+            Stock delistedOverseas =
+                    stockRepository.save(
+                            Stock.builder()
+                                    .symbol("WL_OVS_DELISTED")
+                                    .nameKo("해외상폐종목")
+                                    .market(Market.NASDAQ)
+                                    .assetType(AssetType.STOCK)
+                                    .active(false)
+                                    .delistedAt(LocalDate.of(2025, 12, 15))
+                                    .build());
+            Stock domestic = savedStock("WL_OVS_DOM", AssetType.STOCK, Market.KOSPI);
+            Stock usIndex = savedStock("WL_OVS_IDX", AssetType.INDEX, Market.US);
+            Stock removedOverseas = savedStock("WL_OVS_REM", AssetType.STOCK, Market.NYSE);
+            stockRepository.markWatchlistRemoved(Set.of(removedOverseas.getId()));
+
+            // Act
+            List<Stock> result = stockRepository.findAllWatchlistOverseasTradable();
+
+            // Assert
+            List<Long> resultIds = result.stream().map(Stock::getId).toList();
+            assertThat(resultIds).contains(delistedOverseas.getId());
+            assertThat(resultIds)
+                    .doesNotContain(domestic.getId(), usIndex.getId(), removedOverseas.getId());
+        }
+    }
+
+    @Nested
     @DisplayName("findAllActiveDomesticTradable — 국내 STOCK·ETF만 반환")
     class FindAllActiveDomesticTradable {
 
