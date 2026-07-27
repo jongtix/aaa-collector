@@ -292,6 +292,58 @@ class CoveredRangeServiceTest {
         }
 
         @Test
+        @DisplayName(
+                "AC-29② — OVERSEAS 도메인: 구간 [cursor,oldest)에 개장일 확인 → usMarketSessionGate로 front_gap 발화"
+                        + " (REQ-CVR-081/083)")
+        void overseasDomain_oldestAfterCursor_raisesAnomalyViaUsGate() {
+            // Arrange — FINRA Daily 등 해외 도메인 앵커의 앞단 미도달을 usMarketSessionGate로 판정해야 한다
+            BackfillStatus status = seed("FRONTGAP_OVERSEAS1", LocalDate.of(2026, 7, 1));
+            LocalDate cursor = LocalDate.of(2026, 7, 2);
+            LocalDate filledUntil = LocalDate.of(2026, 7, 5);
+            LocalDate oldest = LocalDate.of(2026, 7, 3);
+            CoveredGapFiller filler = step -> new CoveredFillResult(5, 5, filledUntil, oldest);
+            when(usMarketSessionGate.isOpenDayStrict(cursor)).thenReturn(Optional.of(true));
+
+            // Act
+            CoveredFillResult result =
+                    coveredRangeService.executeStep(
+                            status, filler, cursor, CoveredCalendarDomain.OVERSEAS);
+
+            // Assert — DOMESTIC 게이트는 전혀 조회하지 않고 usMarketSessionGate만 조회한다
+            assertThat(result.oldest()).isEqualTo(oldest);
+            assertThat(reload(status.getId()).getCoveredUntilDate()).isEqualTo(filledUntil);
+            verify(backfillMetrics, times(1))
+                    .recordCoveredWalkAnomaly(CoveredWalkAnomalyKind.FRONT_GAP);
+            verify(usMarketSessionGate, times(1)).isOpenDayStrict(cursor);
+            verify(marketSessionGate, never()).isOpenDayStrict(any());
+        }
+
+        @Test
+        @DisplayName(
+                "AC-29② — OVERSEAS 도메인: 토·일만 낀 구간(전 구간 휴장 확인) → usMarketSessionGate로 억제(REQ-CVR-081/087)")
+        void overseasDomain_wholeRangeClosed_suppressesViaUsGate() {
+            // Arrange — 토요일 커서, oldest=월요일(구간 [토,월) = {토,일})
+            BackfillStatus status = seed("SUPPRESS_OVERSEAS1", LocalDate.of(2026, 7, 1));
+            LocalDate saturday = LocalDate.of(2026, 7, 4);
+            LocalDate sunday = LocalDate.of(2026, 7, 5);
+            LocalDate monday = LocalDate.of(2026, 7, 6);
+            LocalDate filledUntil = LocalDate.of(2026, 7, 10);
+            CoveredGapFiller filler = step -> new CoveredFillResult(5, 5, filledUntil, monday);
+            when(usMarketSessionGate.isOpenDayStrict(saturday)).thenReturn(Optional.of(false));
+            when(usMarketSessionGate.isOpenDayStrict(sunday)).thenReturn(Optional.of(false));
+
+            // Act
+            coveredRangeService.executeStep(
+                    status, filler, saturday, CoveredCalendarDomain.OVERSEAS);
+
+            // Assert — 억제(anomaly 아님), DOMESTIC 게이트는 조회하지 않는다
+            assertThat(reload(status.getId()).getCoveredUntilDate()).isEqualTo(filledUntil);
+            verify(backfillMetrics, never()).recordCoveredWalkAnomaly(any());
+            verify(backfillMetrics, times(1)).recordFrontGapSuppressed();
+            verify(marketSessionGate, never()).isOpenDayStrict(any());
+        }
+
+        @Test
         @DisplayName("AC-27③ — oldest <= cursor(정상 도달) → 판정 자체 미수행, 캘린더 게이트 조회 0회")
         void oldestAtOrBeforeCursor_noAnomaly() {
             // Arrange — 정상 케이스(TASK-010 스텝 폭 35일 정정 후 절대 발화하지 않아야 하는 tripwire)
