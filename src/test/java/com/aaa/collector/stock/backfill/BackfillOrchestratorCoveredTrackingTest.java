@@ -93,8 +93,8 @@ class BackfillOrchestratorCoveredTrackingTest {
     void pendingEmpty_stockCoveredGapWalkStillRuns() {
         // Arrange — backward walk 대상 없음(모두 COMPLETED 등)이지만 활성 종목은 존재
         Stock stock = buildStock("005930");
-        when(stockRepository.findAllActiveTradable()).thenReturn(List.of(stock));
-        when(stockRepository.findAllActiveOverseasTradable()).thenReturn(List.of());
+        when(stockRepository.findAllWatchlistTradable()).thenReturn(List.of(stock));
+        when(stockRepository.findAllWatchlistOverseasTradable()).thenReturn(List.of());
         when(backfillStatusRepository.findByStatusInAndTargetTypeOrderById(any(), anyString()))
                 .thenReturn(List.of());
 
@@ -125,8 +125,8 @@ class BackfillOrchestratorCoveredTrackingTest {
     @DisplayName("활성 종목 없음 — STOCK 갭 walk도 함께 skip")
     void noActiveStocks_gapWalkSkipped() {
         // Arrange
-        when(stockRepository.findAllActiveTradable()).thenReturn(List.of());
-        when(stockRepository.findAllActiveOverseasTradable()).thenReturn(List.of());
+        when(stockRepository.findAllWatchlistTradable()).thenReturn(List.of());
+        when(stockRepository.findAllWatchlistOverseasTradable()).thenReturn(List.of());
 
         // Act
         orchestrator.run();
@@ -140,8 +140,8 @@ class BackfillOrchestratorCoveredTrackingTest {
     void pendingNonEmpty_stockCoveredGapWalkRunsOnce() {
         // Arrange
         Stock stock = buildStock("005930");
-        when(stockRepository.findAllActiveTradable()).thenReturn(List.of(stock));
-        when(stockRepository.findAllActiveOverseasTradable()).thenReturn(List.of());
+        when(stockRepository.findAllWatchlistTradable()).thenReturn(List.of(stock));
+        when(stockRepository.findAllWatchlistOverseasTradable()).thenReturn(List.of());
         when(backfillStatusRepository.findByStatusInAndTargetTypeOrderById(any(), anyString()))
                 .thenReturn(List.of(buildCompletedStatus("005930", "daily_ohlcv")));
         when(backfillStatusRepository.findById(any()))
@@ -182,8 +182,8 @@ class BackfillOrchestratorCoveredTrackingTest {
                         .assetType(AssetType.COMMODITY)
                         .active(true)
                         .build();
-        when(stockRepository.findAllActiveTradable()).thenReturn(List.of(stock, etn, commodity));
-        when(stockRepository.findAllActiveOverseasTradable()).thenReturn(List.of());
+        when(stockRepository.findAllWatchlistTradable()).thenReturn(List.of(stock, etn, commodity));
+        when(stockRepository.findAllWatchlistOverseasTradable()).thenReturn(List.of());
         when(backfillStatusRepository.findByStatusInAndTargetTypeOrderById(any(), anyString()))
                 .thenReturn(List.of());
 
