@@ -85,6 +85,16 @@ class StockCoveredGapWalkRunnerTest {
                 .build();
     }
 
+    private Stock buildDelistedStock(String symbol, Market market, LocalDate delistedAt) {
+        return Stock.builder()
+                .symbol(symbol)
+                .market(market)
+                .assetType(AssetType.STOCK)
+                .active(false)
+                .delistedAt(delistedAt)
+                .build();
+    }
+
     @Nested
     @DisplayName("resolveCap — 여름(EDT, UTC-4) 케이스")
     class SummerEdt {
@@ -220,6 +230,108 @@ class StockCoveredGapWalkRunnerTest {
                             any(),
                             any(),
                             org.mockito.ArgumentMatchers.eq(LocalDate.of(2026, 7, 21)));
+        }
+    }
+
+    @Nested
+    @DisplayName(
+            "resolveCap — 상폐일(delisted_at) clamp (SPEC-COLLECTOR-BACKFILL-014 REQ-BACKFILL-179/182,"
+                    + " AC-4/AC-5, EC-1/EC-2/EC-5)")
+    class DelistedAtClamp {
+
+        // 2026-07-20T17:00:00Z == 2026-07-21 02:00 KST(크론 발화 시각), ET 전일 = 2026-07-19(장중)
+        private final Clock clock =
+                Clock.fixed(Instant.parse("2026-07-20T17:00:00Z"), ZoneId.of("America/New_York"));
+
+        @Test
+        @DisplayName(
+                "AC-4 — 국내 상폐 확정 종목(delisted_at < 오늘)은 상한이 delisted_at으로 clamp됨"
+                        + " (min(오늘, delisted_at))")
+        void domestic_delistedBeforeToday_capClampedToDelistedAt() {
+            Stock stock = buildDelistedStock("010620", Market.KOSPI, LocalDate.of(2025, 12, 15));
+
+            LocalDate cap = runner(clock).resolveCap(stock);
+
+            assertThat(cap).isEqualTo(LocalDate.of(2025, 12, 15));
+        }
+
+        @Test
+        @DisplayName("AC-5 — delisted_at이 NULL이면 기존 상한(오늘 KST)을 그대로 유지(정확성 무저하)")
+        void domestic_delistedAtNull_keepsExistingCap() {
+            Stock stock = buildStock("005930", Market.KOSPI);
+
+            LocalDate cap = runner(clock).resolveCap(stock);
+
+            assertThat(cap).isEqualTo(LocalDate.of(2026, 7, 21));
+        }
+
+        @Test
+        @DisplayName("EC-1 — delisted_at이 기존 상한(오늘)과 정확히 같으면 clamp 미발동, 기존 상한 유지")
+        void domestic_delistedAtEqualsToday_noClampApplied() {
+            Stock stock = buildDelistedStock("010620", Market.KOSPI, LocalDate.of(2026, 7, 21));
+
+            LocalDate cap = runner(clock).resolveCap(stock);
+
+            assertThat(cap).isEqualTo(LocalDate.of(2026, 7, 21));
+        }
+
+        @Test
+        @DisplayName("EC-2 — delisted_at이 기존 상한보다 미래면 clamp 미발동, 오늘까지 정상 수집")
+        void domestic_delistedAtInFuture_noClampApplied() {
+            Stock stock = buildDelistedStock("010620", Market.KOSPI, LocalDate.of(2026, 8, 1));
+
+            LocalDate cap = runner(clock).resolveCap(stock);
+
+            assertThat(cap).isEqualTo(LocalDate.of(2026, 7, 21));
+        }
+
+        @Test
+        @DisplayName("EC-5 — 해외 상폐 종목은 상한이 min(ET−1, delisted_at)으로 산정됨")
+        void overseas_delistedBeforeEtYesterday_capClampedToDelistedAt() {
+            Stock stock = buildDelistedStock("AAPL", Market.NASDAQ, LocalDate.of(2025, 12, 15));
+
+            LocalDate cap = runner(clock).resolveCap(stock);
+
+            assertThat(cap).isEqualTo(LocalDate.of(2025, 12, 15));
+        }
+
+        @Test
+        @DisplayName("해외 상폐 종목이라도 delisted_at이 ET−1보다 미래면 clamp 미발동, ET−1 유지")
+        void overseas_delistedAfterEtYesterday_noClampApplied() {
+            Stock stock = buildDelistedStock("AAPL", Market.NASDAQ, LocalDate.of(2026, 7, 20));
+
+            LocalDate cap = runner(clock).resolveCap(stock);
+
+            assertThat(cap).isEqualTo(LocalDate.of(2026, 7, 19));
+        }
+
+        @Test
+        @DisplayName(
+                "AC-4 통합 — runFor가 walkGapForward에 clamp된 상한(delisted_at)을 전달한다"
+                        + "(filler 생성자·walkGapForward 양쪽 동일 값 주입 설계 보존)")
+        void runFor_walkGapForwardReceivesClampedCap() {
+            Stock stock = buildDelistedStock("010620", Market.KOSPI, LocalDate.of(2025, 12, 15));
+            BackfillStatus status = buildStatus("010620", "credit_balance");
+            when(backfillStatusRepository.findByTargetTypeAndDataTableOrderById(
+                            "STOCK", "daily_ohlcv"))
+                    .thenReturn(List.of());
+            when(backfillStatusRepository.findByTargetTypeAndDataTableOrderById(
+                            "STOCK", "investor_trend"))
+                    .thenReturn(List.of());
+            when(backfillStatusRepository.findByTargetTypeAndDataTableOrderById(
+                            "STOCK", "credit_balance"))
+                    .thenReturn(List.of(status));
+            when(backfillStatusRepository.findByTargetTypeAndDataTableOrderById(
+                            "STOCK", "short_sale_domestic"))
+                    .thenReturn(List.of());
+
+            runner(clock).runFor(Map.of("010620", stock), session);
+
+            verify(coveredRangeService)
+                    .walkGapForward(
+                            any(),
+                            any(),
+                            org.mockito.ArgumentMatchers.eq(LocalDate.of(2025, 12, 15)));
         }
     }
 

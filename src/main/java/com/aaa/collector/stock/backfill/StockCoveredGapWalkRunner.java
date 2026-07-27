@@ -117,12 +117,19 @@ public class StockCoveredGapWalkRunner {
     // 미국 장이 아직 전일(ET) 거래 중이라 KIS 미확정(장중) 부분바가 반환되고 INSERT IGNORE로 영구 저장되어 확정바 업데이트를
     // 영구 차단한다(aaa-infra#112). 진입점(runOne)에서 산출해 filler 생성자·walkGapForward 양쪽에 동일 값으로 주입한다 —
     // StockRangeCoveredGapFiller 내부 캡(구 후보 A)은 바깥 루프 today가 캡되지 않아 비종료 재요청 루프 위험이 있어 기각됨.
+    // 상폐 확정 종목(delisted_at 비-NULL)은 상한을 min(base, delisted_at)으로 추가 clamp한다 — 그렇지 않으면
+    // 후보 개방(SPEC-COLLECTOR-BACKFILL-014)으로 새로 노출되는 상폐 종목이 상폐일 이후 미래 구간을 매 회차
+    // 반복 조회하는 무한 no-op 낭비 루프에 빠진다.
     // @MX:REASON: aaa-infra#112 근본원인 대칭 조치, DP-1 확정안(진입점 캡). aaa-infra#91과 동일 정신(ET 대칭 처리).
-    // @MX:SPEC: SPEC-COLLECTOR-BACKFILL-012
+    //             delisted clamp는 SPEC-COLLECTOR-BACKFILL-014 REQ-BACKFILL-179(산정 규칙)/-182(미제공 시
+    //             축퇴) — 후보 개방과 배포 결합(REQ-184).
+    // @MX:SPEC: SPEC-COLLECTOR-BACKFILL-012, SPEC-COLLECTOR-BACKFILL-014
     LocalDate resolveCap(Stock stock) {
-        if (OVERSEAS_MARKETS.contains(stock.getMarket())) {
-            return LocalDate.now(clock.withZone(ET)).minusDays(1);
-        }
-        return LocalDate.now(clock.withZone(KST));
+        LocalDate base =
+                OVERSEAS_MARKETS.contains(stock.getMarket())
+                        ? LocalDate.now(clock.withZone(ET)).minusDays(1)
+                        : LocalDate.now(clock.withZone(KST));
+        LocalDate delistedAt = stock.getDelistedAt();
+        return (delistedAt != null && delistedAt.isBefore(base)) ? delistedAt : base;
     }
 }
