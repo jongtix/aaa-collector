@@ -7,14 +7,18 @@ import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 import com.aaa.collector.market.indicator.MarketIndicatorLastSuccessRepository;
+import com.aaa.collector.market.session.MarketSessionGate;
+import com.aaa.collector.market.session.UsMarketSessionGate;
 import com.aaa.collector.observability.BackfillDensityRepository;
 import com.aaa.collector.observability.BatchLastLoadRepository;
 import com.aaa.collector.observability.CoverageRatioRepository;
 import com.aaa.collector.support.RootFixtureCleaner;
 import java.sql.SQLException;
 import java.time.LocalDate;
+import java.util.Optional;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -58,6 +62,11 @@ class CoveredRangeServiceTest {
 
     /** 실제 카운터 대신 verify()로 REQ-CVR-031 anomaly 신호 발생을 검증한다. */
     @MockitoBean private BackfillMetrics backfillMetrics;
+
+    /** 국내 캘린더 게이트 — TASK-018 앞단 미도달 판정용 {@code isOpenDayStrict} 결정론화. */
+    @MockitoBean private MarketSessionGate marketSessionGate;
+
+    @MockitoBean private UsMarketSessionGate usMarketSessionGate;
 
     @Autowired private CoveredRangeService coveredRangeService;
     @Autowired private BackfillStatusRepository backfillStatusRepository;
@@ -249,7 +258,8 @@ class CoveredRangeServiceTest {
 
         @Test
         @DisplayName(
-                "AC-21 — oldest > cursor(앞단 미도달) → anomaly 발생 + covered_until_date 그래도 전진(라이브락 없음)")
+                "AC-27② — 구간 [cursor,oldest)에 개장일 확인 → front_gap 발화 + covered_until_date 그래도 전진(라이브락"
+                        + " 없음, REQ-CVR-081)")
         void oldestAfterCursor_raisesAnomalyButStillAdvances() {
             // Arrange — 스텝 폭 산정이 잘못됐거나 API 반환 특성이 변한 잔여 상황을 stub으로 모사한다
             BackfillStatus status = seed("FRONTGAP1", LocalDate.of(2026, 7, 1));
@@ -257,6 +267,7 @@ class CoveredRangeServiceTest {
             LocalDate filledUntil = LocalDate.of(2026, 7, 5);
             LocalDate oldest = LocalDate.of(2026, 7, 3); // cursor(07-02)보다 늦음 = 앞단 미도달
             CoveredGapFiller filler = step -> new CoveredFillResult(5, 5, filledUntil, oldest);
+            when(marketSessionGate.isOpenDayStrict(cursor)).thenReturn(Optional.of(true));
 
             // Act
             CoveredFillResult result =
@@ -270,10 +281,11 @@ class CoveredRangeServiceTest {
             verify(backfillMetrics, never()).recordAnomalyFailed();
             verify(backfillMetrics, times(1))
                     .recordCoveredWalkAnomaly(CoveredWalkAnomalyKind.FRONT_GAP);
+            verify(backfillMetrics, never()).recordFrontGapSuppressed();
         }
 
         @Test
-        @DisplayName("AC-21 — oldest <= cursor(정상 도달) → anomaly 미발생")
+        @DisplayName("AC-27③ — oldest <= cursor(정상 도달) → 판정 자체 미수행, 캘린더 게이트 조회 0회")
         void oldestAtOrBeforeCursor_noAnomaly() {
             // Arrange — 정상 케이스(TASK-010 스텝 폭 35일 정정 후 절대 발화하지 않아야 하는 tripwire)
             BackfillStatus status = seed("FRONTOK1", LocalDate.of(2026, 7, 1));
@@ -288,11 +300,113 @@ class CoveredRangeServiceTest {
             assertThat(reload(status.getId()).getCoveredUntilDate()).isEqualTo(filledUntil);
             verify(backfillMetrics, never()).recordAnomalyFailed();
             verify(backfillMetrics, never()).recordCoveredWalkAnomaly(any());
+            verify(backfillMetrics, never()).recordFrontGapSuppressed();
+            verify(marketSessionGate, never()).isOpenDayStrict(any());
+        }
+
+        @Test
+        @DisplayName("AC-27① — 토요일·일요일만 낀 구간(전 구간 휴장 확인) → 발화 0 + 억제 카운터 1 (REQ-CVR-081/087)")
+        void wholeRangeClosed_suppressesWithoutAnomaly() {
+            // Arrange — 토요일 커서, oldest=월요일(구간 [토,월) = {토,일})
+            BackfillStatus status = seed("SUPPRESS1", LocalDate.of(2026, 7, 1));
+            LocalDate saturday = LocalDate.of(2026, 7, 4);
+            LocalDate sunday = LocalDate.of(2026, 7, 5);
+            LocalDate monday = LocalDate.of(2026, 7, 6);
+            LocalDate filledUntil = LocalDate.of(2026, 7, 10);
+            CoveredGapFiller filler = step -> new CoveredFillResult(5, 5, filledUntil, monday);
+            when(marketSessionGate.isOpenDayStrict(saturday)).thenReturn(Optional.of(false));
+            when(marketSessionGate.isOpenDayStrict(sunday)).thenReturn(Optional.of(false));
+
+            // Act
+            coveredRangeService.executeStep(
+                    status, filler, saturday, CoveredCalendarDomain.DOMESTIC);
+
+            // Assert — 억제(anomaly 아님), covered_until_date는 그래도 전진
+            assertThat(reload(status.getId()).getCoveredUntilDate()).isEqualTo(filledUntil);
+            verify(backfillMetrics, never()).recordAnomalyFailed();
+            verify(backfillMetrics, never()).recordCoveredWalkAnomaly(any());
+            verify(backfillMetrics, times(1)).recordFrontGapSuppressed();
+            verify(marketSessionGate, never()).isOpenDay(any());
+        }
+
+        @Test
+        @DisplayName("AC-27④ — 구간 중 1일이라도 '모름' → calendar_unknown 발화(나머지가 전부 휴장이어도, REQ-CVR-085)")
+        void unknownDateInRange_raisesCalendarUnknown() {
+            // Arrange — 첫날은 휴장 확인, 둘째날은 캘린더에 행 없음("모름")에서 조기 단축
+            BackfillStatus status = seed("UNKNOWN1", LocalDate.of(2026, 7, 1));
+            LocalDate day1 = LocalDate.of(2026, 7, 2);
+            LocalDate day2 = LocalDate.of(2026, 7, 3);
+            LocalDate oldest = LocalDate.of(2026, 7, 5); // 구간 [day1, oldest) = {day1, day2, day1+2}
+            LocalDate filledUntil = LocalDate.of(2026, 7, 8);
+            CoveredGapFiller filler = step -> new CoveredFillResult(5, 5, filledUntil, oldest);
+            when(marketSessionGate.isOpenDayStrict(day1)).thenReturn(Optional.of(false));
+            when(marketSessionGate.isOpenDayStrict(day2)).thenReturn(Optional.empty());
+
+            // Act
+            coveredRangeService.executeStep(status, filler, day1, CoveredCalendarDomain.DOMESTIC);
+
+            // Assert
+            assertThat(reload(status.getId()).getCoveredUntilDate()).isEqualTo(filledUntil);
+            verify(backfillMetrics, never()).recordAnomalyFailed();
+            verify(backfillMetrics, times(1))
+                    .recordCoveredWalkAnomaly(CoveredWalkAnomalyKind.CALENDAR_UNKNOWN);
+            verify(backfillMetrics, never()).recordFrontGapSuppressed();
+        }
+
+        @Test
+        @DisplayName("AC-27④ — '모름' 발견 즉시 조기 단축, 그 이후 날짜는 조회하지 않는다")
+        void unknownDateInRange_shortCircuitsScan() {
+            // Arrange — 첫날은 휴장 확인, 둘째날은 캘린더에 행 없음("모름")에서 조기 단축
+            BackfillStatus status = seed("UNKNOWN2", LocalDate.of(2026, 7, 1));
+            LocalDate day1 = LocalDate.of(2026, 7, 2);
+            LocalDate day2 = LocalDate.of(2026, 7, 3);
+            LocalDate oldest = LocalDate.of(2026, 7, 5); // 구간 [day1, oldest) = {day1, day2, 07-04}
+            LocalDate filledUntil = LocalDate.of(2026, 7, 8);
+            CoveredGapFiller filler = step -> new CoveredFillResult(5, 5, filledUntil, oldest);
+            when(marketSessionGate.isOpenDayStrict(day1)).thenReturn(Optional.of(false));
+            when(marketSessionGate.isOpenDayStrict(day2)).thenReturn(Optional.empty());
+
+            // Act
+            coveredRangeService.executeStep(status, filler, day1, CoveredCalendarDomain.DOMESTIC);
+
+            // Assert — 3번째 날짜(07-04)는 조회하지 않는다(조기 단축)
+            verify(marketSessionGate, times(1)).isOpenDayStrict(day1);
+            verify(marketSessionGate, times(1)).isOpenDayStrict(day2);
+            verify(marketSessionGate, never()).isOpenDayStrict(day1.plusDays(2));
+        }
+
+        @Test
+        @DisplayName("탐색 상한 상수(130) > 현재 최대 스텝 폭(90) 회귀 — 정상 스텝이 상한에 걸리지 않는다(REQ-CVR-086)")
+        void searchLimitConstant_exceedsMaxStepWidth() {
+            assertThat(CoveredRangeService.FRONT_GAP_SEARCH_LIMIT_CALENDAR_DAYS).isGreaterThan(90);
+        }
+
+        @Test
+        @DisplayName("AC-27⑤ — 구간 길이 > 탐색 상한(130 달력일) → 스캔 없이 calendar_unknown 발화 (REQ-CVR-086)")
+        void rangeExceedsSearchLimit_raisesWithoutScanning() {
+            // Arrange
+            BackfillStatus status = seed("MALFORMED1", LocalDate.of(2026, 7, 1));
+            LocalDate cursor = LocalDate.of(2026, 7, 2);
+            LocalDate oldest =
+                    cursor.plusDays(CoveredRangeService.FRONT_GAP_SEARCH_LIMIT_CALENDAR_DAYS + 1);
+            LocalDate filledUntil = oldest.plusDays(3);
+            CoveredGapFiller filler = step -> new CoveredFillResult(5, 5, filledUntil, oldest);
+
+            // Act
+            coveredRangeService.executeStep(status, filler, cursor, CoveredCalendarDomain.DOMESTIC);
+
+            // Assert
+            assertThat(reload(status.getId()).getCoveredUntilDate()).isEqualTo(filledUntil);
+            verify(backfillMetrics, never()).recordAnomalyFailed();
+            verify(backfillMetrics, times(1))
+                    .recordCoveredWalkAnomaly(CoveredWalkAnomalyKind.CALENDAR_UNKNOWN);
+            verify(backfillMetrics, never()).recordFrontGapSuppressed();
+            verify(marketSessionGate, never()).isOpenDayStrict(any());
         }
 
         @Test
         @DisplayName(
-                "recordCoveredWalkAnomaly() 예외 발생해도 covered_until_date 전진은 롤백되지 않는다(REQ-CVR-076 관측 신호는"
+                "recordCoveredWalkAnomaly() 예외 발생해도 covered_until_date 전진은 롤백되지 않는다(REQ-CVR-081 관측 신호는"
                         + " 전진을 억제하지 않는다는 설계 의도가 메트릭 실패로 깨지면 안 됨)")
         void recordAnomalyFailedThrows_advanceStillCommits() {
             // Arrange — 앞단 미도달 anomaly 분기에서 메트릭 카운터 증가가 예외를 던지는 상황을 모사한다
@@ -301,6 +415,7 @@ class CoveredRangeServiceTest {
             LocalDate filledUntil = LocalDate.of(2026, 7, 5);
             LocalDate oldest = LocalDate.of(2026, 7, 3); // cursor보다 늦음 = 앞단 미도달
             CoveredGapFiller filler = step -> new CoveredFillResult(5, 5, filledUntil, oldest);
+            when(marketSessionGate.isOpenDayStrict(cursor)).thenReturn(Optional.of(true));
             doThrow(new RuntimeException("metrics registry 장애"))
                     .when(backfillMetrics)
                     .recordCoveredWalkAnomaly(any());

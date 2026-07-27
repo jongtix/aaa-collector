@@ -3,6 +3,8 @@ package com.aaa.collector.backfill;
 import com.aaa.collector.common.gate.MarketOpenGate;
 import com.aaa.collector.common.gate.UsMarketOpenGate;
 import java.time.LocalDate;
+import java.time.temporal.ChronoUnit;
+import java.util.Optional;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
@@ -26,6 +28,15 @@ import org.springframework.transaction.support.TransactionTemplate;
 @RequiredArgsConstructor
 public class CoveredRangeService {
 
+    /**
+     * 앞단 미도달 판정 시 {@code [cursor, oldest)} 구간을 실제로 탐색하는 상한(달력일) — 이를 넘는 구간은 정상 스텝에서 구조적으로 불가능한
+     * 길이(malformed)이므로 스캔 없이 {@link CoveredWalkAnomalyKind#CALENDAR_UNKNOWN}을 발생시킨다(REQ-CVR-086,
+     * plan.md §9c.2 사용자 확정값 — 과거 120일 + 미래 10일). 현재 최대 스텝 폭({@code
+     * StockRangeCoveredGapFiller.STEP_DAYS_WIDE = 90})보다 커야 정상 경로가 이 상한에 걸리지 않는다(회귀 가드 대상,
+     * REQ-CVR-075a와 동일한 침묵 가정 금지 원칙).
+     */
+    static final int FRONT_GAP_SEARCH_LIMIT_CALENDAR_DAYS = 130;
+
     private final TransactionTemplate transactionTemplate;
     private final BackfillStatusRepository backfillStatusRepository;
     private final BackfillMetrics backfillMetrics;
@@ -42,10 +53,10 @@ public class CoveredRangeService {
      *   <li>{@code kept > 0} — 검증 통과 저장 확인됨. {@code covered_until_date}를 {@code
      *       result.filledUntil()}로 전진시키고 같은 트랜잭션에서 커밋한다(REQ-CVR-012/030). {@code
      *       filler.persistStep}이 던진 예외는 이 메서드 밖으로 전파되며, 트랜잭션 전체(데이터 저장 + 전진)가 롤백된다(결정 1 원자성). 추가로
-     *       {@code result.oldest() > cursor}(앞단 미도달)이면 {@link
+     *       구간 {@code [cursor, oldest)}에 개장일이 확인되면(거래일 기준, REQ-CVR-081) {@link
      *       BackfillMetrics#recordCoveredWalkAnomaly(CoveredWalkAnomalyKind)}({@link
-     *       CoveredWalkAnomalyKind#FRONT_GAP})로 anomaly 경보 신호를 발생시킨다(REQ-CVR-076, 심층 방어) — 단 전진은
-     *       억제하지 않는다(동일 anchor 재호출 라이브락 방지, 앞단 hole을 경보로 관측 가능하게 남긴다). GROUP_A 전용 {@link
+     *       CoveredWalkAnomalyKind#FRONT_GAP})로 anomaly 경보 신호를 발생시킨다(TASK-018, 심층 방어) — 단 전진은 억제하지
+     *       않는다(동일 anchor 재호출 라이브락 방지, 앞단 hole을 경보로 관측 가능하게 남긴다). GROUP_A 전용 {@link
      *       BackfillMetrics#recordAnomalyFailed()}와는 카운터가 분리되어 있다(SPEC-COLLECTOR-BACKFILL-011
      *       TASK-014).
      *   <li>{@code raw > 0 && kept == 0} — 원본 응답은 있으나 검증을 전량 통과하지 못한 이상(#77류 침묵 skip). 전진하지 않고
@@ -75,15 +86,7 @@ public class CoveredRangeService {
                         BackfillStatus managed =
                                 backfillStatusRepository.findById(status.getId()).orElseThrow();
                         managed.advanceCoveredUntil(result.filledUntil());
-                        if (result.oldest() != null && result.oldest().isAfter(cursor)) {
-                            log.warn(
-                                    "[covered-range] 앞단 미도달 이상(REQ-CVR-076) — cursor={}, oldest={},"
-                                            + " filledUntil={} (전진은 비억제)",
-                                    cursor,
-                                    result.oldest(),
-                                    result.filledUntil());
-                            recordCoveredWalkAnomalySafely(CoveredWalkAnomalyKind.FRONT_GAP);
-                        }
+                        evaluateFrontGap(cursor, result, domain);
                     } else if (result.raw() > 0) {
                         log.warn(
                                 "[covered-range] 검증 전량 실패 이상 — cursor={}, raw={}, kept=0",
@@ -197,6 +200,59 @@ public class CoveredRangeService {
     }
 
     /**
+     * 앞단 미도달 판정 — 구간 {@code [cursor, oldest)}에 개장일이 존재하는지 거래일 기준으로 확인한다(REQ-CVR-081, TASK-018).
+     *
+     * <p>{@code oldest}가 {@code cursor} 이후가 아니면(정상 도달) 판정 자체를 수행하지 않는다. 구간 길이가 {@link
+     * #FRONT_GAP_SEARCH_LIMIT_CALENDAR_DAYS}를 초과하면 malformed로 간주해 스캔 없이 {@link
+     * CoveredWalkAnomalyKind#CALENDAR_UNKNOWN}을 발생시킨다(REQ-CVR-086). 그렇지 않으면 {@code cursor}부터 순회하며
+     * {@link MarketOpenGate#isOpenDayStrict(LocalDate)}/{@link
+     * UsMarketOpenGate#isOpenDayStrict(LocalDate)}로 개장(발화, {@link
+     * CoveredWalkAnomalyKind#FRONT_GAP}) 또는 모름(발화, {@link CoveredWalkAnomalyKind#CALENDAR_UNKNOWN},
+     * REQ-CVR-085)에서 조기 단축한다. 구간 전체가 휴장으로 확인되면 억제하되 별도 카운터로 양의 증거를 남긴다(REQ-CVR-087).
+     */
+    private void evaluateFrontGap(
+            LocalDate cursor, CoveredFillResult result, CoveredCalendarDomain domain) {
+        LocalDate oldest = result.oldest();
+        if (oldest == null || !oldest.isAfter(cursor)) {
+            return; // 정상 도달 — 판정 자체 미수행(REQ-CVR-081 전제 조건)
+        }
+        if (ChronoUnit.DAYS.between(cursor, oldest) > FRONT_GAP_SEARCH_LIMIT_CALENDAR_DAYS) {
+            log.warn(
+                    "[covered-range] 앞단 미도달 판정 불가(REQ-CVR-086) — 구간 길이 탐색 상한 초과. cursor={}, oldest={}",
+                    cursor,
+                    oldest);
+            recordCoveredWalkAnomalySafely(CoveredWalkAnomalyKind.CALENDAR_UNKNOWN);
+            return;
+        }
+        for (LocalDate d = cursor; d.isBefore(oldest); d = d.plusDays(1)) {
+            Optional<Boolean> openState = openDayStrictState(domain, d);
+            if (openState.isEmpty()) {
+                log.warn(
+                        "[covered-range] 앞단 미도달 판정 불가(REQ-CVR-085) — 캘린더 정보 부족. cursor={}, oldest={},"
+                                + " unknownDate={}",
+                        cursor,
+                        oldest,
+                        d);
+                recordCoveredWalkAnomalySafely(CoveredWalkAnomalyKind.CALENDAR_UNKNOWN);
+                return;
+            }
+            if (Boolean.TRUE.equals(openState.get())) {
+                log.warn(
+                        "[covered-range] 앞단 미도달 이상(REQ-CVR-081) — cursor={}, oldest={}, filledUntil={}"
+                                + " (전진은 비억제)",
+                        cursor,
+                        oldest,
+                        result.filledUntil());
+                recordCoveredWalkAnomalySafely(CoveredWalkAnomalyKind.FRONT_GAP);
+                return;
+            }
+        }
+        // 구간 [cursor, oldest) 전체가 휴장으로 확인됨 — 억제(anomaly 아님, 별도 카운터로 양의 증거만 남김)
+        log.debug("[covered-range] 앞단 미도달 억제 — 구간 전체 휴장 확인. cursor={}, oldest={}", cursor, oldest);
+        recordFrontGapSuppressedSafely();
+    }
+
+    /**
      * {@link BackfillMetrics#recordCoveredWalkAnomaly(CoveredWalkAnomalyKind)}를 호출하되, 예외가 트랜잭션 밖으로
      * 전파되지 않도록 방어한다(SPEC-COLLECTOR-BACKFILL-011 TASK-014 — GROUP_A {@code recordAnomalyFailed()}와
      * 분리된 카운터로 전환).
@@ -217,6 +273,20 @@ public class CoveredRangeService {
         }
     }
 
+    /**
+     * {@link BackfillMetrics#recordFrontGapSuppressed()}를 호출하되, 예외가 트랜잭션 밖으로 전파되지 않도록 방어한다({@link
+     * #recordCoveredWalkAnomalySafely(CoveredWalkAnomalyKind)}와 동일한 방어 정신).
+     */
+    @SuppressWarnings(
+            "PMD.AvoidCatchingGenericException") // 메트릭 실패가 트랜잭션 롤백을 유발하면 안 됨 — REQ-CVR-087
+    private void recordFrontGapSuppressedSafely() {
+        try {
+            backfillMetrics.recordFrontGapSuppressed();
+        } catch (RuntimeException e) {
+            log.error("[covered-range] 억제 메트릭 기록 실패(트랜잭션에는 영향 없음)", e);
+        }
+    }
+
     /** {@code covered_until_date}+1(NULL이면 {@code last_collected_date}+1) — REQ-CVR-041. */
     private LocalDate startCursor(BackfillStatus fresh) {
         LocalDate coveredUntil = fresh.getCoveredUntilDate();
@@ -231,5 +301,16 @@ public class CoveredRangeService {
         return domain == CoveredCalendarDomain.OVERSEAS
                 ? usMarketOpenGate.isOpenDay(date)
                 : marketOpenGate.isOpenDay(date);
+    }
+
+    /**
+     * 앞단 미도달 판정 전용 검증 접근자를 도메인 기반으로 선택한다(REQ-CVR-082) — 좁은 범위에 고정되고 범위 밖을 개장으로 fail-open 처리하는
+     * {@link #isOpenDay(CoveredCalendarDomain, LocalDate)}는 이 목적에 사용하지 않는다. "값 있음/모름"을 구분해야 하므로
+     * {@link Optional}을 그대로 전달한다.
+     */
+    private Optional<Boolean> openDayStrictState(CoveredCalendarDomain domain, LocalDate date) {
+        return domain == CoveredCalendarDomain.OVERSEAS
+                ? usMarketOpenGate.isOpenDayStrict(date)
+                : marketOpenGate.isOpenDayStrict(date);
     }
 }

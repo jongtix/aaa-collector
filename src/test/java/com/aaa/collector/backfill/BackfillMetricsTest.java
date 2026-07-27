@@ -20,6 +20,8 @@ class BackfillMetricsTest {
     private static final String ANOMALY_FAILED = "aaa_collector_backfill_anomaly_failed_total";
     private static final String COVERED_WALK_ANOMALY =
             "aaa_collector_backfill_covered_walk_anomaly_total";
+    private static final String COVERED_WALK_FRONT_GAP_SUPPRESSED =
+            "aaa_collector_backfill_covered_walk_front_gap_suppressed_total";
 
     @Nested
     @DisplayName("@PostConstruct 사전 등록")
@@ -48,6 +50,14 @@ class BackfillMetricsTest {
                                     .tag("kind", "all_rejected")
                                     .counter()
                                     .count())
+                    .isEqualTo(0.0);
+            assertThat(
+                            registry.get(COVERED_WALK_ANOMALY)
+                                    .tag("kind", "calendar_unknown")
+                                    .counter()
+                                    .count())
+                    .isEqualTo(0.0);
+            assertThat(registry.get(COVERED_WALK_FRONT_GAP_SUPPRESSED).counter().count())
                     .isEqualTo(0.0);
             Gauge gauge = registry.get(PROGRESS).gauge();
             assertThat(gauge.value()).isEqualTo(0.0);
@@ -240,6 +250,72 @@ class BackfillMetricsTest {
             assertThat(
                             registry.get(COVERED_WALK_ANOMALY)
                                     .tag("kind", "front_gap")
+                                    .counter()
+                                    .count())
+                    .isEqualTo(0.0);
+        }
+
+        @Test
+        @DisplayName(
+                "recordCoveredWalkAnomaly(CALENDAR_UNKNOWN) 호출 시 calendar_unknown kind만 증가한다"
+                        + " (SPEC-COLLECTOR-BACKFILL-011 TASK-018)")
+        void recordCoveredWalkAnomaly_calendarUnknown_incrementsOnlyCalendarUnknown() {
+            SimpleMeterRegistry registry = new SimpleMeterRegistry();
+            BackfillMetrics metrics = new BackfillMetrics(registry);
+            metrics.initCounters();
+
+            metrics.recordCoveredWalkAnomaly(CoveredWalkAnomalyKind.CALENDAR_UNKNOWN);
+
+            assertThat(
+                            registry.get(COVERED_WALK_ANOMALY)
+                                    .tag("kind", "calendar_unknown")
+                                    .counter()
+                                    .count())
+                    .isEqualTo(1.0);
+            assertThat(
+                            registry.get(COVERED_WALK_ANOMALY)
+                                    .tag("kind", "front_gap")
+                                    .counter()
+                                    .count())
+                    .isEqualTo(0.0);
+            assertThat(
+                            registry.get(COVERED_WALK_ANOMALY)
+                                    .tag("kind", "all_rejected")
+                                    .counter()
+                                    .count())
+                    .isEqualTo(0.0);
+            assertThat(registry.get(COVERED_WALK_FRONT_GAP_SUPPRESSED).counter().count())
+                    .isEqualTo(0.0);
+        }
+    }
+
+    @Nested
+    @DisplayName(
+            "앞단 미도달 억제 카운터 (recordFrontGapSuppressed, SPEC-COLLECTOR-BACKFILL-011 TASK-018,"
+                    + " REQ-CVR-087)")
+    class RecordFrontGapSuppressed {
+
+        @Test
+        @DisplayName("recordFrontGapSuppressed 호출마다 카운터가 누적되고 anomaly 카운터는 무변화")
+        void recordFrontGapSuppressed_incrementsIndependently() {
+            SimpleMeterRegistry registry = new SimpleMeterRegistry();
+            BackfillMetrics metrics = new BackfillMetrics(registry);
+            metrics.initCounters();
+
+            metrics.recordFrontGapSuppressed();
+            metrics.recordFrontGapSuppressed();
+
+            assertThat(registry.get(COVERED_WALK_FRONT_GAP_SUPPRESSED).counter().count())
+                    .isEqualTo(2.0);
+            assertThat(
+                            registry.get(COVERED_WALK_ANOMALY)
+                                    .tag("kind", "front_gap")
+                                    .counter()
+                                    .count())
+                    .isEqualTo(0.0);
+            assertThat(
+                            registry.get(COVERED_WALK_ANOMALY)
+                                    .tag("kind", "calendar_unknown")
                                     .counter()
                                     .count())
                     .isEqualTo(0.0);

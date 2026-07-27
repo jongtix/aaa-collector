@@ -65,6 +65,14 @@ public class BackfillMetrics {
     static final String COVERED_WALK_ANOMALY_NAME =
             "aaa_collector_backfill_covered_walk_anomaly_total";
 
+    /**
+     * 앞단 미도달 판정 억제(전 구간 휴장 확인) 전용 무태그 카운터 (SPEC-COLLECTOR-BACKFILL-011 TASK-018, REQ-CVR-087). 억제는
+     * anomaly가 아니므로 {@link #COVERED_WALK_ANOMALY_NAME}에 넣지 않는다 — 넣으면 {@code sum by()} 집계가 오염되고
+     * 메트릭명이 거짓이 된다(v0.6.0이 정정한 겸용 결함의 재발 방지). 알림 없음, 대시보드·검증용.
+     */
+    static final String COVERED_WALK_FRONT_GAP_SUPPRESSED_NAME =
+            "aaa_collector_backfill_covered_walk_front_gap_suppressed_total";
+
     private final MeterRegistry registry;
 
     /** 진행률(완료/전체) gauge가 지연 조회하는 가변 상태. */
@@ -87,6 +95,7 @@ public class BackfillMetrics {
                     .tag("kind", kind.tagValue())
                     .register(registry);
         }
+        Counter.builder(COVERED_WALK_FRONT_GAP_SUPPRESSED_NAME).register(registry);
         registry.gauge(PROGRESS_NAME, progressHolder, DoubleAdder::doubleValue);
         registry.gauge(PENDING_SLOTS_NAME, pendingSlotsHolder, AtomicLong::doubleValue);
     }
@@ -152,6 +161,16 @@ public class BackfillMetrics {
                 .tag("kind", kind.tagValue())
                 .register(registry)
                 .increment();
+    }
+
+    /**
+     * 앞단 미도달 판정에서 구간 {@code [cursor, oldest)} 전체가 휴장으로 확인되어 억제됐을 때 호출한다
+     * (SPEC-COLLECTOR-BACKFILL-011 TASK-018, REQ-CVR-087). anomaly가 아니므로 {@link
+     * #recordCoveredWalkAnomaly(CoveredWalkAnomalyKind)}와 별개 카운터로 분리되어 있다 — 배포 후 "front_gap 0건"이 정정
+     * 성공인지 갭 walk 미실행인지 구분하기 위한 최소 비용의 양의 증거다.
+     */
+    public void recordFrontGapSuppressed() {
+        Counter.builder(COVERED_WALK_FRONT_GAP_SUPPRESSED_NAME).register(registry).increment();
     }
 
     /**
