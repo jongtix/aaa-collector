@@ -363,7 +363,8 @@ class StockCoveredGapWalkRunnerTest {
                     .walkGapForward(
                             any(),
                             any(),
-                            org.mockito.ArgumentMatchers.eq(LocalDate.of(2025, 12, 15)));
+                            org.mockito.ArgumentMatchers.eq(LocalDate.of(2025, 12, 15)),
+                            org.mockito.ArgumentMatchers.eq(CoveredCalendarDomain.DOMESTIC));
         }
     }
 
