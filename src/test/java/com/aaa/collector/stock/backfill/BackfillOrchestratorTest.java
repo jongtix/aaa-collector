@@ -27,12 +27,14 @@ import com.aaa.collector.stock.enums.AssetType;
 import com.aaa.collector.stock.enums.Market;
 import java.time.LocalDate;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.InOrder;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
@@ -137,8 +139,8 @@ class BackfillOrchestratorTest {
                     buildInProgressStatus("005930", "daily_ohlcv", LocalDate.of(2023, 7, 1));
             BackfillStatus refreshed3 = buildCompletedStatus("005930", "daily_ohlcv");
 
-            when(stockRepository.findAllActiveTradable()).thenReturn(List.of(stock));
-            when(stockRepository.findAllActiveOverseasTradable()).thenReturn(List.of());
+            when(stockRepository.findAllWatchlistTradable()).thenReturn(List.of(stock));
+            when(stockRepository.findAllWatchlistOverseasTradable()).thenReturn(List.of());
             when(backfillStatusRepository.findByStatusInAndTargetTypeOrderById(any(), anyString()))
                     .thenReturn(List.of(initial));
             when(backfillStatusRepository.findById(any()))
@@ -171,8 +173,8 @@ class BackfillOrchestratorTest {
             BackfillStatus stale2 = buildInProgressStatus("005930", "investor_trend", anchor);
             BackfillStatus completed = buildCompletedStatus("005930", "investor_trend");
 
-            when(stockRepository.findAllActiveTradable()).thenReturn(List.of(stock));
-            when(stockRepository.findAllActiveOverseasTradable()).thenReturn(List.of());
+            when(stockRepository.findAllWatchlistTradable()).thenReturn(List.of(stock));
+            when(stockRepository.findAllWatchlistOverseasTradable()).thenReturn(List.of());
             when(backfillStatusRepository.findByStatusInAndTargetTypeOrderById(any(), anyString()))
                     .thenReturn(List.of(initial));
             when(backfillStatusRepository.findById(any()))
@@ -196,8 +198,8 @@ class BackfillOrchestratorTest {
             BackfillStatus initial = buildPendingStatus("005930", "daily_ohlcv");
             BackfillStatus completed = buildCompletedStatus("005930", "daily_ohlcv");
 
-            when(stockRepository.findAllActiveTradable()).thenReturn(List.of(stock));
-            when(stockRepository.findAllActiveOverseasTradable()).thenReturn(List.of());
+            when(stockRepository.findAllWatchlistTradable()).thenReturn(List.of(stock));
+            when(stockRepository.findAllWatchlistOverseasTradable()).thenReturn(List.of());
             when(backfillStatusRepository.findByStatusInAndTargetTypeOrderById(any(), anyString()))
                     .thenReturn(List.of(initial));
             when(backfillStatusRepository.findById(any())).thenReturn(Optional.of(completed));
@@ -237,8 +239,8 @@ class BackfillOrchestratorTest {
             // GROUP_C decide는 무조건 completed이므로 status가 COMPLETED로 전이됨(anchor 값 자체는 무관)
             BackfillStatus completed = buildCompletedStatus("005930", "corporate_events");
 
-            when(stockRepository.findAllActiveTradable()).thenReturn(List.of(stock));
-            when(stockRepository.findAllActiveOverseasTradable()).thenReturn(List.of());
+            when(stockRepository.findAllWatchlistTradable()).thenReturn(List.of(stock));
+            when(stockRepository.findAllWatchlistOverseasTradable()).thenReturn(List.of());
             when(backfillStatusRepository.findByStatusInAndTargetTypeOrderById(any(), anyString()))
                     .thenReturn(List.of(initial));
             when(backfillStatusRepository.findById(any())).thenReturn(Optional.of(completed));
@@ -278,8 +280,8 @@ class BackfillOrchestratorTest {
             BackfillStatus inProg3 =
                     buildInProgressStatus("005930", "daily_ohlcv", LocalDate.of(2023, 11, 1));
 
-            when(stockRepository.findAllActiveTradable()).thenReturn(List.of(stock));
-            when(stockRepository.findAllActiveOverseasTradable()).thenReturn(List.of());
+            when(stockRepository.findAllWatchlistTradable()).thenReturn(List.of(stock));
+            when(stockRepository.findAllWatchlistOverseasTradable()).thenReturn(List.of());
             when(backfillStatusRepository.findByStatusInAndTargetTypeOrderById(any(), anyString()))
                     .thenReturn(List.of(initial));
             when(backfillStatusRepository.findById(any()))
@@ -316,8 +318,8 @@ class BackfillOrchestratorTest {
             BackfillStatus probe3 =
                     buildInProgressStatus("005930", "credit_balance", LocalDate.of(2020, 3, 3));
 
-            when(stockRepository.findAllActiveTradable()).thenReturn(List.of(stock));
-            when(stockRepository.findAllActiveOverseasTradable()).thenReturn(List.of());
+            when(stockRepository.findAllWatchlistTradable()).thenReturn(List.of(stock));
+            when(stockRepository.findAllWatchlistOverseasTradable()).thenReturn(List.of());
             when(backfillStatusRepository.findByStatusInAndTargetTypeOrderById(any(), anyString()))
                     .thenReturn(List.of(initial));
             when(backfillStatusRepository.findById(any()))
@@ -348,8 +350,8 @@ class BackfillOrchestratorTest {
             BackfillStatus stalled = buildInProgressStatus("005930", "daily_ohlcv", anchorDate);
             BackfillStatus stalled2 = buildInProgressStatus("005930", "daily_ohlcv", anchorDate);
 
-            when(stockRepository.findAllActiveTradable()).thenReturn(List.of(stock));
-            when(stockRepository.findAllActiveOverseasTradable()).thenReturn(List.of());
+            when(stockRepository.findAllWatchlistTradable()).thenReturn(List.of(stock));
+            when(stockRepository.findAllWatchlistOverseasTradable()).thenReturn(List.of());
             when(backfillStatusRepository.findByStatusInAndTargetTypeOrderById(any(), anyString()))
                     .thenReturn(List.of(initial));
             when(backfillStatusRepository.findById(any()))
@@ -377,8 +379,8 @@ class BackfillOrchestratorTest {
                     buildInProgressStatus("005930", "daily_ohlcv", LocalDate.of(2024, 3, 1));
             BackfillStatus completed = buildCompletedStatus("005930", "daily_ohlcv");
 
-            when(stockRepository.findAllActiveTradable()).thenReturn(List.of(stock));
-            when(stockRepository.findAllActiveOverseasTradable()).thenReturn(List.of());
+            when(stockRepository.findAllWatchlistTradable()).thenReturn(List.of(stock));
+            when(stockRepository.findAllWatchlistOverseasTradable()).thenReturn(List.of());
             when(backfillStatusRepository.findByStatusInAndTargetTypeOrderById(any(), anyString()))
                     .thenReturn(List.of(initial));
             when(backfillStatusRepository.findById(any()))
@@ -406,8 +408,8 @@ class BackfillOrchestratorTest {
             BackfillStatus stale1 = buildInProgressStatus("005930", "credit_balance", anchor);
             BackfillStatus completed = buildCompletedStatus("005930", "credit_balance");
 
-            when(stockRepository.findAllActiveTradable()).thenReturn(List.of(stock));
-            when(stockRepository.findAllActiveOverseasTradable()).thenReturn(List.of());
+            when(stockRepository.findAllWatchlistTradable()).thenReturn(List.of(stock));
+            when(stockRepository.findAllWatchlistOverseasTradable()).thenReturn(List.of());
             when(backfillStatusRepository.findByStatusInAndTargetTypeOrderById(any(), anyString()))
                     .thenReturn(List.of(initial));
             when(backfillStatusRepository.findById(any()))
@@ -436,8 +438,8 @@ class BackfillOrchestratorTest {
         void ac3_1_allTablesGetOwnStream() throws InterruptedException {
             // Arrange: 4개 테이블 각각 1개 status — 단일 종목 "005930"
             Stock stock = buildDomesticStock("005930");
-            when(stockRepository.findAllActiveTradable()).thenReturn(List.of(stock));
-            when(stockRepository.findAllActiveOverseasTradable()).thenReturn(List.of());
+            when(stockRepository.findAllWatchlistTradable()).thenReturn(List.of(stock));
+            when(stockRepository.findAllWatchlistOverseasTradable()).thenReturn(List.of());
 
             BackfillStatus s1 = buildPendingStatus("005930", "daily_ohlcv");
             BackfillStatus s2 = buildPendingStatus("005930", "investor_trend");
@@ -467,8 +469,8 @@ class BackfillOrchestratorTest {
             when(properties.getPerTableCompletionCap()).thenReturn(1);
 
             Stock stock = buildDomesticStock("005930");
-            when(stockRepository.findAllActiveTradable()).thenReturn(List.of(stock));
-            when(stockRepository.findAllActiveOverseasTradable()).thenReturn(List.of());
+            when(stockRepository.findAllWatchlistTradable()).thenReturn(List.of(stock));
+            when(stockRepository.findAllWatchlistOverseasTradable()).thenReturn(List.of());
 
             BackfillStatus it1 = buildPendingStatus("005930", "investor_trend");
             BackfillStatus it2 = buildPendingStatus("005930", "investor_trend");
@@ -506,9 +508,9 @@ class BackfillOrchestratorTest {
             Stock stock1 = buildDomesticStock("005930");
             Stock stock2 = buildDomesticStock("000660");
             Stock stock3 = buildDomesticStock("003550");
-            when(stockRepository.findAllActiveTradable())
+            when(stockRepository.findAllWatchlistTradable())
                     .thenReturn(List.of(stock1, stock2, stock3));
-            when(stockRepository.findAllActiveOverseasTradable()).thenReturn(List.of());
+            when(stockRepository.findAllWatchlistOverseasTradable()).thenReturn(List.of());
 
             // 모두 daily_ohlcv 테이블 → 1개 VT 스트림
             BackfillStatus s1 = buildPendingStatus("005930", "daily_ohlcv");
@@ -537,8 +539,8 @@ class BackfillOrchestratorTest {
 
             Stock stock1 = buildDomesticStock("005930");
             Stock stock2 = buildDomesticStock("000660");
-            when(stockRepository.findAllActiveTradable()).thenReturn(List.of(stock1, stock2));
-            when(stockRepository.findAllActiveOverseasTradable()).thenReturn(List.of());
+            when(stockRepository.findAllWatchlistTradable()).thenReturn(List.of(stock1, stock2));
+            when(stockRepository.findAllWatchlistOverseasTradable()).thenReturn(List.of());
 
             // 모두 daily_ohlcv 테이블 → 1개 스트림, cap=1 → 첫 번째 status(5윈도우)만 처리
             BackfillStatus s1 = buildPendingStatus("005930", "daily_ohlcv");
@@ -576,20 +578,23 @@ class BackfillOrchestratorTest {
         }
 
         @Test
-        @DisplayName("AC-5.3 — 비활성 종목 status는 inner 루프 미개시·슬롯 미소비 (BACKFILL-001 AC-7.4 유지)")
-        void ac5_3_inactiveStock_skipped_noSlotConsumed() throws InterruptedException {
-            // Arrange — 활성종목: 005930만, 000660은 비활성
+        @DisplayName(
+                "AC-5.3/AC-2(SPEC-COLLECTOR-BACKFILL-014) — 후보 맵(관심종목)에 없는 종목(관심그룹 제거)은 inner"
+                        + " 루프 미개시·슬롯 미소비. active 값과는 무관 — 후보 판정은 오직 맵 존재 여부다")
+        void ac5_3_watchlistRemovedStock_skipped_noSlotConsumed() throws InterruptedException {
+            // Arrange — 후보 맵(watchlist-only 조회 결과)에는 005930만 포함, 000660은 관심그룹에서 제거되어
+            // 후보 맵에 아예 없음(SPEC-COLLECTOR-BACKFILL-014 REQ-BACKFILL-180 — 회귀 방지)
             when(properties.getPerTableCompletionCap()).thenReturn(1);
 
             Stock activeStock = buildDomesticStock("005930");
-            when(stockRepository.findAllActiveTradable()).thenReturn(List.of(activeStock));
-            when(stockRepository.findAllActiveOverseasTradable()).thenReturn(List.of());
+            when(stockRepository.findAllWatchlistTradable()).thenReturn(List.of(activeStock));
+            when(stockRepository.findAllWatchlistOverseasTradable()).thenReturn(List.of());
 
-            // 모두 daily_ohlcv — 1개 스트림. 비활성(000660)은 스킵(슬롯 미소비) → 활성(005930) 처리됨
-            BackfillStatus inactive = buildPendingStatus("000660", "daily_ohlcv");
+            // 모두 daily_ohlcv — 1개 스트림. 관심그룹 제거(000660)는 스킵(슬롯 미소비) → 005930은 처리됨
+            BackfillStatus removed = buildPendingStatus("000660", "daily_ohlcv");
             BackfillStatus active = buildPendingStatus("005930", "daily_ohlcv");
             when(backfillStatusRepository.findByStatusInAndTargetTypeOrderById(any(), anyString()))
-                    .thenReturn(List.of(inactive, active));
+                    .thenReturn(List.of(removed, active));
 
             BackfillStatus completed = buildCompletedStatus("005930", "daily_ohlcv");
             when(backfillStatusRepository.findById(any())).thenReturn(Optional.of(completed));
@@ -598,7 +603,7 @@ class BackfillOrchestratorTest {
             orchestrator.run();
 
             // Assert — 000660은 스킵, 005930은 처리됨(슬롯 1 소비)
-            verify(windowExecutor, never()).fetchWindow(eq(inactive), any(), any());
+            verify(windowExecutor, never()).fetchWindow(eq(removed), any(), any());
             verify(windowExecutor, times(1)).fetchWindow(any(), eq(activeStock), eq(session));
             verify(windowExecutor, times(1)).persistWindow(any(), eq(activeStock), any());
         }
@@ -614,9 +619,9 @@ class BackfillOrchestratorTest {
             Stock stock1 = buildDomesticStock("005930");
             Stock stock2 = buildDomesticStock("000660");
             Stock stock3 = buildDomesticStock("003550");
-            when(stockRepository.findAllActiveTradable())
+            when(stockRepository.findAllWatchlistTradable())
                     .thenReturn(List.of(stock1, stock2, stock3));
-            when(stockRepository.findAllActiveOverseasTradable()).thenReturn(List.of());
+            when(stockRepository.findAllWatchlistOverseasTradable()).thenReturn(List.of());
 
             BackfillStatus it1 = buildPendingStatus("005930", "investor_trend");
             BackfillStatus it2 = buildPendingStatus("000660", "investor_trend");
@@ -654,8 +659,8 @@ class BackfillOrchestratorTest {
         void ac4_1_windowException_isolatesStatus_continuesNext() throws InterruptedException {
             // Arrange
             Stock stock = buildDomesticStock("005930");
-            when(stockRepository.findAllActiveTradable()).thenReturn(List.of(stock));
-            when(stockRepository.findAllActiveOverseasTradable()).thenReturn(List.of());
+            when(stockRepository.findAllWatchlistTradable()).thenReturn(List.of(stock));
+            when(stockRepository.findAllWatchlistOverseasTradable()).thenReturn(List.of());
 
             BackfillStatus first = buildPendingStatus("005930", "daily_ohlcv");
             ReflectionTestUtils.setField(first, "id", 1L);
@@ -696,8 +701,8 @@ class BackfillOrchestratorTest {
         void ac4_3_interruptedStream_otherTablesUnaffected() throws InterruptedException {
             // Arrange: daily_ohlcv(first)는 InterruptedException, investor_trend(second)는 정상
             Stock stock = buildDomesticStock("005930");
-            when(stockRepository.findAllActiveTradable()).thenReturn(List.of(stock));
-            when(stockRepository.findAllActiveOverseasTradable()).thenReturn(List.of());
+            when(stockRepository.findAllWatchlistTradable()).thenReturn(List.of(stock));
+            when(stockRepository.findAllWatchlistOverseasTradable()).thenReturn(List.of());
 
             BackfillStatus first = buildPendingStatus("005930", "daily_ohlcv");
             BackfillStatus second = buildPendingStatus("005930", "investor_trend");
@@ -737,8 +742,8 @@ class BackfillOrchestratorTest {
         void ac6_1_sessionOpenedExactlyOnce() throws InterruptedException {
             // Arrange
             Stock stock = buildDomesticStock("005930");
-            when(stockRepository.findAllActiveTradable()).thenReturn(List.of(stock));
-            when(stockRepository.findAllActiveOverseasTradable()).thenReturn(List.of());
+            when(stockRepository.findAllWatchlistTradable()).thenReturn(List.of(stock));
+            when(stockRepository.findAllWatchlistOverseasTradable()).thenReturn(List.of());
 
             BackfillStatus s1 = buildPendingStatus("005930", "daily_ohlcv");
             BackfillStatus s2 = buildPendingStatus("005930", "investor_trend");
@@ -786,8 +791,8 @@ class BackfillOrchestratorTest {
             when(properties.getPerTableCompletionCap()).thenReturn(10);
 
             Stock stock = buildDomesticStock("005930");
-            when(stockRepository.findAllActiveTradable()).thenReturn(List.of(stock));
-            when(stockRepository.findAllActiveOverseasTradable()).thenReturn(List.of());
+            when(stockRepository.findAllWatchlistTradable()).thenReturn(List.of(stock));
+            when(stockRepository.findAllWatchlistOverseasTradable()).thenReturn(List.of());
 
             BackfillStatus s1 = buildPendingStatus("005930", "daily_ohlcv");
             BackfillStatus s2 = buildPendingStatus("005930", "investor_trend");
@@ -817,8 +822,8 @@ class BackfillOrchestratorTest {
             when(properties.getPerTableCompletionCap()).thenReturn(10);
 
             Stock stock = buildDomesticStock("005930");
-            when(stockRepository.findAllActiveTradable()).thenReturn(List.of(stock));
-            when(stockRepository.findAllActiveOverseasTradable()).thenReturn(List.of());
+            when(stockRepository.findAllWatchlistTradable()).thenReturn(List.of(stock));
+            when(stockRepository.findAllWatchlistOverseasTradable()).thenReturn(List.of());
 
             BackfillStatus s1 = buildPendingStatus("005930", "daily_ohlcv");
             when(backfillStatusRepository.findByStatusInAndTargetTypeOrderById(any(), anyString()))
@@ -870,8 +875,8 @@ class BackfillOrchestratorTest {
                     buildInProgressStatus("Q760009", "daily_ohlcv", LocalDate.of(2024, 6, 1));
             BackfillStatus completed = buildCompletedStatus("Q760009", "daily_ohlcv");
 
-            when(stockRepository.findAllActiveTradable()).thenReturn(List.of(etn));
-            when(stockRepository.findAllActiveOverseasTradable()).thenReturn(List.of());
+            when(stockRepository.findAllWatchlistTradable()).thenReturn(List.of(etn));
+            when(stockRepository.findAllWatchlistOverseasTradable()).thenReturn(List.of());
             when(backfillStatusRepository.findByStatusInAndTargetTypeOrderById(any(), anyString()))
                     .thenReturn(List.of(initial));
             when(backfillStatusRepository.findById(any()))
@@ -897,8 +902,8 @@ class BackfillOrchestratorTest {
             BackfillStatus initial = buildPendingStatus("M04020000", "daily_ohlcv");
             BackfillStatus completed = buildCompletedStatus("M04020000", "daily_ohlcv");
 
-            when(stockRepository.findAllActiveTradable()).thenReturn(List.of(commodity));
-            when(stockRepository.findAllActiveOverseasTradable()).thenReturn(List.of());
+            when(stockRepository.findAllWatchlistTradable()).thenReturn(List.of(commodity));
+            when(stockRepository.findAllWatchlistOverseasTradable()).thenReturn(List.of());
             when(backfillStatusRepository.findByStatusInAndTargetTypeOrderById(any(), anyString()))
                     .thenReturn(List.of(initial));
             when(backfillStatusRepository.findById(any())).thenReturn(Optional.of(completed));
@@ -928,8 +933,8 @@ class BackfillOrchestratorTest {
             BackfillStatus status = buildPendingStatus("005930", "daily_ohlcv");
             BackfillStatus completed = buildCompletedStatus("005930", "daily_ohlcv");
 
-            when(stockRepository.findAllActiveTradable()).thenReturn(List.of(stock));
-            when(stockRepository.findAllActiveOverseasTradable()).thenReturn(List.of());
+            when(stockRepository.findAllWatchlistTradable()).thenReturn(List.of(stock));
+            when(stockRepository.findAllWatchlistOverseasTradable()).thenReturn(List.of());
             when(backfillStatusRepository.findByStatusInAndTargetTypeOrderById(any(), anyString()))
                     .thenReturn(List.of(status));
             when(backfillStatusRepository.findById(any())).thenReturn(Optional.of(completed));
@@ -947,8 +952,8 @@ class BackfillOrchestratorTest {
         @Test
         @DisplayName("run() — 활성 종목 없으면 윈도우 실행 없음")
         void run_noActiveStocks_skipsAllItems() throws InterruptedException {
-            when(stockRepository.findAllActiveTradable()).thenReturn(List.of());
-            when(stockRepository.findAllActiveOverseasTradable()).thenReturn(List.of());
+            when(stockRepository.findAllWatchlistTradable()).thenReturn(List.of());
+            when(stockRepository.findAllWatchlistOverseasTradable()).thenReturn(List.of());
 
             orchestrator.run();
 
@@ -960,8 +965,8 @@ class BackfillOrchestratorTest {
         @DisplayName("run() — 처리 대상 없으면 (AC-6.5) 윈도우 실행 없음")
         void run_allCompleted_zeroKisCalls() throws InterruptedException {
             Stock stock = buildDomesticStock("005930");
-            when(stockRepository.findAllActiveTradable()).thenReturn(List.of(stock));
-            when(stockRepository.findAllActiveOverseasTradable()).thenReturn(List.of());
+            when(stockRepository.findAllWatchlistTradable()).thenReturn(List.of(stock));
+            when(stockRepository.findAllWatchlistOverseasTradable()).thenReturn(List.of());
             when(backfillStatusRepository.findByStatusInAndTargetTypeOrderById(any(), anyString()))
                     .thenReturn(List.of());
 
@@ -982,10 +987,215 @@ class BackfillOrchestratorTest {
 
             // Assert — 시딩은 수행되나 이후 종목 조회·윈도우 실행은 전면 skip (no fallback)
             verify(seeder).seedActiveStocks();
-            verify(stockRepository, never()).findAllActiveTradable();
+            verify(stockRepository, never()).findAllWatchlistTradable();
             verify(backfillStatusRepository, never())
                     .findByStatusInAndTargetTypeOrderById(any(), anyString());
             verify(windowExecutor, never()).fetchWindow(any(), any(), any());
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // SPEC-COLLECTOR-BACKFILL-014 — 후보 선정 기준 관심종목 재정의 (REQ-BACKFILL-176~182)
+    // -----------------------------------------------------------------------
+
+    @Nested
+    @DisplayName("SPEC-COLLECTOR-BACKFILL-014: 후보 선정 기준 = 관심종목(watchlist_removed_at IS NULL)")
+    class WatchlistCandidateSelection {
+
+        private Stock buildDelistedStock(String symbol) {
+            return Stock.builder()
+                    .symbol(symbol)
+                    .market(Market.KOSPI)
+                    .assetType(AssetType.STOCK)
+                    .active(false)
+                    .delistedAt(LocalDate.of(2025, 12, 15))
+                    .build();
+        }
+
+        private Stock buildDelistedStockWithNullDelistedAt(String symbol) {
+            return Stock.builder()
+                    .symbol(symbol)
+                    .market(Market.KOSPI)
+                    .assetType(AssetType.STOCK)
+                    .active(false)
+                    .build();
+        }
+
+        @Test
+        @DisplayName(
+                "AC-1 — 상폐(active=false) + watchlist 유지 종목이 후보 맵에 포함되어 슬롯 소비·executor 진입"
+                        + " (REQ-BACKFILL-178)")
+        void ac1_delistedStock_watchlistRetained_includedAsCandidate() throws InterruptedException {
+            // Arrange — 010620 상당: active=false(상폐), delistedAt 채워짐, watchlist는 유지되어
+            // 신규 watchlist-only 조회 결과에 포함되었다고 가정(레포지토리 계층은 M1에서 검증됨)
+            Stock delisted = buildDelistedStock("010620");
+            BackfillStatus initial = buildPendingStatus("010620", "credit_balance");
+            BackfillStatus completed = buildCompletedStatus("010620", "credit_balance");
+
+            when(stockRepository.findAllWatchlistTradable()).thenReturn(List.of(delisted));
+            when(stockRepository.findAllWatchlistOverseasTradable()).thenReturn(List.of());
+            when(backfillStatusRepository.findByStatusInAndTargetTypeOrderById(any(), anyString()))
+                    .thenReturn(List.of(initial));
+            when(backfillStatusRepository.findById(any())).thenReturn(Optional.of(completed));
+
+            // Act
+            orchestrator.run();
+
+            // Assert — continue 스킵 없이 executor에 도달(슬롯 소비, executeOneWindow 진입)
+            verify(windowExecutor, times(1)).fetchWindow(any(), eq(delisted), eq(session));
+            verify(windowExecutor, times(1)).persistWindow(any(), eq(delisted), any());
+        }
+
+        @Test
+        @DisplayName(
+                "AC-3 — delisted_at이 NULL인 상폐 종목(HALTED/sync 레이스)도 후보 포함·executor 진입"
+                        + " (REQ-BACKFILL-181, anchor 세부는 SPEC-013 위임이라 미단언)")
+        void ac3_delistedAtNull_stillTreatedAsNormalCandidate() throws InterruptedException {
+            // Arrange — 433870 상당: active=false, delistedAt=NULL
+            Stock delistedNoDate = buildDelistedStockWithNullDelistedAt("433870");
+            BackfillStatus initial = buildPendingStatus("433870", "credit_balance");
+            BackfillStatus completed = buildCompletedStatus("433870", "credit_balance");
+
+            when(stockRepository.findAllWatchlistTradable()).thenReturn(List.of(delistedNoDate));
+            when(stockRepository.findAllWatchlistOverseasTradable()).thenReturn(List.of());
+            when(backfillStatusRepository.findByStatusInAndTargetTypeOrderById(any(), anyString()))
+                    .thenReturn(List.of(initial));
+            when(backfillStatusRepository.findById(any())).thenReturn(Optional.of(completed));
+
+            // Act
+            orchestrator.run();
+
+            // Assert — 후보 포함 판정은 watchlistRemovedAt만 사용(delistedAt 미의존).
+            // 위임 경계: anchor 값·probe 횟수·종료 판정은 단언하지 않는다(SPEC-013 소관, AC-11).
+            verify(windowExecutor, times(1)).fetchWindow(any(), eq(delistedNoDate), eq(session));
+            verify(windowExecutor, times(1)).persistWindow(any(), eq(delistedNoDate), any());
+        }
+
+        @Test
+        @DisplayName(
+                "EC-3 — 상폐 + 관심그룹 제거 동시(종목이 후보 맵에 없음)면 관심 축 우선 적용으로 제외 유지" + " (REQ-BACKFILL-180)")
+        void ec3_delistedAndWatchlistRemoved_stillExcluded() throws InterruptedException {
+            // Arrange — 후보 맵(watchlist-only 조회 결과)에는 다른 정상 종목만 있고, 상폐+관심제거 종목은
+            // 관심 축 조건에 걸려 맵에 아예 없다(레포지토리 계층 검증은 StockRepositoryTest 소관)
+            Stock normal = buildDomesticStock("005930");
+            when(stockRepository.findAllWatchlistTradable()).thenReturn(List.of(normal));
+            when(stockRepository.findAllWatchlistOverseasTradable()).thenReturn(List.of());
+
+            BackfillStatus delistedAndRemoved = buildPendingStatus("433870", "credit_balance");
+            BackfillStatus normalStatus = buildPendingStatus("005930", "credit_balance");
+            when(backfillStatusRepository.findByStatusInAndTargetTypeOrderById(any(), anyString()))
+                    .thenReturn(List.of(delistedAndRemoved, normalStatus));
+
+            BackfillStatus completed = buildCompletedStatus("005930", "credit_balance");
+            when(backfillStatusRepository.findById(any())).thenReturn(Optional.of(completed));
+
+            // Act
+            orchestrator.run();
+
+            // Assert — 상폐+관심제거 종목은 스킵, 정상 종목만 처리
+            verify(windowExecutor, never()).fetchWindow(eq(delistedAndRemoved), any(), any());
+            verify(windowExecutor, times(1)).fetchWindow(any(), eq(normal), eq(session));
+        }
+
+        @Test
+        @DisplayName("EC-4 — 활성 + 관심 유지 정상군은 변경 전과 완전히 동일하게 후보 포함(비회귀)")
+        void ec4_activeNormalStock_regressionUnchanged() throws InterruptedException {
+            Stock normal = buildDomesticStock("005930");
+            BackfillStatus initial = buildPendingStatus("005930", "daily_ohlcv");
+            BackfillStatus completed = buildCompletedStatus("005930", "daily_ohlcv");
+
+            when(stockRepository.findAllWatchlistTradable()).thenReturn(List.of(normal));
+            when(stockRepository.findAllWatchlistOverseasTradable()).thenReturn(List.of());
+            when(backfillStatusRepository.findByStatusInAndTargetTypeOrderById(any(), anyString()))
+                    .thenReturn(List.of(initial));
+            when(backfillStatusRepository.findById(any())).thenReturn(Optional.of(completed));
+
+            orchestrator.run();
+
+            verify(windowExecutor, times(1)).fetchWindow(any(), eq(normal), eq(session));
+            verify(windowExecutor, times(1)).persistWindow(any(), eq(normal), any());
+        }
+
+        @Test
+        @DisplayName("EC-7 — 후보 집합이 비어 있어도 기존 빈 후보 처리 경로(스킵 로그 후 종료) 그대로 유지")
+        void ec7_emptyCandidateSet_followsExistingSkipPath() throws InterruptedException {
+            when(stockRepository.findAllWatchlistTradable()).thenReturn(List.of());
+            when(stockRepository.findAllWatchlistOverseasTradable()).thenReturn(List.of());
+
+            orchestrator.run();
+
+            // 신규 분기·예외 없이 기존 스킵 경로(빈 맵 → 조기 return) 그대로 — status 조회조차 되지 않음
+            verify(backfillStatusRepository, never())
+                    .findByStatusInAndTargetTypeOrderById(any(), anyString());
+            verify(windowExecutor, never()).fetchWindow(any(), any(), any());
+        }
+
+        @Test
+        @DisplayName(
+                "AC-8 — 후보 개방(상폐 delisted_at set/NULL 2건) + 관심그룹 제거 대조군이 함께 있는 전체 경로 통합 —"
+                        + " 두 상폐 종목은 backward executor 도달, 관심제거 종목은 스킵 (REQ-176·178·180·181,"
+                        + " AC-11 위임 경계 준수)")
+        void ac8_fullPath_candidateOpening_watchlistRemovalExclusion_integrated()
+                throws InterruptedException {
+            // Arrange — 상폐 delisted_at set(010620) + 상폐 delisted_at NULL(433870) 두 종목만 후보 맵에
+            // 존재(watchlist 유지 가정). 관심그룹 제거 종목(999999)은 맵에 없다.
+            Stock delistedWithDate = buildDelistedStock("010620");
+            Stock delistedNoDate = buildDelistedStockWithNullDelistedAt("433870");
+            when(stockRepository.findAllWatchlistTradable())
+                    .thenReturn(List.of(delistedWithDate, delistedNoDate));
+            when(stockRepository.findAllWatchlistOverseasTradable()).thenReturn(List.of());
+
+            BackfillStatus s1 = buildPendingStatus("010620", "credit_balance");
+            BackfillStatus s2 = buildPendingStatus("433870", "credit_balance");
+            BackfillStatus removed = buildPendingStatus("999999", "credit_balance");
+            when(backfillStatusRepository.findByStatusInAndTargetTypeOrderById(any(), anyString()))
+                    .thenReturn(List.of(s1, s2, removed));
+
+            BackfillStatus completed1 = buildCompletedStatus("010620", "credit_balance");
+            BackfillStatus completed2 = buildCompletedStatus("433870", "credit_balance");
+            ReflectionTestUtils.setField(s1, "id", 1L);
+            ReflectionTestUtils.setField(s2, "id", 2L);
+            when(backfillStatusRepository.findById(1L)).thenReturn(Optional.of(completed1));
+            when(backfillStatusRepository.findById(2L)).thenReturn(Optional.of(completed2));
+
+            // Act — 전체 경로(후보 맵 → backward processTableStreams → 정방향 walk 호출)
+            orchestrator.run();
+
+            // Assert — 1) 두 상폐 종목 모두 executor(backward)에 도달(REQ-178/181), 위임 경계상 anchor 세부는
+            // 단언하지 않는다(AC-11).
+            verify(windowExecutor, times(1)).fetchWindow(any(), eq(delistedWithDate), eq(session));
+            verify(windowExecutor, times(1)).fetchWindow(any(), eq(delistedNoDate), eq(session));
+            // 2) 관심그룹 제거 대조 종목은 두 경로 모두에서 제외(REQ-180)
+            verify(windowExecutor, never()).fetchWindow(eq(removed), any(), any());
+            // 3) 정방향 covered-gap walk도 동일 후보 맵(단일 인스턴스)으로 호출됨(REQ-176, AC-9 단일 후보 집합)
+            verify(stockCoveredGapWalkRunner, times(1)).runFor(any(), eq(session));
+        }
+
+        @Test
+        @DisplayName(
+                "AC-9 — 후보 맵이 회차당 1회 구축되어 backward·정방향 walk 두 경로에 동일 인스턴스로 주입됨"
+                        + " (REQ-176 단일 후보 집합 공유)")
+        void ac9_singleCandidateMapInstance_sharedByBothPaths() throws InterruptedException {
+            Stock stock = buildDomesticStock("005930");
+            when(stockRepository.findAllWatchlistTradable()).thenReturn(List.of(stock));
+            when(stockRepository.findAllWatchlistOverseasTradable()).thenReturn(List.of());
+            BackfillStatus initial = buildPendingStatus("005930", "daily_ohlcv");
+            BackfillStatus completed = buildCompletedStatus("005930", "daily_ohlcv");
+            when(backfillStatusRepository.findByStatusInAndTargetTypeOrderById(any(), anyString()))
+                    .thenReturn(List.of(initial));
+            when(backfillStatusRepository.findById(any())).thenReturn(Optional.of(completed));
+
+            @SuppressWarnings("unchecked")
+            ArgumentCaptor<Map<String, Stock>> captor = ArgumentCaptor.forClass(Map.class);
+
+            orchestrator.run();
+
+            verify(stockCoveredGapWalkRunner).runFor(captor.capture(), eq(session));
+            // backward 경로가 소비한 맵(005930 포함)과 정방향 walk에 주입된 맵이 동일 내용/인스턴스임을
+            // 확인 — findAllWatchlistTradable/OverseasTradable은 각각 정확히 1회만 호출된다(회차당 1회 구축).
+            assertThat(captor.getValue()).containsKey("005930");
+            verify(stockRepository, times(1)).findAllWatchlistTradable();
+            verify(stockRepository, times(1)).findAllWatchlistOverseasTradable();
         }
     }
 }

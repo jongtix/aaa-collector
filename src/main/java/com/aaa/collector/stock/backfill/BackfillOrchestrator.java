@@ -84,10 +84,11 @@ public class BackfillOrchestrator {
             return;
         }
 
-        // Step 3: 활성 종목 맵 구축 (AC-7.4 비활성 종목 스킵)
+        // Step 3: 관심종목 맵 구축 (AC-7.4/SPEC-COLLECTOR-BACKFILL-014 — watchlist_removed_at IS NULL
+        // 기준, active 무관. 상폐 종목도 관심그룹에 남아 있으면 후보에 포함된다)
         Map<String, Stock> activeStockBySymbol = buildActiveStockMap();
         if (activeStockBySymbol.isEmpty()) {
-            log.info("[backfill-orchestrator] 활성 종목 없음 — 처리 스킵");
+            log.info("[backfill-orchestrator] 관심종목 없음 — 처리 스킵");
             return;
         }
 
@@ -201,7 +202,7 @@ public class BackfillOrchestrator {
             String symbol = status.getTargetCode();
             Stock stock = activeStockBySymbol.get(symbol);
             if (stock == null) {
-                log.debug("[backfill-orchestrator] 비활성 종목 스킵 — symbol={}", symbol);
+                log.debug("[backfill-orchestrator] 관심그룹 제거 종목 스킵 — symbol={}", symbol);
                 continue;
             }
 
@@ -364,9 +365,15 @@ public class BackfillOrchestrator {
                 && prevDate.equals(refreshed.getLastCollectedDate());
     }
 
+    // @MX:NOTE: [AUTO] 후보 선정 기준 = 관심종목(watchlist_removed_at IS NULL), active 무관 — 상폐 종목도
+    // 관심그룹에 남아 있으면 backward 백필·정방향 covered-gap walk 두 경로 모두의 후보에 포함된다. 이 맵 하나가
+    // 회차당 1회 구축되어 양쪽 경로에 동일 인스턴스로 주입된다(단일 후보 집합, 경로별 기준 분기 없음).
+    // @MX:REASON: SPEC-COLLECTOR-BACKFILL-014 REQ-BACKFILL-176/177/178 — 라이브 수집 서비스가 쓰는
+    // findAllActive*는 절대 무변경(REQ-183), 본 메서드만 신규 watchlist-only 조회로 교체.
+    // @MX:SPEC: SPEC-COLLECTOR-BACKFILL-014
     private Map<String, Stock> buildActiveStockMap() {
-        List<Stock> domestic = stockRepository.findAllActiveTradable();
-        List<Stock> overseas = stockRepository.findAllActiveOverseasTradable();
+        List<Stock> domestic = stockRepository.findAllWatchlistTradable();
+        List<Stock> overseas = stockRepository.findAllWatchlistOverseasTradable();
 
         Map<String, Stock> map =
                 domestic.stream().collect(Collectors.toMap(Stock::getSymbol, s -> s));
