@@ -6,14 +6,21 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import ch.qos.logback.classic.Level;
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
 import com.aaa.collector.stock.Stock;
 import com.aaa.collector.stock.StockRepository;
 import com.aaa.collector.stock.enums.AssetType;
 import com.aaa.collector.stock.enums.ListingStatus;
 import com.aaa.collector.stock.enums.Market;
 import java.time.LocalDate;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
@@ -21,6 +28,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.slf4j.LoggerFactory;
 import org.springframework.test.util.ReflectionTestUtils;
 
 // @MX:SPEC: SPEC-COLLECTOR-WLSYNC-008
@@ -220,6 +228,198 @@ class WatchlistEntryWriterTest {
             assertThat(counter.updated).isZero();
             assertThat(counter.unchanged).isZero();
             verify(etfMetadataWriter, never()).upsert(any(), any());
+        }
+    }
+
+    // @MX:SPEC: SPEC-COLLECTOR-SHORTSALE-OVERSEAS-002
+    @Nested
+    @DisplayName("해외 상장일 하향 정정 (REQ-SSOG-009,010,011,012,023)")
+    class OverseasListedDateDownCorrection {
+
+        private Logger writerLogger;
+        private ListAppender<ILoggingEvent> listAppender;
+
+        @BeforeEach
+        void attachLogAppender() {
+            writerLogger = (Logger) LoggerFactory.getLogger(WatchlistEntryWriter.class);
+            listAppender = new ListAppender<>();
+            listAppender.start();
+            writerLogger.addAppender(listAppender);
+        }
+
+        @AfterEach
+        void detachLogAppender() {
+            writerLogger.detachAppender(listAppender);
+            listAppender.stop();
+        }
+
+        private List<ILoggingEvent> updateLogs() {
+            return listAppender.list.stream()
+                    .filter(e -> e.getLevel() == Level.INFO)
+                    .filter(e -> e.getFormattedMessage().startsWith("해외 상장일 갱신"))
+                    .toList();
+        }
+
+        private static Stock existingOverseasStock(String symbol, LocalDate listedDate) {
+            Stock stock =
+                    Stock.builder()
+                            .symbol(symbol)
+                            .nameKo(symbol)
+                            .market(Market.NASDAQ)
+                            .assetType(AssetType.STOCK)
+                            .active(true)
+                            .listedDate(listedDate)
+                            .build();
+            ReflectionTestUtils.setField(stock, "id", 1L);
+            return stock;
+        }
+
+        @Test
+        @DisplayName("SERV류 하향 정정 — 저장 2024-04-18 → 취득 2024-03-08로 하향 (AC-09)")
+        void overvaluedListedDate_correctedDownward() {
+            setUp();
+            Stock existing = existingOverseasStock("SERV", LocalDate.of(2024, 4, 18));
+            when(stockRepository.findById(existing.getId())).thenReturn(Optional.of(existing));
+            StockInfo info =
+                    new StockInfo(
+                            AssetType.STOCK,
+                            "Serve Robotics",
+                            LocalDate.of(2024, 3, 8),
+                            null,
+                            Market.NASDAQ,
+                            ListingStatus.NORMAL,
+                            null);
+            ResolvedStock resolved = new ResolvedStock("SERV", "SERV", Market.NASDAQ, info);
+            Map<String, Stock> existingByKey = Map.of("SERV:NASDAQ", existing);
+
+            entryWriter.upsertOne(resolved, existingByKey, new WatchlistWriter.Counter());
+
+            assertThat(existing.getListedDate()).isEqualTo(LocalDate.of(2024, 3, 8));
+        }
+
+        @Test
+        @DisplayName("국내 종목 — 하향 정정 미적용(해외 분기 게이트, AC-09a·C7)")
+        void domesticStock_downCorrectionNotApplied() {
+            setUp();
+            Stock existing = existingStock(true, null);
+            existing.correctMetadata(Market.KOSPI, LocalDate.of(2018, 12, 28));
+            when(stockRepository.findById(existing.getId())).thenReturn(Optional.of(existing));
+            StockInfo info =
+                    new StockInfo(
+                            AssetType.STOCK,
+                            "HD Hyundai Mipo",
+                            LocalDate.of(2016, 8, 17),
+                            null,
+                            Market.KOSPI,
+                            ListingStatus.NORMAL,
+                            null);
+            ResolvedStock resolved = new ResolvedStock("010620", "HD현대미포", Market.KOSPI, info);
+            Map<String, Stock> existingByKey = Map.of("010620:KOSPI", existing);
+
+            entryWriter.upsertOne(resolved, existingByKey, new WatchlistWriter.Counter());
+
+            assertThat(existing.getListedDate()).isEqualTo(LocalDate.of(2018, 12, 28));
+        }
+
+        @Test
+        @DisplayName("COIN류 상향 미적용 — 저장 2021-04-08보다 취득값(2021-04-14)이 늦으면 불변 (AC-10)")
+        void laterAcquiredValue_doesNotOverwrite() {
+            setUp();
+            Stock existing = existingOverseasStock("COIN", LocalDate.of(2021, 4, 8));
+            when(stockRepository.findById(existing.getId())).thenReturn(Optional.of(existing));
+            StockInfo info =
+                    new StockInfo(
+                            AssetType.STOCK,
+                            "Coinbase",
+                            LocalDate.of(2021, 4, 14),
+                            null,
+                            Market.NASDAQ,
+                            ListingStatus.NORMAL,
+                            null);
+            ResolvedStock resolved = new ResolvedStock("COIN", "COIN", Market.NASDAQ, info);
+            Map<String, Stock> existingByKey = Map.of("COIN:NASDAQ", existing);
+
+            entryWriter.upsertOne(resolved, existingByKey, new WatchlistWriter.Counter());
+
+            assertThat(existing.getListedDate()).isEqualTo(LocalDate.of(2021, 4, 8));
+        }
+
+        @Test
+        @DisplayName("운영자 오버라이드 값 보존 — 취득값이 저장값보다 늦으면 오버라이드가 유지된다 (REQ-SSOG-023)")
+        void operatorOverride_preservedWhenAcquiredValueIsLater() {
+            setUp();
+            // 운영자가 진짜 상장일로 판단해 수동 하향 오버라이드한 값(REQ-SSOG-022)이라고 가정.
+            Stock existing = existingOverseasStock("XOM", LocalDate.of(1920, 1, 1));
+            when(stockRepository.findById(existing.getId())).thenReturn(Optional.of(existing));
+            StockInfo info =
+                    new StockInfo(
+                            AssetType.STOCK,
+                            "Exxon Mobil",
+                            LocalDate.of(1980, 3, 17),
+                            null,
+                            Market.NYSE,
+                            ListingStatus.NORMAL,
+                            null);
+            ResolvedStock resolved = new ResolvedStock("XOM", "XOM", Market.NYSE, info);
+            Map<String, Stock> existingByKey = Map.of("XOM:NYSE", existing);
+
+            entryWriter.upsertOne(resolved, existingByKey, new WatchlistWriter.Counter());
+
+            assertThat(existing.getListedDate()).isEqualTo(LocalDate.of(1920, 1, 1));
+        }
+
+        @Test
+        @DisplayName("연속 2회 실행 — 2회차는 변경 0건(수렴, AC-11)")
+        void secondRun_noFurtherChange() {
+            setUp();
+            Stock existing = existingOverseasStock("SERV", LocalDate.of(2024, 4, 18));
+            when(stockRepository.findById(existing.getId())).thenReturn(Optional.of(existing));
+            StockInfo info =
+                    new StockInfo(
+                            AssetType.STOCK,
+                            "Serve Robotics",
+                            LocalDate.of(2024, 3, 8),
+                            null,
+                            Market.NASDAQ,
+                            ListingStatus.NORMAL,
+                            null);
+            ResolvedStock resolved = new ResolvedStock("SERV", "SERV", Market.NASDAQ, info);
+            Map<String, Stock> existingByKey = Map.of("SERV:NASDAQ", existing);
+            WatchlistWriter.Counter first = new WatchlistWriter.Counter();
+            WatchlistWriter.Counter second = new WatchlistWriter.Counter();
+
+            entryWriter.upsertOne(resolved, existingByKey, first);
+            entryWriter.upsertOne(resolved, existingByKey, second);
+
+            assertThat(first.updated).isEqualTo(1);
+            assertThat(second.updated).isZero();
+            assertThat(second.unchanged).isEqualTo(1);
+            assertThat(existing.getListedDate()).isEqualTo(LocalDate.of(2024, 3, 8));
+        }
+
+        @Test
+        @DisplayName("변경 로깅 — symbol·before·after 값이 나타난다 (REQ-SSOG-012)")
+        void loggedChange_containsSymbolBeforeAfter() {
+            setUp();
+            Stock existing = existingOverseasStock("SERV", LocalDate.of(2024, 4, 18));
+            when(stockRepository.findById(existing.getId())).thenReturn(Optional.of(existing));
+            StockInfo info =
+                    new StockInfo(
+                            AssetType.STOCK,
+                            "Serve Robotics",
+                            LocalDate.of(2024, 3, 8),
+                            null,
+                            Market.NASDAQ,
+                            ListingStatus.NORMAL,
+                            null);
+            ResolvedStock resolved = new ResolvedStock("SERV", "SERV", Market.NASDAQ, info);
+            Map<String, Stock> existingByKey = Map.of("SERV:NASDAQ", existing);
+
+            entryWriter.upsertOne(resolved, existingByKey, new WatchlistWriter.Counter());
+
+            assertThat(updateLogs()).hasSize(1);
+            String message = updateLogs().getFirst().getFormattedMessage();
+            assertThat(message).contains("SERV").contains("2024-04-18").contains("2024-03-08");
         }
     }
 }

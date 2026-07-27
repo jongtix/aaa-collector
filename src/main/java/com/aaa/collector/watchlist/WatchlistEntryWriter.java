@@ -4,7 +4,9 @@ import com.aaa.collector.stock.Stock;
 import com.aaa.collector.stock.StockRepository;
 import com.aaa.collector.stock.enums.AssetType;
 import com.aaa.collector.stock.etf.EtfMetadataWriter;
+import java.time.LocalDate;
 import java.util.Map;
+import java.util.Objects;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -105,7 +107,29 @@ class WatchlistEntryWriter {
         // StockInfo가 있을 때만 수행. null이면 조회 실패(graceful skip) — 상폐/거래정지 판정을 내리지 않고
         // 직전 active/delistedAt 상태를 그대로 유지한다(REQ-WLSYNC-150).
         if (info != null) {
+            boolean overseas =
+                    StockRepository.OVERSEAS_TRADABLE_MARKETS.contains(resolved.market());
+            LocalDate listedDateBefore = overseas ? existing.getListedDate() : null;
+
             changed |= existing.correctMetadata(info.market(), info.listedDate());
+
+            // 해외 상장일 하향 정정 (SPEC-COLLECTOR-SHORTSALE-OVERSEAS-002 REQ-SSOG-009,010): KIS lstg_dt
+            // 유래 과대평가 상장일을 Yahoo 최초 거래일로 하향 수렴시킨다. 국내는 제외한다(C7) —
+            // correctListedDateDownTo는 하향 전용 가드라 null 입력·상향 시도는 자동 no-op이다(REQ-SSOG-005,010).
+            if (overseas) {
+                changed |= existing.correctListedDateDownTo(info.listedDate());
+                // 변경 기록(REQ-SSOG-012) — NULL 채움(correctMetadata)·하향 정정(correctListedDateDownTo)
+                // 두 경로 모두 여기서 단일 지점으로 로깅한다.
+                LocalDate listedDateAfter = existing.getListedDate();
+                if (!Objects.equals(listedDateBefore, listedDateAfter)) {
+                    log.info(
+                            "해외 상장일 갱신 — symbol={}, before={}, after={}",
+                            resolved.symbol(),
+                            listedDateBefore,
+                            listedDateAfter);
+                }
+            }
+
             changed |= existing.reflectListingStatus(info.listingStatus(), info.delistedAt());
         }
 
