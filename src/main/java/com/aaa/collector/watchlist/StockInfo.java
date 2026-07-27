@@ -51,4 +51,14 @@ record StockInfo(
             Market market) {
         this(assetType, nameEn, listedDate, etfMetaInfo, market, ListingStatus.NORMAL, null);
     }
+
+    /**
+     * {@code listedDate}만 교체한 복사본을 반환한다 — 나머지 필드는 그대로 보존한다 (SPEC-COLLECTOR-SHORTSALE-OVERSEAS-002
+     * REQ-SSOG-001,002,005). 해외 종목의 상장일 값 소스를 KIS {@code lstg_dt}에서 Yahoo 최초 거래일로 교체할 때 쓴다 —
+     * 상폐/거래정지 판정 결과({@code listingStatus}·{@code delistedAt})는 불변이다.
+     */
+    StockInfo withListedDate(LocalDate newListedDate) {
+        return new StockInfo(
+                assetType, nameEn, newListedDate, etfMetaInfo, market, listingStatus, delistedAt);
+    }
 }

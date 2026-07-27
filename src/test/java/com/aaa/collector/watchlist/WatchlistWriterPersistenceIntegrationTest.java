@@ -335,4 +335,60 @@ class WatchlistWriterPersistenceIntegrationTest {
             verify(stockListService, never()).refreshCache();
         }
     }
+
+    // @MX:SPEC: SPEC-COLLECTOR-SHORTSALE-OVERSEAS-002
+    @Nested
+    @DisplayName("해외 상장일 INSERT/UPDATE 영속성 (REQ-SSOG-007,008, AC-07,08)")
+    class OverseasListedDatePersistence {
+
+        @Test
+        @DisplayName("신규 해외 종목 INSERT — 취득한 상장일로 등록 (AC-07)")
+        void newOverseasStock_insertedWithAcquiredListedDate() {
+            // Arrange — 해석 단계(WatchlistStockResolver)가 이미 Yahoo 값으로 교체한 StockInfo를 전달한다
+            StockInfo info =
+                    new StockInfo(
+                            AssetType.STOCK,
+                            "Arm Holdings",
+                            LocalDate.of(2023, 9, 14),
+                            null,
+                            Market.NASDAQ,
+                            ListingStatus.NORMAL,
+                            null);
+
+            // Act
+            watchlistWriter.upsertAll(
+                    List.of(new ResolvedStock("ARM", "Arm", Market.NASDAQ, info)), 0);
+
+            // Assert
+            Stock result =
+                    stockRepository.findBySymbolAndMarket("ARM", Market.NASDAQ).orElseThrow();
+            createdStockIds.add(result.getId());
+            assertThat(result.getListedDate()).isEqualTo(LocalDate.of(2023, 9, 14));
+        }
+
+        @Test
+        @DisplayName("기존 NULL 상장일 해외 종목 — 다음 동기화에서 채워짐 (AC-08, em.clear() fresh 재조회)")
+        void existingNullListedDate_filledOnNextSync() {
+            // Arrange — 상장일 미상 상태로 저장된 기존 해외 종목
+            Stock stock = savedStock("SERV", Market.NASDAQ, "Serve Robotics", true, null);
+            StockInfo info =
+                    new StockInfo(
+                            AssetType.STOCK,
+                            "Serve Robotics",
+                            LocalDate.of(2024, 3, 8),
+                            null,
+                            Market.NASDAQ,
+                            ListingStatus.NORMAL,
+                            null);
+
+            // Act
+            watchlistWriter.upsertAll(
+                    List.of(new ResolvedStock("SERV", "Serve Robotics", Market.NASDAQ, info)), 0);
+            em.clear();
+
+            // Assert — fresh 재조회(WLSYNC-009 dirty-check 회귀 가드)
+            Stock result = stockRepository.findById(stock.getId()).orElseThrow();
+            assertThat(result.getListedDate()).isEqualTo(LocalDate.of(2024, 3, 8));
+        }
+    }
 }

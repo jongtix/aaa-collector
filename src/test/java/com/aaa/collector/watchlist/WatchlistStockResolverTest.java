@@ -22,6 +22,7 @@ import com.aaa.collector.kis.token.KisTokenIssueException;
 import com.aaa.collector.stock.StockAssetTypeClassifier;
 import com.aaa.collector.stock.enums.AssetType;
 import com.aaa.collector.stock.enums.Market;
+import java.time.LocalDate;
 import java.time.format.DateTimeParseException;
 import java.util.List;
 import org.junit.jupiter.api.BeforeEach;
@@ -50,6 +51,7 @@ class WatchlistStockResolverTest {
     @Mock private StockAssetTypeClassifier stockAssetTypeClassifier;
     @Mock private GuardedKisExecutor guardedKisExecutor;
     @Mock private HealthyKeySelector healthyKeySelector;
+    @Mock private OverseasListedDateProvider overseasListedDateProvider;
 
     private WatchlistStockResolver watchlistStockResolver;
 
@@ -61,7 +63,8 @@ class WatchlistStockResolverTest {
                         kisStockInfoClient,
                         stockAssetTypeClassifier,
                         guardedKisExecutor,
-                        keyLeaseRegistry);
+                        keyLeaseRegistry,
+                        overseasListedDateProvider);
         // StockAssetTypeClassifier 실제 구현과 동일하게 동작하도록 lenient 스텁
         StockAssetTypeClassifier real = new StockAssetTypeClassifier();
         lenient()
@@ -330,6 +333,74 @@ class WatchlistStockResolverTest {
 
             assertThat(result).hasSize(1);
             assertThat(result.getFirst().market()).isEqualTo(Market.KOSDAQ);
+        }
+    }
+
+    // @MX:SPEC: SPEC-COLLECTOR-SHORTSALE-OVERSEAS-002
+    @Nested
+    @DisplayName("해외 상장일 소스 전환 (REQ-SSOG-001,002,005,006)")
+    class OverseasListedDateSourceSwitch {
+
+        @Test
+        @DisplayName("해외 종목 — Yahoo 최초 거래일로 listedDate 교체")
+        void overseasStock_listedDateReplacedWithYahooFirstTradeDate() {
+            List<KisStockListByGroupResponse.Stock> stocks =
+                    List.of(new KisStockListByGroupResponse.Stock("FS", "ARM", "NAS", "Arm"));
+            singleHealthyKey();
+            StockInfo kisInfo =
+                    new StockInfo(
+                            AssetType.STOCK,
+                            "Arm Holdings",
+                            LocalDate.of(2024, 4, 18),
+                            Market.NASDAQ);
+            when(kisStockInfoClient.fetchStockInfo(any(), any(), any())).thenReturn(kisInfo);
+            when(overseasListedDateProvider.fetch("ARM")).thenReturn(LocalDate.of(2023, 9, 14));
+
+            List<ResolvedStock> result = watchlistStockResolver.resolve(stocks);
+
+            assertThat(result).hasSize(1);
+            assertThat(result.getFirst().stockInfo().listedDate())
+                    .isEqualTo(LocalDate.of(2023, 9, 14));
+        }
+
+        @Test
+        @DisplayName("국내 종목 — KIS 상장일 유지, Yahoo 취득 컴포넌트 never() 호출(REQ-SSOG-002, C7)")
+        void domesticStock_keepsKisListedDate_neverCallsOverseasProvider() {
+            List<KisStockListByGroupResponse.Stock> stocks =
+                    List.of(new KisStockListByGroupResponse.Stock("UN", "005930", "KRX", "삼성전자"));
+            singleHealthyKey();
+            StockInfo kisInfo =
+                    new StockInfo(
+                            AssetType.STOCK, "Samsung", LocalDate.of(1975, 6, 11), Market.KOSPI);
+            when(kisStockInfoClient.fetchStockInfo(any(), any(), any())).thenReturn(kisInfo);
+
+            List<ResolvedStock> result = watchlistStockResolver.resolve(stocks);
+
+            assertThat(result).hasSize(1);
+            assertThat(result.getFirst().stockInfo().listedDate())
+                    .isEqualTo(LocalDate.of(1975, 6, 11));
+            verify(overseasListedDateProvider, never()).fetch(any());
+        }
+
+        @Test
+        @DisplayName("Yahoo 취득 실패(null 반환) — listedDate가 null로 세팅(KIS 값 미대체, REQ-SSOG-005)")
+        void overseasFetchFails_listedDateNull_notReplacedByKisValue() {
+            List<KisStockListByGroupResponse.Stock> stocks =
+                    List.of(new KisStockListByGroupResponse.Stock("FS", "SERV", "NAS", "Serv"));
+            singleHealthyKey();
+            StockInfo kisInfo =
+                    new StockInfo(
+                            AssetType.STOCK,
+                            "Serve Robotics",
+                            LocalDate.of(2024, 4, 18),
+                            Market.NASDAQ);
+            when(kisStockInfoClient.fetchStockInfo(any(), any(), any())).thenReturn(kisInfo);
+            when(overseasListedDateProvider.fetch("SERV")).thenReturn(null);
+
+            List<ResolvedStock> result = watchlistStockResolver.resolve(stocks);
+
+            assertThat(result).hasSize(1);
+            assertThat(result.getFirst().stockInfo().listedDate()).isNull();
         }
     }
 

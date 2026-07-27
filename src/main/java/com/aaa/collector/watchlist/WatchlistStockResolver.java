@@ -10,9 +10,11 @@ import com.aaa.collector.kis.gate.KeyLeaseRegistry.LeaseSession;
 import com.aaa.collector.kis.gate.NoHealthyKeyException;
 import com.aaa.collector.kis.token.KisTokenIssueException;
 import com.aaa.collector.stock.StockAssetTypeClassifier;
+import com.aaa.collector.stock.StockRepository;
 import com.aaa.collector.stock.enums.AssetType;
 import com.aaa.collector.stock.enums.Market;
 import java.net.URI;
+import java.time.LocalDate;
 import java.time.format.DateTimeParseException;
 import java.util.List;
 import java.util.Optional;
@@ -43,6 +45,7 @@ public class WatchlistStockResolver {
     private final StockAssetTypeClassifier stockAssetTypeClassifier;
     private final GuardedKisExecutor guardedKisExecutor;
     private final KeyLeaseRegistry keyLeaseRegistry;
+    private final OverseasListedDateProvider overseasListedDateProvider;
 
     /**
      * ②단계: 종목별 기본정보를 건강한 키 least-busy lease 멀티키 경로로 조회하여 {@link ResolvedStock} 목록을 산출한다
@@ -115,8 +118,21 @@ public class WatchlistStockResolver {
         // StockInfo가 null(조회 실패) 또는 market()이 null(정적 자산유형 경로)이면 coarse routingMarket 사용.
         Market authoritative =
                 (info != null && info.market() != null) ? info.market() : routingMarket;
+
+        // 해외 상장일 값 소스 전환 (SPEC-COLLECTOR-SHORTSALE-OVERSEAS-002 REQ-SSOG-001,002,005):
+        // 해외 종목에 한해 KIS lstg_dt를 Yahoo 최초 거래일로 교체한다. 취득 실패 시 null로 세팅해 신규 INSERT에
+        // KIS 오염값이 실리지 않도록 한다 — UPDATE 경로의 correctMetadata/correctListedDateDownTo는 null
+        // 입력에 no-op이므로 기존 저장값은 보존된다(REQ-SSOG-005). 국내는 이 분기에 도달하지 않는다(REQ-SSOG-002).
+        if (info != null && isOverseas(authoritative)) {
+            LocalDate firstTradeDate = overseasListedDateProvider.fetch(stock.jongCode());
+            info = info.withListedDate(firstTradeDate);
+        }
         return new ResolveResult.Success(
                 new ResolvedStock(stock.jongCode(), stock.htsKorIsnm(), authoritative, info));
+    }
+
+    private static boolean isOverseas(Market market) {
+        return StockRepository.OVERSEAS_TRADABLE_MARKETS.contains(market);
     }
 
     private StockInfo fetchStockInfo(
