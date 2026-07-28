@@ -68,6 +68,10 @@ public class Stock extends BaseEntity {
     @Column(name = "delisting_reason", length = 30)
     private DelistingReason delistingReason;
 
+    // @MX:SPEC: SPEC-COLLECTOR-SHORTSALE-OVERSEAS-002
+    @Column(name = "listed_date_overridden", updatable = false)
+    private final boolean listedDateOverridden; // 운영자 전용 표시 — 앱은 설정·해제하지 않음(REQ-SSOG-030)
+
     @Builder
     private Stock(
             String symbol,
@@ -79,7 +83,8 @@ public class Stock extends BaseEntity {
             boolean active,
             LocalDateTime watchlistRemovedAt,
             LocalDate delistedAt,
-            DelistingReason delistingReason) {
+            DelistingReason delistingReason,
+            boolean listedDateOverridden) {
         super();
         this.symbol = symbol;
         this.nameKo = nameKo;
@@ -91,6 +96,7 @@ public class Stock extends BaseEntity {
         this.watchlistRemovedAt = watchlistRemovedAt;
         this.delistedAt = delistedAt;
         this.delistingReason = delistingReason;
+        this.listedDateOverridden = listedDateOverridden;
     }
 
     /**
@@ -196,7 +202,10 @@ public class Stock extends BaseEntity {
      * <ul>
      *   <li>시장 교정: 저장값이 {@code authoritativeMarket}과 다른 경우에만 교정한다. 이미 일치하면 변경하지 않는다.
      *   <li>상장일 채우기: 저장값이 {@code null}이고 {@code authoritative listedDate}가 non-null인 경우에만 채운다.
-     *       non-null → non-null 덮어쓰기나 null로의 변경은 수행하지 않는다.
+     *       non-null → non-null 덮어쓰기나 null로의 변경은 수행하지 않는다. {@code listedDateOverridden}이 {@code
+     *       true}인 종목은 이 분기를 건드리지 않는다(SPEC-COLLECTOR-SHORTSALE-OVERSEAS-002 REQ-SSOG-029 — 방어적 가드.
+     *       오버라이드 종목은 정의상 {@code listedDate}가 이미 non-null이라 실질적으로는 no-op이지만, 자동 경로가 오버라이드 종목의 상장일을
+     *       어떤 분기로도 건드리지 않음을 코드 자체가 말하게 한다). 시장 교정은 이 가드의 영향을 받지 않는다(범위 밖 회귀 방지).
      * </ul>
      *
      * @param authoritativeMarket 권위 시장값 (null이면 시장 교정을 수행하지 않음)
@@ -212,8 +221,11 @@ public class Stock extends BaseEntity {
             changed = true;
         }
 
-        // 상장일 채우기: NULL→non-null만 수행 (REQ-STOCKMETA-012)
-        if (this.listedDate == null && authoritativeListedDate != null) {
+        // 상장일 채우기: NULL→non-null만 수행 (REQ-STOCKMETA-012). 운영자 오버라이드 종목은 방어적으로 제외
+        // (SPEC-COLLECTOR-SHORTSALE-OVERSEAS-002 REQ-SSOG-029) — market 교정은 이 조건과 무관하게 위에서 이미 수행됐다.
+        if (this.listedDate == null
+                && authoritativeListedDate != null
+                && !this.listedDateOverridden) {
             this.listedDate = authoritativeListedDate;
             changed = true;
         }
@@ -234,12 +246,19 @@ public class Stock extends BaseEntity {
      * WatchlistEntryWriter.updateIfNeeded()}가 해외 종목에 한해 Yahoo 최초 거래일을 근거로도 이 메서드를 호출한다. 계약(하향 전용
      * 가드)은 이 확장으로 변경되지 않는다.
      *
+     * <p>운영자 오버라이드 가드(REQ-SSOG-023,029): {@code listedDateOverridden}이 {@code true}이면 방향과 무관하게
+     * no-op이다. {@code WatchlistEntryWriter}·{@code CoverageRefresher}(BACKFILL-010) 등 이 메서드를 호출하는
+     * 모든 자동 경로가 배선 변경 없이 이 가드를 동일하게 관통한다 — 가드가 호출자가 아니라 이 메서드 안에 있기 때문이다.
+     *
      * @param min 이미 저장된 {@code daily_ohlcv}의 {@code MIN(trade_date)} 또는 Yahoo 최초 거래일 — 이 값이 현재
      *     {@code listedDate}보다 이르면 그 자체로 과대평가 증거다(KIS 재조회 불요)
      * @return {@code listedDate}가 실제로 하향 변경된 경우 {@code true}
      */
     // @MX:SPEC: SPEC-COLLECTOR-BACKFILL-010
     public boolean correctListedDateDownTo(LocalDate min) {
+        if (this.listedDateOverridden) {
+            return false; // 운영자 판정 보호 — 방향 무관 (SPEC-COLLECTOR-SHORTSALE-OVERSEAS-002 REQ-SSOG-023)
+        }
         if (min == null || this.listedDate == null || !min.isBefore(this.listedDate)) {
             return false;
         }

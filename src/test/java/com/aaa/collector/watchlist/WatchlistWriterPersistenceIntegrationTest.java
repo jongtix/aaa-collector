@@ -391,4 +391,85 @@ class WatchlistWriterPersistenceIntegrationTest {
             assertThat(result.getListedDate()).isEqualTo(LocalDate.of(2024, 3, 8));
         }
     }
+
+    // @MX:SPEC: SPEC-COLLECTOR-SHORTSALE-OVERSEAS-002
+    @Nested
+    @DisplayName("운영자 오버라이드 표시 내구성 (RKLB 형상 재현, REQ-SSOG-023,030, AC-23,30)")
+    class ListedDateOverridePersistence {
+
+        @Test
+        @DisplayName("표시 TRUE 종목 — 2회 연속 동기화에도 상장일 불변(RKLB 형상, AC-23)")
+        void overriddenListedDate_survivesRepeatedSync() {
+            // Arrange — 운영자가 2021-08-25로 오버라이드 표시한 종목(RKLB 형상)을 root JDBC로 직접 세운다.
+            // 앱 코드에 오버라이드 세터가 없으므로(REQ-SSOG-030) 표시 주입은 운영 채널과 동일한 root 경로로 한다.
+            Stock stock = savedStock("RKLB", Market.NASDAQ, "Rocket Lab", true, null);
+            JdbcTemplate rootJdbcTemplate = RootFixtureCleaner.rootJdbcTemplate(MYSQL.getJdbcUrl());
+            rootJdbcTemplate.update(
+                    "UPDATE stocks SET listed_date = ?, listed_date_overridden = TRUE WHERE id = ?",
+                    LocalDate.of(2021, 8, 25),
+                    stock.getId());
+            StockInfo info =
+                    new StockInfo(
+                            AssetType.STOCK,
+                            "Rocket Lab",
+                            LocalDate.of(2020, 11, 24), // Yahoo 취득값 — SPAC 셸(VACQ) 이력 상속, 부정확
+                            null,
+                            Market.NASDAQ,
+                            ListingStatus.NORMAL,
+                            null);
+            ResolvedStock resolved = new ResolvedStock("RKLB", "Rocket Lab", Market.NASDAQ, info);
+
+            // Act — 동기화 2회 연속 실행
+            watchlistWriter.upsertAll(List.of(resolved), 0);
+            em.clear();
+            Stock afterFirst = stockRepository.findById(stock.getId()).orElseThrow();
+
+            watchlistWriter.upsertAll(List.of(resolved), 0);
+            em.clear();
+            Stock afterSecond = stockRepository.findById(stock.getId()).orElseThrow();
+
+            // Assert — 매 회 fresh 재조회에서 오버라이드 값 불변(WLSYNC-009 dirty-check 회귀 가드 패턴)
+            assertThat(afterFirst.getListedDate()).isEqualTo(LocalDate.of(2021, 8, 25));
+            assertThat(afterFirst.isListedDateOverridden()).isTrue();
+            assertThat(afterSecond.getListedDate()).isEqualTo(LocalDate.of(2021, 8, 25));
+            assertThat(afterSecond.isListedDateOverridden()).isTrue();
+        }
+
+        @Test
+        @DisplayName("오버라이드 표시는 앱 UPDATE에 실리지 않음 — 다른 필드 변경에도 DB 표시값 불변(AC-30)")
+        void overrideFlag_notMutatedByAppUpdate() {
+            // Arrange
+            Stock stock = savedStock("RKLB", Market.NASDAQ, "Rocket Lab", true, null);
+            JdbcTemplate rootJdbcTemplate = RootFixtureCleaner.rootJdbcTemplate(MYSQL.getJdbcUrl());
+            rootJdbcTemplate.update(
+                    "UPDATE stocks SET listed_date = ?, listed_date_overridden = TRUE WHERE id = ?",
+                    LocalDate.of(2021, 8, 25),
+                    stock.getId());
+
+            // Act — nameEn 변경으로 dirty-check UPDATE를 유발한다(오버라이드 자체와 무관한 필드)
+            StockInfo info =
+                    new StockInfo(
+                            AssetType.STOCK,
+                            "Rocket Lab USA", // 이름 변경 — UPDATE 트리거
+                            LocalDate.of(2020, 11, 24),
+                            null,
+                            Market.NASDAQ,
+                            ListingStatus.NORMAL,
+                            null);
+            watchlistWriter.upsertAll(
+                    List.of(new ResolvedStock("RKLB", "Rocket Lab", Market.NASDAQ, info)), 0);
+            em.clear();
+
+            // Assert — nameEn은 바뀌었지만(변경 발생 증거) 표시 컬럼은 root 세션에서 세운 값 그대로다.
+            // updatable=false 매핑이 실제 SQL에 반영됐는지 root 재조회로 직접 확인한다(엔티티 1차 캐시 우회).
+            Stock updated = stockRepository.findById(stock.getId()).orElseThrow();
+            assertThat(updated.getNameEn()).isEqualTo("Rocket Lab USA");
+            Boolean overriddenInDb =
+                    rootJdbcTemplate.queryForObject(
+                            "SELECT listed_date_overridden FROM stocks WHERE id = ?",
+                            Boolean.class,
+                            stock.getId());
+            assertThat(overriddenInDb).isTrue();
+        }
+    }
 }

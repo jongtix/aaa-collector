@@ -232,6 +232,117 @@ class StockTest {
         }
     }
 
+    // @MX:SPEC: SPEC-COLLECTOR-SHORTSALE-OVERSEAS-002
+    @Nested
+    @DisplayName("운영자 오버라이드 표시 가드 — 방향 무관 자동 경로 차단 (REQ-SSOG-023,028(g),029,030,031)")
+    class ListedDateOverrideGuard {
+
+        private static Stock overriddenOverseasStock(LocalDate listedDate) {
+            return Stock.builder()
+                    .symbol("RKLB")
+                    .nameEn("Rocket Lab")
+                    .market(Market.NASDAQ)
+                    .assetType(AssetType.STOCK)
+                    .active(true)
+                    .listedDate(listedDate)
+                    .listedDateOverridden(true)
+                    .build();
+        }
+
+        @Test
+        @DisplayName("표시 TRUE + 취득값이 더 이름 → correctListedDateDownTo no-op(하향 차단, AC-23)")
+        void overridden_acquiredEarlier_downCorrectionBlocked() {
+            LocalDate overridden = LocalDate.of(2021, 8, 25);
+            Stock stock = overriddenOverseasStock(overridden);
+
+            boolean changed = stock.correctListedDateDownTo(LocalDate.of(2020, 11, 24));
+
+            assertThat(changed).isFalse();
+            assertThat(stock.getListedDate()).isEqualTo(overridden);
+        }
+
+        @Test
+        @DisplayName("표시 TRUE + 취득값이 더 늦음 → 종전대로 no-op(상향 불가 회귀 고정)")
+        void overridden_acquiredLater_neverCorrectsUp() {
+            LocalDate overridden = LocalDate.of(1920, 1, 1);
+            Stock stock = overriddenOverseasStock(overridden);
+
+            boolean changed = stock.correctListedDateDownTo(LocalDate.of(1980, 3, 17));
+
+            assertThat(changed).isFalse();
+            assertThat(stock.getListedDate()).isEqualTo(overridden);
+        }
+
+        @Test
+        @DisplayName(
+                "표시 TRUE + 저장 상장일 NULL + 취득값 non-null → correctMetadata가 상장일을 채우지 않음(방어 가드, AC-29)")
+        void overridden_nullListedDate_metadataFillBlocked() {
+            Stock stock =
+                    Stock.builder()
+                            .symbol("RKLB")
+                            .nameEn("Rocket Lab")
+                            .market(Market.NASDAQ)
+                            .assetType(AssetType.STOCK)
+                            .active(true)
+                            .listedDateOverridden(true)
+                            .build();
+
+            boolean changed = stock.correctMetadata(null, LocalDate.of(2020, 11, 24));
+
+            assertThat(changed).isFalse();
+            assertThat(stock.getListedDate()).isNull();
+        }
+
+        @Test
+        @DisplayName("표시 TRUE에서도 correctMetadata의 market 교정은 정상 동작(범위 밖 회귀 가드)")
+        void overridden_marketCorrectionStillApplies() {
+            LocalDate overridden = LocalDate.of(2021, 8, 25);
+            Stock stock =
+                    Stock.builder()
+                            .symbol("RKLB")
+                            .nameEn("Rocket Lab")
+                            .market(Market.NYSE) // 잘못 저장된 시장
+                            .assetType(AssetType.STOCK)
+                            .active(true)
+                            .listedDate(overridden)
+                            .listedDateOverridden(true)
+                            .build();
+
+            boolean changed = stock.correctMetadata(Market.NASDAQ, LocalDate.of(2020, 11, 24));
+
+            assertThat(changed).isTrue();
+            assertThat(stock.getMarket()).isEqualTo(Market.NASDAQ);
+            assertThat(stock.getListedDate()).isEqualTo(overridden); // 상장일은 불변
+        }
+
+        @Test
+        @DisplayName("표시 FALSE → 기존 하향 정정 동작과 완전히 동일(회귀 없음)")
+        void notOverridden_downCorrectionBehavesAsBefore() {
+            LocalDate overestimated = LocalDate.of(2024, 4, 18);
+            Stock stock = kosdaqStockWithDate(overestimated);
+
+            boolean changed = stock.correctListedDateDownTo(LocalDate.of(2024, 3, 8));
+
+            assertThat(changed).isTrue();
+            assertThat(stock.getListedDate()).isEqualTo(LocalDate.of(2024, 3, 8));
+        }
+
+        @Test
+        @DisplayName("밀도 경로 관통 확인 — CoverageRefresher가 쓰는 동일 메서드도 호출자 무관하게 항상 no-op")
+        void overridden_densityPathGuardHoldsRegardlessOfCaller() {
+            // CoverageRefresher.correctListedDateAndReset()도 동일한 Stock.correctListedDateDownTo를
+            // 호출한다(별도 배선 없음) — 이 테스트는 그 호출자와 무관하게 도메인 가드 자체가 항상 no-op임을
+            // 고정한다(SPEC-COLLECTOR-SHORTSALE-OVERSEAS-002 결정 6-2).
+            LocalDate overridden = LocalDate.of(2021, 8, 25);
+            Stock stock = overriddenOverseasStock(overridden);
+
+            boolean changed = stock.correctListedDateDownTo(LocalDate.of(2007, 8, 20));
+
+            assertThat(changed).isFalse();
+            assertThat(stock.getListedDate()).isEqualTo(overridden);
+        }
+    }
+
     @Nested
     @DisplayName(
             "reflectListingStatus — 상폐/거래정지 상태 전이 (SPEC-COLLECTOR-WLSYNC-008"
