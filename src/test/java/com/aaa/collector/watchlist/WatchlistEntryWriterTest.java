@@ -345,10 +345,12 @@ class WatchlistEntryWriterTest {
         }
 
         @Test
-        @DisplayName("운영자 오버라이드 값 보존 — 취득값이 저장값보다 늦으면 오버라이드가 유지된다 (REQ-SSOG-023)")
-        void operatorOverride_preservedWhenAcquiredValueIsLater() {
+        @DisplayName("취득값이 저장값보다 늦으면 하향 전용 가드가 그대로 막는다 — listedDateOverridden 표시 없이도 성립(T3 회귀)")
+        void downwardOnlyGuard_blocksWhenAcquiredValueIsLater() {
             setUp();
-            // 운영자가 진짜 상장일로 판단해 수동 하향 오버라이드한 값(REQ-SSOG-022)이라고 가정.
+            // 이 테스트는 listedDateOverridden 표시를 세우지 않는다 — correctListedDateDownTo의
+            // 하향 전용 가드(T3)만으로도 성립하는 케이스. 표시 기반 양방향 오버라이드 내구성(REQ-SSOG-023,
+            // v0.3.2)의 실제 커버리지는 StockTest.ListedDateOverrideGuard 참조.
             Stock existing = existingOverseasStock("XOM", LocalDate.of(1920, 1, 1));
             when(stockRepository.findById(existing.getId())).thenReturn(Optional.of(existing));
             StockInfo info =
