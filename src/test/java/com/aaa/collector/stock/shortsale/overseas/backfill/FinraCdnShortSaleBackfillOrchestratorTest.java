@@ -390,7 +390,7 @@ class FinraCdnShortSaleBackfillOrchestratorTest {
                     .thenReturn(List.of(stock(1L, "AAPL")));
             when(client.fetch(d1)).thenReturn(new FinraCdnFetchResult.Found(List.of("BODY")));
             when(dailyLoader.loadDate(eq(d1), eq(List.of("BODY")), any()))
-                    .thenReturn(new FinraCdnDailyLoadOutcome(0, 1, 3, 1));
+                    .thenReturn(new FinraCdnDailyLoadOutcome(0, 1, 3, 1, 0));
             when(client.fetch(d0))
                     .thenReturn(
                             new FinraCdnFetchResult.Absent(

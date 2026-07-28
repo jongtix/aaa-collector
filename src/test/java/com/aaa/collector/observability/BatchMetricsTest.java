@@ -33,6 +33,7 @@ class BatchMetricsTest {
     private static final String LAST_DATA = "aaa_collector_batch_last_data_seconds";
     private static final String SILENT_DROP = "aaa_collector_batch_silent_drops_total";
     private static final String PARSE_REJECT = "aaa_collector_batch_parse_rejections_total";
+    private static final String TICKER_REUSE_SKIP = "aaa_collector_finra_ticker_reuse_skip_total";
 
     @Nested
     @DisplayName("배치 회차 완료 기록 (REQ-OBSV-020)")
@@ -284,6 +285,74 @@ class BatchMetricsTest {
             metrics.recordSilentDrops(0);
 
             assertThat(registry.get(SILENT_DROP).counter().count()).isEqualTo(0.0);
+        }
+    }
+
+    @Nested
+    @DisplayName(
+            "FINRA 티커 재사용 게이트 스킵 카운터 (SPEC-COLLECTOR-SHORTSALE-OVERSEAS-002 REQ-SSOG-018, AC-18)")
+    class TickerReuseSkip {
+
+        @Test
+        @DisplayName("단일 누적 카운터로 게이트 제외 건수를 증가시킨다 (3건 발생 시나리오)")
+        void incrementsSingleTickerReuseSkipCounter() {
+            SimpleMeterRegistry registry = new SimpleMeterRegistry();
+            BatchMetrics metrics =
+                    new BatchMetrics(
+                            registry,
+                            Clock.systemDefaultZone(),
+                            mock(BatchLastLoadRepository.class));
+
+            metrics.recordTickerReuseSkips(3);
+
+            assertThat(registry.get(TICKER_REUSE_SKIP).counter().count()).isEqualTo(3.0);
+        }
+
+        @Test
+        @DisplayName("0건 제외는 카운터를 증가시키지 않는다")
+        void zeroSkipsDoesNotIncrement() {
+            SimpleMeterRegistry registry = new SimpleMeterRegistry();
+            BatchMetrics metrics =
+                    new BatchMetrics(
+                            registry,
+                            Clock.systemDefaultZone(),
+                            mock(BatchLastLoadRepository.class));
+
+            metrics.recordTickerReuseSkips(0);
+
+            assertThat(registry.get(TICKER_REUSE_SKIP).counter().count()).isEqualTo(0.0);
+        }
+
+        @Test
+        @DisplayName("@PostConstruct 사전등록 — 제외가 한 번도 없어도 0 시계열이 이미 존재한다")
+        void preRegistersZeroSeriesOnPostConstruct() {
+            SimpleMeterRegistry registry = new SimpleMeterRegistry();
+            BatchMetrics metrics =
+                    new BatchMetrics(
+                            registry,
+                            Clock.systemDefaultZone(),
+                            mock(BatchLastLoadRepository.class));
+
+            // Act: 컨테이너가 빈 초기화 시점에 호출하는 진입점을 직접 호출 (Spring 컨텍스트 없이 재현)
+            metrics.initTickerReuseSkipCounter();
+
+            assertThat(registry.get(TICKER_REUSE_SKIP).counter().count()).isEqualTo(0.0);
+        }
+
+        @Test
+        @DisplayName("메터 타입이 정확히 Counter다 (Gauge _total 자동 제거 함정 회귀 가드)")
+        void meterTypeIsExactlyCounter() {
+            SimpleMeterRegistry registry = new SimpleMeterRegistry();
+            BatchMetrics metrics =
+                    new BatchMetrics(
+                            registry,
+                            Clock.systemDefaultZone(),
+                            mock(BatchLastLoadRepository.class));
+
+            metrics.recordTickerReuseSkips(1);
+
+            assertThat(registry.get(TICKER_REUSE_SKIP).meter().getId().getType())
+                    .isEqualTo(io.micrometer.core.instrument.Meter.Type.COUNTER);
         }
     }
 

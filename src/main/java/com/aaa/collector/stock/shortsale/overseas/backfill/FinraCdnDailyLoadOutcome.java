@@ -11,5 +11,8 @@ package com.aaa.collector.stock.shortsale.overseas.backfill;
  * @param raw 병합 전 파일별 파싱 성공 행수 합(§2.6 raw, TASK-005a 후보 A)
  * @param skipped 파싱 skip 수(요약 행·빈값·음수·컬럼 부족)
  * @param unmatched 매칭 실패 심볼 수(symbolMap에 없는 심볼)
+ * @param gateExcluded 상장일 게이트로 제외된 행 수(매칭되었으나 거래일이 상장일보다 이른 경우,
+ *     SPEC-COLLECTOR-SHORTSALE-OVERSEAS-002 REQ-SSOG-013/016 — unmatched와 독립 집계)
  */
-public record FinraCdnDailyLoadOutcome(int kept, int raw, int skipped, int unmatched) {}
+public record FinraCdnDailyLoadOutcome(
+        int kept, int raw, int skipped, int unmatched, int gateExcluded) {}

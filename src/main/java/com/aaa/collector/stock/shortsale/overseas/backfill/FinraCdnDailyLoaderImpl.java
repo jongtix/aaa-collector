@@ -1,5 +1,6 @@
 package com.aaa.collector.stock.shortsale.overseas.backfill;
 
+import com.aaa.collector.observability.BatchMetrics;
 import com.aaa.collector.stock.ShortSaleOverseasRepository;
 import com.aaa.collector.stock.Stock;
 import com.aaa.collector.stock.shortsale.overseas.FinraSymbolNormalizer;
@@ -10,6 +11,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
 /**
@@ -23,13 +25,21 @@ import org.springframework.stereotype.Component;
  * kept}는 저장 시도가 예외 없이 완료된 매칭 심볼 수({@code upsertDaily}가 {@code INSERT ... ON DUPLICATE KEY UPDATE}라
  * 호출 성공=저장 확정, 중복 삽입 시도 포함이라는 kept 정의와 부합), {@code raw}는 병합 이전 파일별 파싱 성공 행수 합("API 원본 응답 행수"는 병합·매칭
  * 이전 시점을 가리킨다는 코디네이터 확정 정의).
+ *
+ * <p>상장일 게이트(SPEC-COLLECTOR-SHORTSALE-OVERSEAS-002 REQ-SSOG-013~018): 매칭된 종목의 거래일이 {@code
+ * listedDate}보다 이르면(당일·이후는 정상 적재) 티커 재사용으로 유입된 타 법인 데이터로 간주해 적재에서 제외한다. {@code listedDate}가
+ * 미상({@code null})이면 게이트를 적용하지 않고 무게이트 매칭임을 관측용으로 로깅한다. 이 클래스는 {@link FinraCdnCoveredGapFiller}(정방향
+ * covered-gap walk)와 과거 방향 walk 양쪽에서 {@link FinraCdnDailyLoader} 인터페이스를 통해 공유되는 단일 지점이므로, 별도 배선 없이
+ * 게이트가 두 경로 모두에 동일하게 관통된다(AC-17).
  */
+@Slf4j
 @Component
 @RequiredArgsConstructor
 public class FinraCdnDailyLoaderImpl implements FinraCdnDailyLoader {
 
     private final FinraCdnFileParser parser;
     private final ShortSaleOverseasRepository shortSaleOverseasRepository;
+    private final BatchMetrics batchMetrics;
 
     @Override
     @SuppressWarnings("PMD.UseConcurrentHashMap") // 단일 스레드 빌드 전용, 이후 읽기만 함
@@ -53,6 +63,7 @@ public class FinraCdnDailyLoaderImpl implements FinraCdnDailyLoader {
 
         int unmatched = 0;
         int kept = 0;
+        int gateExcluded = 0;
         LocalDateTime now = LocalDateTime.now();
         for (Map.Entry<String, BigDecimal> entry : shortSums.entrySet()) {
             String symbol = entry.getKey();
@@ -61,10 +72,47 @@ public class FinraCdnDailyLoaderImpl implements FinraCdnDailyLoader {
                 unmatched++;
                 continue;
             }
+            if (isGatedOut(date, symbol, stock)) {
+                gateExcluded++;
+                continue;
+            }
             shortSaleOverseasRepository.upsertDaily(
                     stock.getId(), date, entry.getValue(), totalSums.get(symbol), now, null, null);
             kept++; // ON DUPLICATE KEY UPDATE 호출이 예외 없이 완료 = 저장 확정(§2.6 kept, 중복 삽입 시도 포함)
         }
-        return new FinraCdnDailyLoadOutcome(kept, raw, skipped, unmatched);
+        batchMetrics.recordTickerReuseSkips(gateExcluded);
+        return new FinraCdnDailyLoadOutcome(kept, raw, skipped, unmatched, gateExcluded);
+    }
+
+    /**
+     * 상장일 게이트를 판정한다 (REQ-SSOG-013/014). {@code listedDate}가 미상이면 게이트를 적용하지 않고 무게이트 매칭임을 관측용으로 로깅한다.
+     * 거래일이 상장일보다 이르면(당일·이후는 통과) 티커 재사용 오염 행으로 판단해 제외 대상으로 판정한다.
+     *
+     * @return 이 행을 적재에서 제외해야 하면 {@code true}
+     */
+    private boolean isGatedOut(LocalDate date, String symbol, Stock stock) {
+        LocalDate listedDate = stock.getListedDate();
+        if (listedDate == null) {
+            if (log.isDebugEnabled()) {
+                log.debug(
+                        "상장일 미상 — 게이트 미적용. symbol={}, date={}, stockId={}",
+                        symbol,
+                        date,
+                        stock.getId());
+            }
+            return false;
+        }
+        if (date.isBefore(listedDate)) {
+            if (log.isInfoEnabled()) {
+                log.info(
+                        "상장일 게이트 제외 — symbol={}, date={}, listedDate={}, stockId={}",
+                        symbol,
+                        date,
+                        listedDate,
+                        stock.getId());
+            }
+            return true;
+        }
+        return false;
     }
 }

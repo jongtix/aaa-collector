@@ -83,7 +83,7 @@ class FinraCdnCoveredGapFillerTest {
 
             when(client.fetch(cursor)).thenReturn(new FinraCdnFetchResult.Found(List.of("body")));
             when(loader.loadDate(eq(cursor), eq(List.of("body")), eq(symbolMap)))
-                    .thenReturn(new FinraCdnDailyLoadOutcome(1, 1, 0, 0));
+                    .thenReturn(new FinraCdnDailyLoadOutcome(1, 1, 0, 0, 0));
 
             // Act
             CoveredFillResult result = filler.persistStep(cursor);
@@ -154,7 +154,7 @@ class FinraCdnCoveredGapFillerTest {
                     new FinraCdnCoveredGapFiller(client, loader, Map.of());
             when(client.fetch(cursor)).thenReturn(new FinraCdnFetchResult.Found(List.of("body")));
             when(loader.loadDate(eq(cursor), eq(List.of("body")), eq(Map.of())))
-                    .thenReturn(new FinraCdnDailyLoadOutcome(0, 1, 0, 1));
+                    .thenReturn(new FinraCdnDailyLoadOutcome(0, 1, 0, 1, 0));
 
             CoveredFillResult result = filler.persistStep(cursor);
 
@@ -210,7 +210,7 @@ class FinraCdnCoveredGapFillerTest {
                     new FinraCdnCoveredGapFiller(client, loader, symbolMap);
             when(client.fetch(cursor)).thenReturn(new FinraCdnFetchResult.Found(List.of("body")));
             when(loader.loadDate(eq(cursor), eq(List.of("body")), eq(symbolMap)))
-                    .thenReturn(new FinraCdnDailyLoadOutcome(1, 1, 0, 0));
+                    .thenReturn(new FinraCdnDailyLoadOutcome(1, 1, 0, 0, 0));
 
             // Act
             coveredRangeService.executeStep(status, filler, cursor, CoveredCalendarDomain.OVERSEAS);
@@ -238,7 +238,7 @@ class FinraCdnCoveredGapFillerTest {
                     new FinraCdnCoveredGapFiller(client, loader, Map.of());
             when(client.fetch(cursor)).thenReturn(new FinraCdnFetchResult.Found(List.of("body")));
             when(loader.loadDate(eq(cursor), eq(List.of("body")), eq(Map.of())))
-                    .thenReturn(new FinraCdnDailyLoadOutcome(0, 1, 0, 1));
+                    .thenReturn(new FinraCdnDailyLoadOutcome(0, 1, 0, 1, 0));
 
             // Act — kept==0 분기는 backfillStatusRepository.findById를 호출하지 않는다(전진 없음)
             coveredRangeService.executeStep(status, filler, cursor, CoveredCalendarDomain.OVERSEAS);

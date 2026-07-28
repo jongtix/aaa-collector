@@ -50,6 +50,7 @@ public class BatchMetrics {
     static final String LAST_DATA_NAME = "aaa_collector_batch_last_data_seconds";
     static final String SILENT_DROP_NAME = "aaa_collector_batch_silent_drops_total";
     static final String PARSE_REJECT_NAME = "aaa_collector_batch_parse_rejections_total";
+    static final String TICKER_REUSE_SKIP_NAME = "aaa_collector_finra_ticker_reuse_skip_total";
 
     /** 모든 배치 시계열이 공유하는 라벨 키 (카디널리티: batch 값만 사용). */
     private static final String BATCH_TAG = "batch";
@@ -71,6 +72,15 @@ public class BatchMetrics {
     @PostConstruct
     void initSilentDropCounter() {
         Counter.builder(SILENT_DROP_NAME).register(registry);
+    }
+
+    /**
+     * FINRA 티커 재사용 게이트 스킵 카운터를 0으로 사전 등록한다 (SPEC-COLLECTOR-SHORTSALE-OVERSEAS-002 REQ-SSOG-018,
+     * AC-18 — 제외 0건이어도 0 시계열 노출).
+     */
+    @PostConstruct
+    void initTickerReuseSkipCounter() {
+        Counter.builder(TICKER_REUSE_SKIP_NAME).register(registry);
     }
 
     /**
@@ -186,6 +196,21 @@ public class BatchMetrics {
      */
     public void recordParseRejections(String batch, long rejections) {
         counter(PARSE_REJECT_NAME, batch).increment(Math.max(0L, rejections));
+    }
+
+    /**
+     * FINRA 매칭 상장일 게이트로 제외된 행 수를 단일 누적 카운터로 기록한다 (SPEC-COLLECTOR-SHORTSALE-OVERSEAS-002
+     * REQ-SSOG-018, {@code recordSilentDrops} 형판 — 라벨 없는 단일 지점 Counter).
+     *
+     * @param skips 이번 {@code loadDate} 호출에서 상장일 게이트로 제외된 행 수(0이면 증가하지 않음)
+     */
+    public void recordTickerReuseSkips(long skips) {
+        // Micrometer 등록은 멱등 — 동일 이름은 동일 카운터 반환(Spring·직접 생성 양쪽 안전, 제외 0이어도 0 시계열 보장).
+        Counter counter = Counter.builder(TICKER_REUSE_SKIP_NAME).register(registry);
+        if (skips <= 0) {
+            return;
+        }
+        counter.increment(skips);
     }
 
     private Counter counter(String name, String batch) {
