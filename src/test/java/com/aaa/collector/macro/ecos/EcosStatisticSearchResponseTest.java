@@ -121,7 +121,7 @@ class EcosStatisticSearchResponseTest {
     class Info200Response {
 
         @Test
-        @DisplayName("RESULT.CODE=INFO-200 응답 — row 필드 없음, statisticSearch=null")
+        @DisplayName("RESULT.CODE=INFO-200 응답 — row 필드 없음, statisticSearch=null, RESULT 노출")
         void deserializeInfo200Response() throws Exception {
             String json =
                     """
@@ -133,6 +133,32 @@ class EcosStatisticSearchResponseTest {
 
             // INFO-200은 StatisticSearch 키가 없으므로 null
             assertThat(response.statisticSearch()).isNull();
+            assertThat(response.result()).isNotNull();
+            assertThat(response.result().code()).isEqualTo("INFO-200");
+            assertThat(response.result().message()).isEqualTo("요청하신 데이터가 없습니다.");
+        }
+    }
+
+    @Nested
+    @DisplayName("ERROR-* 응답 역직렬화 (AC-2.1)")
+    class ErrorResponse {
+
+        @Test
+        @DisplayName(
+                "RESULT.CODE=ERROR-101 응답 — RESULT.CODE/MESSAGE 접근 가능, ignoreUnknown으로 폐기되지 않음")
+        void deserializeError101Response() throws Exception {
+            String json =
+                    """
+                    {"RESULT": {"CODE": "ERROR-101", "MESSAGE": "주기와 다른 형식의 날짜 형식입니다."}}
+                    """;
+
+            EcosStatisticSearchResponse response =
+                    objectMapper.readValue(json, EcosStatisticSearchResponse.class);
+
+            assertThat(response.statisticSearch()).isNull();
+            assertThat(response.result()).isNotNull();
+            assertThat(response.result().code()).isEqualTo("ERROR-101");
+            assertThat(response.result().message()).contains("주기와 다른 형식");
         }
     }
 }

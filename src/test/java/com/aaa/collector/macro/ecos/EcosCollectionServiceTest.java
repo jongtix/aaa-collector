@@ -76,7 +76,17 @@ class EcosCollectionServiceTest {
     private EcosStatisticSearchResponse responseWithRows(
             List<EcosStatisticSearchResponse.Row> rows) {
         return new EcosStatisticSearchResponse(
-                new EcosStatisticSearchResponse.StatisticSearch(rows.size(), rows));
+                new EcosStatisticSearchResponse.StatisticSearch(rows.size(), rows), null);
+    }
+
+    private EcosStatisticSearchResponse info200Response() {
+        return new EcosStatisticSearchResponse(
+                null, new EcosStatisticSearchResponse.Result("INFO-200", "요청하신 데이터가 없습니다."));
+    }
+
+    private EcosStatisticSearchResponse errorResponse(String code, String message) {
+        return new EcosStatisticSearchResponse(
+                null, new EcosStatisticSearchResponse.Result(code, message));
     }
 
     private EcosStatisticSearchResponse.Row row(String time, String value) {
@@ -211,16 +221,16 @@ class EcosCollectionServiceTest {
     // ────────────────────────────────────────────────────────────────────
 
     @Nested
-    @DisplayName("INFO-200 응답 — 0건 처리 후 계속")
+    @DisplayName("INFO-200 응답 — 0건 처리 후 계속 (AC-2.3)")
     class Info200Response {
 
         @Test
-        @DisplayName("statisticSearch=null (INFO-200) → 해당 시리즈 0건, insertIgnoreDuplicate 미호출")
+        @DisplayName("RESULT.CODE=INFO-200 → 해당 시리즈 0건, 예외 없음, insertBatch 미호출")
         void info200Response_skipAndContinue() {
             // Arrange
             stubRestClientChain();
             when(responseSpec.body(EcosStatisticSearchResponse.class))
-                    .thenReturn(new EcosStatisticSearchResponse(null));
+                    .thenReturn(info200Response());
 
             // Act
             MacroCollectionResult result = service.collect();
@@ -229,6 +239,91 @@ class EcosCollectionServiceTest {
             assertThat(result.attempted()).isZero();
             assertThat(result.succeeded()).isZero();
             verify(macroIndicatorInserter, never()).insertBatch(any());
+        }
+    }
+
+    @Nested
+    @DisplayName("ERROR-* 응답 — 실패 집계 + 시리즈 격리 (AC-2.2, AC-2.4, AC-2.6)")
+    class ErrorResponseHandling {
+
+        @Test
+        @DisplayName("ERROR-101 → 예외 승격, attempted 계상, 나머지 7개 시리즈 계속, serviceKey 미노출")
+        @SuppressWarnings("unchecked")
+        void error101Response_promotedToExceptionAndIsolated() {
+            // Arrange — 첫 번째 시리즈만 ERROR-101, 나머지는 정상 1행
+            stubRestClientChain();
+            when(responseSpec.body(EcosStatisticSearchResponse.class))
+                    .thenReturn(errorResponse("ERROR-101", "주기와 다른 형식의 날짜 형식입니다."))
+                    .thenReturn(responseWithRows(List.of(row("20260620", "3.50"))));
+
+            // Act — 예외가 collect()로 전파되지 않아야 함(시리즈 단위 격리)
+            MacroCollectionResult result = service.collect();
+
+            // Assert — 실패 시리즈 1건이 attempted에 계상됨(REQ-ECOSFMT-019), INFO-200과 결과가 다름
+            assertThat(result.attempted()).isGreaterThanOrEqualTo(1);
+            assertThat(result.succeeded()).isGreaterThanOrEqualTo(1);
+        }
+
+        @Test
+        @DisplayName("예외 메시지에 indicator_code/RESULT.CODE/RESULT.MESSAGE 포함, serviceKey 미노출")
+        void error101Response_exceptionMessageExcludesServiceKey() {
+            // Arrange
+            EcosSeriesConfig.Series series = EcosSeriesConfig.ALL.getFirst();
+
+            // Act
+            Exception thrown =
+                    org.junit.jupiter.api.Assertions.assertThrows(
+                            RuntimeException.class,
+                            () -> {
+                                throw new EcosApiException(
+                                        series.indicatorCode(),
+                                        "ERROR-101",
+                                        "주기와 다른 형식의 날짜 형식입니다.");
+                            });
+
+            // Assert
+            assertThat(thrown.getMessage()).contains(series.indicatorCode());
+            assertThat(thrown.getMessage()).contains("ERROR-101");
+            assertThat(thrown.getMessage()).doesNotContain("serviceKey");
+        }
+    }
+
+    @Nested
+    @DisplayName("예측 불가 응답 — 실패 처리 (AC-2.5)")
+    class UnpredictableResponse {
+
+        @Test
+        @DisplayName("응답 body가 null → 정상 0건 아닌 실패로 취급, 나머지 시리즈 계속")
+        @SuppressWarnings("unchecked")
+        void nullResponseBody_treatedAsFailure() {
+            // Arrange — 첫 번째 시리즈만 null body, 나머지는 정상 1행
+            stubRestClientChain();
+            when(responseSpec.body(EcosStatisticSearchResponse.class))
+                    .thenReturn(null)
+                    .thenReturn(responseWithRows(List.of(row("20260620", "3.50"))));
+
+            // Act — 예외가 collect()로 전파되지 않아야 함(시리즈 단위 격리)
+            MacroCollectionResult result = service.collect();
+
+            // Assert — null 응답 시리즈가 attempted에 실패로 계상됨
+            assertThat(result.attempted()).isGreaterThanOrEqualTo(1);
+        }
+
+        @Test
+        @DisplayName("RESULT·StatisticSearch 어느 키도 없으면 → 실패로 취급")
+        @SuppressWarnings("unchecked")
+        void neitherResultNorStatisticSearch_treatedAsFailure() {
+            // Arrange — 첫 번째 시리즈만 RESULT/StatisticSearch 둘 다 null, 나머지는 정상 1행
+            stubRestClientChain();
+            when(responseSpec.body(EcosStatisticSearchResponse.class))
+                    .thenReturn(new EcosStatisticSearchResponse(null, null))
+                    .thenReturn(responseWithRows(List.of(row("20260620", "3.50"))));
+
+            // Act
+            MacroCollectionResult result = service.collect();
+
+            // Assert
+            assertThat(result.attempted()).isGreaterThanOrEqualTo(1);
         }
     }
 

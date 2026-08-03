@@ -90,6 +90,7 @@ public class EcosCollectionService {
                 succeeded += result.succeeded();
                 skipped += result.skipped();
             } catch (Exception e) {
+                attempted++;
                 log.error("[ecos] 시리즈 수집 예외 — series={}, 다음 시리즈 계속", series.indicatorCode(), e);
             }
         }
@@ -108,14 +109,63 @@ public class EcosCollectionService {
         EcosStatisticSearchResponse response =
                 ecosRestClient.get().uri(url).retrieve().body(EcosStatisticSearchResponse.class);
 
-        // INFO-200 응답 (StatisticSearch 키 없음)
-        if (response == null
-                || response.statisticSearch() == null
-                || response.statisticSearch().row() == null) {
-            log.info("[ecos] INFO-200 응답 — series={}, 0건 처리", series.indicatorCode());
-            return new MacroCollectionResult(0, 0, 0);
+        MacroCollectionResult earlyResult = classifyResponse(series, response);
+        if (earlyResult != null) {
+            return earlyResult;
         }
 
+        return processRows(series, response);
+    }
+
+    /**
+     * 응답을 분류해 조기 반환 결과를 산출한다. {@code ERROR-*}·예측 불가 응답은 예외를 던지고, {@code INFO-200}(정당한 0건)은 {@code
+     * (0,0,0)}을 반환한다. 정상 데이터 응답(row 처리 필요)이면 {@code null}을 반환해 호출자가 계속 처리하도록 한다.
+     */
+    private MacroCollectionResult classifyResponse(
+            EcosSeriesConfig.Series series, EcosStatisticSearchResponse response) {
+        EcosStatisticSearchResponse.Result result = response != null ? response.result() : null;
+
+        // ERROR-* 응답 — 예외 승격(REQ-ECOSFMT-008, AC-2.2). StatisticSearch 동시 존재 여부와
+        // 무관하게 오류가 우선한다(E-5).
+        throwIfErrorCode(series, result);
+
+        if (hasStatisticSearchRows(response)) {
+            return null;
+        }
+        return classifyEmptyResponse(series, response, result);
+    }
+
+    private void throwIfErrorCode(
+            EcosSeriesConfig.Series series, EcosStatisticSearchResponse.Result result) {
+        if (result != null && result.code() != null && result.code().startsWith("ERROR-")) {
+            throw new EcosApiException(series.indicatorCode(), result.code(), result.message());
+        }
+    }
+
+    private boolean hasStatisticSearchRows(EcosStatisticSearchResponse response) {
+        return response != null
+                && response.statisticSearch() != null
+                && response.statisticSearch().row() != null;
+    }
+
+    /** {@code StatisticSearch}가 없는 응답을 예측 불가 실패(AC-2.5) 또는 INFO-200 정당한 0건으로 분류한다. */
+    private MacroCollectionResult classifyEmptyResponse(
+            EcosSeriesConfig.Series series,
+            EcosStatisticSearchResponse response,
+            EcosStatisticSearchResponse.Result result) {
+        if (response == null || result == null) {
+            // 예측 불가 응답 — 본문 null 또는 RESULT/StatisticSearch 어느 키도 없음
+            // (REQ-ECOSFMT-010, AC-2.5). 정상 0건으로 무음 흡수하지 않는다.
+            throw new EcosApiException(series.indicatorCode(), "RESULT/StatisticSearch 키 없음");
+        }
+
+        // INFO-200 응답 (정당한 0건)
+        log.info("[ecos] INFO-200 응답 — series={}, 0건 처리", series.indicatorCode());
+        return new MacroCollectionResult(0, 0, 0);
+    }
+
+    private MacroCollectionResult processRows(
+            EcosSeriesConfig.Series series, EcosStatisticSearchResponse response) {
         int attempted = 0;
         int skipped = 0;
 
