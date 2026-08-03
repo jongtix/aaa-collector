@@ -224,6 +224,41 @@ class FredCollectionServiceTest {
     }
 
     // ────────────────────────────────────────────────────────────────────
+    // 응답 null — 실패 처리 (T4, AC-7.1~7.4, REQ-FREDFMT-001~003, 011)
+    // ────────────────────────────────────────────────────────────────────
+
+    @Nested
+    @DisplayName("응답 null — 실패 처리 (AC-7.1, 7.2)")
+    class NullResponse {
+
+        @Test
+        @DisplayName("응답 body가 null → 정상 0건이 아닌 실패로 취급, attempted 계상, 나머지 4개 시리즈 계속")
+        void nullResponseBody_treatedAsFailureAndCountedInAttempted() {
+            // Arrange — 첫 번째 시리즈만 null body, 나머지 4개는 정상 1행
+            stubRestClientChain();
+            when(responseSpec.body(FredObservationsResponse.class))
+                    .thenReturn(null)
+                    .thenReturn(responseWithObs(List.of(obs("2026-06-17", "3.63"))));
+
+            // Act — 예외가 collect()로 전파되지 않아야 함(시리즈 단위 격리)
+            MacroCollectionResult result = service.collect();
+
+            // Assert — null 응답 시리즈가 attempted에 실패로 계상됨(REQ-FREDFMT-002)
+            assertThat(result.attempted()).isGreaterThanOrEqualTo(1);
+        }
+
+        @Test
+        @DisplayName("예외 메시지에 apiKey 미노출 (AC-7.4)")
+        void exceptionMessage_excludesApiKey() {
+            FredApiException thrown = new FredApiException("FRED_DFF", "응답 본문이 null");
+
+            assertThat(thrown.getMessage()).contains("FRED_DFF");
+            assertThat(thrown.getMessage()).doesNotContain("apiKey");
+            assertThat(thrown.getMessage()).doesNotContain("api_key");
+        }
+    }
+
+    // ────────────────────────────────────────────────────────────────────
     // 예외 격리
     // ────────────────────────────────────────────────────────────────────
 

@@ -77,6 +77,7 @@ public class FredCollectionService {
                 succeeded += result.succeeded();
                 skipped += result.skipped();
             } catch (Exception e) {
+                attempted++;
                 log.error("[fred] 시리즈 수집 예외 — series={}, 다음 시리즈 계속", series.indicatorCode(), e);
             }
         }
@@ -95,7 +96,12 @@ public class FredCollectionService {
         FredObservationsResponse response =
                 macroFredRestClient.get().uri(url).retrieve().body(FredObservationsResponse.class);
 
-        if (response == null || response.observations() == null) {
+        if (response == null) {
+            // 예측 불가 응답 — 정상 0건으로 흡수하지 않고 실패로 취급(REQ-FREDFMT-001, AC-7.1)
+            throw new FredApiException(series.indicatorCode(), "응답 본문이 null");
+        }
+
+        if (response.observations().isEmpty()) {
             log.info("[fred] 빈 응답 — series={}", series.indicatorCode());
             return new MacroCollectionResult(0, 0, 0);
         }
