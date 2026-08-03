@@ -88,12 +88,16 @@ public interface ShortSaleOverseasRepository extends JpaRepository<ShortSaleOver
      * Short Interest 수집 결과를 {@code trade_date = settlementDate} 행으로 멱등 UPSERT한다(Tier-2). interest
      * 전용 컬럼만 SET하여 Daily 컬럼({@code short_volume}/{@code total_volume}/{@code daily_collected_at})은
      * 보존하며, {@code revisionFlag="R"} 재적재 시 잔고를 갱신한다(REQ-SSO-014b). {@code float_shares}/{@code
-     * si_pct_float}는 적재하지 않아 NULL로 남는다(REQ-SSO-004).
+     * si_pct_float}는 적재하지 않아 NULL로 남는다(REQ-SSO-004). {@code daysToCover}/{@code avgDailyVolume}은 둘
+     * 다 nullable — 없거나 파싱 불가해도 행 자체는 거부하지 않고 해당 컬럼만 NULL로 남는다(SPEC-COLLECTOR-
+     * SHORTSALE-OVERSEAS-003 REQ-SSOI-010/-011).
      *
      * @param stockId 종목 PK
      * @param settlementDate settlementDate(= trade_date = short_interest_date)
      * @param shortInterest 당기 공매도 잔고({@code currentShortPositionQuantity})
      * @param interestCollectedAt Short Interest 수집 시각
+     * @param daysToCover 커버 소요일({@code daysToCoverQuantity}, 없거나 파싱 불가 시 {@code null})
+     * @param avgDailyVolume 평균 일거래량({@code averageDailyVolumeQuantity}, 없거나 파싱 불가 시 {@code null})
      */
     @Transactional
     @Modifying
@@ -102,13 +106,15 @@ public interface ShortSaleOverseasRepository extends JpaRepository<ShortSaleOver
                     """
                     INSERT INTO short_sale_overseas
                         (stock_id, trade_date, short_interest, short_interest_date,
-                         interest_collected_at, created_at, updated_at)
+                         days_to_cover, avg_daily_volume, interest_collected_at, created_at, updated_at)
                     VALUES
                         (:stockId, :settlementDate, :shortInterest, :settlementDate,
-                         :interestCollectedAt, NOW(), NOW())
+                         :daysToCover, :avgDailyVolume, :interestCollectedAt, NOW(), NOW())
                     ON DUPLICATE KEY UPDATE
                         short_interest = VALUES(short_interest),
                         short_interest_date = VALUES(short_interest_date),
+                        days_to_cover = VALUES(days_to_cover),
+                        avg_daily_volume = VALUES(avg_daily_volume),
                         interest_collected_at = VALUES(interest_collected_at),
                         updated_at = NOW()
                     """,
@@ -117,7 +123,26 @@ public interface ShortSaleOverseasRepository extends JpaRepository<ShortSaleOver
             @Param("stockId") Long stockId,
             @Param("settlementDate") LocalDate settlementDate,
             @Param("shortInterest") Long shortInterest,
-            @Param("interestCollectedAt") LocalDateTime interestCollectedAt);
+            @Param("interestCollectedAt") LocalDateTime interestCollectedAt,
+            @Param("daysToCover") BigDecimal daysToCover,
+            @Param("avgDailyVolume") Long avgDailyVolume);
+
+    /**
+     * 하위 호환 오버로드 — {@code daysToCover}/{@code avgDailyVolume} 없이 호출한다(SPEC-COLLECTOR-SHORTSALE-
+     * OVERSEAS-003 M2 이전 호출부 컴파일·동작 유지 목적). 두 신규 컬럼은 {@code null}로 남는다.
+     *
+     * @param stockId 종목 PK
+     * @param settlementDate settlementDate(= trade_date = short_interest_date)
+     * @param shortInterest 당기 공매도 잔고({@code currentShortPositionQuantity})
+     * @param interestCollectedAt Short Interest 수집 시각
+     */
+    default void upsertInterest(
+            Long stockId,
+            LocalDate settlementDate,
+            Long shortInterest,
+            LocalDateTime interestCollectedAt) {
+        upsertInterest(stockId, settlementDate, shortInterest, interestCollectedAt, null, null);
+    }
 
     /**
      * 종목 집합 + 기준 거래일에 대해 {@code short_interest IS NOT NULL AND short_interest_date ≤ tradeDate}인 최신

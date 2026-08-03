@@ -54,6 +54,9 @@ class ShortSaleOverseasRepositoryIT {
     @MockitoBean private BackfillDensityRepository backfillDensityRepository;
     private static final AtomicInteger SYMBOL_SEQ = new AtomicInteger();
 
+    /** daysToCover 실측 픽스처 값(AAPL, api-specs/finra/01-공매도잔고.md) — 문자열 리터럴 중복(PMD) 회피. */
+    private static final String DAYS_TO_COVER_339 = "3.39";
+
     @Autowired private ShortSaleOverseasRepository repository;
     @Autowired private StockRepository stockRepository;
 
@@ -269,6 +272,101 @@ class ShortSaleOverseasRepositoryIT {
             assertThat(row.getShortVolume()).isEqualByComparingTo("7000");
             assertThat(row.getTotalVolume()).isEqualByComparingTo("12000");
             assertThat(row.getDailyCollectedAt()).isEqualTo(dailyAt);
+        }
+    }
+
+    @Nested
+    @DisplayName(
+            "upsertInterest(daysToCover, avgDailyVolume) — 신규 컬럼 확장"
+                    + " (SPEC-COLLECTOR-SHORTSALE-OVERSEAS-003 M2, REQ-SSOI-010/011)")
+    class UpsertInterestWithMetrics {
+
+        @Test
+        @DisplayName("daysToCover/avgDailyVolume가 모두 존재하면 그대로 적재된다 (AC-10, AC-11)")
+        void persistsBothMetricsWhenPresent() {
+            // Arrange
+            Stock aapl = savedUsStock();
+            LocalDate settlementDate = LocalDate.of(2026, 4, 15);
+
+            // Act
+            repository.upsertInterest(
+                    aapl.getId(),
+                    settlementDate,
+                    134_422_787L,
+                    LocalDateTime.now(),
+                    new BigDecimal(DAYS_TO_COVER_339),
+                    39_674_165L);
+
+            // Assert
+            ShortSaleOverseas row = findRow(aapl.getId(), settlementDate);
+            assertThat(row.getDaysToCover()).isEqualByComparingTo(DAYS_TO_COVER_339);
+            assertThat(row.getAvgDailyVolume()).isEqualTo(39_674_165L);
+        }
+
+        @Test
+        @DisplayName("daysToCover/avgDailyVolume가 없으면(null) 두 컬럼만 NULL로 남고 행은 정상 적재된다 (AC-11a)")
+        void persistsNullMetricsWithoutRejectingRow() {
+            // Arrange
+            Stock aapl = savedUsStock();
+            LocalDate settlementDate = LocalDate.of(2026, 4, 30);
+
+            // Act
+            repository.upsertInterest(
+                    aapl.getId(), settlementDate, 100_000_000L, LocalDateTime.now(), null, null);
+
+            // Assert: 행 자체는 정상 적재(shortInterest 있음), 신규 컬럼만 NULL
+            ShortSaleOverseas row = findRow(aapl.getId(), settlementDate);
+            assertThat(row.getShortInterest()).isEqualTo(100_000_000L);
+            assertThat(row.getDaysToCover()).isNull();
+            assertThat(row.getAvgDailyVolume()).isNull();
+        }
+
+        @Test
+        @DisplayName("기존 4-파라미터 오버로드는 신규 두 컬럼을 NULL로 남기고 하위 호환 동작을 유지한다")
+        void legacyFourArgOverloadLeavesNewColumnsNull() {
+            // Arrange
+            Stock aapl = savedUsStock();
+            LocalDate settlementDate = LocalDate.of(2026, 5, 15);
+
+            // Act: 기존 4-파라미터 호출부(M2 이전) — 신규 컬럼 인지 없이 컴파일·동작 유지
+            repository.upsertInterest(
+                    aapl.getId(), settlementDate, 200_000_000L, LocalDateTime.now());
+
+            // Assert
+            ShortSaleOverseas row = findRow(aapl.getId(), settlementDate);
+            assertThat(row.getShortInterest()).isEqualTo(200_000_000L);
+            assertThat(row.getDaysToCover()).isNull();
+            assertThat(row.getAvgDailyVolume()).isNull();
+        }
+
+        @Test
+        @DisplayName("revisionFlag=\"R\" 재적재 시 신규 컬럼도 함께 갱신된다 (EC-06)")
+        void revisionReupsertUpdatesNewColumnsToo() {
+            // Arrange: 최초 적재(신규 컬럼 값 있음)
+            Stock aapl = savedUsStock();
+            LocalDate settlementDate = LocalDate.of(2026, 4, 15);
+            repository.upsertInterest(
+                    aapl.getId(),
+                    settlementDate,
+                    126_771_284L,
+                    LocalDateTime.now(),
+                    new BigDecimal("3.00"),
+                    35_000_000L);
+
+            // Act: revision 재적재 — 신규 컬럼 값도 갱신
+            repository.upsertInterest(
+                    aapl.getId(),
+                    settlementDate,
+                    134_422_787L,
+                    LocalDateTime.now(),
+                    new BigDecimal(DAYS_TO_COVER_339),
+                    39_674_165L);
+
+            // Assert
+            ShortSaleOverseas row = findRow(aapl.getId(), settlementDate);
+            assertThat(row.getShortInterest()).isEqualTo(134_422_787L);
+            assertThat(row.getDaysToCover()).isEqualByComparingTo(DAYS_TO_COVER_339);
+            assertThat(row.getAvgDailyVolume()).isEqualTo(39_674_165L);
         }
     }
 

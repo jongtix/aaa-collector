@@ -154,4 +154,63 @@ class FinraQuantityParserTest {
             assertThat(reasons).containsExactly("qty<0(-1)");
         }
     }
+
+    @Nested
+    @DisplayName(
+            "toNullableNonNegativeDecimal/-Integer — Interest 부가 컬럼 관대한 변환"
+                    + " (SPEC-COLLECTOR-SHORTSALE-OVERSEAS-003 M2, REQ-SSOI-011)")
+    class NullableConversions {
+
+        @Test
+        @DisplayName("정상 소수 값은 그대로 반환한다 (AC-11)")
+        void toNullableNonNegativeDecimal_returnsValueWhenValid() {
+            BigDecimal result =
+                    FinraQuantityParser.toNullableNonNegativeDecimal(new BigDecimal("3.39"));
+
+            assertThat(result).isEqualByComparingTo("3.39");
+        }
+
+        @Test
+        @DisplayName("null 값은 사유 누적 없이 조용히 null을 반환한다 (AC-11a)")
+        void toNullableNonNegativeDecimal_returnsNullOnNull() {
+            assertThat(FinraQuantityParser.toNullableNonNegativeDecimal(null)).isNull();
+        }
+
+        @Test
+        @DisplayName("음수 값은 사유 누적 없이 조용히 null을 반환한다 (AC-11a)")
+        void toNullableNonNegativeDecimal_returnsNullOnNegative() {
+            assertThat(FinraQuantityParser.toNullableNonNegativeDecimal(BigDecimal.valueOf(-1)))
+                    .isNull();
+        }
+
+        @Test
+        @DisplayName("정상 정수 값은 long으로 변환한다 (AC-11)")
+        void toNullableNonNegativeInteger_returnsValueWhenValid() {
+            Long result =
+                    FinraQuantityParser.toNullableNonNegativeInteger(
+                            BigDecimal.valueOf(39_674_165L));
+
+            assertThat(result).isEqualTo(39_674_165L);
+        }
+
+        @Test
+        @DisplayName("null 값은 조용히 null을 반환한다 (AC-11a)")
+        void toNullableNonNegativeInteger_returnsNullOnNull() {
+            assertThat(FinraQuantityParser.toNullableNonNegativeInteger(null)).isNull();
+        }
+
+        @Test
+        @DisplayName("소수부가 있으면 거부 사유 없이 조용히 null을 반환한다 (AC-11a)")
+        void toNullableNonNegativeInteger_returnsNullOnFractional() {
+            assertThat(FinraQuantityParser.toNullableNonNegativeInteger(new BigDecimal("10.5")))
+                    .isNull();
+        }
+
+        @Test
+        @DisplayName("음수 값은 조용히 null을 반환한다 (AC-11a)")
+        void toNullableNonNegativeInteger_returnsNullOnNegative() {
+            assertThat(FinraQuantityParser.toNullableNonNegativeInteger(BigDecimal.valueOf(-5)))
+                    .isNull();
+        }
+    }
 }

@@ -66,6 +66,17 @@ public class ShortSaleOverseas extends BaseEntity {
     @Column(name = "short_interest_date")
     private final LocalDate shortInterestDate;
 
+    // @MX:NOTE: [AUTO] days_to_cover/avg_daily_volume(V41) — FINRA daysToCoverQuantity/
+    // averageDailyVolumeQuantity를 신규 nullable 컬럼으로 적재(SPEC-COLLECTOR-SHORTSALE-OVERSEAS-003
+    // REQ-SSOI-010). 값이 없거나 파싱 불가해도 행 자체는 거부하지 않고 이 두 컬럼만 NULL로 남는다
+    // (REQ-SSOI-011) — short_volume/total_volume과 달리 ZERO 정규화하지 않는다.
+    // @MX:SPEC: SPEC-COLLECTOR-SHORTSALE-OVERSEAS-003
+    @Column(name = "days_to_cover", precision = 10, scale = 2)
+    private final BigDecimal daysToCover;
+
+    @Column(name = "avg_daily_volume")
+    private final Long avgDailyVolume;
+
     @Column(name = "daily_collected_at")
     private final LocalDateTime dailyCollectedAt;
 
@@ -82,6 +93,8 @@ public class ShortSaleOverseas extends BaseEntity {
             Long floatShares,
             BigDecimal siPctFloat,
             LocalDate shortInterestDate,
+            BigDecimal daysToCover,
+            Long avgDailyVolume,
             LocalDateTime dailyCollectedAt,
             LocalDateTime interestCollectedAt) {
         super();
@@ -94,6 +107,9 @@ public class ShortSaleOverseas extends BaseEntity {
         this.floatShares = floatShares;
         this.siPctFloat = siPctFloat;
         this.shortInterestDate = shortInterestDate;
+        // nullable 컬럼(REQ-SSOI-011) — ZERO 정규화 없이 null 그대로 보존
+        this.daysToCover = daysToCover;
+        this.avgDailyVolume = avgDailyVolume;
         this.dailyCollectedAt = dailyCollectedAt;
         this.interestCollectedAt = interestCollectedAt;
     }

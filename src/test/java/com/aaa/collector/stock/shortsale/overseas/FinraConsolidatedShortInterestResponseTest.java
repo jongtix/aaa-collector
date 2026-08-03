@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
+import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.List;
 import org.junit.jupiter.api.DisplayName;
@@ -79,14 +80,76 @@ class FinraConsolidatedShortInterestResponseTest {
         }
 
         @Test
-        @DisplayName("미사용 필드(issueName/daysToCoverQuantity 등)는 무시한다")
-        void ignoresUnknownFields() throws Exception {
-            // currentShortPositionQuantity/settlementDate/symbolCode/revisionFlag 외 필드는 무시
+        @DisplayName(
+                "issueName/daysToCoverQuantity/averageDailyVolumeQuantity 필드를 캡처한다 (M2, REQ-SSOI-012,"
+                        + " AC-12)")
+        void capturesIssueNameAndInterestMetricFields() throws Exception {
+            // Act
+            List<FinraConsolidatedShortInterestResponse> rows =
+                    objectMapper.readValue(
+                            AAPL_SETTLEMENT_ROW,
+                            new FinraConsolidatedShortInterestResponseListType());
+
+            // Assert
+            FinraConsolidatedShortInterestResponse row = rows.getFirst();
+            assertThat(row.issueName()).isEqualTo("Apple Inc. Common Stock");
+            assertThat(row.daysToCoverQuantity()).isEqualByComparingTo("3.39");
+            assertThat(row.averageDailyVolumeQuantity()).isEqualByComparingTo("39674165");
+        }
+
+        @Test
+        @DisplayName("여전히 미사용인 필드(accountingYearMonthNumber 등)는 계속 무시한다")
+        void ignoresRemainingUnusedFields() throws Exception {
+            // accountingYearMonthNumber/marketClassCode/issuerServicesGroupExchangeCode/
+            // previousShortPositionQuantity/changePreviousNumber/changePercent/stockSplitFlag는
+            // 여전히 무시 대상 — 역직렬화가 예외 없이 성공하고 캡처 대상 필드만 채워짐을 확인
             List<FinraConsolidatedShortInterestResponse> rows =
                     objectMapper.readValue(
                             AAPL_SETTLEMENT_ROW,
                             new FinraConsolidatedShortInterestResponseListType());
             assertThat(rows.getFirst().symbolCode()).isEqualTo("AAPL");
+        }
+
+        @Test
+        @DisplayName(
+                "issueName/daysToCoverQuantity/averageDailyVolumeQuantity가 없으면 null로 남는다 (AC-11a)")
+        void leavesNewFieldsNullWhenAbsent() throws Exception {
+            String revisedRow =
+                    """
+                    [
+                      {"symbolCode":"AAPL","settlementDate":"2026-04-15","currentShortPositionQuantity":140000000,"revisionFlag":"R"}
+                    ]
+                    """;
+
+            // Act
+            List<FinraConsolidatedShortInterestResponse> rows =
+                    objectMapper.readValue(
+                            revisedRow, new FinraConsolidatedShortInterestResponseListType());
+
+            // Assert
+            FinraConsolidatedShortInterestResponse row = rows.getFirst();
+            assertThat(row.issueName()).isNull();
+            assertThat(row.daysToCoverQuantity()).isNull();
+            assertThat(row.averageDailyVolumeQuantity()).isNull();
+        }
+    }
+
+    @Nested
+    @DisplayName("하위 호환 4-필드 생성자 (M2 이전 호출부 유지)")
+    class LegacyConstructor {
+
+        @Test
+        @DisplayName("4-필드 생성자로 만들면 신규 3필드는 null로 남는다")
+        void legacyConstructorLeavesNewFieldsNull() {
+            FinraConsolidatedShortInterestResponse row =
+                    new FinraConsolidatedShortInterestResponse(
+                            "AAPL", LocalDate.of(2026, 4, 15), new BigDecimal("134422787"), null);
+
+            assertThat(row.symbolCode()).isEqualTo("AAPL");
+            assertThat(row.currentShortPositionQuantity()).isEqualByComparingTo("134422787");
+            assertThat(row.issueName()).isNull();
+            assertThat(row.daysToCoverQuantity()).isNull();
+            assertThat(row.averageDailyVolumeQuantity()).isNull();
         }
     }
 

@@ -88,4 +88,42 @@ final class FinraQuantityParser {
             return null;
         }
     }
+
+    /**
+     * 관대한(non-strict) 십진 변환 — Short Interest 부가 컬럼({@code days_to_cover}) 전용
+     * (SPEC-COLLECTOR-SHORTSALE-OVERSEAS-003 REQ-SSOI-011). {@code currentShortPositionQuantity}의
+     * 엄격 검증({@link #toNonNegativeDecimal})과 달리 {@code reasons}를 누적하지 않는다 — 값이 없거나(null) 음수이면 조용히
+     * {@code null}을 반환할 뿐 skip·거부 계측 대상이 아니며, 호출자는 해당 컬럼만 NULL로 남기고 행 자체는 거부하지 않는다.
+     *
+     * @param value 변환 대상 수량(FINRA {@code daysToCoverQuantity})
+     * @return 비음수 {@link BigDecimal}, 또는 없거나 음수면 {@code null}
+     */
+    static BigDecimal toNullableNonNegativeDecimal(BigDecimal value) {
+        if (value == null || value.signum() < 0) {
+            return null;
+        }
+        return value;
+    }
+
+    /**
+     * 관대한(non-strict) 정수 변환 — Short Interest 부가 컬럼({@code avg_daily_volume}) 전용
+     * (SPEC-COLLECTOR-SHORTSALE-OVERSEAS-003 REQ-SSOI-011). 값이 없거나(null) 음수이거나 소수부가 있으면 {@link
+     * #toNonNegativeInteger}와 달리 조용히 {@code null}을 반환한다 — 거부 신호를 누적하지 않으며, 호출자는 해당 컬럼만 NULL로 남기고 행
+     * 자체는 거부하지 않는다.
+     *
+     * @param value 변환 대상 수량(FINRA {@code averageDailyVolumeQuantity})
+     * @return 비음수 무손실 {@code long}, 또는 없거나 음수·소수부 존재 시 {@code null}
+     */
+    static Long toNullableNonNegativeInteger(BigDecimal value) {
+        BigDecimal decimal = toNullableNonNegativeDecimal(value);
+        if (decimal == null) {
+            return null;
+        }
+        try {
+            return decimal.longValueExact();
+        } catch (ArithmeticException e) {
+            // 소수부 존재 — 파싱 불가로 간주해 조용히 null(REQ-SSOI-011). 행은 거부하지 않는다.
+            return null;
+        }
+    }
 }
