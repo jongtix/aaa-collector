@@ -1,6 +1,7 @@
 package com.aaa.collector.macro.fred;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.never;
@@ -220,6 +221,83 @@ class FredCollectionServiceTest {
 
             // Assert
             assertThat(result.skipped()).isGreaterThanOrEqualTo(1);
+        }
+    }
+
+    // ────────────────────────────────────────────────────────────────────
+    // collectAllForIndicator — 백필 code별 단일 시리즈 수집 (T5, AC-8.1~8.6, REQ-FREDFMT-004~010)
+    // ────────────────────────────────────────────────────────────────────
+
+    @Nested
+    @DisplayName("collectAllForIndicator — code별 단일 시리즈 백필")
+    class CollectAllForIndicator {
+
+        @Test
+        @DisplayName("FRED_DFF 지정 — 해당 시리즈만 1회 수집, 5개 일괄 수집 안 함 (AC-8.1, 8.6)")
+        void singleIndicatorCode_collectsOnlyThatSeries() {
+            // Arrange
+            stubRestClientChain();
+            when(responseSpec.body(FredObservationsResponse.class))
+                    .thenReturn(responseWithObs(List.of(obs("2026-06-17", "5.33"))));
+
+            // Act
+            MacroCollectionResult result = service.collectAllForIndicator("FRED_DFF");
+
+            // Assert — RestClient.get()이 1회만 호출됨(5회 아님)
+            verify(macroFredRestClient, times(1)).get();
+            assertThat(result.attempted()).isEqualTo(1);
+            assertThat(result.succeeded()).isEqualTo(1);
+        }
+
+        @Test
+        @DisplayName("반환 집계에 타 시리즈 수집분이 섞이지 않음 (AC-8.2)")
+        void singleIndicatorCode_noAggregationFromOtherSeries() {
+            // Arrange
+            stubRestClientChain();
+            when(responseSpec.body(FredObservationsResponse.class))
+                    .thenReturn(responseWithObs(List.of(obs("2026-06-17", "3.63"))));
+
+            // Act
+            MacroCollectionResult result = service.collectAllForIndicator("FRED_DGS10");
+
+            // Assert
+            verify(macroFredRestClient, times(1)).get();
+            assertThat(result.succeeded()).isEqualTo(1);
+        }
+
+        @Test
+        @DisplayName("응답 null — 예외가 오케스트레이터로 전파됨(시리즈 격리 없이, AC-8.4)")
+        void nullResponse_propagatesExceptionWithoutIsolation() {
+            // Arrange
+            stubRestClientChain();
+            when(responseSpec.body(FredObservationsResponse.class)).thenReturn(null);
+
+            // Act & Assert — collectInternal()과 달리 예외가 흡수되지 않고 전파되어야 함
+            assertThatThrownBy(() -> service.collectAllForIndicator("FRED_DFF"))
+                    .isInstanceOf(FredApiException.class);
+        }
+
+        @Test
+        @DisplayName("정당한 0건 — 예외 없이 (0,0,0) 반환 (AC-8.5)")
+        void emptyObservations_returnsZeroWithoutException() {
+            // Arrange
+            stubRestClientChain();
+            when(responseSpec.body(FredObservationsResponse.class))
+                    .thenReturn(responseWithObs(List.of()));
+
+            // Act
+            MacroCollectionResult result = service.collectAllForIndicator("FRED_DFF");
+
+            // Assert
+            assertThat(result.attempted()).isZero();
+            assertThat(result.succeeded()).isZero();
+        }
+
+        @Test
+        @DisplayName("미지 indicator_code — 예외 발생, 다른 시리즈로 대체하지 않음 (AC-8.3)")
+        void unknownIndicatorCode_throwsException() {
+            assertThatThrownBy(() -> service.collectAllForIndicator("FRED_UNKNOWN"))
+                    .isInstanceOf(FredApiException.class);
         }
     }
 

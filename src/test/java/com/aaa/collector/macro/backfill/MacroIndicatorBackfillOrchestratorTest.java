@@ -155,15 +155,17 @@ class MacroIndicatorBackfillOrchestratorTest {
         }
 
         @Test
-        @DisplayName("PENDING FRED 항목 — fredCollectionService.collectAll() 호출 후 COMPLETED 갱신")
-        void pendingFredEntry_callsCollectAllAndUpdatesCompleted() {
+        @DisplayName(
+                "PENDING FRED 항목 — fredCollectionService.collectAllForIndicator() 호출 후 COMPLETED"
+                        + " 갱신 (AC-8.1)")
+        void pendingFredEntry_callsCollectAllForIndicatorAndUpdatesCompleted() {
             // Arrange
             BackfillStatus status = mockStatus(2L, "FRED_DFF");
             BackfillStatus mockManaged = Mockito.mock(BackfillStatus.class);
             when(backfillStatusRepository.findByStatusInAndTargetTypeOrderById(
                             any(), eq("MACRO_INDICATOR")))
                     .thenReturn(List.of(status));
-            when(fredCollectionService.collectAll())
+            when(fredCollectionService.collectAllForIndicator("FRED_DFF"))
                     .thenReturn(new MacroCollectionResult(50, 48, 2));
             when(macroIndicatorRepository.findMinTradeDateByIndicatorCode("FRED_DFF"))
                     .thenReturn(Optional.of(LocalDate.of(2019, 6, 1)));
@@ -172,8 +174,9 @@ class MacroIndicatorBackfillOrchestratorTest {
             // Act
             orchestrator.run();
 
-            // Assert
-            verify(fredCollectionService).collectAll();
+            // Assert — 5개 시리즈 일괄 수집(collectAll())은 호출되지 않음(AC-8.1, 8.6)
+            verify(fredCollectionService).collectAllForIndicator("FRED_DFF");
+            verify(fredCollectionService, never()).collectAll();
             verify(backfillStatusRepository).findById(2L);
             verify(mockManaged)
                     .advance(eq(BackfillStatusType.COMPLETED), any(LocalDate.class), eq(0), any());
@@ -193,6 +196,7 @@ class MacroIndicatorBackfillOrchestratorTest {
             // Assert — collectAll(For Indicator) 호출 없음
             verify(ecosCollectionService, never()).collectAllForIndicator(anyString());
             verify(ecosCollectionService, never()).collectAll();
+            verify(fredCollectionService, never()).collectAllForIndicator(anyString());
             verify(fredCollectionService, never()).collectAll();
         }
     }
@@ -266,7 +270,8 @@ class MacroIndicatorBackfillOrchestratorTest {
     @DisplayName("W-2: AC-4.2 FRED 지표 코드 — fredCollectionService 분기 검증")
     class FredRoutingParameterized {
 
-        @ParameterizedTest(name = "FRED 코드={0} → fredCollectionService.collectAll() 호출")
+        @ParameterizedTest(
+                name = "FRED 코드={0} → fredCollectionService.collectAllForIndicator() 라우팅")
         @ValueSource(
                 strings = {
                     "FRED_DFF",
@@ -275,15 +280,17 @@ class MacroIndicatorBackfillOrchestratorTest {
                     "FRED_A191RL1Q225SBEA",
                     "FRED_UNRATE"
                 })
-        @DisplayName("FRED indicator_code 5개 전체 — fredCollectionService.collectAll() 라우팅")
-        void fredIndicatorCode_routesToFredCollectionService(String indicatorCode) {
+        @DisplayName(
+                "FRED indicator_code 5개 전체 — fredCollectionService.collectAllForIndicator()"
+                        + " 단일 시리즈 라우팅 (AC-8.1, 8.6)")
+        void fredIndicatorCode_routesToFredCollectionServiceSingleSeries(String indicatorCode) {
             // Arrange
             BackfillStatus status = mockStatus(20L, indicatorCode);
             BackfillStatus mockManaged = Mockito.mock(BackfillStatus.class);
             when(backfillStatusRepository.findByStatusInAndTargetTypeOrderById(
                             any(), eq("MACRO_INDICATOR")))
                     .thenReturn(List.of(status));
-            when(fredCollectionService.collectAll())
+            when(fredCollectionService.collectAllForIndicator(indicatorCode))
                     .thenReturn(new MacroCollectionResult(100, 100, 0));
             when(macroIndicatorRepository.findMinTradeDateByIndicatorCode(indicatorCode))
                     .thenReturn(Optional.of(LocalDate.of(2000, 1, 3)));
@@ -292,8 +299,9 @@ class MacroIndicatorBackfillOrchestratorTest {
             // Act
             orchestrator.run();
 
-            // Assert
-            verify(fredCollectionService).collectAll();
+            // Assert — 5개 시리즈 일괄 수집(collectAll())은 호출되지 않음
+            verify(fredCollectionService).collectAllForIndicator(indicatorCode);
+            verify(fredCollectionService, never()).collectAll();
             verify(ecosCollectionService, never()).collectAll();
             verify(mockManaged)
                     .advance(

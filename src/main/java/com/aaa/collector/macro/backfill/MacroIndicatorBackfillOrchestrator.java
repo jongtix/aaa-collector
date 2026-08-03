@@ -125,7 +125,8 @@ public class MacroIndicatorBackfillOrchestrator {
             // REQ-ECOSFMT-012 — code당 8개 시리즈 일괄 수집 대신 해당 시리즈 1개만 수집
             return ecosCollectionService.collectAllForIndicator(indicatorCode);
         } else {
-            return fredCollectionService.collectAll();
+            // REQ-FREDFMT-004 — code당 5개 시리즈 일괄 수집 대신 해당 시리즈 1개만 수집
+            return fredCollectionService.collectAllForIndicator(indicatorCode);
         }
     }
 

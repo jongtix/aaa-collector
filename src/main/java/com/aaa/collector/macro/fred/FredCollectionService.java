@@ -64,6 +64,28 @@ public class FredCollectionService {
         return collectInternal(true);
     }
 
+    /**
+     * {@code indicator_code}로 지정된 단일 FRED 시리즈의 전체 이력을 백필한다(REQ-FREDFMT-005).
+     *
+     * <p>5개 시리즈 일괄 수집(collectAll())과 달리 해당 시리즈 1개만 호출하며(REQ-FREDFMT-004, 010), 반환 집계에 다른 시리즈의 수집분을
+     * 합산하지 않는다(REQ-FREDFMT-006 — 오귀속 금지). {@code collectInternal()}의 시리즈 단위 예외 격리와 달리 예외를 흡수하지 않고
+     * 호출자(백필 오케스트레이터)로 그대로 전파한다(REQ-FREDFMT-008 — 예외 경로가 FAILED 전이를 트리거하도록).
+     *
+     * @throws FredApiException {@code indicator_code}에 대응하는 시리즈 설정이 없으면 (REQ-FREDFMT-007), 또는 수집이
+     *     예측 불가 응답으로 실패하면
+     */
+    public MacroCollectionResult collectAllForIndicator(String indicatorCode) {
+        FredSeriesConfig.Series series = findSeries(indicatorCode);
+        return collectSeries(series, true);
+    }
+
+    private static FredSeriesConfig.Series findSeries(String indicatorCode) {
+        return FredSeriesConfig.ALL.stream()
+                .filter(s -> s.indicatorCode().equals(indicatorCode))
+                .findFirst()
+                .orElseThrow(() -> new FredApiException(indicatorCode, "알 수 없는 indicator_code"));
+    }
+
     @SuppressWarnings("PMD.AvoidCatchingGenericException")
     private MacroCollectionResult collectInternal(boolean backfill) {
         int attempted = 0;
