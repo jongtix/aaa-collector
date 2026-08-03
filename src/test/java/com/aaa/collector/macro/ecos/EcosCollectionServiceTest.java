@@ -51,6 +51,7 @@ class EcosCollectionServiceTest {
     @Mock private ResponseSpec responseSpec;
 
     @Captor private ArgumentCaptor<List<MacroIndicator>> inserterCaptor;
+    @Captor private ArgumentCaptor<String> uriCaptor;
 
     private final InserterProperties inserterProperties = new InserterProperties();
 
@@ -147,6 +148,128 @@ class EcosCollectionServiceTest {
         @DisplayName("지원하지 않는 주기 코드 → IllegalArgumentException")
         void unsupportedPeriod_throwsException() {
             assertThatThrownBy(() -> EcosCollectionService.normalizeDate("W", "20260620"))
+                    .isInstanceOf(IllegalArgumentException.class);
+        }
+    }
+
+    // ────────────────────────────────────────────────────────────────────
+    // 주기별 요청 URL 날짜 포맷 (T2, AC-1.1~1.4, 1.7, REQ-ECOSFMT-001~006, 022/023)
+    // ────────────────────────────────────────────────────────────────────
+
+    @Nested
+    @DisplayName("buildUrl — 주기별 날짜 포맷")
+    class UrlDateFormat {
+
+        @Test
+        @DisplayName("당일 수집 — M 시리즈(ECOS_CPI) 요청 URL 날짜가 6자리(YYYYMM) [실측 #2 재발 방지]")
+        void dailyCollect_monthlySeries_sixDigitDate() {
+            // Arrange
+            stubRestClientChain();
+            when(responseSpec.body(EcosStatisticSearchResponse.class))
+                    .thenReturn(responseWithRows(List.of(row("202606", "3.50"))));
+
+            // Act
+            service.collect();
+
+            // Assert — ECOS_CPI는 EcosSeriesConfig.ALL의 6번째(index 5) 시리즈
+            verify(requestHeadersUriSpec, times(8)).uri(uriCaptor.capture());
+            String cpiUrl = uriCaptor.getAllValues().get(5);
+            String[] segments = cpiUrl.split("/");
+            String startDate = segments[segments.length - 3];
+            String endDate = segments[segments.length - 2];
+            assertThat(startDate).matches("^\\d{6}$");
+            assertThat(endDate).matches("^\\d{6}$");
+        }
+
+        @Test
+        @DisplayName("당일 수집 — Q 시리즈(ECOS_GDP_QOQ) 요청 URL 날짜가 YYYYQN [실측 #3 재발 방지, #5 형식 준거]")
+        void dailyCollect_quarterlySeries_yyyyQnDate() {
+            // Arrange
+            stubRestClientChain();
+            when(responseSpec.body(EcosStatisticSearchResponse.class))
+                    .thenReturn(responseWithRows(List.of(row("2026Q2", "0.6"))));
+
+            // Act
+            service.collect();
+
+            // Assert — ECOS_GDP_QOQ는 EcosSeriesConfig.ALL의 7번째(index 6) 시리즈
+            verify(requestHeadersUriSpec, times(8)).uri(uriCaptor.capture());
+            String gdpUrl = uriCaptor.getAllValues().get(6);
+            String[] segments = gdpUrl.split("/");
+            String startDate = segments[segments.length - 3];
+            String endDate = segments[segments.length - 2];
+            assertThat(startDate).matches("^\\d{4}Q[1-4]$");
+            assertThat(endDate).matches("^\\d{4}Q[1-4]$");
+        }
+
+        @Test
+        @DisplayName("당일 수집 — D 시리즈(ECOS_BASE_RATE) 요청 URL 날짜가 8자리(YYYYMMDD, 회귀 없음)")
+        void dailyCollect_dailySeries_eightDigitDate() {
+            // Arrange
+            stubRestClientChain();
+            when(responseSpec.body(EcosStatisticSearchResponse.class))
+                    .thenReturn(responseWithRows(List.of(row("20260620", "3.50"))));
+
+            // Act
+            service.collect();
+
+            // Assert — ECOS_BASE_RATE는 EcosSeriesConfig.ALL의 첫 번째(index 0) 시리즈
+            verify(requestHeadersUriSpec, times(8)).uri(uriCaptor.capture());
+            String baseRateUrl = uriCaptor.getAllValues().getFirst();
+            String[] segments = baseRateUrl.split("/");
+            String startDate = segments[segments.length - 3];
+            String endDate = segments[segments.length - 2];
+            assertThat(startDate).matches("^\\d{8}$");
+            assertThat(endDate).matches("^\\d{8}$");
+        }
+
+        @Test
+        @DisplayName("백필 — 주기별 시작 리터럴(D=19000101, M=190001, Q=1900Q1) [실측 #7 재발 방지]")
+        void backfill_periodSpecificStartLiteral() {
+            // Arrange
+            stubRestClientChain();
+            when(responseSpec.body(EcosStatisticSearchResponse.class))
+                    .thenReturn(responseWithRows(List.of(row("20260620", "3.50"))));
+
+            // Act
+            service.collectAll();
+
+            // Assert
+            verify(requestHeadersUriSpec, times(8)).uri(uriCaptor.capture());
+            List<String> urls = uriCaptor.getAllValues();
+            assertThat(startDateSegment(urls.getFirst())).isEqualTo("19000101"); // D
+            assertThat(startDateSegment(urls.get(5))).isEqualTo("190001"); // M (ECOS_CPI)
+            assertThat(startDateSegment(urls.get(6))).isEqualTo("1900Q1"); // Q (ECOS_GDP_QOQ)
+        }
+
+        private String startDateSegment(String url) {
+            String[] segments = url.split("/");
+            return segments[segments.length - 3];
+        }
+
+        @Test
+        @DisplayName("Q 분기 계산 경계 — 1·3월=Q1, 4·6월=Q2")
+        void quarterCalculation_q1AndQ2Boundaries() {
+            assertThat(EcosPeriodDateFormatter.quarterOf(1)).isEqualTo(1);
+            assertThat(EcosPeriodDateFormatter.quarterOf(3)).isEqualTo(1);
+            assertThat(EcosPeriodDateFormatter.quarterOf(4)).isEqualTo(2);
+            assertThat(EcosPeriodDateFormatter.quarterOf(6)).isEqualTo(2);
+        }
+
+        @Test
+        @DisplayName("Q 분기 계산 경계 — 7·9월=Q3, 10·12월=Q4")
+        void quarterCalculation_q3AndQ4Boundaries() {
+            assertThat(EcosPeriodDateFormatter.quarterOf(7)).isEqualTo(3);
+            assertThat(EcosPeriodDateFormatter.quarterOf(9)).isEqualTo(3);
+            assertThat(EcosPeriodDateFormatter.quarterOf(10)).isEqualTo(4);
+            assertThat(EcosPeriodDateFormatter.quarterOf(12)).isEqualTo(4);
+        }
+
+        @Test
+        @DisplayName("미지원 주기 코드 → URL 생성 시 예외(무음 폴백 제거, REQ-ECOSFMT-006)")
+        void unsupportedPeriod_throwsInsteadOfSilentFallback() {
+            assertThatThrownBy(
+                            () -> EcosPeriodDateFormatter.formatDateForPeriod(LocalDate.now(), "W"))
                     .isInstanceOf(IllegalArgumentException.class);
         }
     }

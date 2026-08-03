@@ -39,15 +39,6 @@ public class EcosCollectionService {
 
     private static final DateTimeFormatter DAILY_FMT = DateTimeFormatter.BASIC_ISO_DATE;
 
-    /** 당일 수집 윈도우 — 일별 최근 30일 */
-    private static final int DAILY_WINDOW = 30;
-
-    /** 당일 수집 윈도우 — 월별 최근 3개월 */
-    private static final int MONTHLY_WINDOW = 3;
-
-    /** 당일 수집 윈도우 — 분기별 최근 2분기 */
-    private static final int QUARTERLY_WINDOW = 6;
-
     // @MX:ANCHOR: [AUTO] ECOS 수집 핵심 진입점 — 8개 시리즈 순차 처리
     // @MX:REASON: [AUTO] MacroExternalScheduler, MacroIndicatorBackfillOrchestrator 에서 호출됨
     // (fan_in=2)
@@ -256,24 +247,19 @@ public class EcosCollectionService {
         // ECOS URL 패턴:
         // /api/StatisticSearch/{serviceKey}/json/kr/{startNo}/{endNo}/{statCode}/{period}/{startDate}/{endDate}/{itemCode}
         LocalDate today = LocalDate.now();
+        String period = series.period();
+        String endDate = EcosPeriodDateFormatter.formatDateForPeriod(today, period);
         String startDate;
-        String endDate = today.format(DateTimeFormatter.BASIC_ISO_DATE);
         int endNo;
 
         if (backfill) {
-            // 전체 이력: 아주 오래된 날짜부터 현재까지
-            startDate = "19000101";
+            // 전체 이력: 주기별 최소 유효 리터럴부터 현재까지(REQ-ECOSFMT-002)
+            startDate = EcosPeriodDateFormatter.backfillStartLiteral(period);
             endNo = 99_999;
         } else {
-            // 당일 수집 윈도우
-            LocalDate from =
-                    switch (series.period()) {
-                        case "D" -> today.minusDays(DAILY_WINDOW);
-                        case "M" -> today.minusMonths(MONTHLY_WINDOW).withDayOfMonth(1);
-                        case "Q" -> today.minusMonths(QUARTERLY_WINDOW).withDayOfMonth(1);
-                        default -> today.minusDays(DAILY_WINDOW);
-                    };
-            startDate = from.format(DateTimeFormatter.BASIC_ISO_DATE);
+            // 당일 수집 윈도우 — 윈도우 크기는 변경하지 않고 날짜 문자열 포맷만 정정(REQ-ECOSFMT-004)
+            LocalDate windowStart = EcosPeriodDateFormatter.windowStart(today, period);
+            startDate = EcosPeriodDateFormatter.formatDateForPeriod(windowStart, period);
             endNo = 100;
         }
 
@@ -282,7 +268,7 @@ public class EcosCollectionService {
                         serviceKey,
                         endNo,
                         series.statCode(),
-                        series.period(),
+                        period,
                         startDate,
                         endDate,
                         series.itemCode());
