@@ -1,7 +1,9 @@
 package com.aaa.collector.stock.shortsale.overseas;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -209,6 +211,82 @@ class ShortSaleOverseasInterestMetricsTest {
 
             // Assert
             verify(batchMetrics, never()).recordDataArrival(any());
+        }
+    }
+
+    @Nested
+    @DisplayName(
+            "daysToCoverQuantity/averageDailyVolumeQuantity 전달 — 6-arg upsertInterest 와이어링"
+                    + " (SPEC-COLLECTOR-SHORTSALE-OVERSEAS-003 M3, REQ-SSOI-011)")
+    class MetricColumnWiring {
+
+        @Test
+        @DisplayName(
+                "daysToCoverQuantity/averageDailyVolumeQuantity가 유효하면 그대로 upsertInterest에 전달된다 (AC-11)")
+        void passesValidMetricFieldsToUpsertInterest() {
+            // Arrange
+            Stock aapl = stock(1L, "AAPL");
+            LocalDate settlement = LocalDate.of(2026, 4, 15);
+            when(stockRepository.findAllActiveOverseasTradable()).thenReturn(List.of(aapl));
+            when(shortSaleOverseasRepository.findExistingInterestPairsByStockIds(
+                            any(), any(), any()))
+                    .thenReturn(Map.of());
+            when(finraClient.fetchConsolidatedShortInterestForSymbols(any(), any(), any()))
+                    .thenReturn(
+                            List.of(
+                                    new FinraConsolidatedShortInterestResponse(
+                                            "AAPL",
+                                            "Apple Inc. Common Stock",
+                                            settlement,
+                                            BigDecimal.valueOf(134_422_787L),
+                                            new BigDecimal("39674165"),
+                                            new BigDecimal("3.39"),
+                                            null)));
+
+            // Act
+            service.collectShortInterest(TODAY);
+
+            // Assert: 파싱된 값이 그대로 6-arg upsertInterest에 전달된다
+            verify(shortSaleOverseasRepository)
+                    .upsertInterest(
+                            eq(1L),
+                            eq(settlement),
+                            eq(134_422_787L),
+                            any(),
+                            eq(new BigDecimal("3.39")),
+                            eq(39_674_165L));
+        }
+
+        @Test
+        @DisplayName(
+                "daysToCoverQuantity/averageDailyVolumeQuantity가 없으면 행은 정상 적재되고 두 컬럼만 NULL로 전달된다"
+                        + " (AC-11a)")
+        void leavesMetricColumnsNullWhenAbsentWithoutRejectingRow() {
+            // Arrange — 하위 호환 4-필드 생성자 사용(신규 3필드는 null로 남는다)
+            Stock aapl = stock(1L, "AAPL");
+            LocalDate settlement = LocalDate.of(2026, 4, 15);
+            when(stockRepository.findAllActiveOverseasTradable()).thenReturn(List.of(aapl));
+            when(shortSaleOverseasRepository.findExistingInterestPairsByStockIds(
+                            any(), any(), any()))
+                    .thenReturn(Map.of());
+            when(finraClient.fetchConsolidatedShortInterestForSymbols(any(), any(), any()))
+                    .thenReturn(
+                            List.of(
+                                    new FinraConsolidatedShortInterestResponse(
+                                            "AAPL",
+                                            settlement,
+                                            BigDecimal.valueOf(134_422_787L),
+                                            null)));
+
+            // Act
+            ShortSaleOverseasInterestCollectionService.InterestResult result =
+                    service.collectShortInterest(TODAY);
+
+            // Assert: 행은 성공 적재되고(거부 아님), 두 컬럼만 NULL로 전달된다
+            assertThat(result.succeeded()).isEqualTo(1);
+            verify(shortSaleOverseasRepository)
+                    .upsertInterest(
+                            eq(1L), eq(settlement), eq(134_422_787L), any(), isNull(), isNull());
         }
     }
 }
