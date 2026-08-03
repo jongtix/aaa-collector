@@ -95,7 +95,7 @@ class ShortSaleOverseasInterestIT extends WarmStartRedisMockSupport {
         // Arrange
         Stock stock = savedUsStock();
         LocalDate settlement = LocalDate.of(2026, 4, 15).minusDays(SYMBOL_SEQ.get());
-        when(finraClient.fetchConsolidatedShortInterest(any(), any()))
+        when(finraClient.fetchConsolidatedShortInterestForSymbols(any(), any(), any()))
                 .thenReturn(List.of(siRow(stock.getSymbol(), settlement, 134_422_787L, null)));
 
         // Act
@@ -126,7 +126,7 @@ class ShortSaleOverseasInterestIT extends WarmStartRedisMockSupport {
         Stock stock = savedUsStock();
         LocalDate settlement = LocalDate.of(2026, 4, 14).minusDays(SYMBOL_SEQ.get());
         repository.upsertInterest(stock.getId(), settlement, 100_000_000L, LocalDateTime.now());
-        when(finraClient.fetchConsolidatedShortInterest(any(), any()))
+        when(finraClient.fetchConsolidatedShortInterestForSymbols(any(), any(), any()))
                 .thenReturn(List.of(siRow(stock.getSymbol(), settlement, 999_999_999L, null)));
 
         // Act
@@ -154,7 +154,7 @@ class ShortSaleOverseasInterestIT extends WarmStartRedisMockSupport {
                 null);
         repository.upsertInterest(stock.getId(), settlement, 126_771_284L, LocalDateTime.now());
 
-        when(finraClient.fetchConsolidatedShortInterest(any(), any()))
+        when(finraClient.fetchConsolidatedShortInterestForSymbols(any(), any(), any()))
                 .thenReturn(List.of(siRow(stock.getSymbol(), settlement, 140_000_000L, "R")));
 
         // Act
@@ -174,7 +174,7 @@ class ShortSaleOverseasInterestIT extends WarmStartRedisMockSupport {
         // Arrange
         Stock stock = savedUsStock();
         LocalDate settlement = LocalDate.of(2026, 4, 12).minusDays(SYMBOL_SEQ.get());
-        when(finraClient.fetchConsolidatedShortInterest(any(), any()))
+        when(finraClient.fetchConsolidatedShortInterestForSymbols(any(), any(), any()))
                 .thenReturn(
                         List.of(
                                 siRow(stock.getSymbol(), settlement, 134_422_787L, null),
@@ -196,7 +196,8 @@ class ShortSaleOverseasInterestIT extends WarmStartRedisMockSupport {
     @DisplayName("빈 응답이면 적재 0건·예외 없음 (AC-EMPTY-1, REQ-SSO-020)")
     void emptyResponseSkips() {
         Stock stock = savedUsStock();
-        when(finraClient.fetchConsolidatedShortInterest(any(), any())).thenReturn(List.of());
+        when(finraClient.fetchConsolidatedShortInterestForSymbols(any(), any(), any()))
+                .thenReturn(List.of());
 
         // Act & Assert: 예외 없이 0건
         service.collectShortInterest(TODAY);
@@ -217,7 +218,7 @@ class ShortSaleOverseasInterestIT extends WarmStartRedisMockSupport {
         repository.upsertInterest(stockA.getId(), settlement, 100_000_000L, LocalDateTime.now());
 
         // 이번 수집에서 종목 B × 동일 날짜 X 를 받음 (revisionFlag=null)
-        when(finraClient.fetchConsolidatedShortInterest(any(), any()))
+        when(finraClient.fetchConsolidatedShortInterestForSymbols(any(), any(), any()))
                 .thenReturn(List.of(siRow(stockB.getSymbol(), settlement, 200_000_000L, null)));
 
         // Act

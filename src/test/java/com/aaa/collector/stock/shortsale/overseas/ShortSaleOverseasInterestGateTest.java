@@ -110,7 +110,7 @@ class ShortSaleOverseasInterestGateTest {
             LocalDate legacyOwnerSettlementDate = LocalDate.of(2020, 6, 30);
             Stock serv = stock(1L, "SERV", servListedDate);
             stubActiveStock(serv);
-            when(finraClient.fetchConsolidatedShortInterest(any(), any()))
+            when(finraClient.fetchConsolidatedShortInterestForSymbols(any(), any(), any()))
                     .thenReturn(List.of(row("SERV", legacyOwnerSettlementDate)));
 
             // Act
@@ -118,7 +118,8 @@ class ShortSaleOverseasInterestGateTest {
                     service.collectShortInterest(TODAY);
 
             // Assert: 적재 미호출 + skipped=1 + 게이트 카운터 1
-            verify(shortSaleOverseasRepository, never()).upsertInterest(any(), any(), any(), any());
+            verify(shortSaleOverseasRepository, never())
+                    .upsertInterest(any(), any(), any(), any(), any(), any());
             assertThat(result.skipped()).isEqualTo(1);
             assertThat(result.succeeded()).isZero();
             assertThat(
@@ -141,7 +142,7 @@ class ShortSaleOverseasInterestGateTest {
             LocalDate recentSettlementDate = TODAY.minusDays(10);
             Stock newlyWatched = stock(2L, "NEWCO", null);
             stubActiveStock(newlyWatched);
-            when(finraClient.fetchConsolidatedShortInterest(any(), any()))
+            when(finraClient.fetchConsolidatedShortInterestForSymbols(any(), any(), any()))
                     .thenReturn(List.of(row("NEWCO", recentSettlementDate)));
 
             // Act
@@ -150,7 +151,7 @@ class ShortSaleOverseasInterestGateTest {
 
             // Assert: 정상 적재, 게이트 카운터 미증가
             verify(shortSaleOverseasRepository)
-                    .upsertInterest(eq(2L), eq(recentSettlementDate), any(), any());
+                    .upsertInterest(eq(2L), eq(recentSettlementDate), any(), any(), any(), any());
             assertThat(result.succeeded()).isEqualTo(1);
             assertThat(result.skipped()).isZero();
             assertThat(
@@ -168,7 +169,7 @@ class ShortSaleOverseasInterestGateTest {
             LocalDate staleSettlementDate = TODAY.minusDays(INTEREST_LOOKBACK_DAYS + 1);
             Stock newlyWatched = stock(3L, "OLDCO", null);
             stubActiveStock(newlyWatched);
-            when(finraClient.fetchConsolidatedShortInterest(any(), any()))
+            when(finraClient.fetchConsolidatedShortInterestForSymbols(any(), any(), any()))
                     .thenReturn(List.of(row("OLDCO", staleSettlementDate)));
 
             // Act
@@ -176,7 +177,8 @@ class ShortSaleOverseasInterestGateTest {
                     service.collectShortInterest(TODAY);
 
             // Assert: 적재 미호출 + skipped=1 + 게이트 카운터 1
-            verify(shortSaleOverseasRepository, never()).upsertInterest(any(), any(), any(), any());
+            verify(shortSaleOverseasRepository, never())
+                    .upsertInterest(any(), any(), any(), any(), any(), any());
             assertThat(result.skipped()).isEqualTo(1);
             assertThat(
                             meterRegistry
@@ -198,7 +200,7 @@ class ShortSaleOverseasInterestGateTest {
             LocalDate boundarySettlementDate = TODAY.minusDays(INTEREST_LOOKBACK_DAYS);
             Stock newlyWatched = stock(4L, "BNDCO", null);
             stubActiveStock(newlyWatched);
-            when(finraClient.fetchConsolidatedShortInterest(any(), any()))
+            when(finraClient.fetchConsolidatedShortInterestForSymbols(any(), any(), any()))
                     .thenReturn(List.of(row("BNDCO", boundarySettlementDate)));
 
             // Act
@@ -207,7 +209,7 @@ class ShortSaleOverseasInterestGateTest {
 
             // Assert: 경계값은 포함(통과) — plan.md isBefore(recentWindowStart) 규칙 고정
             verify(shortSaleOverseasRepository)
-                    .upsertInterest(eq(4L), eq(boundarySettlementDate), any(), any());
+                    .upsertInterest(eq(4L), eq(boundarySettlementDate), any(), any(), any(), any());
             assertThat(result.succeeded()).isEqualTo(1);
             assertThat(result.skipped()).isZero();
             assertThat(
@@ -229,7 +231,7 @@ class ShortSaleOverseasInterestGateTest {
             // Arrange: 게이트 스킵이 발생하지 않는 정상 케이스
             Stock aapl = stock(5L, "AAPL", LocalDate.of(2000, 1, 1));
             stubActiveStock(aapl);
-            when(finraClient.fetchConsolidatedShortInterest(any(), any()))
+            when(finraClient.fetchConsolidatedShortInterestForSymbols(any(), any(), any()))
                     .thenReturn(List.of(row("AAPL", TODAY.minusDays(1))));
 
             // Act

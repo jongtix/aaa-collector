@@ -78,7 +78,7 @@ class ShortSaleOverseasInterestMetricsTest {
             when(shortSaleOverseasRepository.findExistingInterestPairsByStockIds(
                             any(), any(), any()))
                     .thenReturn(Map.of());
-            when(finraClient.fetchConsolidatedShortInterest(any(), any()))
+            when(finraClient.fetchConsolidatedShortInterestForSymbols(any(), any(), any()))
                     .thenReturn(
                             List.of(
                                     new FinraConsolidatedShortInterestResponse(
@@ -112,7 +112,7 @@ class ShortSaleOverseasInterestMetricsTest {
             when(shortSaleOverseasRepository.findExistingInterestPairsByStockIds(
                             any(), any(), any()))
                     .thenReturn(Map.of());
-            when(finraClient.fetchConsolidatedShortInterest(any(), any()))
+            when(finraClient.fetchConsolidatedShortInterestForSymbols(any(), any(), any()))
                     .thenReturn(
                             List.of(
                                     new FinraConsolidatedShortInterestResponse(
@@ -132,7 +132,8 @@ class ShortSaleOverseasInterestMetricsTest {
         @Test
         @DisplayName("빈 응답이면 0건으로 기록한다")
         void recordsZeroOnEmpty() {
-            when(finraClient.fetchConsolidatedShortInterest(any(), any())).thenReturn(List.of());
+            when(finraClient.fetchConsolidatedShortInterestForSymbols(any(), any(), any()))
+                    .thenReturn(List.of());
 
             // Act
             service.collectShortInterest(TODAY);
@@ -155,7 +156,7 @@ class ShortSaleOverseasInterestMetricsTest {
             when(shortSaleOverseasRepository.findExistingInterestPairsByStockIds(
                             any(), any(), any()))
                     .thenReturn(Map.of());
-            when(finraClient.fetchConsolidatedShortInterest(any(), any()))
+            when(finraClient.fetchConsolidatedShortInterestForSymbols(any(), any(), any()))
                     .thenReturn(
                             List.of(
                                     new FinraConsolidatedShortInterestResponse(
@@ -174,7 +175,8 @@ class ShortSaleOverseasInterestMetricsTest {
         @Test
         @DisplayName("빈 응답(폴만 발생)에는 last_data를 갱신하지 않는다 — FINRA 미발표 탐지")
         void skipsDataArrivalOnEmpty() {
-            when(finraClient.fetchConsolidatedShortInterest(any(), any())).thenReturn(List.of());
+            when(finraClient.fetchConsolidatedShortInterestForSymbols(any(), any(), any()))
+                    .thenReturn(List.of());
 
             // Act
             service.collectShortInterest(TODAY);
@@ -193,7 +195,7 @@ class ShortSaleOverseasInterestMetricsTest {
             when(shortSaleOverseasRepository.findExistingInterestPairsByStockIds(
                             any(), any(), any()))
                     .thenReturn(Map.of(1L, java.util.Set.of(settlement)));
-            when(finraClient.fetchConsolidatedShortInterest(any(), any()))
+            when(finraClient.fetchConsolidatedShortInterestForSymbols(any(), any(), any()))
                     .thenReturn(
                             List.of(
                                     new FinraConsolidatedShortInterestResponse(

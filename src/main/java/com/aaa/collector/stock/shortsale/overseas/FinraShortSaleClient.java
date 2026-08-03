@@ -2,6 +2,7 @@ package com.aaa.collector.stock.shortsale.overseas;
 
 import java.time.LocalDate;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.List;
 import java.util.Map;
 import java.util.function.IntFunction;
@@ -32,6 +33,22 @@ public class FinraShortSaleClient {
 
     private static final String RECORD_TOTAL_HEADER = "record-total";
 
+    /**
+     * FINRA 필터 객체의 필드명 키 — {@code compareFilters}/{@code dateRangeFilters}/{@code domainFilters}가
+     * 공유한다.
+     */
+    private static final String FIELD_NAME_KEY = "fieldName";
+
+    /** {@code domainFilters} 심볼 필터 필드명(FINRA 실측 2026-07-28, api-specs/finra/01-공매도잔고.md). */
+    private static final String DOMAIN_FILTER_SYMBOL_FIELD = "symbolCode";
+
+    /**
+     * {@code domainFilters} 심볼 목록 단일 요청 청크 기본 크기(SPEC-COLLECTOR-SHORTSALE-OVERSEAS-003 M3,
+     * REQ-SSOI-003). FINRA 요청 바디 크기 제약이 아직 실측 확정되지 않아(plan.md M5 구현 시점 검증), 검증 전까지의 기본 가정치인 76(현재
+     * 워치리스트 전량 1콜 성공 실측, 2026-07-28)을 그대로 사용한다 — M5 실측 결과로 조정한다.
+     */
+    private static final int DEFAULT_DOMAIN_FILTER_CHUNK_SIZE = 76;
+
     private static final ParameterizedTypeReference<List<FinraRegShoDailyResponse>>
             DAILY_LIST_TYPE = new ParameterizedTypeReference<>() {};
     private static final ParameterizedTypeReference<List<FinraConsolidatedShortInterestResponse>>
@@ -53,9 +70,12 @@ public class FinraShortSaleClient {
                                 "compareFilters",
                                 List.of(
                                         Map.of(
-                                                "compareType", "EQUAL",
-                                                "fieldName", "tradeReportDate",
-                                                "fieldValue", tradeReportDate.toString())),
+                                                "compareType",
+                                                "EQUAL",
+                                                FIELD_NAME_KEY,
+                                                "tradeReportDate",
+                                                "fieldValue",
+                                                tradeReportDate.toString())),
                                 "limit",
                                 PAGE_LIMIT,
                                 "offset",
@@ -80,14 +100,81 @@ public class FinraShortSaleClient {
                                 "dateRangeFilters",
                                 List.of(
                                         Map.of(
-                                                "fieldName", "settlementDate",
-                                                "startDate", from.toString(),
-                                                "endDate", to.toString())),
+                                                FIELD_NAME_KEY,
+                                                "settlementDate",
+                                                "startDate",
+                                                from.toString(),
+                                                "endDate",
+                                                to.toString())),
                                 "limit",
                                 PAGE_LIMIT,
                                 "offset",
                                 offset),
                 INTEREST_LIST_TYPE);
+    }
+
+    /**
+     * {@code consolidatedShortInterest}를 {@code domainFilters}(심볼 목록) + {@code dateRangeFilters}
+     * (settlementDate 범위)로 호출해 지정 심볼들의 이력을 페이징 누적한다(SPEC-COLLECTOR-SHORTSALE-OVERSEAS-003 M3,
+     * REQ-SSOI-001/-002). 심볼 목록이 {@link #DEFAULT_DOMAIN_FILTER_CHUNK_SIZE}건을 초과하면 순차 청크 요청으로 분할해
+     * 병합한다(REQ-SSOI-003) — 어떤 심볼도 누락되지 않는다.
+     *
+     * @param symbols 조회 대상 심볼 목록(활성 해외 워치리스트, {@code activeUsStocksBySymbol()} 키 집합)
+     * @param from 범위 시작 settlementDate(포함)
+     * @param to 범위 끝 settlementDate(포함)
+     * @return 전 청크·전 페이지를 합친 공매도 잔고 행(심볼 목록이 비어 있으면 빈 리스트, HTTP 호출 없음)
+     */
+    public List<FinraConsolidatedShortInterestResponse> fetchConsolidatedShortInterestForSymbols(
+            Collection<String> symbols, LocalDate from, LocalDate to) {
+        return fetchConsolidatedShortInterestForSymbols(
+                symbols, from, to, DEFAULT_DOMAIN_FILTER_CHUNK_SIZE);
+    }
+
+    /**
+     * {@link #fetchConsolidatedShortInterestForSymbols(Collection, LocalDate, LocalDate)}의 청크 크기 명시
+     * 오버로드 — 단위 테스트가 가상의 작은 청크 크기로 분할 로직을 검증할 수 있도록 패키지 전용으로 노출한다 (REQ-SSOI-003).
+     *
+     * @param symbols 조회 대상 심볼 목록
+     * @param from 범위 시작 settlementDate(포함)
+     * @param to 범위 끝 settlementDate(포함)
+     * @param chunkSize 단일 요청당 최대 심볼 수
+     * @return 전 청크·전 페이지를 합친 공매도 잔고 행
+     */
+    List<FinraConsolidatedShortInterestResponse> fetchConsolidatedShortInterestForSymbols(
+            Collection<String> symbols, LocalDate from, LocalDate to, int chunkSize) {
+        List<String> symbolList = new ArrayList<>(symbols);
+        List<FinraConsolidatedShortInterestResponse> merged = new ArrayList<>();
+        for (int start = 0; start < symbolList.size(); start += chunkSize) {
+            List<String> chunk =
+                    symbolList.subList(start, Math.min(start + chunkSize, symbolList.size()));
+            merged.addAll(
+                    fetchAllPages(
+                            CONSOLIDATED_SHORT_INTEREST_PATH,
+                            offset ->
+                                    Map.of(
+                                            "domainFilters",
+                                            List.of(
+                                                    Map.of(
+                                                            FIELD_NAME_KEY,
+                                                            DOMAIN_FILTER_SYMBOL_FIELD,
+                                                            "values",
+                                                            chunk)),
+                                            "dateRangeFilters",
+                                            List.of(
+                                                    Map.of(
+                                                            FIELD_NAME_KEY,
+                                                            "settlementDate",
+                                                            "startDate",
+                                                            from.toString(),
+                                                            "endDate",
+                                                            to.toString())),
+                                            "limit",
+                                            PAGE_LIMIT,
+                                            "offset",
+                                            offset),
+                            INTEREST_LIST_TYPE));
+        }
+        return merged;
     }
 
     /**

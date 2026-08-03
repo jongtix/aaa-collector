@@ -232,6 +232,109 @@ class FinraShortSaleClientTest {
         }
     }
 
+    @Nested
+    @DisplayName(
+            "fetchConsolidatedShortInterestForSymbols — domainFilters 심볼 목록 + 청크 분할"
+                    + " (SPEC-COLLECTOR-SHORTSALE-OVERSEAS-003 M3)")
+    class FetchConsolidatedShortInterestForSymbols {
+
+        @Test
+        @DisplayName(
+                "domainFilters(symbolCode, 심볼 목록) + dateRangeFilters(보존 하한~오늘) + limit/offset을 요청 바디에"
+                        + " 구성한다 (AC-01)")
+        void buildsDomainFiltersWithSymbolListAndDateRange() {
+            mockServer
+                    .expect(requestTo(INTEREST_URL))
+                    .andExpect(method(HttpMethod.POST))
+                    .andExpect(headerDoesNotExist(HttpHeaders.AUTHORIZATION))
+                    .andExpect(jsonPath("$.domainFilters[0].fieldName").value("symbolCode"))
+                    .andExpect(jsonPath("$.domainFilters[0].values[0]").value("AAPL"))
+                    .andExpect(jsonPath("$.domainFilters[0].values[1]").value("MSFT"))
+                    .andExpect(jsonPath("$.dateRangeFilters[0].fieldName").value("settlementDate"))
+                    .andExpect(jsonPath("$.dateRangeFilters[0].startDate").value("2017-12-29"))
+                    .andExpect(jsonPath("$.dateRangeFilters[0].endDate").value("2026-07-28"))
+                    .andExpect(jsonPath("$.limit").value(5_000))
+                    .andExpect(jsonPath("$.offset").value(0))
+                    .andRespond(
+                            withSuccess(
+                                            interestRows("AAPL", "2020-01-15", 1_000_000),
+                                            MediaType.APPLICATION_JSON)
+                                    .header("record-total", "1"));
+
+            // Act
+            List<FinraConsolidatedShortInterestResponse> rows =
+                    client.fetchConsolidatedShortInterestForSymbols(
+                            List.of("AAPL", "MSFT"),
+                            LocalDate.of(2017, 12, 29),
+                            LocalDate.of(2026, 7, 28));
+
+            // Assert
+            mockServer.verify();
+            assertThat(rows).hasSize(1);
+            assertThat(rows.getFirst().symbolCode()).isEqualTo("AAPL");
+        }
+
+        @Test
+        @DisplayName(
+                "심볼 목록이 청크 크기를 초과하면 순차 청크 요청으로 분할해 병합한다 — 어떤 심볼도 누락되지 않는다 (AC-03, REQ-SSOI-003)")
+        void splitsSymbolsIntoSequentialChunksAndMerges() {
+            // Arrange: 가상의 작은 청크 크기(2)로 3심볼을 [AAPL,MSFT] + [GOOG] 두 청크로 분할
+            mockServer
+                    .expect(requestTo(INTEREST_URL))
+                    .andExpect(jsonPath("$.domainFilters[0].values[0]").value("AAPL"))
+                    .andExpect(jsonPath("$.domainFilters[0].values[1]").value("MSFT"))
+                    .andExpect(jsonPath("$.offset").value(0))
+                    .andRespond(
+                            withSuccess(
+                                            interestRows(
+                                                    "AAPL",
+                                                    "2020-01-15",
+                                                    1_000_000,
+                                                    "MSFT",
+                                                    "2020-01-15",
+                                                    2_000_000),
+                                            MediaType.APPLICATION_JSON)
+                                    .header("record-total", "2"));
+            mockServer
+                    .expect(requestTo(INTEREST_URL))
+                    .andExpect(jsonPath("$.domainFilters[0].values[0]").value("GOOG"))
+                    .andExpect(jsonPath("$.offset").value(0))
+                    .andRespond(
+                            withSuccess(
+                                            interestRows("GOOG", "2020-01-15", 3_000_000),
+                                            MediaType.APPLICATION_JSON)
+                                    .header("record-total", "1"));
+
+            // Act — 패키지 전용 chunkSize 오버로드로 가상의 작은 청크 크기(2) 지정
+            List<FinraConsolidatedShortInterestResponse> rows =
+                    client.fetchConsolidatedShortInterestForSymbols(
+                            List.of("AAPL", "MSFT", "GOOG"),
+                            LocalDate.of(2017, 12, 29),
+                            LocalDate.of(2026, 7, 28),
+                            2);
+
+            // Assert: 두 청크 응답이 모두 병합되어 3행이 된다
+            mockServer.verify();
+            assertThat(rows).hasSize(3);
+            assertThat(rows)
+                    .extracting(FinraConsolidatedShortInterestResponse::symbolCode)
+                    .containsExactly("AAPL", "MSFT", "GOOG");
+        }
+
+        @Test
+        @DisplayName("심볼 목록이 비어 있으면 HTTP 호출 없이 빈 리스트를 반환한다")
+        void returnsEmptyWithoutHttpCallWhenSymbolsEmpty() {
+            // Act
+            List<FinraConsolidatedShortInterestResponse> rows =
+                    client.fetchConsolidatedShortInterestForSymbols(
+                            List.of(), LocalDate.of(2017, 12, 29), LocalDate.of(2026, 7, 28));
+
+            // Assert: mockServer에 등록된 기대치가 없으므로 HTTP 호출이 있었다면 실패했을 것이다
+            assertThat(rows).isEmpty();
+            mockServer.verify();
+        }
+    }
+
     // --- fixture helpers ---
 
     /** {@code (symbol, short, total)} 트리플의 가변 인자로 regShoDaily JSON 배열을 만든다. */

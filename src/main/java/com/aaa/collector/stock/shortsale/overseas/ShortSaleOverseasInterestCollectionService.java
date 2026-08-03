@@ -6,6 +6,7 @@ import com.aaa.collector.observability.WatermarkSeries;
 import com.aaa.collector.stock.ShortSaleOverseasRepository;
 import com.aaa.collector.stock.Stock;
 import com.aaa.collector.stock.StockRepository;
+import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
@@ -19,13 +20,14 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 /**
- * 미국 공매도 Short Interest(잔고) 수집 서비스 (SPEC-COLLECTOR-SHORTSALE-OVERSEAS-001).
+ * 미국 공매도 Short Interest(잔고) 수집 서비스 (SPEC-COLLECTOR-SHORTSALE-OVERSEAS-001, 전 보존 구간 폴링 전환은
+ * SPEC-COLLECTOR-SHORTSALE-OVERSEAS-003 M3).
  *
- * <p>FINRA {@code consolidatedShortInterest} 행을 미국 활성 STOCK+ETF 종목에 매칭하여 {@code
+ * <p>FINRA {@code consolidatedShortInterest} 행을 {@code domainFilters}(활성 해외 워치리스트 심볼) + {@code
+ * dateRangeFilters}(settlementDate, 2017-12-29~오늘 전 보존 구간) 범위로 수집해 미국 활성 STOCK+ETF 종목에 매칭하고, {@code
  * short_sale_overseas}의 interest 전용 컬럼({@code short_interest}, {@code short_interest_date}, {@code
- * interest_collected_at})을 UPSERT한다. {@code dateRangeFilters}(settlementDate, 오늘−40일~오늘) 범위로
- * 수집(D16)하고, FINRA 전량({@code fetchAllPages} 누적) 수신 후 5000행 단위로 청크 처리한다. Daily 컬럼은
- * 보존한다(REQ-SSO-015/-022).
+ * days_to_cover}, {@code avg_daily_volume}, {@code interest_collected_at})을 UPSERT한다. FINRA
+ * 전량({@code fetchAllPages} 누적) 수신 후 5000행 단위로 청크 처리한다. Daily 컬럼은 보존한다(REQ-SSO-015/-022).
  */
 @Slf4j
 @Service
@@ -35,13 +37,27 @@ import org.springframework.stereotype.Service;
 // UPSERT·계측 담당
 // @MX:REASON: SPEC-COLLECTOR-SHORTSALE-OVERSEAS-001
 // REQ-SSO-003,-014a,-014b,-014c,-015,-020,-021,-022,-040
+// + SPEC-COLLECTOR-SHORTSALE-OVERSEAS-003 REQ-SSOI-001,-002,-003,-010,-011 (M3 전 보존구간 domainFilters
+// 전환)
 // — Interest 경로 수렴 진입점(FinraShortSaleClient, StockRepository, ShortSaleOverseasRepository,
 // BatchMetrics)
 // @MX:SPEC: SPEC-COLLECTOR-SHORTSALE-OVERSEAS-001
 public class ShortSaleOverseasInterestCollectionService {
 
-    /** Short Interest 범위 폴링 룩백 일수 — 반월 주기 + 발행 래그(~2주)를 덮는다(D16). */
+    /**
+     * Interest 경로 상장일 게이트의 "최근 구간" 경계 일수(REQ-SSOI-006/-007, plan.md 핵심 아키텍처 결정 1). M2까지는 Short
+     * Interest 범위 폴링 룩백(반월 주기 + 발행 래그 ~2주를 덮는 용도, D16)으로 쓰였으나, M3부터 폴링 범위 산정은 {@link
+     * #INTEREST_RETENTION_FLOOR}가 대체하고 이 상수는 게이트 "최근 구간" 경계 판정 전용으로 재해석된다(사용자 결정 2026-08-02) —
+     * 상수명·값은 변경하지 않는다.
+     */
     private static final int INTEREST_LOOKBACK_DAYS = 40;
+
+    /**
+     * Short Interest 전 보존 구간 폴링 하한(SPEC-COLLECTOR-SHORTSALE-OVERSEAS-003 M3, 핵심 아키텍처 결정 3). FINRA
+     * API 실측 최고(最古) settlementDate(2026-07-28 실측, api-specs/finra/01-공매도잔고.md) — FINRA 자체 보존 정책이라
+     * 배포 후 변경될 성질이 아니므로 config로 외부화하지 않는다(YAGNI, INTEREST_LOOKBACK_DAYS와 동일 배치 패턴).
+     */
+    private static final LocalDate INTEREST_RETENTION_FLOOR = LocalDate.of(2017, 12, 29);
 
     /** Short Interest 청크 처리 크기 — 전량 누적 후 이 단위로 나눠 처리한다(D19). */
     private static final int INTEREST_PROCESS_BATCH_SIZE = 5000;
@@ -59,26 +75,34 @@ public class ShortSaleOverseasInterestCollectionService {
     private final WatermarkMetrics watermarkMetrics;
 
     /**
-     * FINRA Short Interest 잔고를 {@code dateRangeFilters}(settlementDate, 오늘−40일~오늘) 범위로 수집한다(D16).
-     * 미국 활성 STOCK+ETF 종목에 매칭(REQ-SSO-003)하여 {@code trade_date=settlementDate} 행으로 interest 전용 컬럼만
-     * UPSERT한다(REQ-SSO-015/-022). DB에 이미 적재된 {@code (stock_id, short_interest_date)} 쌍이 없으면 신규 적재,
-     * 있으면 {@code revisionFlag="R"}일 때만 갱신, {@code ≠"R"}이면 skip한다(REQ-SSO-014a/-014b/-014c).
+     * FINRA Short Interest 잔고를 {@code domainFilters}(활성 해외 워치리스트 심볼) + {@code dateRangeFilters}
+     * (settlementDate, 2017-12-29~오늘 전 보존 구간) 범위로 수집한다(SPEC-COLLECTOR-SHORTSALE-OVERSEAS-003 M3,
+     * REQ-SSOI-001/-002 — 舊 40일 룩백 폴링에서 전환). 미국 활성 STOCK+ETF 종목에 매칭(REQ-SSO-003)하여 {@code
+     * trade_date=settlementDate} 행으로 interest 전용 컬럼만 UPSERT한다(REQ-SSO-015/-022). DB에 이미 적재된 {@code
+     * (stock_id, short_interest_date)} 쌍이 없으면 신규 적재, 있으면 {@code revisionFlag="R"}일 때만 갱신, {@code
+     * ≠"R"}이면 skip한다(REQ-SSO-014a/-014b/-014c). Interest 경로 상장일 게이트(REQ-SSOI-005/-006/-007)는 매칭 직후
+     * 별도로 판정한다.
      *
      * @param today 수집 기준일(범위 끝)
      * @return 시도/성공/skip 집계
      */
     public InterestResult collectShortInterest(LocalDate today) {
-        LocalDate from = today.minusDays(INTEREST_LOOKBACK_DAYS);
+        // REQ-SSOI-001/-002: domainFilters(심볼 목록)를 구성하려면 요청 전에 워치리스트를 먼저 조회해야 한다 — 매칭
+        // 전 전량 수신하던 기존 순서를 뒤집는다(plan.md 핵심 아키텍처 결정 3).
+        Map<String, Stock> stockBySymbol = activeUsStocksBySymbol();
         List<FinraConsolidatedShortInterestResponse> rows =
-                finraClient.fetchConsolidatedShortInterest(from, today);
+                finraClient.fetchConsolidatedShortInterestForSymbols(
+                        stockBySymbol.keySet(), INTEREST_RETENTION_FLOOR, today);
         if (rows.isEmpty()) {
             // REQ-SSO-020/-030: 내용까지 본 결과 빈 응답 — 적재 0건 정상 skip. 0건도 계측한다(REQ-SSO-040)
-            log.info("[overseas-shortsale-interest] 빈 응답 — 적재 0건 skip, range={}~{}", from, today);
+            log.info(
+                    "[overseas-shortsale-interest] 빈 응답 — 적재 0건 skip, range={}~{}",
+                    INTEREST_RETENTION_FLOOR,
+                    today);
             batchMetrics.recordCompletion(BATCH_INTEREST, 0L, 0L, 0L, 0L);
             return new InterestResult(0, 0, 0);
         }
 
-        Map<String, Stock> stockBySymbol = activeUsStocksBySymbol();
         // REQ-SSO-014a: (stock_id, short_interest_date) 쌍 단위 존재 판정 — 전역 날짜 집합이면 교차 종목 침묵 드롭 발생
         Set<Long> stockIds =
                 stockBySymbol.values().stream()
@@ -86,7 +110,7 @@ public class ShortSaleOverseasInterestCollectionService {
                         .collect(Collectors.toUnmodifiableSet());
         Map<Long, Set<LocalDate>> existingPairs =
                 shortSaleOverseasRepository.findExistingInterestPairsByStockIds(
-                        stockIds, from, today);
+                        stockIds, INTEREST_RETENTION_FLOOR, today);
 
         InterestBatchAccumulator acc = new InterestBatchAccumulator();
         for (int start = 0; start < rows.size(); start += INTEREST_PROCESS_BATCH_SIZE) {
@@ -122,7 +146,7 @@ public class ShortSaleOverseasInterestCollectionService {
                 attempted,
                 succeeded,
                 skipped,
-                from,
+                INTEREST_RETENTION_FLOOR,
                 today);
         return new InterestResult(attempted, succeeded, skipped);
     }
@@ -185,7 +209,9 @@ public class ShortSaleOverseasInterestCollectionService {
      * skip(REQ-SSO-014c). 잔고가 null·음수·scale 초과·소수부면 skip+WARN하고 파싱 거부 카운터를
      * 증가시킨다(REQ-SSO-021·REQ-SSD-016). Interest 경로 상장일 게이트 판정(REQ-SSOI-005/-006/-007)은 호출자({@link
      * #processInterestRow})가 이 메서드 호출 전에 이미 수행한다 — revisionFlag="R" 경로가 舊 소유자 구간을 재유입시키지 않도록
-     * revision 판정보다 먼저 걸러진다.
+     * revision 판정보다 먼저 걸러진다. {@code daysToCoverQuantity}/{@code averageDailyVolumeQuantity}는 관대하게
+     * 파싱해 {@code days_to_cover}/{@code avg_daily_volume}로 함께 UPSERT한다 — 없거나 파싱 불가해도 행을 거부하지 않고 해당
+     * 컬럼만 NULL로 남긴다(REQ-SSOI-010/-011).
      */
     private boolean upsertInterestRow(
             Stock stock,
@@ -227,10 +253,22 @@ public class ShortSaleOverseasInterestCollectionService {
             return false;
         }
 
+        // REQ-SSOI-011: daysToCoverQuantity/averageDailyVolumeQuantity는 관대하게 파싱한다 — 없거나 파싱 불가해도
+        // 행을 거부하지 않고 해당 컬럼만 NULL로 남긴다(currentShortPositionQuantity의 엄격 검증과 다름).
+        BigDecimal daysToCover =
+                FinraQuantityParser.toNullableNonNegativeDecimal(row.daysToCoverQuantity());
+        Long avgDailyVolume =
+                FinraQuantityParser.toNullableNonNegativeInteger(row.averageDailyVolumeQuantity());
+
         // REQ-SSO-015/-022: interest 전용 컬럼만 SET(Daily 컬럼 보존, daily_collected_at NULL 유지),
         // float_shares/si_pct_float는 미적재로 NULL(REQ-SSO-004)
         shortSaleOverseasRepository.upsertInterest(
-                stock.getId(), settlementDate, shortInterest, LocalDateTime.now());
+                stock.getId(),
+                settlementDate,
+                shortInterest,
+                LocalDateTime.now(),
+                daysToCover,
+                avgDailyVolume);
         return true;
     }
 
