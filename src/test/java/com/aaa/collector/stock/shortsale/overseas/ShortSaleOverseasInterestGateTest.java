@@ -7,6 +7,10 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import ch.qos.logback.classic.Level;
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
 import com.aaa.collector.observability.BatchLastLoadRepository;
 import com.aaa.collector.observability.BatchMetrics;
 import com.aaa.collector.observability.WatermarkMetrics;
@@ -22,6 +26,7 @@ import java.time.Clock;
 import java.time.LocalDate;
 import java.util.List;
 import java.util.Map;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -29,6 +34,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.slf4j.LoggerFactory;
 import org.springframework.test.util.ReflectionTestUtils;
 
 /**
@@ -88,6 +94,18 @@ class ShortSaleOverseasInterestGateTest {
             String symbol, LocalDate settlementDate) {
         return new FinraConsolidatedShortInterestResponse(
                 symbol, settlementDate, BigDecimal.valueOf(1_000_000L), null);
+    }
+
+    private static FinraConsolidatedShortInterestResponse rowWithIssueName(
+            String symbol, LocalDate settlementDate, String issueName) {
+        return new FinraConsolidatedShortInterestResponse(
+                symbol,
+                issueName,
+                settlementDate,
+                BigDecimal.valueOf(1_000_000L),
+                null,
+                null,
+                null);
     }
 
     private void stubActiveStock(Stock stock) {
@@ -242,6 +260,93 @@ class ShortSaleOverseasInterestGateTest {
             assertThat(meter.getId().getType()).isEqualTo(Meter.Type.COUNTER);
             assertThat(meterRegistry.find("aaa_collector_finra_ticker_reuse_skip_total").counter())
                     .isNull();
+        }
+    }
+
+    @Nested
+    @DisplayName("M4: 게이트 제외 진단 로깅에 issueName이 포함된다 (REQ-SSOI-009, plan.md 핵심 아키텍처 결정 4)")
+    class GateExclusionDiagnosticLogging {
+
+        private Logger serviceLogger;
+        private ListAppender<ILoggingEvent> listAppender;
+
+        @BeforeEach
+        void attachLogAppender() {
+            serviceLogger =
+                    (Logger)
+                            LoggerFactory.getLogger(
+                                    ShortSaleOverseasInterestCollectionService.class);
+            listAppender = new ListAppender<>();
+            listAppender.start();
+            serviceLogger.addAppender(listAppender);
+        }
+
+        @AfterEach
+        void detachLogAppender() {
+            serviceLogger.detachAppender(listAppender);
+            listAppender.stop();
+        }
+
+        @Test
+        @DisplayName("게이트 제외 행의 舊 소유자 issueName이 로그 라인에 그대로 나타난다")
+        void gatedOutRow_logsIssueNameForTriageWithoutException() {
+            // Arrange: SERV 실측 케이스 재사용 — 舊 소유자 ServiceMaster Global Holdings 구간
+            LocalDate servListedDate = LocalDate.of(2024, 3, 8);
+            LocalDate legacyOwnerSettlementDate = LocalDate.of(2020, 6, 30);
+            String legacyOwnerIssueName = "ServiceMaster Global Holdings, Inc.";
+            Stock serv = stock(1L, "SERV", servListedDate);
+            stubActiveStock(serv);
+            when(finraClient.fetchConsolidatedShortInterestForSymbols(any(), any(), any()))
+                    .thenReturn(
+                            List.of(
+                                    rowWithIssueName(
+                                            "SERV",
+                                            legacyOwnerSettlementDate,
+                                            legacyOwnerIssueName)));
+
+            // Act — 예외 없이 실행되어야 한다(마일스톤 완료 조건)
+            ShortSaleOverseasInterestCollectionService.InterestResult result =
+                    service.collectShortInterest(TODAY);
+
+            // Assert: 게이트 제외 결과는 기존과 동일 + 로그 라인에 issueName 포함
+            assertThat(result.skipped()).isEqualTo(1);
+            List<ILoggingEvent> gateExclusionLogs =
+                    listAppender.list.stream()
+                            .filter(e -> e.getLevel() == Level.INFO)
+                            .filter(e -> e.getFormattedMessage().contains("상장일 게이트 제외"))
+                            .toList();
+            assertThat(gateExclusionLogs).hasSize(1);
+            assertThat(gateExclusionLogs.getFirst().getFormattedMessage())
+                    .contains("issueName=" + legacyOwnerIssueName)
+                    .contains("symbol=SERV")
+                    .contains("settlementDate=" + legacyOwnerSettlementDate)
+                    .contains("listedDate=" + servListedDate);
+        }
+
+        @Test
+        @DisplayName("issueName이 null이어도 예외 없이 실행되고 로그 라인에 issueName=null로 남는다")
+        void gatedOutRow_nullIssueName_logsWithoutException() {
+            // Arrange: FINRA 응답에 issueName이 없는 방어적 케이스
+            LocalDate staleSettlementDate = TODAY.minusDays(INTEREST_LOOKBACK_DAYS + 1);
+            Stock oldco = stock(3L, "OLDCO", null);
+            stubActiveStock(oldco);
+            when(finraClient.fetchConsolidatedShortInterestForSymbols(any(), any(), any()))
+                    .thenReturn(List.of(row("OLDCO", staleSettlementDate)));
+
+            // Act
+            ShortSaleOverseasInterestCollectionService.InterestResult result =
+                    service.collectShortInterest(TODAY);
+
+            // Assert
+            assertThat(result.skipped()).isEqualTo(1);
+            List<ILoggingEvent> gateExclusionLogs =
+                    listAppender.list.stream()
+                            .filter(e -> e.getLevel() == Level.INFO)
+                            .filter(e -> e.getFormattedMessage().contains("상장일 게이트 제외"))
+                            .toList();
+            assertThat(gateExclusionLogs).hasSize(1);
+            assertThat(gateExclusionLogs.getFirst().getFormattedMessage())
+                    .contains("issueName=null");
         }
     }
 }

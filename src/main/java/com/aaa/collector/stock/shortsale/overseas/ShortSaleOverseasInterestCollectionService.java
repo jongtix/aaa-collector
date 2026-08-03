@@ -177,11 +177,16 @@ public class ShortSaleOverseasInterestCollectionService {
             // 지점(spec.md C1). revision 판정보다 먼저 검사해 舊 소유자 구간이 revisionFlag="R" 경로로 재유입되지 않게 한다.
             acc.gateSkipped++;
             acc.skipped++;
+            // SPEC-COLLECTOR-SHORTSALE-OVERSEAS-003 M4 REQ-SSOI-009: issueName은 DB 미저장 진단 전용 —
+            // 사람이 SI 오염 트리아지 시 runbook-cik-verification.md 없이도 1차 신호를 얻게 한다(plan.md 핵심 아키텍처
+            // 결정 4).
             log.info(
-                    "[overseas-shortsale-interest] 상장일 게이트 제외 — symbol={}, settlementDate={}, listedDate={}",
+                    "[overseas-shortsale-interest] 상장일 게이트 제외 — symbol={}, settlementDate={},"
+                            + " listedDate={}, issueName={}",
                     stock.getSymbol(),
                     settlementDate,
-                    stock.getListedDate());
+                    stock.getListedDate(),
+                    row.issueName());
             return;
         }
         if (upsertInterestRow(stock, row, existingPairs)) {
