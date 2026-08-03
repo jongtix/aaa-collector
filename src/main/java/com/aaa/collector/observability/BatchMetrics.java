@@ -51,6 +51,7 @@ public class BatchMetrics {
     static final String SILENT_DROP_NAME = "aaa_collector_batch_silent_drops_total";
     static final String PARSE_REJECT_NAME = "aaa_collector_batch_parse_rejections_total";
     static final String TICKER_REUSE_SKIP_NAME = "aaa_collector_finra_ticker_reuse_skip_total";
+    static final String INTEREST_GATE_SKIP_NAME = "aaa_collector_finra_interest_gate_skip_total";
 
     /** 모든 배치 시계열이 공유하는 라벨 키 (카디널리티: batch 값만 사용). */
     private static final String BATCH_TAG = "batch";
@@ -81,6 +82,16 @@ public class BatchMetrics {
     @PostConstruct
     void initTickerReuseSkipCounter() {
         Counter.builder(TICKER_REUSE_SKIP_NAME).register(registry);
+    }
+
+    /**
+     * Interest 경로 상장일 게이트 스킵 카운터를 0으로 사전 등록한다 (SPEC-COLLECTOR-SHORTSALE-OVERSEAS-003 REQ-SSOI-008,
+     * AC-08 — 제외 0건이어도 0 시계열 노출). CDN Daily의 {@value #TICKER_REUSE_SKIP_NAME}과는 별개 시계열이다 — 두 경로의
+     * 스킵을 한 시계열로 섞으면 관측성이 저하되므로 분리한다.
+     */
+    @PostConstruct
+    void initInterestGateSkipCounter() {
+        Counter.builder(INTEREST_GATE_SKIP_NAME).register(registry);
     }
 
     /**
@@ -207,6 +218,22 @@ public class BatchMetrics {
     public void recordTickerReuseSkips(long skips) {
         // Micrometer 등록은 멱등 — 동일 이름은 동일 카운터 반환(Spring·직접 생성 양쪽 안전, 제외 0이어도 0 시계열 보장).
         Counter counter = Counter.builder(TICKER_REUSE_SKIP_NAME).register(registry);
+        if (skips <= 0) {
+            return;
+        }
+        counter.increment(skips);
+    }
+
+    /**
+     * Interest 경로 상장일 게이트로 제외된 행 수를 단일 누적 카운터로 기록한다 (SPEC-COLLECTOR-SHORTSALE-OVERSEAS-003
+     * REQ-SSOI-008, {@link #recordTickerReuseSkips(long)} 형판 — 라벨 없는 단일 지점 Counter, CDN Daily 게이트
+     * 스킵과는 별개 시계열).
+     *
+     * @param skips 이번 처리에서 Interest 게이트로 제외된 행 수(0 이하는 증가하지 않음)
+     */
+    public void recordInterestGateSkips(long skips) {
+        // Micrometer 등록은 멱등 — 동일 이름은 동일 카운터 반환(Spring·직접 생성 양쪽 안전, 제외 0이어도 0 시계열 보장).
+        Counter counter = Counter.builder(INTEREST_GATE_SKIP_NAME).register(registry);
         if (skips <= 0) {
             return;
         }
