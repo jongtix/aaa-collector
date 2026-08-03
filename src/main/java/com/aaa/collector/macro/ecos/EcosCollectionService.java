@@ -68,6 +68,28 @@ public class EcosCollectionService {
         return collectInternal(true);
     }
 
+    /**
+     * {@code indicator_code}로 지정된 단일 ECOS 시리즈의 전체 이력을 백필한다(REQ-ECOSFMT-013).
+     *
+     * <p>8개 시리즈 일괄 수집(collectAll())과 달리 해당 시리즈 1개만 호출하며(REQ-ECOSFMT-012, 018), 반환 집계에 다른 시리즈의 수집분을
+     * 합산하지 않는다(REQ-ECOSFMT-014 — 오귀속 금지). {@code collectInternal()}의 시리즈 단위 예외 격리와 달리 예외를 흡수하지 않고
+     * 호출자(백필 오케스트레이터)로 그대로 전파한다(REQ-ECOSFMT-016 — 예외 경로가 FAILED 전이를 트리거하도록).
+     *
+     * @throws EcosApiException {@code indicator_code}에 대응하는 시리즈 설정이 없으면 (REQ-ECOSFMT-015), 또는 수집이
+     *     {@code ERROR-*}·예측 불가 응답으로 실패하면
+     */
+    public MacroCollectionResult collectAllForIndicator(String indicatorCode) {
+        EcosSeriesConfig.Series series = findSeries(indicatorCode);
+        return collectSeries(series, true);
+    }
+
+    private static EcosSeriesConfig.Series findSeries(String indicatorCode) {
+        return EcosSeriesConfig.ALL.stream()
+                .filter(s -> s.indicatorCode().equals(indicatorCode))
+                .findFirst()
+                .orElseThrow(() -> new EcosApiException(indicatorCode, "알 수 없는 indicator_code"));
+    }
+
     @SuppressWarnings("PMD.AvoidCatchingGenericException")
     private MacroCollectionResult collectInternal(boolean backfill) {
         int attempted = 0;

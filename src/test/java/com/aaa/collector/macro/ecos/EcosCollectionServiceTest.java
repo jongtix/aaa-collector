@@ -275,6 +275,84 @@ class EcosCollectionServiceTest {
     }
 
     // ────────────────────────────────────────────────────────────────────
+    // collectAllForIndicator — 백필 code별 단일 시리즈 수집 (T3, AC-4.1~4.6, REQ-ECOSFMT-012~018)
+    // ────────────────────────────────────────────────────────────────────
+
+    @Nested
+    @DisplayName("collectAllForIndicator — code별 단일 시리즈 백필")
+    class CollectAllForIndicator {
+
+        @Test
+        @DisplayName("ECOS_CPI 지정 — 해당 시리즈만 1회 수집, 8개 일괄 수집 안 함 (AC-4.1, 4.6)")
+        void singleIndicatorCode_collectsOnlyThatSeries() {
+            // Arrange
+            stubRestClientChain();
+            when(responseSpec.body(EcosStatisticSearchResponse.class))
+                    .thenReturn(responseWithRows(List.of(row("202606", "3.50"))));
+
+            // Act
+            MacroCollectionResult result = service.collectAllForIndicator("ECOS_CPI");
+
+            // Assert — RestClient.get()이 1회만 호출됨(8회 아님)
+            verify(ecosRestClient, times(1)).get();
+            assertThat(result.attempted()).isEqualTo(1);
+            assertThat(result.succeeded()).isEqualTo(1);
+        }
+
+        @Test
+        @DisplayName("반환 집계에 타 시리즈 수집분이 섞이지 않음 (AC-4.2)")
+        void singleIndicatorCode_noAggregationFromOtherSeries() {
+            // Arrange — 단일 행만 반환하도록 스텁(다른 시리즈가 호출되면 8회가 되어 검증 실패)
+            stubRestClientChain();
+            when(responseSpec.body(EcosStatisticSearchResponse.class))
+                    .thenReturn(responseWithRows(List.of(row("2026Q2", "0.6"))));
+
+            // Act
+            MacroCollectionResult result = service.collectAllForIndicator("ECOS_GDP_QOQ");
+
+            // Assert
+            verify(ecosRestClient, times(1)).get();
+            assertThat(result.succeeded()).isEqualTo(1);
+        }
+
+        @Test
+        @DisplayName("ERROR-* 응답 — 예외가 오케스트레이터로 전파됨(시리즈 격리 없이, AC-4.3)")
+        void errorResponse_propagatesExceptionWithoutIsolation() {
+            // Arrange
+            stubRestClientChain();
+            when(responseSpec.body(EcosStatisticSearchResponse.class))
+                    .thenReturn(errorResponse("ERROR-101", "주기와 다른 형식의 날짜 형식입니다."));
+
+            // Act & Assert — collectInternal()과 달리 예외가 흡수되지 않고 전파되어야 함
+            assertThatThrownBy(() -> service.collectAllForIndicator("ECOS_CPI"))
+                    .isInstanceOf(EcosApiException.class);
+        }
+
+        @Test
+        @DisplayName("정당한 0건(INFO-200) — 예외 없이 (0,0,0) 반환 (AC-4.4)")
+        void info200_returnsZeroWithoutException() {
+            // Arrange
+            stubRestClientChain();
+            when(responseSpec.body(EcosStatisticSearchResponse.class))
+                    .thenReturn(info200Response());
+
+            // Act
+            MacroCollectionResult result = service.collectAllForIndicator("ECOS_CPI");
+
+            // Assert
+            assertThat(result.attempted()).isZero();
+            assertThat(result.succeeded()).isZero();
+        }
+
+        @Test
+        @DisplayName("미지 indicator_code — 예외 발생, 다른 시리즈로 대체하지 않음 (AC-4.5)")
+        void unknownIndicatorCode_throwsException() {
+            assertThatThrownBy(() -> service.collectAllForIndicator("ECOS_UNKNOWN"))
+                    .isInstanceOf(EcosApiException.class);
+        }
+    }
+
+    // ────────────────────────────────────────────────────────────────────
     // 수집 서비스 동작 검증
     // ────────────────────────────────────────────────────────────────────
 

@@ -122,7 +122,8 @@ public class MacroIndicatorBackfillOrchestrator {
 
     private MacroCollectionResult collectAll(String indicatorCode) {
         if (ECOS_CODES.contains(indicatorCode)) {
-            return ecosCollectionService.collectAll();
+            // REQ-ECOSFMT-012 — code당 8개 시리즈 일괄 수집 대신 해당 시리즈 1개만 수집
+            return ecosCollectionService.collectAllForIndicator(indicatorCode);
         } else {
             return fredCollectionService.collectAll();
         }

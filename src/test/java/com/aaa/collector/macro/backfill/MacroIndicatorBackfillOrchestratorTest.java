@@ -127,15 +127,17 @@ class MacroIndicatorBackfillOrchestratorTest {
     class Processing {
 
         @Test
-        @DisplayName("PENDING ECOS 항목 — ecosCollectionService.collectAll() 호출 후 COMPLETED 갱신")
-        void pendingEcosEntry_callsCollectAllAndUpdatesCompleted() {
+        @DisplayName(
+                "PENDING ECOS 항목 — ecosCollectionService.collectAllForIndicator() 호출 후 COMPLETED 갱신"
+                        + " (AC-4.1)")
+        void pendingEcosEntry_callsCollectAllForIndicatorAndUpdatesCompleted() {
             // Arrange
             BackfillStatus status = mockStatus(1L, "ECOS_BASE_RATE");
             BackfillStatus mockManaged = Mockito.mock(BackfillStatus.class);
             when(backfillStatusRepository.findByStatusInAndTargetTypeOrderById(
                             any(), eq("MACRO_INDICATOR")))
                     .thenReturn(List.of(status));
-            when(ecosCollectionService.collectAll())
+            when(ecosCollectionService.collectAllForIndicator("ECOS_BASE_RATE"))
                     .thenReturn(new MacroCollectionResult(100, 95, 5));
             when(macroIndicatorRepository.findMinTradeDateByIndicatorCode("ECOS_BASE_RATE"))
                     .thenReturn(Optional.of(LocalDate.of(2020, 1, 2)));
@@ -144,8 +146,9 @@ class MacroIndicatorBackfillOrchestratorTest {
             // Act
             orchestrator.run();
 
-            // Assert
-            verify(ecosCollectionService).collectAll();
+            // Assert — 8개 시리즈 일괄 수집(collectAll())은 호출되지 않음(AC-4.1, 4.6)
+            verify(ecosCollectionService).collectAllForIndicator("ECOS_BASE_RATE");
+            verify(ecosCollectionService, never()).collectAll();
             verify(backfillStatusRepository).findById(1L);
             verify(mockManaged)
                     .advance(eq(BackfillStatusType.COMPLETED), any(LocalDate.class), eq(0), any());
@@ -187,7 +190,8 @@ class MacroIndicatorBackfillOrchestratorTest {
             // Act
             orchestrator.run();
 
-            // Assert — collectAll 호출 없음
+            // Assert — collectAll(For Indicator) 호출 없음
+            verify(ecosCollectionService, never()).collectAllForIndicator(anyString());
             verify(ecosCollectionService, never()).collectAll();
             verify(fredCollectionService, never()).collectAll();
         }
@@ -211,7 +215,7 @@ class MacroIndicatorBackfillOrchestratorTest {
             when(backfillStatusRepository.findByStatusInAndTargetTypeOrderById(
                             any(), eq("MACRO_INDICATOR")))
                     .thenReturn(List.of(status));
-            when(ecosCollectionService.collectAll())
+            when(ecosCollectionService.collectAllForIndicator("ECOS_BASE_RATE"))
                     .thenReturn(new MacroCollectionResult(200, 200, 0));
             when(macroIndicatorRepository.findMinTradeDateByIndicatorCode("ECOS_BASE_RATE"))
                     .thenReturn(Optional.of(expectedMin));
@@ -237,7 +241,8 @@ class MacroIndicatorBackfillOrchestratorTest {
             when(backfillStatusRepository.findByStatusInAndTargetTypeOrderById(
                             any(), eq("MACRO_INDICATOR")))
                     .thenReturn(List.of(status));
-            when(ecosCollectionService.collectAll()).thenReturn(new MacroCollectionResult(0, 0, 0));
+            when(ecosCollectionService.collectAllForIndicator("ECOS_BASE_RATE"))
+                    .thenReturn(new MacroCollectionResult(0, 0, 0));
             when(macroIndicatorRepository.findMinTradeDateByIndicatorCode("ECOS_BASE_RATE"))
                     .thenReturn(Optional.empty());
             when(backfillStatusRepository.findById(11L)).thenReturn(Optional.of(mockManaged));
@@ -295,7 +300,8 @@ class MacroIndicatorBackfillOrchestratorTest {
                             eq(BackfillStatusType.COMPLETED), any(LocalDate.class), eq(0), eq(100));
         }
 
-        @ParameterizedTest(name = "ECOS 코드={0} → ecosCollectionService.collectAll() 호출")
+        @ParameterizedTest(
+                name = "ECOS 코드={0} → ecosCollectionService.collectAllForIndicator() 라우팅")
         @ValueSource(
                 strings = {
                     "ECOS_BASE_RATE",
@@ -307,15 +313,17 @@ class MacroIndicatorBackfillOrchestratorTest {
                     "ECOS_GDP_QOQ",
                     "ECOS_CURRENT_ACCOUNT"
                 })
-        @DisplayName("ECOS indicator_code 8개 전체 — ecosCollectionService.collectAll() 라우팅")
-        void ecosIndicatorCode_routesToEcosCollectionService(String indicatorCode) {
+        @DisplayName(
+                "ECOS indicator_code 8개 전체 — ecosCollectionService.collectAllForIndicator()"
+                        + " 단일 시리즈 라우팅 (AC-4.1, 4.6)")
+        void ecosIndicatorCode_routesToEcosCollectionServiceSingleSeries(String indicatorCode) {
             // Arrange
             BackfillStatus status = mockStatus(21L, indicatorCode);
             BackfillStatus mockManaged = Mockito.mock(BackfillStatus.class);
             when(backfillStatusRepository.findByStatusInAndTargetTypeOrderById(
                             any(), eq("MACRO_INDICATOR")))
                     .thenReturn(List.of(status));
-            when(ecosCollectionService.collectAll())
+            when(ecosCollectionService.collectAllForIndicator(indicatorCode))
                     .thenReturn(new MacroCollectionResult(80, 80, 0));
             when(macroIndicatorRepository.findMinTradeDateByIndicatorCode(indicatorCode))
                     .thenReturn(Optional.of(LocalDate.of(2005, 1, 4)));
@@ -324,8 +332,9 @@ class MacroIndicatorBackfillOrchestratorTest {
             // Act
             orchestrator.run();
 
-            // Assert
-            verify(ecosCollectionService).collectAll();
+            // Assert — 8개 시리즈 일괄 수집(collectAll())은 호출되지 않음
+            verify(ecosCollectionService).collectAllForIndicator(indicatorCode);
+            verify(ecosCollectionService, never()).collectAll();
             verify(fredCollectionService, never()).collectAll();
             verify(mockManaged)
                     .advance(eq(BackfillStatusType.COMPLETED), any(LocalDate.class), eq(0), eq(80));
@@ -341,15 +350,16 @@ class MacroIndicatorBackfillOrchestratorTest {
     class ErrorHandling {
 
         @Test
-        @DisplayName("collectAll() 예외 — findById 후 fail() 호출")
-        void collectAllException_callsUpdateError() {
+        @DisplayName("collectAllForIndicator() 예외 — findById 후 fail() 호출 (AC-4.3)")
+        void collectAllForIndicatorException_callsUpdateError() {
             // Arrange
             BackfillStatus status = mockStatus(3L, "ECOS_BASE_RATE");
             BackfillStatus mockManaged = Mockito.mock(BackfillStatus.class);
             when(backfillStatusRepository.findByStatusInAndTargetTypeOrderById(
                             any(), eq("MACRO_INDICATOR")))
                     .thenReturn(List.of(status));
-            when(ecosCollectionService.collectAll()).thenThrow(new RuntimeException("API error"));
+            when(ecosCollectionService.collectAllForIndicator("ECOS_BASE_RATE"))
+                    .thenThrow(new RuntimeException("API error"));
             when(backfillStatusRepository.findById(3L)).thenReturn(Optional.of(mockManaged));
 
             // Act
