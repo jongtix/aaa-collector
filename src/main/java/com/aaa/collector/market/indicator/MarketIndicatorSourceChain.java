@@ -79,10 +79,14 @@ public class MarketIndicatorSourceChain {
                 if (i == 0 && primaryExpectedEmpty.test(date)) {
                     metrics.recordExpectedNoData(indicator, source.sourceName());
                     log.info(
-                            "[market-ind-chain] {} fetchDaily 휴장일 예상 무데이터 — 다음 소스로",
-                            source.sourceName());
+                            "[market-ind-chain] {} fetchDaily 휴장일 예상 무데이터(date={}) — 다음 소스로",
+                            source.sourceName(),
+                            date);
                 } else {
-                    log.warn("[market-ind-chain] {} fetchDaily 빈 결과 — 다음 소스로", source.sourceName());
+                    log.warn(
+                            "[market-ind-chain] {} fetchDaily 빈 결과(date={}) — 다음 소스로",
+                            source.sourceName(),
+                            date);
                 }
                 if (nextSourceName != null) {
                     metrics.recordFallback(
@@ -90,8 +94,9 @@ public class MarketIndicatorSourceChain {
                 }
             } catch (Exception e) {
                 log.warn(
-                        "[market-ind-chain] {} fetchDaily 예외 — 다음 소스로: {}",
+                        "[market-ind-chain] {} fetchDaily 예외(date={}) — 다음 소스로: {}",
                         source.sourceName(),
+                        date,
                         sanitize(e.getMessage()));
                 if (nextSourceName != null) {
                     metrics.recordFallback(indicator, source.sourceName(), nextSourceName, "error");
