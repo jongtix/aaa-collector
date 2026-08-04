@@ -116,9 +116,12 @@ public class ShortSaleRowMapper {
         BigDecimal shortSellAccQtyRate = new BigDecimal(row.acmlSstsCntgQtyRlim());
         BigDecimal shortSellAccAmtRate = new BigDecimal(row.acmlSstsTrPbmnRlim());
         // SPEC-COLLECTOR-SHORTSALE-ACMLVOL-001 REQ-SSAV-004/005 — 기존 8개 필드와 동일 try 블록 내부에서
-        // 파싱한다. 실패 시 NumberFormatException이 그대로 전파되어 catch(NumberFormatException)이 행 전체를
-        // skip + WARN 로그로 흡수한다(특례 없음).
-        Long acmlVol = Long.parseLong(row.acmlVol());
+        // 파싱한다. null/blank(값 결측, REQ-SSAV-004 문서화된 계약)는 acmlVol=null로 직접 처리해 행을 보존한다.
+        // 값이 존재하는데 파싱 실패(진짜 훼손 데이터)한 경우에만 NumberFormatException이 전파되어
+        // catch(NumberFormatException)이 행 전체를 skip + WARN 로그로 흡수한다(REQ-SSAV-005, 특례 없음).
+        String acmlVolRaw = row.acmlVol();
+        Long acmlVol =
+                (acmlVolRaw == null || acmlVolRaw.isBlank()) ? null : Long.parseLong(acmlVolRaw);
 
         if (SupplyDemandValidator.anyNegative(
                 shortSellQty, shortSellAmt, shortSellAccQty, shortSellAccAmt)) {

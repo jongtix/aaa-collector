@@ -209,6 +209,50 @@ class ShortSaleRowMapperTest {
 
             assertThat(result).isEmpty();
         }
+
+        @Test
+        @DisplayName("acml_vol null(키 결측) — 행 유실 없이 다른 9개 필드 정상 저장, acmlVol=null")
+        void acmlVol_null_rowPreservedWithNullAcmlVol() {
+            List<ShortSaleDomestic> result =
+                    mapper.collectValid(
+                            stock("005930"),
+                            "005930",
+                            response(List.of(validRow("20260612", null))),
+                            TODAY,
+                            WINDOW_START);
+
+            assertThat(result).hasSize(1);
+            assertThat(result.getFirst())
+                    .extracting(
+                            ShortSaleDomestic::getAcmlVol,
+                            ShortSaleDomestic::getTradeDate,
+                            ShortSaleDomestic::getShortSellQty,
+                            ShortSaleDomestic::getShortSellAmt,
+                            ShortSaleDomestic::getShortSellAccQty,
+                            ShortSaleDomestic::getShortSellAccAmt)
+                    .containsExactly(
+                            null,
+                            LocalDate.of(2026, 6, 12),
+                            12_000L,
+                            900_000_000L,
+                            50_000L,
+                            3_750_000_000L);
+        }
+
+        @Test
+        @DisplayName("acml_vol blank(공백 문자열) — 행 유실 없이 정상 저장, acmlVol=null")
+        void acmlVol_blank_rowPreservedWithNullAcmlVol() {
+            List<ShortSaleDomestic> result =
+                    mapper.collectValid(
+                            stock("005930"),
+                            "005930",
+                            response(List.of(validRow("20260612", "   "))),
+                            TODAY,
+                            WINDOW_START);
+
+            assertThat(result).hasSize(1);
+            assertThat(result.getFirst().getAcmlVol()).isNull();
+        }
     }
 
     @Nested
