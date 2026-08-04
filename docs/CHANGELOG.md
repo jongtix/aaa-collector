@@ -33,6 +33,18 @@
 
 ## [Unreleased]
 
+### Added
+
+- **SI(반월 공매도 잔고) 이력 수집 상시화 + Interest 경로 티커재사용 게이트** (SPEC-COLLECTOR-SHORTSALE-OVERSEAS-003, AC-01~AC-15 + AC-07a/AC-11a, 총 17건):
+  기존 40일 슬라이딩 윈도우 방식이던 FINRA `consolidatedShortInterest` 폴링을 전 보존 구간(2017-12-29~) 상시 백필로 전환하고, Interest 경로에 없던 티커재사용 방어 게이트를 신설했다.
+  - **M1 — Interest 경로 상장일 게이트 신설** (`ShortSaleOverseasInterestCollectionService`): `isGatedOut` 판정 로직 추가 — 종목의 `listedDate` 이전 정산일 데이터를 제외해 FINRA 티커 재사용 오염(예: SERV, SPCX 사례)을 방지. `BatchMetrics.recordInterestGateSkips(long)` 신규 메트릭.
+  - **M2 — 스키마 확장** (Flyway `V41__collector_add_short_interest_metrics_to_short_sale_overseas.sql`): `short_sale_overseas`에 `days_to_cover`(DECIMAL(10,2))·`avg_daily_volume`(BIGINT) nullable 컬럼 추가. `ShortSaleOverseas` 엔티티/리포지토리/DTO/파서(`FinraQuantityParser`) 확장.
+  - **M3 — 전 보존 구간 폴링 전환** (`FinraShortSaleClient`, `ShortSaleOverseasInterestCollectionService`): 40일 슬라이딩 윈도우 → 보존 하한 상수(`INTEREST_RETENTION_FLOOR = 2017-12-29`) 기준 상시 폴링. M2의 `daysToCoverQuantity`/`averageDailyVolumeQuantity` 프로덕션 와이어링 완료.
+  - **M4 — 진단 로깅**: 게이트 제외 행의 `issueName`을 로그 라인에 추가(DB 미저장)해 SI 오염 트리아지 1차 신호 제공.
+  - **M5 — 구현 시점 검증** (코드 변경 없음): 워치리스트 81심볼 단일 `domainFilters` 콜 청크 분할 불필요 확인, SPCX 티커재사용 게이트 자동 처리 확인. 실측 결과는 `api-specs/finra/01-공매도잔고.md` 기록.
+  - **M6 — 운영 LOCF retro-UPDATE** (코드 변경 없음, DB 운영 작업): 신규 컬럼 배포 이전 이력 약 127,877행에 대해 range-join 방식 LOCF 백필 실행. 실행 절차·검증 결과는 `runbook-locf-retro-update.md` 기록.
+  - 사전조사 문서 기반 착수(명시적 aaa-infra 이슈 번호 없음): `.moai/reports/pre-spec/shortsale-overseas-si-backfill.md`
+
 ### Fixed
 
 - **ECOS M/Q 날짜 포맷 및 ECOS/FRED 오류 분류·백필 오귀속 결함 수정** (SPEC-COLLECTOR-ECOS-DATEFMT-001, AC-1~AC-8):
