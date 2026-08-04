@@ -35,6 +35,17 @@
 
 ### Added
 
+- **`short_sale_domestic.acml_vol`(누적 거래량) 원본 보존 컬럼 추가** (SPEC-COLLECTOR-SHORTSALE-ACMLVOL-001, AC-1~AC-6, 6건):
+  KIS `daily-short-sale`(FHPST04830000) 응답의 `acml_vol`(누적 거래량, 수정주가 기준) 원본 값을
+  변환·클램핑 없이 저장하는 신규 nullable 컬럼을 추가했다. `short_sell_vol_rate`(`ssts_vol_rlim`)가
+  원주 기준 `ssts_cntg_qty`를 수정주가 기준 `acml_vol`로 나누는 KIS API 필드 단위 불일치로 100%를
+  초과하는 왜곡(aaa-infra#61, 659행, 최대 472.51%)이 발생하는데, 이 컬럼은 그 진단·정정에 필요한
+  분모를 확보할 뿐이다 — 이 SPEC은 `ssts_vol_rlim` 값 자체를 정정하지 않는다(out of scope).
+  - **스키마**: Flyway `V42__collector_add_acml_vol_to_short_sale_domestic.sql` — `ADD COLUMN acml_vol BIGINT NULL`(DEFAULT 없음). 전방향 전용(forward-only) — 배포 이전 행은 `acml_vol = NULL`로 유지, 과거분 백필 없음.
+  - **엔티티/DTO/매퍼/인서터**: `ShortSaleDomestic.acmlVol`(boxed `Long`, nullable) 필드, `KisShortSaleResponse.ShortSaleRow.acmlVol` 레코드 컴포넌트, `ShortSaleRowMapper.toEntity` 파싱 배선, `ShortSaleInserter` `INSERT IGNORE` 컬럼 목록 확장.
+  - **가용성 회귀 방지**(post-sync-audit 수정): `acml_vol`이 결측(키 없음 또는 blank)인 경우 행 전체를 폐기하지 않고 `acmlVol = null`로 보존한다. 값이 존재하는데 파싱 실패하는 진짜 훼손 데이터만 기존과 동일하게 행 전체 제외 + WARN 로그(REQ-SSAV-005, 특례 없음).
+  - 관련: aaa-infra#61
+
 - **SI(반월 공매도 잔고) 이력 수집 상시화 + Interest 경로 티커재사용 게이트** (SPEC-COLLECTOR-SHORTSALE-OVERSEAS-003, AC-01~AC-15 + AC-07a/AC-11a, 총 17건):
   기존 40일 슬라이딩 윈도우 방식이던 FINRA `consolidatedShortInterest` 폴링을 전 보존 구간(2017-12-29~) 상시 백필로 전환하고, Interest 경로에 없던 티커재사용 방어 게이트를 신설했다.
   - **M1 — Interest 경로 상장일 게이트 신설** (`ShortSaleOverseasInterestCollectionService`): `isGatedOut` 판정 로직 추가 — 종목의 `listedDate` 이전 정산일 데이터를 제외해 FINRA 티커 재사용 오염(예: SERV, SPCX 사례)을 방지. `BatchMetrics.recordInterestGateSkips(long)` 신규 메트릭.
