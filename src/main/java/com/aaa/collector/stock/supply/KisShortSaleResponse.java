@@ -26,6 +26,9 @@ public record KisShortSaleResponse(
      * 공매도 일별추이 행 (output2 배열 1건).
      *
      * <p>매핑 대상(REQ-BATCH2-041): 공매도 체결 수량/거래대금 + 비율 + 누적. 금액은 원 단위 무변환(OI-2). 비율은 DECIMAL(7,4) 매핑.
+     *
+     * <p>{@code acmlVol}(SPEC-COLLECTOR-SHORTSALE-ACMLVOL-001, REQ-SSAV-004): 누적 거래량(수정주가 기준). 원본
+     * 무변환·무클램핑으로 저장한다 — {@code ssts_vol_rlim} 왜곡(aaa-infra#61) 진단용 분모 확보 목적, 기존 필드 순서 보존을 위해 끝에 추가.
      */
     @JsonIgnoreProperties(ignoreUnknown = true)
     public record ShortSaleRow(
@@ -46,5 +49,7 @@ public record KisShortSaleResponse(
             /** 누적 공매도 거래 대금 (원 무변환) */
             String acmlSstsTrPbmn,
             /** 누적 공매도 거래 대금 비중 (%) */
-            String acmlSstsTrPbmnRlim) {}
+            String acmlSstsTrPbmnRlim,
+            /** 누적 거래량 (수정주가 기준, 원본 무변환) */
+            String acmlVol) {}
 }

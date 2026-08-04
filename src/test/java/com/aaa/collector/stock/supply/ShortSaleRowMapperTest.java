@@ -17,6 +17,7 @@ class ShortSaleRowMapperTest {
 
     private static final LocalDate TODAY = LocalDate.of(2026, 6, 13);
     private static final LocalDate WINDOW_START = TODAY.minusDays(14);
+    private static final String ACML_VOL = "21500067";
 
     private final ShortSaleRowMapper mapper = new ShortSaleRowMapper();
 
@@ -32,17 +33,40 @@ class ShortSaleRowMapperTest {
 
     private KisShortSaleResponse.ShortSaleRow validRow(String date) {
         return new KisShortSaleResponse.ShortSaleRow(
-                date, "12000", "3.5", "900000000", "4.2", "50000", "5.1", "3750000000", "6.3");
+                date,
+                "12000",
+                "3.5",
+                "900000000",
+                "4.2",
+                "50000",
+                "5.1",
+                "3750000000",
+                "6.3",
+                ACML_VOL);
+    }
+
+    private KisShortSaleResponse.ShortSaleRow validRow(String date, String acmlVol) {
+        return new KisShortSaleResponse.ShortSaleRow(
+                date,
+                "12000",
+                "3.5",
+                "900000000",
+                "4.2",
+                "50000",
+                "5.1",
+                "3750000000",
+                "6.3",
+                acmlVol);
     }
 
     private KisShortSaleResponse.ShortSaleRow nullDateRow() {
         return new KisShortSaleResponse.ShortSaleRow(
-                null, null, null, null, null, null, null, null, null);
+                null, null, null, null, null, null, null, null, null, null);
     }
 
     private KisShortSaleResponse.ShortSaleRow blankDateRow() {
         return new KisShortSaleResponse.ShortSaleRow(
-                "", null, null, null, null, null, null, null, null);
+                "", null, null, null, null, null, null, null, null, null);
     }
 
     private KisShortSaleResponse response(List<KisShortSaleResponse.ShortSaleRow> rows) {
@@ -154,6 +178,40 @@ class ShortSaleRowMapperTest {
     }
 
     @Nested
+    @DisplayName("SPEC-COLLECTOR-SHORTSALE-ACMLVOL-001 — acml_vol 원본 보존")
+    class AcmlVolMapping {
+
+        @Test
+        @DisplayName("AC-2(REQ-SSAV-004/006) — acml_vol 정상 파싱, 엔티티에 원본값 그대로 채워짐")
+        void acmlVol_parsedAndPreservedOnEntity() {
+            List<ShortSaleDomestic> result =
+                    mapper.collectValid(
+                            stock("005930"),
+                            "005930",
+                            response(List.of(validRow("20260612"))),
+                            TODAY,
+                            WINDOW_START);
+
+            assertThat(result).hasSize(1);
+            assertThat(result.getFirst().getAcmlVol()).isEqualTo(21_500_067L);
+        }
+
+        @Test
+        @DisplayName("AC-3(REQ-SSAV-005) — acml_vol 숫자 파싱 실패 시 행 전체 제외(기존 8필드와 동일 실패 경로)")
+        void acmlVol_unparseable_rowExcluded() {
+            List<ShortSaleDomestic> result =
+                    mapper.collectValid(
+                            stock("005930"),
+                            "005930",
+                            response(List.of(validRow("20260612", "notanumber"))),
+                            TODAY,
+                            WINDOW_START);
+
+            assertThat(result).isEmpty();
+        }
+    }
+
+    @Nested
     @DisplayName("SPEC-COLLECTOR-ASSETSCOPE-001 REQ-ASSETSCOPE-012 — ETN·COMMODITY 공매도 사실적 0 특성화")
     class EtnCommodityFactualZero {
 
@@ -181,7 +239,7 @@ class ShortSaleRowMapperTest {
             // 날짜·가격류는 유효(비-null)하되 공매도 수량·거래대금 축은 전부 사실적 0 —
             // 제도상 공매도가 불가한 자산(ETN·COMMODITY)의 정상 응답 형태다(위조·쓰레기 행이 아님).
             return new KisShortSaleResponse.ShortSaleRow(
-                    date, "0", "0.0", "0", "0.0", "0", "0.0", "0", "0.0");
+                    date, "0", "0.0", "0", "0.0", "0", "0.0", "0", "0.0", "0");
         }
 
         @Test

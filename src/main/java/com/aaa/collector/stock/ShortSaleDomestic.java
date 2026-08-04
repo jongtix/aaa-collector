@@ -66,6 +66,15 @@ public class ShortSaleDomestic extends BaseEntity {
     @Column(name = "short_sell_acc_amt_rate", precision = 7, scale = 4)
     private final BigDecimal shortSellAccAmtRate;
 
+    /**
+     * KIS 누적 거래량(acml_vol, 수정주가 기준, 원본 무변환). 결측 시 NULL(과거 행 미백필).
+     *
+     * <p>SPEC-COLLECTOR-SHORTSALE-ACMLVOL-001 REQ-SSAV-002 — {@code short_sell_vol_rate} 진단용 분모 확보
+     * 목적(aaa-infra#61), NOT NULL 제약 없음(Flyway DDL 단독 관리).
+     */
+    @Column(name = "acml_vol")
+    private final Long acmlVol;
+
     @Builder
     private ShortSaleDomestic(
             Stock stock,
@@ -77,7 +86,8 @@ public class ShortSaleDomestic extends BaseEntity {
             long shortSellAccQty,
             BigDecimal shortSellAccQtyRate,
             long shortSellAccAmt,
-            BigDecimal shortSellAccAmtRate) {
+            BigDecimal shortSellAccAmtRate,
+            Long acmlVol) {
         super();
         this.stock = stock;
         this.tradeDate = tradeDate;
@@ -89,5 +99,6 @@ public class ShortSaleDomestic extends BaseEntity {
         this.shortSellAccQtyRate = shortSellAccQtyRate;
         this.shortSellAccAmt = shortSellAccAmt;
         this.shortSellAccAmtRate = shortSellAccAmtRate;
+        this.acmlVol = acmlVol;
     }
 }
