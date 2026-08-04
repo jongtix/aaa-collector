@@ -48,9 +48,9 @@ public class ShortSaleInserter {
             INSERT IGNORE INTO short_sale_domestic
                 (stock_id, trade_date, short_sell_qty, short_sell_vol_rate, short_sell_amt,
                  short_sell_amt_rate, short_sell_acc_qty, short_sell_acc_qty_rate,
-                 short_sell_acc_amt, short_sell_acc_amt_rate, created_at, updated_at)
+                 short_sell_acc_amt, short_sell_acc_amt_rate, acml_vol, created_at, updated_at)
             VALUES
-                (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())
+                (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())
             """;
 
     private final JdbcTemplate jdbcTemplate;
@@ -107,5 +107,8 @@ public class ShortSaleInserter {
         ps.setBigDecimal(8, e.getShortSellAccQtyRate());
         ps.setLong(9, e.getShortSellAccAmt());
         ps.setBigDecimal(10, e.getShortSellAccAmtRate());
+        // SPEC-COLLECTOR-SHORTSALE-ACMLVOL-001 REQ-SSAV-006 — acmlVol은 boxed Long(null 가능, 과거
+        // 행 미백필 REQ-SSAV-007)이므로 setLong이 아닌 null-safe setObject를 사용한다.
+        ps.setObject(11, e.getAcmlVol());
     }
 }

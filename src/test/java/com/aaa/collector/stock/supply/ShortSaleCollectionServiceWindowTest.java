@@ -97,7 +97,16 @@ class ShortSaleCollectionServiceWindowTest {
 
     private KisShortSaleResponse.ShortSaleRow row(String date) {
         return new KisShortSaleResponse.ShortSaleRow(
-                date, "12000", "3.5", "900000000", "4.2", "50000", "5.1", "3750000000", "6.3");
+                date,
+                "12000",
+                "3.5",
+                "900000000",
+                "4.2",
+                "50000",
+                "5.1",
+                "3750000000",
+                "6.3",
+                "21500067");
     }
 
     private KisShortSaleResponse response(List<KisShortSaleResponse.ShortSaleRow> rows) {

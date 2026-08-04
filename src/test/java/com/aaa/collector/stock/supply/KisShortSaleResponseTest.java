@@ -59,6 +59,7 @@ class KisShortSaleResponseTest {
                         "acml_ssts_cntg_qty_rlim":"5.1",
                         "acml_ssts_tr_pbmn":"3750000000",
                         "acml_ssts_tr_pbmn_rlim":"6.3",
+                        "acml_vol":"21500067",
                         "stck_oprc":"74000",
                         "avrg_prc":"75000"
                       }
@@ -81,7 +82,8 @@ class KisShortSaleResponseTest {
                             KisShortSaleResponse.ShortSaleRow::acmlSstsCntgQty,
                             KisShortSaleResponse.ShortSaleRow::acmlSstsCntgQtyRlim,
                             KisShortSaleResponse.ShortSaleRow::acmlSstsTrPbmn,
-                            KisShortSaleResponse.ShortSaleRow::acmlSstsTrPbmnRlim)
+                            KisShortSaleResponse.ShortSaleRow::acmlSstsTrPbmnRlim,
+                            KisShortSaleResponse.ShortSaleRow::acmlVol)
                     .containsExactly(
                             "20260605",
                             "12000",
@@ -91,7 +93,8 @@ class KisShortSaleResponseTest {
                             "50000",
                             "5.1",
                             "3750000000",
-                            "6.3");
+                            "6.3",
+                            "21500067");
         }
     }
 
@@ -112,7 +115,7 @@ class KisShortSaleResponseTest {
         void output2_isImmutable() {
             KisShortSaleResponse.ShortSaleRow row =
                     new KisShortSaleResponse.ShortSaleRow(
-                            "20260605", "1", "2", "3", "4", "5", "6", "7", "8");
+                            "20260605", "1", "2", "3", "4", "5", "6", "7", "8", "9");
             KisShortSaleResponse response =
                     new KisShortSaleResponse("0", "MCA00000", "정상", new ArrayList<>(List.of(row)));
 
