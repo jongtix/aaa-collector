@@ -481,6 +481,43 @@ class CoveredRangeServiceGapWalkTest {
         }
 
         @Test
+        @DisplayName("AC-SDWALK-004 — '모름' 중단 후 다음 회차에서 동일 커서부터 재개(라이브락 없음)")
+        void resumesFromSameCursorAfterCalendarUnknownHalt_onSubsequentRetry() {
+            // Arrange — 1회차: unknownDate가 market_calendar에 행이 없어 "모름"으로 중단
+            LocalDate coveredUntil = LocalDate.of(2026, 7, 1);
+            LocalDate unknownDate = coveredUntil.plusDays(1);
+            LocalDate today = unknownDate.plusDays(5);
+            when(marketSessionGate.isOpenDayStrict(unknownDate)).thenReturn(Optional.empty());
+            BackfillStatus status = seedUsdkrw(LocalDate.of(2020, 1, 1), coveredUntil);
+            RecordingSingleDateFiller firstRunFiller =
+                    new RecordingSingleDateFiller(status.getId());
+
+            // Act — 1회차: "모름" 중단(REQ-SDWALK-005)
+            coveredRangeService.walkGapForward(
+                    status, firstRunFiller, today, CoveredCalendarDomain.DOMESTIC);
+
+            // Assert — 1회차는 필러 미호출, covered_until_date 미전진, CALENDAR_UNKNOWN 이상 신호 정확히 1회
+            assertThat(firstRunFiller.cursorsCalled).isEmpty();
+            assertThat(reload(status.getId()).getCoveredUntilDate()).isEqualTo(coveredUntil);
+            verify(backfillMetrics, times(1))
+                    .recordCoveredWalkAnomaly(CoveredWalkAnomalyKind.CALENDAR_UNKNOWN);
+
+            // Arrange — 2회차: 캘린더가 채워져 동일 커서가 이제 개장으로 확인됨(다음 날의 캘린더 갱신을 시뮬레이션)
+            when(marketSessionGate.isOpenDayStrict(unknownDate)).thenReturn(Optional.of(true));
+            RecordingSingleDateFiller secondRunFiller =
+                    new RecordingSingleDateFiller(status.getId());
+
+            // Act — 2회차: 동일 status 객체로 재호출(재개, REQ-SDWALK-006)
+            coveredRangeService.walkGapForward(
+                    status, secondRunFiller, today, CoveredCalendarDomain.DOMESTIC);
+
+            // Assert — 재개는 직전 회차가 중단한 지점(unknownDate)부터 정확히 시작하며(재조회·skip 없음),
+            // 정상적으로 today까지 전진한다(라이브락 없음)
+            assertThat(secondRunFiller.cursorsCalled.getFirst()).isEqualTo(unknownDate);
+            assertThat(reload(status.getId()).getCoveredUntilDate()).isEqualTo(today);
+        }
+
+        @Test
         @DisplayName("AC-SDWALK-005 — OVERSEAS(FINRA Daily)는 정밀 판정 접근자를 전혀 호출하지 않는다(회귀 고정)")
         void overseasDomain_neverCallsStrictAccessor() {
             // Arrange — FINRA Daily 전역 앵커 대상, 캐시 창 밖 과거 커서
