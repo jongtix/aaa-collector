@@ -58,6 +58,34 @@
 
 ### Fixed
 
+- **SINGLE_DATE 정방향 갭 walk 캘린더 판정 fail-open → "모름" 구분 전환** (SPEC-COLLECTOR-BACKFILL-015, AC-SDWALK-001~008, 8건):
+  `CoveredRangeService.walkGapForward()`의 `SINGLE_DATE` 모드(USDKRW·FINRA Daily) 사전 skip 판정이 좁은 캐시
+  기반 시장 개장일 게이트(`MarketOpenGate.isOpenDay()`, 매일 `[오늘−14일, 오늘+20일]`만 재조회하는 인메모리
+  캐시)를 사용해, 캐시 범위 **밖** 날짜를 실제 개장 여부와 무관하게 무조건 개장으로 오판(fail-open)하던 근본원인을
+  정정했다(aaa-infra#134). 정방향 갭 walk 커서가 쿼터 캡 등으로 캐시 하한보다 오래된 과거로 뒤처지면, 오판된
+  "개장일"에 대해 데이터 저장 단계가 호출되고 대상 API가 정상적으로 빈 응답(실제 휴장일이므로)을 반환해
+  `kept==0`으로 즉시 중단되는데, `covered_until_date`가 전진하지 않아 다음 회차도 동일 커서에서 이 패턴을
+  그대로 반복하는 자기 회복 불가능한 영구 고착이 발생했다(DB write 없는 무흔적 장애) — 이 메커니즘이
+  `market_indicators` USDKRW의 2026-07-18~ 결손 구간을 유발했다.
+  - **수정**: `DOMESTIC`(USDKRW) 캘린더 도메인에 한해, 사전 skip 판정을 이미 존재하던 검증 전용 판정
+    접근자(`MarketOpenGate.isOpenDayStrict(LocalDate): Optional<Boolean>`, SPEC-COLLECTOR-CALENDAR-001)로
+    전환했다 — 신규 캘린더 백엔드·캐시·저장소는 신설하지 않고 `evaluateFrontGap()`이 이미 사용하던 접근자를
+    재사용했다. 판정 결과를 개장/휴장/"모름"(`Optional.empty()`) 3분기로 처리하는
+    `singleDateWalkDecision()` 헬퍼를 신설했다: 휴장이면 정상 skip 후 walk 계속 진행(DEBUG 로그만), 개장이면
+    기존과 동일하게 데이터 저장 단계 진행(회귀 없음), "모름"이면 그 날짜를 개장으로 낙관 해석하지 않고 이번
+    호출의 walk 진행을 즉시 중단하며(`covered_until_date` 미갱신, 다음 회차에 동일 커서부터 재시도) WARN
+    로그 + `CoveredWalkAnomalyKind.CALENDAR_UNKNOWN` 이상 신호를 정확히 1회 발생시킨다(`evaluateFrontGap()`과
+    동일한 관측 관례).
+  - **OVERSEAS(FINRA Daily) 및 `RANGE` 모드는 완전 무변경**: `OVERSEAS` 캘린더 도메인(FINRA Daily)의
+    사전 skip 판정은 기존 캐시 판정 접근자(`UsMarketOpenGate.isOpenDay()`, fail-open)를 그대로 유지한다 —
+    동일 결함 메커니즘을 공유하지만 노출 조건이 훨씬 좁아(연도 경계를 넘는 장기 지연 + 그 해 NYSE 공휴일 적중이
+    동시에 필요) 별도 이슈로 분리했다(aaa-infra#138, 이 SPEC의 범위 밖). STOCK 범위형 4종(`daily_ohlcv`·
+    `investor_trend`·`short_sale_domestic`·`credit_balance`)이 사용하는 `RANGE` 모드 판정 경로 및 앞단
+    미도달 판정(`evaluateFrontGap()` 계열)·라이브 배치 쿼터 소진 스킵 로직도 변경하지 않는다.
+  - 관련: aaa-infra#134 (근본원인, 이 SPEC이 정정). aaa-infra#138 (FINRA Daily 동일 메커니즘, 별도 SPEC 소관).
+    이 커밋은 코드 수정 배포만 다룬다 — USDKRW 결손 구간(2026-07-18~)의 실제 자동 복구 관찰 및 수동 SQL
+    백필은 이 SPEC 범위 밖이다.
+
 - **ECOS M/Q 날짜 포맷 및 ECOS/FRED 오류 분류·백필 오귀속 결함 수정** (SPEC-COLLECTOR-ECOS-DATEFMT-001, AC-1~AC-8):
   `ECOS_CPI`·`ECOS_GDP_QOQ`·`ECOS_CURRENT_ACCOUNT` 3종이 도입 이래 전기간 0행이던 결함(aaa-infra#130)을
   4중 결함 체인 전체에서 수정했다.
