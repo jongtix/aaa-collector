@@ -31,7 +31,8 @@ class DbGrantVerifierTest {
                                                     "short_sale_overseas",
                                                     "etf_metadata",
                                                     "backfill_status",
-                                                    "market_calendar")))
+                                                    "market_calendar",
+                                                    "short_sale_domestic")))
                     .doesNotThrowAnyException();
         }
 
@@ -83,7 +84,7 @@ class DbGrantVerifierTest {
     class Tier2TablePrivileges {
 
         @Test
-        @DisplayName("6개 Tier-2 테이블 모두 존재하면 예외 없음")
+        @DisplayName("7개 Tier-2 테이블 모두 존재하면 예외 없음")
         void passes_when_all_tier2_tables_present() {
             assertThatCode(
                             () ->
@@ -95,7 +96,8 @@ class DbGrantVerifierTest {
                                                     "short_sale_overseas",
                                                     "etf_metadata",
                                                     "backfill_status",
-                                                    "market_calendar")))
+                                                    "market_calendar",
+                                                    "short_sale_domestic")))
                     .doesNotThrowAnyException();
         }
 
@@ -144,21 +146,23 @@ class DbGrantVerifierTest {
     @DisplayName("backfill_status Tier-2 등재 (SPEC-COLLECTOR-BACKFILL-001 CR-01)")
     class BackfillStatusTier2 {
 
-        // 6개 Tier-2 테이블 완전 집합 (기존 4개 + backfill_status + market_calendar).
-        private static final Set<String> ALL_SIX =
+        // 7개 Tier-2 테이블 완전 집합 (기존 6개 + short_sale_domestic,
+        // SPEC-COLLECTOR-SHORTSALE-VOLRATE-CORRECTION-001 / ADR-026 2026-08-06 개정).
+        private static final Set<String> ALL_SEVEN =
                 Set.of(
                         "stocks",
                         "stock_grades",
                         "short_sale_overseas",
                         "etf_metadata",
                         "backfill_status",
-                        "market_calendar");
+                        "market_calendar",
+                        "short_sale_domestic");
 
         @Test
-        @DisplayName(
-                "AC-9.5 — TIER2_TABLES는 정확히 6개(기존 4개 + backfill_status + market_calendar)를 포함한다")
-        void tier2TablesContainsExactlySixExpected() {
-            // 회귀 가드: backfill_status/market_calendar 누락 또는 임의 테이블 추가를 빌드 단계에서 차단한다.
+        @DisplayName("AC-9.5 — TIER2_TABLES는 정확히 7개(기존 6개 + short_sale_domestic)를 포함한다")
+        void tier2TablesContainsExactlySevenExpected() {
+            // 회귀 가드: backfill_status/market_calendar/short_sale_domestic 누락 또는 임의 테이블 추가를 빌드 단계에서
+            // 차단한다.
             assertThat(DbGrantVerifier.TIER2_TABLES)
                     .containsExactlyInAnyOrder(
                             "stocks",
@@ -166,7 +170,8 @@ class DbGrantVerifierTest {
                             "short_sale_overseas",
                             "etf_metadata",
                             "backfill_status",
-                            "market_calendar");
+                            "market_calendar",
+                            "short_sale_domestic");
         }
 
         @Test
@@ -207,9 +212,31 @@ class DbGrantVerifierTest {
         }
 
         @Test
-        @DisplayName("6개 Tier-2 테이블 모두 존재하면 예외 없음")
-        void passes_when_all_six_tier2_tables_present() {
-            assertThatCode(() -> verifier.verify(Set.of("SELECT", "INSERT"), ALL_SIX))
+        @DisplayName(
+                "short_sale_domestic UPDATE 권한 누락 시 fail-fast(예외) + 테이블명 포함"
+                        + " (SPEC-COLLECTOR-SHORTSALE-VOLRATE-CORRECTION-001)")
+        void failsFast_when_shortSaleDomestic_update_missing() {
+            // Arrange — short_sale_domestic만 UPDATE 권한이 없는 상태 (root 수동 GRANT 누락 시나리오)
+            Set<String> schemaPrivs = Set.of("SELECT", "INSERT");
+            Set<String> tier2Tables =
+                    Set.of(
+                            "stocks",
+                            "stock_grades",
+                            "short_sale_overseas",
+                            "etf_metadata",
+                            "backfill_status",
+                            "market_calendar");
+
+            // Act & Assert
+            assertThatThrownBy(() -> verifier.verify(schemaPrivs, tier2Tables))
+                    .isInstanceOf(DbGrantMissingException.class)
+                    .hasMessageContaining("short_sale_domestic");
+        }
+
+        @Test
+        @DisplayName("7개 Tier-2 테이블 모두 존재하면 예외 없음")
+        void passes_when_all_seven_tier2_tables_present() {
+            assertThatCode(() -> verifier.verify(Set.of("SELECT", "INSERT"), ALL_SEVEN))
                     .doesNotThrowAnyException();
         }
     }

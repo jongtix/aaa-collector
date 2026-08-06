@@ -11,7 +11,7 @@ import java.util.Set;
  *
  * <ol>
  *   <li>스키마 레벨: {@code SELECT}, {@code INSERT} on {@code aaa.*}
- *   <li>테이블 레벨: {@link #TIER2_TABLES} 5개 테이블에 {@code UPDATE}
+ *   <li>테이블 레벨: {@link #TIER2_TABLES} 7개 테이블에 {@code UPDATE}
  * </ol>
  *
  * <p>I/O가 없는 순수 로직 컴포넌트다. 권한 집합을 인자로 받아 검증하므로 단위 테스트가 용이하다.
@@ -32,6 +32,13 @@ public class DbGrantVerifier {
      *
      * <p>{@code market_calendar}는 SPEC-COLLECTOR-CALENDAR-001(REQ-CAL-020/-021)에서 추가됐다. 일일 갱신 배치가
      * 우선순위 판정 후 기존 행을 in-place UPDATE하므로(REQ-CAL-004) Tier-2다.
+     *
+     * <p>{@code short_sale_domestic}은 SPEC-COLLECTOR-SHORTSALE-VOLRATE-CORRECTION-001(ADR-026
+     * 2026-08-06 개정)에서 추가됐다. 두 독립적 근본원인(aaa-infra#61 분할·병합 왜곡 상시 정정, aaa-infra#133 T+0 예비치 리비전 소급
+     * 정정)의 공통 정정 파이프라인이 {@code short_sell_vol_rate}/{@code short_sell_qty}/{@code acml_vol}/{@code
+     * vol_rate_verified_at}를 평이한 {@code UPDATE ... WHERE}로 in-place 정정하므로 Tier-2다. {@code
+     * daily_ohlcv}/{@code investor_trend}는 같은 SPEC의 정정 대상이지만 재단(backbone) 테이블 blast-radius 회피 + 닫히는
+     * 구간(오퍼레이터 수동 SQL로 처리)이라는 근거로 이 SPEC에서는 Tier-2에 포함하지 않는다(ADR-026 2026-08-06 개정 참고).
      */
     static final Set<String> TIER2_TABLES =
             Set.of(
@@ -40,7 +47,8 @@ public class DbGrantVerifier {
                     "short_sale_overseas",
                     "etf_metadata",
                     "backfill_status",
-                    "market_calendar");
+                    "market_calendar",
+                    "short_sale_domestic");
 
     private static final Set<String> REQUIRED_SCHEMA_PRIVS = Set.of("SELECT", "INSERT");
 
