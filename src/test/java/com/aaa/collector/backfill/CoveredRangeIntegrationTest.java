@@ -23,6 +23,7 @@ import java.sql.SQLException;
 import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -87,7 +88,10 @@ class CoveredRangeIntegrationTest {
         // market_indicators 잔여 행이 다른 테스트의 countByIndicatorCode 절대값 단언을 오염시킨다 — 매 테스트
         // 전 명시적으로 비운다(테스트 격리, 프로덕션 경로 무관).
         marketIndicatorRepository.deleteAll();
-        when(marketSessionGate.isOpenDay(any())).thenReturn(true);
+        // DOMESTIC은 이제 정밀 판정 접근자(isOpenDayStrict)를 사용한다(SPEC-COLLECTOR-BACKFILL-015
+        // REQ-SDWALK-001) — 기본값을 개장 확정(Optional.of(true))으로 스텁해 기존 단언을 무변경으로 유지한다.
+        when(marketSessionGate.isOpenDayStrict(any())).thenReturn(Optional.of(true));
+        // OVERSEAS는 기존 캐시 판정 접근자(isOpenDay)를 그대로 유지한다(REQ-SDWALK-008, 변경 없음).
         when(usMarketSessionGate.isOpenDay(any())).thenReturn(true);
         clearInvocations(backfillMetrics);
     }

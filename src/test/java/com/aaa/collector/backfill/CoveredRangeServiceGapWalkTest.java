@@ -3,6 +3,9 @@ package com.aaa.collector.backfill;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.clearInvocations;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
@@ -19,6 +22,7 @@ import java.time.LocalDate;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -73,6 +77,9 @@ class CoveredRangeServiceGapWalkTest {
         // 기본값: 모든 날짜 개장일(테스트별로 필요 시 재정의) — 비거래일 skip 시나리오 전용 테스트에서만 false 혼입
         when(marketSessionGate.isOpenDay(any())).thenReturn(true);
         when(usMarketSessionGate.isOpenDay(any())).thenReturn(true);
+        // DOMESTIC은 이제 정밀 판정 접근자(isOpenDayStrict)를 사용한다(SPEC-COLLECTOR-BACKFILL-015
+        // REQ-SDWALK-001) — 기본값을 개장 확정(Optional.of(true))으로 스텁해 기존 단언을 무변경으로 유지한다.
+        when(marketSessionGate.isOpenDayStrict(any())).thenReturn(Optional.of(true));
         // flaky 근본 수정 — BackfillPendingSlotsWarmStarter(ApplicationRunner)가 Spring 컨텍스트 부팅 시
         // backfillMetrics.setPendingSlots(...)를 1회 호출한다. @MockitoBean은 매 테스트 "이후"에만 자동
         // reset되므로, 이 컨텍스트로 처음 실행되는 테스트(클래스 간 컨텍스트 캐시 재사용 순서에 따라 달라짐 — 순서
@@ -252,17 +259,20 @@ class CoveredRangeServiceGapWalkTest {
         }
 
         @Test
-        @DisplayName("비거래일(주말) skip — 기존 시장 캘린더 게이트 재사용, 필러가 호출되지 않는다")
+        @DisplayName("비거래일(주말) skip — 정밀 판정 접근자(isOpenDayStrict) 사용, 필러가 호출되지 않는다")
         void skipsNonTradingDays_viaExistingCalendarGate() {
-            // Arrange — 토/일요일을 게이트가 휴장일로 판정
+            // Arrange — 토/일요일을 정밀 판정 접근자가 휴장일(Optional.of(false))로 판정
+            // (SPEC-COLLECTOR-BACKFILL-015 REQ-SDWALK-001, DOMESTIC은 isOpenDay가 아닌 isOpenDayStrict
+            // 사용)
             LocalDate coveredUntil = LocalDate.of(2026, 7, 2); // 목요일
             LocalDate today = LocalDate.of(2026, 7, 8); // 다음 주 수요일 (금·토·일 포함)
-            when(marketSessionGate.isOpenDay(any()))
+            when(marketSessionGate.isOpenDayStrict(any()))
                     .thenAnswer(
                             invocation -> {
                                 LocalDate date = invocation.getArgument(0);
                                 DayOfWeek dow = date.getDayOfWeek();
-                                return dow != DayOfWeek.SATURDAY && dow != DayOfWeek.SUNDAY;
+                                return Optional.of(
+                                        dow != DayOfWeek.SATURDAY && dow != DayOfWeek.SUNDAY);
                             });
             BackfillStatus status = seedUsdkrw(LocalDate.of(2020, 1, 1), coveredUntil);
             RecordingSingleDateFiller filler = new RecordingSingleDateFiller(status.getId());
@@ -411,6 +421,93 @@ class CoveredRangeServiceGapWalkTest {
             assertThat(filler.cursorsCalled).isEmpty();
             assertThat(reload(status.getId()).getCoveredUntilDate()).isNull();
             verifyNoInteractions(backfillMetrics);
+        }
+    }
+
+    @Nested
+    @DisplayName(
+            "SINGLE_DATE DOMESTIC 정밀 판정 접근자 전환 — fail-open → 모름 구분 (SPEC-COLLECTOR-BACKFILL-015)")
+    class SingleDateStrictAccessorDecision {
+
+        @Test
+        @DisplayName(
+                "AC-SDWALK-001 — 캐시 창 밖 과거 휴장 주말(2026-07-18/19, aaa-infra#134 실사례) skip 후 walk"
+                        + " 계속 진행")
+        void cacheWindowExternalPastWeekend_skipsAndResumesWalk() {
+            // Arrange — aaa-infra#134 실사례 재현: covered_until_date=2026-07-17(금), 캐시 창(오늘−14~오늘+20)
+            // 밖의 과거 토·일요일이 정밀 판정 접근자로 정확히 휴장 판정된다
+            LocalDate coveredUntil = LocalDate.of(2026, 7, 17); // 금요일
+            LocalDate saturday = LocalDate.of(2026, 7, 18);
+            LocalDate sunday = LocalDate.of(2026, 7, 19);
+            LocalDate today = LocalDate.of(2026, 7, 20); // 월요일
+            when(marketSessionGate.isOpenDayStrict(saturday)).thenReturn(Optional.of(false));
+            when(marketSessionGate.isOpenDayStrict(sunday)).thenReturn(Optional.of(false));
+            BackfillStatus status = seedUsdkrw(LocalDate.of(2020, 1, 1), coveredUntil);
+            RecordingSingleDateFiller filler = new RecordingSingleDateFiller(status.getId());
+
+            // Act
+            coveredRangeService.walkGapForward(
+                    status, filler, today, CoveredCalendarDomain.DOMESTIC);
+
+            // Assert — 토·일요일은 필러 호출 대상에서 제외되지만, 이전처럼 빈 API 응답으로 인해 walk가 중단되지
+            // 않고 월요일까지 계속 진행된다(REQ-SDWALK-001/003)
+            assertThat(filler.cursorsCalled).containsExactly(today);
+            assertThat(reload(status.getId()).getCoveredUntilDate()).isEqualTo(today);
+            // AC-SDWALK-007 — 정상 skip은 이상 신호(메트릭)를 발생시키지 않는다(DEBUG 로그만, "모름" 중단과 구분)
+            verify(backfillMetrics, never()).recordCoveredWalkAnomaly(any());
+        }
+
+        @Test
+        @DisplayName("AC-SDWALK-003 — market_calendar에 행이 없는 진짜 '모름'은 이상 신호 발생 + 이번 호출 중단(미전진)")
+        void genuinelyUnknownCalendarDate_raisesAnomalyAndHalts() {
+            // Arrange
+            LocalDate coveredUntil = LocalDate.of(2026, 7, 1);
+            LocalDate unknownDate = coveredUntil.plusDays(1);
+            LocalDate today = unknownDate.plusDays(5);
+            when(marketSessionGate.isOpenDayStrict(unknownDate)).thenReturn(Optional.empty());
+            BackfillStatus status = seedUsdkrw(LocalDate.of(2020, 1, 1), coveredUntil);
+            RecordingSingleDateFiller filler = new RecordingSingleDateFiller(status.getId());
+
+            // Act
+            coveredRangeService.walkGapForward(
+                    status, filler, today, CoveredCalendarDomain.DOMESTIC);
+
+            // Assert — 필러 미호출, covered_until_date 미전진(호출 전 값과 동일), CALENDAR_UNKNOWN 이상 신호
+            // 정확히 1회(REQ-SDWALK-005/006)
+            assertThat(filler.cursorsCalled).isEmpty();
+            assertThat(reload(status.getId()).getCoveredUntilDate()).isEqualTo(coveredUntil);
+            verify(backfillMetrics, times(1))
+                    .recordCoveredWalkAnomaly(CoveredWalkAnomalyKind.CALENDAR_UNKNOWN);
+        }
+
+        @Test
+        @DisplayName("AC-SDWALK-005 — OVERSEAS(FINRA Daily)는 정밀 판정 접근자를 전혀 호출하지 않는다(회귀 고정)")
+        void overseasDomain_neverCallsStrictAccessor() {
+            // Arrange — FINRA Daily 전역 앵커 대상, 캐시 창 밖 과거 커서
+            LocalDate coveredUntil = LocalDate.of(2020, 1, 1);
+            LocalDate today = coveredUntil.plusDays(3);
+            BackfillStatus status =
+                    backfillStatusRepository.saveAndFlush(
+                            BackfillStatus.builder()
+                                    .targetType("OVERSEAS_SHORTSALE")
+                                    .targetCode("__GLOBAL__")
+                                    .dataTable("short_sale_overseas")
+                                    .status(BackfillStatusType.IN_PROGRESS)
+                                    .lastCollectedDate(coveredUntil.minusDays(1))
+                                    .build());
+            status.advanceCoveredUntil(coveredUntil);
+            status = backfillStatusRepository.saveAndFlush(status);
+            RecordingSingleDateFiller filler = new RecordingSingleDateFiller(status.getId());
+
+            // Act
+            coveredRangeService.walkGapForward(
+                    status, filler, today, CoveredCalendarDomain.OVERSEAS);
+
+            // Assert — 판정 결과·동작은 이 SPEC 이전과 완전히 동일(기존 캐시 판정 접근자만 사용), 정밀 판정
+            // 접근자는 전혀 호출되지 않는다(REQ-SDWALK-007/008)
+            assertThat(filler.cursorsCalled).hasSize(3);
+            assertThat(reload(status.getId()).getCoveredUntilDate()).isEqualTo(today);
+            verify(usMarketSessionGate, never()).isOpenDayStrict(any());
         }
     }
 }

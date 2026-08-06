@@ -127,8 +127,9 @@ class CoveredRangeServiceMarketCalendarRegressionTest {
 
         @Test
         @DisplayName(
-                "CoveredRangeService.walkGapForward의 SINGLE_DATE 분기가 수년 전 커서를 skip하지 않는다(fail-open)")
-        void walkGapForward_singleDateMode_doesNotSkipYearsAgoCursor() {
+                "CoveredRangeService.walkGapForward의 SINGLE_DATE DOMESTIC 분기가 정밀 판정 접근자로 전환된 후 수년 전"
+                        + " 휴장 커서를 정확히 skip한다(SPEC-COLLECTOR-BACKFILL-015)")
+        void walkGapForward_singleDateMode_skipsYearsAgoCursorAccurately() {
             // Arrange — covered_until_date를 수년 전 날짜 직전으로 설정, today 파라미터도 그 날짜로 고정해 커서가
             // 정확히 수년 전 날짜에 머무르게 한다
             LocalDate yearsAgo = today().minusYears(3);
@@ -153,8 +154,10 @@ class CoveredRangeServiceMarketCalendarRegressionTest {
             coveredRangeService.walkGapForward(
                     status, filler, yearsAgo, CoveredCalendarDomain.DOMESTIC);
 
-            // Assert — fail-open(true)이므로 "비거래일 skip" 조건(!isOpenDay)이 성립하지 않아 필러가 호출된다
-            assertThat(filler.cursorsCalled).containsExactly(yearsAgo);
+            // Assert — DOMESTIC은 이제 정밀 판정 접근자(isOpenDayStrict)를 사용하므로 게이트 캐시 범위 밖이어도
+            // market_calendar에 시딩된 실제 값(휴장)을 정확히 반영해 필러가 호출되지 않는다(REQ-SDWALK-001/003,
+            // 더 이상 fail-open으로 퇴화하지 않는다)
+            assertThat(filler.cursorsCalled).isEmpty();
         }
     }
 
@@ -196,6 +199,10 @@ class CoveredRangeServiceMarketCalendarRegressionTest {
             LocalDate holiday = today().minusDays(10);
             LocalDate dayAfterHoliday = holiday.plusDays(1);
             seed(holiday, false);
+            // dayAfterHoliday를 개장으로 명시 시딩 — 시딩하지 않으면 market_calendar에 행이 없어 정밀 판정
+            // 접근자가 "모름"(Optional.empty())을 반환해 REQ-SDWALK-005에 따라 즉시 중단되므로, 이 테스트가
+            // 원래 검증하려는 "정확한 휴장일 skip 후 walk 계속 진행"(REQ-SDWALK-001/003) 의도가 보존되지 않는다
+            seed(dayAfterHoliday, true);
             marketSessionGateRefresher.refresh();
 
             BackfillStatus status =
