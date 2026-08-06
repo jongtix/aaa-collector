@@ -393,4 +393,175 @@ class ShortSaleVolRateCorrectionServiceTest {
             assertThat(ShortSaleVolRateCorrectionService.TRACK2_BATCH_SIZE).isGreaterThan(1);
         }
     }
+
+    @Nested
+    @DisplayName("T0R 완료 마커 게이트 (REQ-T0R-043~045, plan.md §M7)")
+    class T0rCompletionMarkerGate {
+
+        @Test
+        @DisplayName(
+                "Track 1 ②단계 — 게이트 active + 대상 거래일이 닫히는 창 구간이면 defer(acml_vol·"
+                        + "vol_rate_verified_at 미기록, REQ-T0R-044)")
+        void track1_deferredWhenGateActiveAndWithinWindow() throws Exception {
+            // Arrange — MATCHED 판정이지만 거래일이 닫히는 창 [2026-06-29, 2026-08-06] 내부
+            when(healthyKeySelector.selectHealthy()).thenReturn(List.of(ISA));
+            Stock stock = stockOf("005930", 10L);
+            LocalDate date = LocalDate.of(2026, 7, 15);
+            ShortSaleDomestic row =
+                    shortSaleRow(stock, date, 10_000L, new BigDecimal("2.00"), null, null, 1000L);
+            when(shortSaleDomesticRepository.findTrack1LegacyBacklogBatch(
+                            anyLong(), any(Pageable.class)))
+                    .thenReturn(List.of(row))
+                    .thenReturn(List.of());
+            when(shortSaleCollectionService.fetchSingleDate(
+                            any(LeaseSession.class), eq("005930"), eq(date)))
+                    .thenReturn(tr04Response("20260715", "10000", "500000"));
+            when(guard.reconcile(new BigDecimal("2.00"), 10_000L, 500_000L, 10_000L))
+                    .thenReturn(AcmlVolReconciliationResult.matched(500_000L));
+            T0rGateState gate = new T0rGateState(true, LocalDate.of(2026, 8, 6));
+
+            // Act
+            ShortSaleVolRateCorrectionResult result = service.correctLegacyBacklog(gate);
+
+            // Assert — defer는 skipped 버킷에 집계되며, 원자적 쓰기·daily_ohlcv 조회 모두 발생하지 않는다
+            assertThat(result).isEqualTo(new ShortSaleVolRateCorrectionResult(0, 0, 1));
+            verify(shortSaleDomesticRepository, never())
+                    .updateTrack1Correction(anyLong(), anyLong(), any(), any());
+            verifyNoInteractions(dailyOhlcvRepository);
+        }
+
+        @Test
+        @DisplayName("Track 1 ②단계 — 게이트 active이나 거래일이 구간 밖이면 정상 처리(defer 미적용)")
+        void track1_notDeferredWhenTradeDateOutsideWindow() throws Exception {
+            // Arrange — 거래일이 닫히는 창 상한(2026-08-06) 이후
+            when(healthyKeySelector.selectHealthy()).thenReturn(List.of(ISA));
+            Stock stock = stockOf("005930", 11L);
+            LocalDate date = LocalDate.of(2026, 8, 10);
+            ShortSaleDomestic row =
+                    shortSaleRow(stock, date, 10_000L, new BigDecimal("2.00"), null, null, 1100L);
+            when(shortSaleDomesticRepository.findTrack1LegacyBacklogBatch(
+                            anyLong(), any(Pageable.class)))
+                    .thenReturn(List.of(row))
+                    .thenReturn(List.of());
+            when(shortSaleCollectionService.fetchSingleDate(
+                            any(LeaseSession.class), eq("005930"), eq(date)))
+                    .thenReturn(tr04Response("20260810", "10000", "500000"));
+            when(guard.reconcile(new BigDecimal("2.00"), 10_000L, 500_000L, 10_000L))
+                    .thenReturn(AcmlVolReconciliationResult.matched(500_000L));
+            when(dailyOhlcvRepository.findByStockIdAndTradeDateIn(11L, List.of(date)))
+                    .thenReturn(List.of(dailyOhlcvOf(stock, date, 1_000_000L)));
+            T0rGateState gate = new T0rGateState(true, LocalDate.of(2026, 8, 6));
+
+            // Act
+            ShortSaleVolRateCorrectionResult result = service.correctLegacyBacklog(gate);
+
+            // Assert
+            assertThat(result).isEqualTo(new ShortSaleVolRateCorrectionResult(1, 0, 0));
+            verify(shortSaleDomesticRepository)
+                    .updateTrack1Correction(
+                            eq(1100L), eq(500_000L), eq(new BigDecimal("1.00")), any());
+        }
+
+        @Test
+        @DisplayName("Track 1 — 게이트 비활성(completed_at NOT NULL)이면 구간 검사 자체를 생략(REQ-T0R-045)")
+        void track1_gateInactive_skipsWindowCheckEntirely() throws Exception {
+            when(healthyKeySelector.selectHealthy()).thenReturn(List.of(ISA));
+            Stock stock = stockOf("005930", 12L);
+            LocalDate date = LocalDate.of(2026, 7, 15); // 닫히는 창 내부 날짜지만 게이트 비활성
+            ShortSaleDomestic row =
+                    shortSaleRow(stock, date, 10_000L, new BigDecimal("2.00"), null, null, 1200L);
+            when(shortSaleDomesticRepository.findTrack1LegacyBacklogBatch(
+                            anyLong(), any(Pageable.class)))
+                    .thenReturn(List.of(row))
+                    .thenReturn(List.of());
+            when(shortSaleCollectionService.fetchSingleDate(
+                            any(LeaseSession.class), eq("005930"), eq(date)))
+                    .thenReturn(tr04Response("20260715", "10000", "500000"));
+            when(guard.reconcile(new BigDecimal("2.00"), 10_000L, 500_000L, 10_000L))
+                    .thenReturn(AcmlVolReconciliationResult.matched(500_000L));
+            when(dailyOhlcvRepository.findByStockIdAndTradeDateIn(12L, List.of(date)))
+                    .thenReturn(List.of(dailyOhlcvOf(stock, date, 1_000_000L)));
+
+            // Act — completed_at NOT NULL이므로 active=false
+            ShortSaleVolRateCorrectionResult result =
+                    service.correctLegacyBacklog(new T0rGateState(false, LocalDate.of(2026, 8, 6)));
+
+            // Assert — defer 없이 정상 처리
+            assertThat(result).isEqualTo(new ShortSaleVolRateCorrectionResult(1, 0, 0));
+            verify(shortSaleDomesticRepository)
+                    .updateTrack1Correction(
+                            eq(1200L), eq(500_000L), eq(new BigDecimal("1.00")), any());
+        }
+
+        @Test
+        @DisplayName("Track 2 recompute 호출 직전 — 게이트 active + 구간 내부면 defer, 가드·daily_ohlcv 미호출")
+        void track2_deferredWhenGateActiveAndWithinWindow() {
+            // Arrange
+            Stock stock = stockOf("005930", 13L);
+            LocalDate date = LocalDate.of(2026, 7, 15);
+            ShortSaleDomestic row =
+                    shortSaleRow(
+                            stock, date, 10_000L, new BigDecimal("1.00"), 1_000_000L, null, 1300L);
+            when(shortSaleDomesticRepository.findTrack2PendingVerificationBatch(
+                            anyLong(), any(Pageable.class)))
+                    .thenReturn(List.of(row))
+                    .thenReturn(List.of());
+            T0rGateState gate = new T0rGateState(true, LocalDate.of(2026, 8, 6));
+
+            // Act
+            ShortSaleVolRateCorrectionResult result = service.verifyRecentInserts(gate);
+
+            // Assert
+            assertThat(result).isEqualTo(new ShortSaleVolRateCorrectionResult(0, 0, 1));
+            verify(shortSaleDomesticRepository, never())
+                    .updateTrack2Verification(anyLong(), any(), any());
+            verifyNoInteractions(dailyOhlcvRepository, guard, shortSaleCollectionService);
+        }
+
+        @Test
+        @DisplayName("Track 2 — 게이트 active이나 거래일이 구간 밖이면 정상 처리(defer 미적용)")
+        void track2_notDeferredWhenTradeDateOutsideWindow() {
+            // Arrange
+            Stock stock = stockOf("005930", 14L);
+            LocalDate date = LocalDate.of(2026, 8, 10);
+            ShortSaleDomestic row =
+                    shortSaleRow(
+                            stock, date, 10_000L, new BigDecimal("1.00"), 1_000_000L, null, 1400L);
+            when(shortSaleDomesticRepository.findTrack2PendingVerificationBatch(
+                            anyLong(), any(Pageable.class)))
+                    .thenReturn(List.of(row))
+                    .thenReturn(List.of());
+            when(dailyOhlcvRepository.findByStockIdAndTradeDateIn(14L, List.of(date)))
+                    .thenReturn(List.of(dailyOhlcvOf(stock, date, 1_000_000L)));
+            T0rGateState gate = new T0rGateState(true, LocalDate.of(2026, 8, 6));
+
+            // Act
+            ShortSaleVolRateCorrectionResult result = service.verifyRecentInserts(gate);
+
+            // Assert
+            assertThat(result).isEqualTo(new ShortSaleVolRateCorrectionResult(1, 0, 0));
+            verify(shortSaleDomesticRepository)
+                    .updateTrack2Verification(eq(1400L), eq(new BigDecimal("1.00")), any());
+        }
+
+        @Test
+        @DisplayName("no-arg 오버로드는 T0rGateState.inactive()로 위임한다(기존 M4 테스트 호환)")
+        void noArgOverloads_delegateToInactiveGate() {
+            Stock stock = stockOf("005930", 15L);
+            LocalDate date = LocalDate.of(2026, 7, 15); // 닫히는 창 내부 날짜라도 게이트 자체가 비활성
+            ShortSaleDomestic row =
+                    shortSaleRow(
+                            stock, date, 10_000L, new BigDecimal("1.00"), 1_000_000L, null, 1500L);
+            when(shortSaleDomesticRepository.findTrack2PendingVerificationBatch(
+                            anyLong(), any(Pageable.class)))
+                    .thenReturn(List.of(row))
+                    .thenReturn(List.of());
+            when(dailyOhlcvRepository.findByStockIdAndTradeDateIn(15L, List.of(date)))
+                    .thenReturn(List.of(dailyOhlcvOf(stock, date, 1_000_000L)));
+
+            ShortSaleVolRateCorrectionResult result = service.verifyRecentInserts();
+
+            assertThat(result).isEqualTo(new ShortSaleVolRateCorrectionResult(1, 0, 0));
+        }
+    }
 }

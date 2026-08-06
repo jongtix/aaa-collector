@@ -36,12 +36,14 @@ import org.springframework.web.client.RestClientException;
  * <p><b>대상 재확인 절차</b>(plan.md §M5): 상한({@code closingWindowEndDate})은 호출자가 매 실행 시 그 시점의 실제
  * REQ-T0R-001 배포 확정일을 다시 계산해 전달해야 한다 — 이 서비스는 값을 캐시하지 않고 호출마다 인자로 받은 범위를 그대로 조회에 사용한다 ("2026-06-29
  * ~ 오늘"이 아니라 "2026-06-29 ~ 배포 확정 시점"의 실제 누적 구간, REQ-T0R-011). 이 서비스는 {@code
- * t0r_correction_status}(M8/M7 게이트 범위)를 직접 다루지 않는다 — 호출자(M7 스케줄러, 미착수)가 그 테이블에서 상한을 읽어 전달할 책임을 진다.
+ * t0r_correction_status}(M8/M7 게이트 범위)를 직접 다루지 않는다 — 호출자({@code
+ * ShortSaleDomesticT0RevisionScheduler}, M7)가 그 테이블에서 상한을 읽어 전달할 책임을 진다.
  */
 @Slf4j
 @Service
 @RequiredArgsConstructor
-// @MX:NOTE: [AUTO] T+0 소급 정정 진입점 — M7 스케줄러(미착수)가 t0r_correction_status 조회 후 상한을 전달해 호출 예정
+// @MX:NOTE: [AUTO] T+0 소급 정정 진입점 — ShortSaleDomesticT0RevisionScheduler(M7)가
+// t0r_correction_status 조회 후 상한을 전달해 호출한다
 // @MX:REASON: SPEC-COLLECTOR-SHORTSALE-VOLRATE-CORRECTION-001 REQ-T0R-010~012,-020~022,-030,
 // plan.md
 // §M5/§M7

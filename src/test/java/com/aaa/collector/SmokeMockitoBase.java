@@ -64,6 +64,7 @@ import com.aaa.collector.stock.shortsale.overseas.backfill.FinraCdnDailyFileClie
 import com.aaa.collector.stock.shortsale.overseas.backfill.FinraCdnFileParser;
 import com.aaa.collector.stock.shortsale.overseas.backfill.FinraCdnShortSaleBackfillOrchestrator;
 import com.aaa.collector.stock.shortsale.overseas.backfill.FinraCdnShortSaleBackfillScheduler;
+import com.aaa.collector.stock.supply.correction.T0rCorrectionStatusRepository;
 import com.aaa.collector.watchlist.OverseasListedDateProvider;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -179,7 +180,11 @@ import org.springframework.transaction.support.TransactionTemplate;
             MarketCalendarRepository.class,
             // SPEC-COLLECTOR-SHORTSALE-OVERSEAS-002 T1: 해외 상장일(firstTradeDate) 취득 신규 빈 모킹
             // (smoke 회귀 방지).
-            OverseasListedDateProvider.class
+            OverseasListedDateProvider.class,
+            // SPEC-COLLECTOR-SHORTSALE-VOLRATE-CORRECTION-001 M7: T0R 완료 마커 조회 신규 JpaRepository 빈
+            // 모킹 — ShortSaleDomesticCorrectionScheduler/ShortSaleDomesticT0RevisionScheduler가 의존
+            // (smoke 회귀 방지).
+            T0rCorrectionStatusRepository.class
         })
 class SmokeMockitoBase {
 

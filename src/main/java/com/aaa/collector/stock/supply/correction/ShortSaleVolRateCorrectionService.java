@@ -46,7 +46,8 @@ import org.springframework.web.client.RestClientException;
 @Slf4j
 @Service
 @RequiredArgsConstructor
-// @MX:NOTE: [AUTO] 2-트랙 정정 진입점 — M7 스케줄러(미착수)가 매 실행마다 Track1→Track2 순서로 호출 예정
+// @MX:NOTE: [AUTO] 2-트랙 정정 진입점 — ShortSaleDomesticCorrectionScheduler(M7)가 매 실행마다
+// Track1→Track2 순서로 호출한다
 // @MX:REASON: SPEC-COLLECTOR-SHORTSALE-VOLRATE-CORRECTION-001 REQ-SSVC-030~039, plan.md §M4/§M7
 public class ShortSaleVolRateCorrectionService {
 
@@ -77,11 +78,26 @@ public class ShortSaleVolRateCorrectionService {
     /**
      * Track 1(레거시·{@code acml_vol} 결측 가드) 정정 배치를 실행한다 (REQ-SSVC-031, -032).
      *
-     * <p>조회 조건에 더 이상 걸리는 행이 없을 때까지 유한 배치 단위로 순차 처리한다 — 단일 트랜잭션으로 전체를 처리하지 않는다.
+     * <p>T0R 완료 마커 게이트를 거치지 않는 호출자용 편의 오버로드 — {@link T0rGateState#inactive()}(구간 검사 생략)로 {@link
+     * #correctLegacyBacklog(T0rGateState)}에 위임한다. 기존(M4) 단위 테스트 호환을 위해 시그니처를 보존한다.
      *
      * @return 이번 실행의 처리 결과 집계
      */
     public ShortSaleVolRateCorrectionResult correctLegacyBacklog() {
+        return correctLegacyBacklog(T0rGateState.inactive());
+    }
+
+    /**
+     * Track 1(레거시·{@code acml_vol} 결측 가드) 정정 배치를 실행한다 (REQ-SSVC-031, -032, REQ-T0R-043~045).
+     *
+     * <p>조회 조건에 더 이상 걸리는 행이 없을 때까지 유한 배치 단위로 순차 처리한다 — 단일 트랜잭션으로 전체를 처리하지 않는다. {@code gate}가
+     * 활성(completed_at IS NULL)이면 ②단계(가드 판정 이후 원자적 쓰기 직전) 직전에 대상 행의 거래일이 닫히는 창 구간에 속하는지 검사해
+     * defer한다(REQ-T0R-044) — defer된 행은 {@link ShortSaleVolRateCorrectionResult#skipped()}에 집계된다.
+     *
+     * @param gate {@code ShortSaleDomesticCorrectionScheduler}가 매 실행 시작 시 1회 조회해 전달하는 T0R 게이트 상태
+     * @return 이번 실행의 처리 결과 집계
+     */
+    public ShortSaleVolRateCorrectionResult correctLegacyBacklog(T0rGateState gate) {
         LeaseSession session = keyLeaseRegistry.openSession();
         if (session.isEmpty()) {
             log.error("[vol-rate-correction][track1] 모든 키 죽음 — 이번 실행 skip");
@@ -99,11 +115,11 @@ public class ShortSaleVolRateCorrectionService {
         while (!batch.isEmpty()) {
             for (ShortSaleDomestic row : batch) {
                 afterId = row.getId();
-                Track1Outcome outcome = correctTrack1Row(session, row);
+                Track1Outcome outcome = correctTrack1Row(session, row, gate);
                 switch (outcome) {
                     case CORRECTED -> corrected++;
                     case REVISION_SUSPECTED -> revisionSuspected++;
-                    case SKIPPED -> skipped++;
+                    case SKIPPED, DEFERRED -> skipped++;
                 }
             }
             batch = shortSaleDomesticRepository.findTrack1LegacyBacklogBatch(afterId, page);
@@ -121,11 +137,25 @@ public class ShortSaleVolRateCorrectionService {
     /**
      * Track 2(상시 재계산 스윕) 정정 배치를 실행한다 (REQ-SSVC-034~038).
      *
-     * <p>KIS 재조회·가드 호출 없이 {@code daily_ohlcv} 조인 재계산만 수행한다(REQ-SSVC-038, -057).
+     * <p>T0R 완료 마커 게이트를 거치지 않는 호출자용 편의 오버로드 — {@link T0rGateState#inactive()}(구간 검사 생략)로 {@link
+     * #verifyRecentInserts(T0rGateState)}에 위임한다. 기존(M4) 단위 테스트 호환을 위해 시그니처를 보존한다.
      *
      * @return 이번 실행의 처리 결과 집계(revisionSuspected는 Track 2에 해당 없으므로 항상 0)
      */
     public ShortSaleVolRateCorrectionResult verifyRecentInserts() {
+        return verifyRecentInserts(T0rGateState.inactive());
+    }
+
+    /**
+     * Track 2(상시 재계산 스윕) 정정 배치를 실행한다 (REQ-SSVC-034~038, REQ-T0R-043~045).
+     *
+     * <p>KIS 재조회·가드 호출 없이 {@code daily_ohlcv} 조인 재계산만 수행한다(REQ-SSVC-038, -057). {@code gate}가 활성이면
+     * recompute 호출 직전에 대상 행의 거래일이 닫히는 창 구간에 속하는지 검사해 defer한다(REQ-T0R-044).
+     *
+     * @param gate {@code ShortSaleDomesticCorrectionScheduler}가 매 실행 시작 시 1회 조회해 전달하는 T0R 게이트 상태
+     * @return 이번 실행의 처리 결과 집계(revisionSuspected는 Track 2에 해당 없으므로 항상 0)
+     */
+    public ShortSaleVolRateCorrectionResult verifyRecentInserts(T0rGateState gate) {
         int corrected = 0;
         int skipped = 0;
         long afterId = 0;
@@ -136,7 +166,7 @@ public class ShortSaleVolRateCorrectionService {
         while (!batch.isEmpty()) {
             for (ShortSaleDomestic row : batch) {
                 afterId = row.getId();
-                if (verifyTrack2Row(row)) {
+                if (verifyTrack2Row(row, gate)) {
                     corrected++;
                 } else {
                     skipped++;
@@ -152,8 +182,9 @@ public class ShortSaleVolRateCorrectionService {
         return new ShortSaleVolRateCorrectionResult(corrected, 0, skipped);
     }
 
-    /** Track 1 단일 행 처리 — TR04 재조회 → 가드 판정 → (성공 시) 재계산·원자적 UPDATE. */
-    private Track1Outcome correctTrack1Row(LeaseSession session, ShortSaleDomestic row) {
+    /** Track 1 단일 행 처리 — TR04 재조회 → 가드 판정 → (T0R 게이트 통과 시) 재계산·원자적 UPDATE. */
+    private Track1Outcome correctTrack1Row(
+            LeaseSession session, ShortSaleDomestic row, T0rGateState gate) {
         String symbol = row.getStock().getSymbol();
         LocalDate tradeDate = row.getTradeDate();
 
@@ -215,6 +246,17 @@ public class ShortSaleVolRateCorrectionService {
             return Track1Outcome.REVISION_SUSPECTED;
         }
 
+        // ②단계(가드 판정 이후 원자적 쓰기 직전) — T0R 완료 마커 게이트(REQ-T0R-044). gate가 활성이고 대상 거래일이
+        // 닫히는 창 구간에 속하면 이번 실행에서 defer한다 — acml_vol·vol_rate_verified_at 둘 다 미기록.
+        if (gate.shouldDefer(tradeDate)) {
+            log.info(
+                    "[vol-rate-correction][track1] T0R 완료 마커 게이트 defer(REQ-T0R-044) —"
+                            + " symbol={}, date={}",
+                    symbol,
+                    tradeDate);
+            return Track1Outcome.DEFERRED;
+        }
+
         Optional<BigDecimal> recomputedRate = recomputeRate(row);
         if (recomputedRate.isEmpty()) {
             return Track1Outcome.SKIPPED;
@@ -226,8 +268,21 @@ public class ShortSaleVolRateCorrectionService {
         return Track1Outcome.CORRECTED;
     }
 
-    /** Track 2 단일 행 처리 — {@code daily_ohlcv} 조인 재계산 후 원자적 UPDATE(값 동일 여부와 무관하게 항상 기록). */
-    private boolean verifyTrack2Row(ShortSaleDomestic row) {
+    /**
+     * Track 2 단일 행 처리 — (T0R 게이트 통과 시) {@code daily_ohlcv} 조인 재계산 후 원자적 UPDATE(값 동일 여부와 무관하게 항상
+     * 기록).
+     */
+    private boolean verifyTrack2Row(ShortSaleDomestic row, T0rGateState gate) {
+        // recompute 호출 직전 — T0R 완료 마커 게이트(REQ-T0R-044). Track 1과 동일 근거.
+        if (gate.shouldDefer(row.getTradeDate())) {
+            log.info(
+                    "[vol-rate-correction][track2] T0R 완료 마커 게이트 defer(REQ-T0R-044) —"
+                            + " symbol={}, date={}",
+                    row.getStock().getSymbol(),
+                    row.getTradeDate());
+            return false;
+        }
+
         Optional<BigDecimal> recomputedRate = recomputeRate(row);
         if (recomputedRate.isEmpty()) {
             return false;
@@ -310,6 +365,8 @@ public class ShortSaleVolRateCorrectionService {
     private enum Track1Outcome {
         CORRECTED,
         REVISION_SUSPECTED,
-        SKIPPED
+        SKIPPED,
+        /** T0R 완료 마커 게이트로 defer됨(REQ-T0R-044) — 집계 시 {@code skipped} 버킷에 합산된다. */
+        DEFERRED
     }
 }
