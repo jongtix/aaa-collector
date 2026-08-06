@@ -144,14 +144,14 @@ public class CoveredRangeService {
      * 재개한다(REQ-CVR-013, 재-walk 낭비 없음).
      *
      * <p>{@link CoveredTrackingEligibility.Mode#SINGLE_DATE}(USDKRW/FINRA Daily)는 하루씩 {@link
-     * #executeStep}을 호출하되, 호출 전 사전 skip 판정을 수행한다(SPEC-COLLECTOR-BACKFILL-015 REQ-SDWALK-001~008) —
-     * {@code DOMESTIC}(USDKRW)은 {@link MarketOpenGate#isOpenDayStrict(LocalDate)}(검증 전용 판정 접근자, "값
-     * 있음/모름" 구분)를 사용하고, {@code OVERSEAS}(FINRA Daily)는 기존 {@link
-     * UsMarketOpenGate#isOpenDay(LocalDate)} (캐시 판정 접근자, fail-open)를 그대로 유지한다(REQ-SDWALK-008, 변경
-     * 없음). {@code DOMESTIC}에서 판정이 "모름"({@link Optional#empty()})이면 그 날짜를 개장으로 낙관 해석하지 않고 이번 호출의
-     * walk 진행을 즉시 중단한다(REQ-SDWALK-005/006, {@code covered_until_date} 미갱신). skip은 인메모리 커서 전진일 뿐 커밋을
-     * 유발하지 않는다. {@link CoveredTrackingEligibility.Mode#RANGE}(STOCK 4종)는 캘린더 게이트를 거치지 않는다 — 기존 윈도우
-     * 메커니즘이 비거래일을 내재적으로 처리하므로(REQ-CVR-050), 게이트로 윈도우 시작일을 선판정하면 윈도우 내부의 유효 거래일까지 오판 skip될 수 있다.
+     * #executeStep}을 호출하되, 호출 전 사전 skip 판정을 수행한다(SPEC-COLLECTOR-BACKFILL-015 REQ-SDWALK-001~008,
+     * SPEC-COLLECTOR-BACKFILL-016 REQ-SDWALK2-001~008) — 양 도메인 모두 검증 전용 판정 접근자({@link
+     * MarketOpenGate#isOpenDayStrict(LocalDate)}/{@link
+     * UsMarketOpenGate#isOpenDayStrict(LocalDate)}, "값 있음/모름" 구분)를 사용한다. 판정이 "모름"({@link
+     * Optional#empty()})이면 그 날짜를 개장으로 낙관 해석하지 않고 이번 호출의 walk 진행을 즉시 중단한다(REQ-SDWALK-005/006,
+     * REQ-SDWALK2-005/006, {@code covered_until_date} 미갱신). skip은 인메모리 커서 전진일 뿐 커밋을 유발하지 않는다.
+     * {@link CoveredTrackingEligibility.Mode#RANGE}(STOCK 4종)는 캘린더 게이트를 거치지 않는다 — 기존 윈도우 메커니즘이
+     * 비거래일을 내재적으로 처리하므로(REQ-CVR-050), 게이트로 윈도우 시작일을 선판정하면 윈도우 내부의 유효 거래일까지 오판 skip될 수 있다.
      *
      * <p>{@code kept == 0}(정상 빈 응답 또는 anomaly, TASK-003 {@link #executeStep} 게이트)이면 이번 회차 진행을 멈춘다 —
      * 캡이나 프로세스 종료로 이번 회차가 끝나도, 이미 커밋된 만큼 다음 회차가 이어받으므로 라이브락이 없다(REQ-CVR-013, -042).
@@ -244,21 +244,16 @@ public class CoveredRangeService {
     }
 
     /**
-     * {@code SINGLE_DATE} 모드의 사전 skip 판정을 도메인별로 분기한다(SPEC-COLLECTOR-BACKFILL-015
-     * REQ-SDWALK-001~008).
+     * {@code SINGLE_DATE} 모드의 사전 skip 판정을 수행한다(SPEC-COLLECTOR-BACKFILL-015 REQ-SDWALK-001~008,
+     * SPEC-COLLECTOR-BACKFILL-016 REQ-SDWALK2-001~008).
      *
-     * <p>{@code DOMESTIC}(USDKRW)은 {@link #openDayStrictState(CoveredCalendarDomain, LocalDate)}(검증
-     * 전용 판정 접근자)로 "값 있음/모름"을 구분한다 — 좁은 캐시 범위 밖 날짜를 무조건 개장으로 오판하는 {@link
-     * #isOpenDay(CoveredCalendarDomain, LocalDate)}(캐시 판정 접근자)는 이 목적에 사용하지 않는다(REQ-SDWALK-001/002).
-     * {@code OVERSEAS}(FINRA Daily)는 기존 캐시 판정 접근자를 그대로 사용한다 — 변경 없음(REQ-SDWALK-007/008).
+     * <p>양 도메인 모두 {@link #openDayStrictState(CoveredCalendarDomain, LocalDate)}(검증 전용 판정 접근자)로 "값
+     * 있음/모름"을 구분한다 — 좁은 범위 밖 날짜를 무조건 개장으로 오판하는 캐시 판정 접근자({@link
+     * MarketOpenGate#isOpenDay(LocalDate)}/{@link UsMarketOpenGate#isOpenDay(LocalDate)})는 이 목적에
+     * 사용하지 않는다(REQ-SDWALK-001/002, REQ-SDWALK2-001/002).
      */
     private SingleDateWalkDecision singleDateWalkDecision(
             CoveredCalendarDomain domain, LocalDate date) {
-        if (domain == CoveredCalendarDomain.OVERSEAS) {
-            return isOpenDay(domain, date)
-                    ? SingleDateWalkDecision.PROCEED
-                    : SingleDateWalkDecision.SKIP;
-        }
         Optional<Boolean> openState = openDayStrictState(domain, date);
         if (openState.isEmpty()) {
             return SingleDateWalkDecision.UNKNOWN;
@@ -384,19 +379,10 @@ public class CoveredRangeService {
     }
 
     /**
-     * 단일 날짜형 대상의 기존 시장 캘린더 게이트를 도메인 기반으로 선택한다(신규 캘린더 로직 없음, TASK-017 — {@code target_type} 문자열 비교를
-     * 대체).
-     */
-    private boolean isOpenDay(CoveredCalendarDomain domain, LocalDate date) {
-        return domain == CoveredCalendarDomain.OVERSEAS
-                ? usMarketOpenGate.isOpenDay(date)
-                : marketOpenGate.isOpenDay(date);
-    }
-
-    /**
-     * 앞단 미도달 판정 전용 검증 접근자를 도메인 기반으로 선택한다(REQ-CVR-082) — 좁은 범위에 고정되고 범위 밖을 개장으로 fail-open 처리하는
-     * {@link #isOpenDay(CoveredCalendarDomain, LocalDate)}는 이 목적에 사용하지 않는다. "값 있음/모름"을 구분해야 하므로
-     * {@link Optional}을 그대로 전달한다.
+     * 도메인 기반 캘린더 판정 전용 검증 접근자를 선택한다(REQ-CVR-082) — 좁은 범위에 고정되고 범위 밖을 개장으로 fail-open 처리하는 캐시 판정
+     * 접근자({@link MarketOpenGate#isOpenDay(LocalDate)}/{@link
+     * UsMarketOpenGate#isOpenDay(LocalDate)})는 이 목적에 사용하지 않는다. "값 있음/모름"을 구분해야 하므로 {@link
+     * Optional}을 그대로 전달한다.
      */
     private Optional<Boolean> openDayStrictState(CoveredCalendarDomain domain, LocalDate date) {
         return domain == CoveredCalendarDomain.OVERSEAS

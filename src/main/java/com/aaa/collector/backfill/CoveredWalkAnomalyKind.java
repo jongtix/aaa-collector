@@ -6,8 +6,9 @@ package com.aaa.collector.backfill;
  * <p>{@link BackfillMetrics#recordCoveredWalkAnomaly(CoveredWalkAnomalyKind)}의 {@code kind} 태그값을
  * 타입-세이프하게 표현한다. GROUP_A 전용 {@link BackfillMetrics#recordAnomalyFailed()}와는 완전히 분리된 신호다 — 이 enum은
  * {@link CoveredRangeService#executeStep}의 앞단 미도달 판정({@code evaluateFrontGap()})과 {@link
- * CoveredRangeService#walkGapForward} {@code SINGLE_DATE} 모드의 {@code DOMESTIC} 사전 skip 판정
- * (SPEC-COLLECTOR-BACKFILL-015 REQ-SDWALK-005) 두 곳에서 사용된다.
+ * CoveredRangeService#walkGapForward} {@code SINGLE_DATE} 모드의 사전 skip 판정(도메인 무관,
+ * SPEC-COLLECTOR-BACKFILL-015 REQ-SDWALK-005 · SPEC-COLLECTOR-BACKFILL-016 REQ-SDWALK2-005) 두 곳에서
+ * 사용된다.
  */
 public enum CoveredWalkAnomalyKind {
 
