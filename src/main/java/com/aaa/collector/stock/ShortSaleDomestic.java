@@ -14,6 +14,7 @@ import jakarta.persistence.Table;
 import jakarta.persistence.UniqueConstraint;
 import java.math.BigDecimal;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import lombok.AccessLevel;
 import lombok.Builder;
 import lombok.Getter;
@@ -75,6 +76,17 @@ public class ShortSaleDomestic extends BaseEntity {
     @Column(name = "acml_vol")
     private final Long acmlVol;
 
+    /**
+     * {@code short_sell_vol_rate}가 정정 공식(REQ-SSVC-011)으로 검증·정정된 시각. NULL이면 미검증 — Track 2(상시 재계산 스윕,
+     * REQ-SSVC-034)의 pending 마커다.
+     *
+     * <p>SPEC-COLLECTOR-SHORTSALE-VOLRATE-CORRECTION-001 REQ-SSVC-034 — 컬럼은 M8 마이그레이션(V45)에서 추가된다.
+     * NOT NULL 제약 없음(Flyway DDL 단독 관리). UPDATE 경로는 네이티브 쿼리이므로 엔티티에 setter를 두지 않는다 — 이 필드는 SELECT 결과
+     * 매핑 전용이다.
+     */
+    @Column(name = "vol_rate_verified_at")
+    private final LocalDateTime volRateVerifiedAt;
+
     @Builder
     private ShortSaleDomestic(
             Stock stock,
@@ -87,7 +99,8 @@ public class ShortSaleDomestic extends BaseEntity {
             BigDecimal shortSellAccQtyRate,
             long shortSellAccAmt,
             BigDecimal shortSellAccAmtRate,
-            Long acmlVol) {
+            Long acmlVol,
+            LocalDateTime volRateVerifiedAt) {
         super();
         this.stock = stock;
         this.tradeDate = tradeDate;
@@ -100,5 +113,6 @@ public class ShortSaleDomestic extends BaseEntity {
         this.shortSellAccAmt = shortSellAccAmt;
         this.shortSellAccAmtRate = shortSellAccAmtRate;
         this.acmlVol = acmlVol;
+        this.volRateVerifiedAt = volRateVerifiedAt;
     }
 }

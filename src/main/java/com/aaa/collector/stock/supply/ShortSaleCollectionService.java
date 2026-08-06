@@ -196,6 +196,24 @@ public class ShortSaleCollectionService {
         return new BackfillWindowResult(oldest, validEntities.size());
     }
 
+    /**
+     * 단일 날짜 TR04 재조회 — {@code acml_vol} 채움 3분기 판정
+     * 가드(SPEC-COLLECTOR-SHORTSALE-VOLRATE-CORRECTION-001 M3/M4)와 레거시 백필 루프(M6)가 재사용하는 좁은 스코프 진입점이다.
+     *
+     * <p>내부적으로 {@link #fetch(LeaseSession, String, LocalDate, LocalDate)}를 {@code from == to ==
+     * date}로 호출한다 — 기존 기간 조회 경로를 그대로 재사용할 뿐 신규 HTTP 경로를 추가하지 않는다(plan.md §M3 "TR04 재조회 클라이언트 배선").
+     *
+     * @param session 호출자가 고정한 per-run 헬스 스냅샷 세션
+     * @param symbol 종목 코드
+     * @param date 재조회 대상 단일 거래일
+     * @return TR04 응답(해당 날짜의 행이 없으면 {@code output2}가 빈 목록일 수 있음)
+     * @throws InterruptedException 게이트 호출 인터럽트 시 전파
+     */
+    public KisShortSaleResponse fetchSingleDate(LeaseSession session, String symbol, LocalDate date)
+            throws InterruptedException {
+        return fetch(session, symbol, date, date);
+    }
+
     private KisShortSaleResponse fetch(
             LeaseSession session, String symbol, LocalDate from, LocalDate to)
             throws InterruptedException {

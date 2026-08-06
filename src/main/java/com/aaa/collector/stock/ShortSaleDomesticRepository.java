@@ -1,8 +1,11 @@
 package com.aaa.collector.stock;
 
+import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.util.List;
 import java.util.Optional;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
@@ -58,4 +61,104 @@ public interface ShortSaleDomesticRepository extends JpaRepository<ShortSaleDome
     /** 최대 거래일 조회 (SPEC-OBSV-WATERMARK-001 REQ-WM-003 warm-start용). */
     @Query("SELECT MAX(s.tradeDate) FROM ShortSaleDomestic s")
     Optional<LocalDate> findMaxTradeDate();
+
+    /**
+     * Track 1(레거시·{@code acml_vol} 결측 가드) 대상 배치 조회 (SPEC-COLLECTOR-SHORTSALE-VOLRATE-CORRECTION-001
+     * REQ-SSVC-031, -032).
+     *
+     * <p>{@code afterId} 커서 기반 순방향 페이지네이션을 사용한다 — REVISION_SUSPECTED로 스킵된 행({@code acml_vol}이 여전히
+     * NULL)이 같은 실행 안에서 무한 반복 조회되지 않도록 항상 id를 전진시킨다. 정정에 성공한 행은 {@code acml_vol}이 채워져 이 조회 조건에서 자연히
+     * 제외된다(다음 페이지에서 재등장하지 않음).
+     *
+     * @param afterId 이전 페이지 마지막 id(첫 페이지는 0)
+     * @param pageable 페이지 크기만 사용(정렬은 쿼리에 고정)
+     * @return id 오름차순 정렬된 대상 행 목록(빈 목록이면 이번 실행에서 더 이상 대상 없음)
+     */
+    @Query(
+            "SELECT s FROM ShortSaleDomestic s JOIN FETCH s.stock"
+                    + " WHERE s.shortSellQty > 0 AND s.acmlVol IS NULL AND s.id > :afterId"
+                    + " ORDER BY s.id ASC")
+    List<ShortSaleDomestic> findTrack1LegacyBacklogBatch(
+            @Param("afterId") long afterId, Pageable pageable);
+
+    /**
+     * Track 2(상시 재계산 스윕) 대상 배치 조회 (SPEC-COLLECTOR-SHORTSALE-VOLRATE-CORRECTION-001 REQ-SSVC-034).
+     *
+     * <p>{@code afterId} 커서 기반 순방향 페이지네이션 — Track 1과 동일한 근거(REQ-SSVC-032). Track 2는 처리한 행마다 {@code
+     * vol_rate_verified_at}을 항상 기록하므로(REQ-SSVC-035) 처리된 행은 자연히 다음 조회에서 제외된다.
+     *
+     * @param afterId 이전 페이지 마지막 id(첫 페이지는 0)
+     * @param pageable 페이지 크기만 사용(정렬은 쿼리에 고정)
+     * @return id 오름차순 정렬된 대상 행 목록(빈 목록이면 이번 실행에서 더 이상 대상 없음)
+     */
+    @Query(
+            "SELECT s FROM ShortSaleDomestic s JOIN FETCH s.stock"
+                    + " WHERE s.shortSellQty > 0 AND s.acmlVol IS NOT NULL"
+                    + " AND s.volRateVerifiedAt IS NULL AND s.id > :afterId"
+                    + " ORDER BY s.id ASC")
+    List<ShortSaleDomestic> findTrack2PendingVerificationBatch(
+            @Param("afterId") long afterId, Pageable pageable);
+
+    /**
+     * Track 1 원자적 정정 쓰기 — {@code acml_vol}·{@code short_sell_vol_rate}·{@code
+     * vol_rate_verified_at}을 단일 UPDATE 문으로 함께 기록한다 (SPEC-COLLECTOR-SHORTSALE-VOLRATE-CORRECTION-001
+     * REQ-SSVC-002, -036).
+     *
+     * <p>단일 행을 대상으로 하는 단일 UPDATE 문이므로 세 컬럼의 쓰기는 DB 엔진 수준에서 원자적이다(AC-1). {@code ON DUPLICATE KEY
+     * UPDATE}가 아닌 평이한 {@code UPDATE ... WHERE}를 사용해(REQ-SSVC-061) {@link
+     * com.aaa.collector.arch.Tier1InsertIgnoreGuardTest}의 {@code TIER2_TABLE_ALLOWLIST}(4개)를 무수정으로
+     * 유지한다(AC-18) — {@code short_sale_domestic}은 M1에서 {@code DbGrantVerifier.TIER2_TABLES}에 이미
+     * 편입됐다.
+     *
+     * @param id 대상 행 PK
+     * @param acmlVol 가드 판정으로 채택된 {@code acml_vol}(MATCHED 재조회값 또는 EVENT_ADJUSTED 역산값)
+     * @param shortSellVolRate REQ-SSVC-011 공식({@code daily_ohlcv} 조인)으로 재계산된 값
+     * @param verifiedAt 정정 완료 시각
+     * @return 영향 행 수(정상 케이스 1, 대상 행이 이미 없으면 0)
+     */
+    @Transactional
+    @Modifying
+    @Query(
+            value =
+                    """
+                    UPDATE short_sale_domestic
+                    SET acml_vol = :acmlVol,
+                        short_sell_vol_rate = :shortSellVolRate,
+                        vol_rate_verified_at = :verifiedAt
+                    WHERE id = :id
+                    """,
+            nativeQuery = true)
+    int updateTrack1Correction(
+            @Param("id") Long id,
+            @Param("acmlVol") long acmlVol,
+            @Param("shortSellVolRate") BigDecimal shortSellVolRate,
+            @Param("verifiedAt") LocalDateTime verifiedAt);
+
+    /**
+     * Track 2 원자적 검증 쓰기 — {@code short_sell_vol_rate}·{@code vol_rate_verified_at}을 단일 UPDATE 문으로
+     * 함께 기록한다 (SPEC-COLLECTOR-SHORTSALE-VOLRATE-CORRECTION-001 REQ-SSVC-035).
+     *
+     * <p>재계산값이 저장값과 같아도(no-op에 가까운 값 재기록) 동일하게 호출한다 — {@code vol_rate_verified_at}은 두 경우 모두 반드시
+     * 기록되어야 한다(AC-9d, "UPDATE 문은 실행되지 않거나 no-op UPDATE로 실행되며(구현 선택)"의 no-op UPDATE 선택).
+     *
+     * @param id 대상 행 PK
+     * @param shortSellVolRate REQ-SSVC-011 공식으로 재계산된 값
+     * @param verifiedAt 검증 완료 시각
+     * @return 영향 행 수(정상 케이스 1, 대상 행이 이미 없으면 0)
+     */
+    @Transactional
+    @Modifying
+    @Query(
+            value =
+                    """
+                    UPDATE short_sale_domestic
+                    SET short_sell_vol_rate = :shortSellVolRate,
+                        vol_rate_verified_at = :verifiedAt
+                    WHERE id = :id
+                    """,
+            nativeQuery = true)
+    int updateTrack2Verification(
+            @Param("id") Long id,
+            @Param("shortSellVolRate") BigDecimal shortSellVolRate,
+            @Param("verifiedAt") LocalDateTime verifiedAt);
 }
