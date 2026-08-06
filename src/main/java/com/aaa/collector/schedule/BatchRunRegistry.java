@@ -79,7 +79,8 @@ public class BatchRunRegistry {
                         BatchCrons.OVERSEAS_DAILY_CRON,
                         BatchCrons.OVERSEAS_DAILY_ZONE,
                         Duration.ofHours(5).toSeconds()),
-                // 국내 일봉 체인(16:00 KST)에 연쇄되는 3라벨 — 동일 cron/zone 공유(§3.1 비고).
+                // 국내 일봉 체인(19:00 KST, SPEC-COLLECTOR-SHORTSALE-VOLRATE-CORRECTION-001 M2
+                // 재설계)에 연쇄되는 3라벨 — 동일 cron/zone 공유(§3.1 비고).
                 new BatchRunEntry(
                         "domestic-supply-investor",
                         BatchCrons.DOMESTIC_DAILY_CHAIN_CRON,

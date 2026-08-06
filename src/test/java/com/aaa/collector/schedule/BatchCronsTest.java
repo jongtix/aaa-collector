@@ -162,9 +162,11 @@ class BatchCronsTest {
         class DailyAndShortsaleBatches {
 
             @Test
-            @DisplayName("DOMESTIC_DAILY_CHAIN_CRON은 DomesticDailyOhlcvScheduler 원본 리터럴과 일치해야 한다")
+            @DisplayName(
+                    "DOMESTIC_DAILY_CHAIN_CRON은 DomesticDailyOhlcvScheduler 원본 리터럴과 일치해야 한다"
+                            + " (SPEC-COLLECTOR-SHORTSALE-VOLRATE-CORRECTION-001 M2, v0.5.0 19:00 재설계)")
             void domesticDailyChainCron_matchesOriginalLiteral() {
-                assertEquals("0 0 16 * * MON-FRI", BatchCrons.DOMESTIC_DAILY_CHAIN_CRON);
+                assertEquals("0 0 19 * * MON-FRI", BatchCrons.DOMESTIC_DAILY_CHAIN_CRON);
             }
 
             @Test

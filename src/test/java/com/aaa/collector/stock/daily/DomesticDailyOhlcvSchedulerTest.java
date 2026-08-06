@@ -40,13 +40,15 @@ class DomesticDailyOhlcvSchedulerTest {
     class ScheduledAnnotation {
 
         @Test
-        @DisplayName("cron='0 0 16 * * MON-FRI', zone='Asia/Seoul' (AC-6 S6-1, S6-2)")
+        @DisplayName(
+                "cron='0 0 19 * * MON-FRI', zone='Asia/Seoul' (AC-6 S6-1, S6-2,"
+                        + " SPEC-COLLECTOR-SHORTSALE-VOLRATE-CORRECTION-001 M2 v0.5.0 재설계)")
         void collectDaily_hasCorrectScheduledAnnotation() throws NoSuchMethodException {
             Method method = DomesticDailyOhlcvScheduler.class.getMethod("collectDaily");
             Scheduled scheduled = method.getAnnotation(Scheduled.class);
 
             assertThat(scheduled).isNotNull();
-            assertThat(scheduled.cron()).isEqualTo("0 0 16 * * MON-FRI");
+            assertThat(scheduled.cron()).isEqualTo("0 0 19 * * MON-FRI");
             assertThat(scheduled.zone()).isEqualTo("Asia/Seoul");
         }
 

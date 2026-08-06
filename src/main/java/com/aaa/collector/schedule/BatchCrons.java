@@ -12,8 +12,14 @@ package com.aaa.collector.schedule;
 public final class BatchCrons {
 
     // ─── domestic-daily-chain ────────────────────────────────────────────────
-    /** 국내 일봉 배치 cron — 평일 16:00 KST. */
-    public static final String DOMESTIC_DAILY_CHAIN_CRON = "0 0 16 * * MON-FRI";
+    // @MX:NOTE: [AUTO] 16:00→19:00 재확정 — SPEC-COLLECTOR-SHORTSALE-VOLRATE-CORRECTION-001
+    // M2(v0.5.0).
+    // T+0 데이터 정착 확인 여유(정착 완료 실측 대비 23분 이상 버퍼) 확보를 위해 시각을 상향했다. 배포 전
+    // 다일(3거래일 이상) 재확인 프로브(REQ-T0R-006) 통과가 배포 전제조건이다.
+    /**
+     * 국내 일봉 배치 cron — 평일 19:00 KST(SPEC-COLLECTOR-SHORTSALE-VOLRATE-CORRECTION-001 M2, v0.5.0 재설계).
+     */
+    public static final String DOMESTIC_DAILY_CHAIN_CRON = "0 0 19 * * MON-FRI";
 
     /** 국내 일봉 배치 zone. */
     public static final String DOMESTIC_DAILY_CHAIN_ZONE = "Asia/Seoul";

@@ -48,7 +48,8 @@ class ExpectedRunGaugeBinderTest {
     @Test
     @DisplayName("게이지 값 = ExpectedFireCalculator가 산출한 직전 발화 epoch (REQ-XR-003)")
     void gaugeValueMatchesExpectedFireCalculator() {
-        // Arrange: 수요일 20:00 KST — MON-FRI 16:00 KST cron의 직전 발화는 같은 날 16:00 KST 슬롯.
+        // Arrange: 수요일 20:00 KST — MON-FRI 19:00 KST cron(domestic-daily-chain,
+        // SPEC-COLLECTOR-SHORTSALE-VOLRATE-CORRECTION-001 M2 재설계)의 직전 발화는 같은 날 19:00 KST 슬롯.
         Instant now = Instant.parse("2026-07-08T11:00:00Z"); // 수 20:00 KST
         SimpleMeterRegistry registry = new SimpleMeterRegistry();
         BatchRunRegistry runRegistry = defaultRunRegistry();
@@ -74,9 +75,10 @@ class ExpectedRunGaugeBinderTest {
     @Test
     @DisplayName("토요일 계산 시 직전 금요일 슬롯 값에 고정된다 (REQ-XR-005 주말 무전진)")
     void weekendPinsToFridaySlot() {
-        // Arrange: 토요일 12:00 KST. MON-FRI 16:00 KST cron의 직전 발화는 금요일 16:00 KST 슬롯이어야 한다.
+        // Arrange: 토요일 12:00 KST. MON-FRI 19:00 KST cron(domestic-daily-chain,
+        // SPEC-COLLECTOR-SHORTSALE-VOLRATE-CORRECTION-001 M2 재설계)의 직전 발화는 금요일 19:00 KST 슬롯이어야 한다.
         Instant saturday = Instant.parse("2026-07-11T03:00:00Z"); // 토 12:00 KST
-        Instant fridaySlot = Instant.parse("2026-07-10T07:00:00Z"); // 금 16:00 KST
+        Instant fridaySlot = Instant.parse("2026-07-10T10:00:00Z"); // 금 19:00 KST
         SimpleMeterRegistry registry = new SimpleMeterRegistry();
         ExpectedRunGaugeBinder binder =
                 new ExpectedRunGaugeBinder(
@@ -116,9 +118,10 @@ class ExpectedRunGaugeBinderTest {
         double thursdayValue = gauge.value();
 
         // Assert: 캐시되지 않고 다음 슬롯으로 재계산된다.
+        // (SPEC-COLLECTOR-SHORTSALE-VOLRATE-CORRECTION-001 M2 재설계 — domestic-daily-chain 19:00 KST)
         assertThat(thursdayValue).isGreaterThan(wednesdayValue);
         assertThat(thursdayValue)
-                .isEqualTo((double) Instant.parse("2026-07-09T07:00:00Z").getEpochSecond());
+                .isEqualTo((double) Instant.parse("2026-07-09T10:00:00Z").getEpochSecond());
     }
 
     @Test

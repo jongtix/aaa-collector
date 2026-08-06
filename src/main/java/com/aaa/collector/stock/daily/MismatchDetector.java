@@ -13,8 +13,9 @@ import org.springframework.stereotype.Component;
  *
  * <p>KIS 재조회값과 DB 저장값의 OHLC(시가·고가·저가·종가)를 비교하여 불일치 시 WARN 로그를 발산한다. 행 수정·삭제는 수행하지 않는다.
  *
- * <p>volume/tradingValue는 비교 대상에서 제외한다. KRX는 장 마감 직후 잠정치를 제공하고 T+1에 최종 확정치로 소급 수정하므로, 16:00 KST 수집
- * 시점의 volume은 구조적으로 확정치와 0~3% 차이가 발생한다. 이 오차는 OHLC 기반 가격 분석 및 LightGBM 예측에 유의미한 영향을 주지 않는다.
+ * <p>volume/tradingValue는 비교 대상에서 제외한다. KRX는 장 마감 직후 잠정치를 제공하고 T+1에 최종 확정치로 소급 수정하므로, 19:00 KST 수집
+ * 시점(SPEC-COLLECTOR-SHORTSALE-VOLRATE-CORRECTION-001 M2 재설계)의 volume은 구조적으로 확정치와 0~3% 차이가 발생한다. 이
+ * 오차는 OHLC 기반 가격 분석 및 LightGBM 예측에 유의미한 영향을 주지 않는다.
  *
  * <p>REQ-INSERT-003: 검증 단계에서 생성된 {@link ParsedOhlcvRow}를 입력으로 받아 재파싱 없이 비교한다 (W-1 불변식).
  *

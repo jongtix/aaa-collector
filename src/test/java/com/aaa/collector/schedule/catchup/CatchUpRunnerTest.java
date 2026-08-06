@@ -147,10 +147,12 @@ class CatchUpRunnerTest {
     class Ac1DomesticDailyMissed {
 
         @Test
-        @DisplayName("평일 18:00 KST, lastLoad = 전날 → shouldRun=true")
+        @DisplayName(
+                "평일 19:10 KST, lastLoad = 전날 → shouldRun=true"
+                        + " (SPEC-COLLECTOR-SHORTSALE-VOLRATE-CORRECTION-001 M2, domestic-daily-chain 19:00 재설계)")
         void whenDailyMissed_thenTriggered() {
-            // Arrange: 2026-06-22(월) 18:00 KST, lastLoad = 전날 22:00 KST
-            Instant now = ZonedDateTime.of(2026, 6, 22, 18, 0, 0, 0, KST).toInstant();
+            // Arrange: 2026-06-22(월) 19:10 KST(19:00 슬롯 + grace 300s 경과), lastLoad = 전날 22:00 KST
+            Instant now = ZonedDateTime.of(2026, 6, 22, 19, 10, 0, 0, KST).toInstant();
             LocalDateTime yesterday = LocalDateTime.of(2026, 6, 21, 22, 0, 0);
 
             Clock clock = Clock.fixed(now, KST);
@@ -222,11 +224,13 @@ class CatchUpRunnerTest {
     class Ac4AlreadyLoaded {
 
         @Test
-        @DisplayName("lastLoad = 오늘 16:30 KST (expectedLastFire=16:00 이후) → shouldRun=false")
+        @DisplayName(
+                "lastLoad = 오늘 19:05 KST (expectedLastFire=19:00 이후) → shouldRun=false"
+                        + " (SPEC-COLLECTOR-SHORTSALE-VOLRATE-CORRECTION-001 M2, domestic-daily-chain 19:00 재설계)")
         void whenAlreadyLoaded_thenNoTrigger() {
-            // Arrange: 2026-06-22(월) 18:00 KST, lastLoad = 오늘 16:30 (16:00 이후)
-            Instant now = ZonedDateTime.of(2026, 6, 22, 18, 0, 0, 0, KST).toInstant();
-            LocalDateTime alreadyLoaded = LocalDateTime.of(2026, 6, 22, 16, 30, 0);
+            // Arrange: 2026-06-22(월) 19:35 KST, lastLoad = 오늘 19:05 (19:00 이후)
+            Instant now = ZonedDateTime.of(2026, 6, 22, 19, 35, 0, 0, KST).toInstant();
+            LocalDateTime alreadyLoaded = LocalDateTime.of(2026, 6, 22, 19, 5, 0);
 
             Clock clock = Clock.fixed(now, KST);
             CatchUpRunner runner = buildRunner(clock, defaultProperties());
@@ -247,9 +251,10 @@ class CatchUpRunnerTest {
         @Test
         @DisplayName("일봉 적재됐어도 creditBalance stale이면 → shouldRun=true")
         void whenCreditBalanceStale_thenTriggered() {
-            // Arrange: 2026-06-22(월) 18:00 KST
-            Instant now = ZonedDateTime.of(2026, 6, 22, 18, 0, 0, 0, KST).toInstant();
-            LocalDateTime fresh = LocalDateTime.of(2026, 6, 22, 16, 30, 0);
+            // Arrange: 2026-06-22(월) 19:10 KST(19:00 슬롯 + grace 300s 경과,
+            // SPEC-COLLECTOR-SHORTSALE-VOLRATE-CORRECTION-001 M2 domestic-daily-chain 19:00 재설계)
+            Instant now = ZonedDateTime.of(2026, 6, 22, 19, 10, 0, 0, KST).toInstant();
+            LocalDateTime fresh = LocalDateTime.of(2026, 6, 22, 19, 5, 0);
             LocalDateTime stale = LocalDateTime.of(2026, 6, 21, 16, 0, 0);
 
             // chain: 일봉(fresh), investorTrend(fresh), creditBalance(stale), shortSale(fresh)
@@ -336,10 +341,11 @@ class CatchUpRunnerTest {
         @Test
         @DisplayName("AC-7: now == expectedLastFire + 300s → grace 미경과(경계) → shouldRun=false")
         void whenNowEqualsGraceDeadline_thenNotRun() {
-            // expectedLastFire = 2026-06-22(월) 16:00 KST
-            // grace = 300s → deadline = 16:05:00
-            // now = 정확히 16:05:00 KST
-            Instant now = ZonedDateTime.of(2026, 6, 22, 16, 5, 0, 0, KST).toInstant();
+            // expectedLastFire = 2026-06-22(월) 19:00 KST
+            // (SPEC-COLLECTOR-SHORTSALE-VOLRATE-CORRECTION-001 M2, domestic-daily-chain 19:00 재설계)
+            // grace = 300s → deadline = 19:05:00
+            // now = 정확히 19:05:00 KST
+            Instant now = ZonedDateTime.of(2026, 6, 22, 19, 5, 0, 0, KST).toInstant();
             LocalDateTime stale = LocalDateTime.of(2026, 6, 21, 16, 0, 0);
 
             Clock clock = Clock.fixed(now, KST);
@@ -364,8 +370,9 @@ class CatchUpRunnerTest {
         @Test
         @DisplayName("AC-16: now == expectedLastFire + 301s → grace 경과 → shouldRun=true")
         void whenNow1SecAfterGrace_thenRun() {
-            // now = 16:05:01 KST (grace deadline + 1s)
-            Instant now = ZonedDateTime.of(2026, 6, 22, 16, 5, 1, 0, KST).toInstant();
+            // now = 19:05:01 KST (grace deadline + 1s;
+            // SPEC-COLLECTOR-SHORTSALE-VOLRATE-CORRECTION-001 M2 domestic-daily-chain 19:00 재설계)
+            Instant now = ZonedDateTime.of(2026, 6, 22, 19, 5, 1, 0, KST).toInstant();
             LocalDateTime stale = LocalDateTime.of(2026, 6, 21, 16, 0, 0);
 
             CatchUpUnit unit =
@@ -392,10 +399,11 @@ class CatchUpRunnerTest {
         @Test
         @DisplayName("첫 번째 단위 trigger가 예외를 던져도 두 번째 단위 trigger가 실행된다")
         void whenFirstUnitThrows_thenSecondUnitStillRuns() {
-            // Arrange: 2026-06-22(월) 18:10 KST — 두 단위 모두 grace 경과
-            // 단위1: domestic-daily-chain (16:00 슬롯 + grace 300s → 16:05 deadline < 18:10)
-            // 단위2: domestic-invest-opinion (18:00 슬롯 + grace 300s → 18:05 deadline < 18:10)
-            Instant now = ZonedDateTime.of(2026, 6, 22, 18, 10, 0, 0, KST).toInstant();
+            // Arrange: 2026-06-22(월) 19:15 KST — 두 단위 모두 grace 경과
+            // (SPEC-COLLECTOR-SHORTSALE-VOLRATE-CORRECTION-001 M2, domestic-daily-chain 19:00 재설계)
+            // 단위1: domestic-daily-chain (19:00 슬롯 + grace 300s → 19:05 deadline < 19:15)
+            // 단위2: domestic-invest-opinion (18:00 슬롯 + grace 300s → 18:05 deadline < 19:15)
+            Instant now = ZonedDateTime.of(2026, 6, 22, 19, 15, 0, 0, KST).toInstant();
             LocalDateTime stale = LocalDateTime.of(2026, 6, 21, 16, 0, 0);
 
             Runnable throwingTrigger = mock(Runnable.class);
@@ -446,8 +454,10 @@ class CatchUpRunnerTest {
         @Test
         @DisplayName("lastLoad = Optional.empty() → stale로 간주 → shouldRun=true")
         void whenLastLoadEmpty_thenStale() {
-            // Arrange: 2026-06-22(월) 18:00 KST, lastLoad = empty
-            Instant now = ZonedDateTime.of(2026, 6, 22, 18, 0, 0, 0, KST).toInstant();
+            // Arrange: 2026-06-22(월) 19:10 KST(19:00 슬롯 + grace 300s 경과,
+            // SPEC-COLLECTOR-SHORTSALE-VOLRATE-CORRECTION-001 M2 domestic-daily-chain 19:00 재설계),
+            // lastLoad = empty
+            Instant now = ZonedDateTime.of(2026, 6, 22, 19, 10, 0, 0, KST).toInstant();
 
             CatchUpUnit unit =
                     domesticDailyUnitWithLastLoad(
@@ -501,14 +511,15 @@ class CatchUpRunnerTest {
         @Test
         @DisplayName("runCatchUp()이 합리적인 시간 내에 완료된다 (인위적 sleep 없음)")
         void runCatchUp_completesWithoutSleep() throws InterruptedException {
-            // now = 2026-06-22(월) 18:00 KST, fresh = 17:30 KST (모든 슬롯보다 이후)
+            // now = 2026-06-22(월) 19:10 KST, fresh = 19:05 KST (모든 슬롯보다 이후)
+            // (SPEC-COLLECTOR-SHORTSALE-VOLRATE-CORRECTION-001 M2, domestic-daily-chain 19:00 재설계)
             // 단위별 same-day/grace/stale 조건이 성립하는 경우만 stale 체크 → 최소 stubbing
-            Instant now = ZonedDateTime.of(2026, 6, 22, 18, 0, 0, 0, KST).toInstant();
-            // fresh: 오늘 17:30 KST — 16:00/17:05 슬롯 이후이므로 해당 단위들은 stale 아님
-            LocalDateTime fresh = LocalDateTime.of(2026, 6, 22, 17, 30, 0);
+            Instant now = ZonedDateTime.of(2026, 6, 22, 19, 10, 0, 0, KST).toInstant();
+            // fresh: 오늘 19:05 KST — 07:50/17:05/18:00/19:00 슬롯 이후이므로 해당 단위들은 stale 아님
+            LocalDateTime fresh = LocalDateTime.of(2026, 6, 22, 19, 5, 0);
 
             // 실제로 stale 체크까지 도달하는 단위만 stubbing (나머지는 same-day/grace 실패):
-            // domestic-daily-chain (16:00 KST, grace 경과): 4개 supplier
+            // domestic-daily-chain (19:00 KST, grace 경과): 4개 supplier
             when(dailyOhlcvRepository.findMaxCreatedAtByMarketsIn(any()))
                     .thenReturn(Optional.of(fresh));
             when(investorTrendRepository.findMaxCreatedAt()).thenReturn(Optional.of(fresh));
@@ -519,8 +530,14 @@ class CatchUpRunnerTest {
             // domestic-etf-representative (07:50 KST, grace 경과, DATE): 1개 supplier
             when(etfRepresentativeHistoryRepository.findMaxEffectiveFrom())
                     .thenReturn(Optional.of(fresh));
-            // overseas-shortsale/overseas-daily/macro/invest-opinion/financial-ratio:
-            // 각각 same-day 또는 grace 조건 미충족 → stale 체크 미도달 → stubbing 불필요
+            // domestic-invest-opinion (18:00 KST, grace 경과 — 19:00 재설계로 now=19:10이 18:05 deadline도
+            // 초과해 새로 도달): 1개 supplier
+            when(analystEstimateRepository.findMaxCreatedAt()).thenReturn(Optional.of(fresh));
+            // macro-external (19:00 KST, domestic-daily-chain과 동일 슬롯 — BatchCrons.java 기존 값,
+            // grace 경과로 새로 도달): 1개 supplier
+            when(macroIndicatorRepository.findMaxCreatedAt()).thenReturn(Optional.of(fresh));
+            // overseas-shortsale/overseas-daily/financial-ratio: 각각 same-day 조건 미충족(ET 새벽 시각·토요일
+            // 전용) → stale 체크 미도달 → stubbing 불필요
 
             Clock clock = Clock.fixed(now, KST);
             CatchUpRunner runner = buildRunner(clock, defaultProperties());
@@ -555,9 +572,10 @@ class CatchUpRunnerTest {
         @Test
         @DisplayName("onApplicationReady()는 Virtual Thread를 띄우고 즉시 반환된다")
         void onApplicationReady_returnsImmediately() throws InterruptedException {
-            Instant now = ZonedDateTime.of(2026, 6, 22, 18, 0, 0, 0, KST).toInstant();
-            // AC-15와 동일한 fresh 시각 (17:30 KST) 및 동일한 stub 전략
-            LocalDateTime fresh = LocalDateTime.of(2026, 6, 22, 17, 30, 0);
+            // AC-15와 동일한 now/fresh 시각 (19:10/19:05 KST) 및 동일한 stub 전략
+            // (SPEC-COLLECTOR-SHORTSALE-VOLRATE-CORRECTION-001 M2, domestic-daily-chain 19:00 재설계)
+            Instant now = ZonedDateTime.of(2026, 6, 22, 19, 10, 0, 0, KST).toInstant();
+            LocalDateTime fresh = LocalDateTime.of(2026, 6, 22, 19, 5, 0);
 
             when(dailyOhlcvRepository.findMaxCreatedAtByMarketsIn(any()))
                     .thenReturn(Optional.of(fresh));
@@ -567,6 +585,8 @@ class CatchUpRunnerTest {
             when(marketIndicatorRepository.findMaxCreatedAt()).thenReturn(Optional.of(fresh));
             when(etfRepresentativeHistoryRepository.findMaxEffectiveFrom())
                     .thenReturn(Optional.of(fresh));
+            when(analystEstimateRepository.findMaxCreatedAt()).thenReturn(Optional.of(fresh));
+            when(macroIndicatorRepository.findMaxCreatedAt()).thenReturn(Optional.of(fresh));
 
             Clock clock = Clock.fixed(now, KST);
             CatchUpRunner runner = buildRunner(clock, defaultProperties());

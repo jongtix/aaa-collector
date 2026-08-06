@@ -13,7 +13,9 @@ import org.springframework.stereotype.Component;
 /**
  * 국내 일봉 OHLCV 수집 스케줄러.
  *
- * <p>평일 16:00 KST({@code 0 0 16 * * MON-FRI}, {@code Asia/Seoul}) — 15:30 장 마감 + 데이터 확정 여유 30분.
+ * <p>평일 19:00 KST({@code 0 0 19 * * MON-FRI}, {@code Asia/Seoul}) — T+0 데이터 정착 확인 여유
+ * (SPEC-COLLECTOR-SHORTSALE-VOLRATE-CORRECTION-001 M2, v0.5.0 재설계). 배포 전 다일(3거래일 이상) 재확인
+ * 프로브(REQ-T0R-006) 통과가 배포 전제조건이다.
  *
  * <p>{@code fixedDelay}/{@code fixedRate} 미사용 — Virtual Threads 버그 회피(ADR-008, REQ-BATCH-051).
  *
