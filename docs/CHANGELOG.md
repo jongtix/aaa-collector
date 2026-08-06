@@ -58,6 +58,35 @@
 
 ### Fixed
 
+- **SINGLE_DATE 갭 walk OVERSEAS(FINRA Daily) 정밀 판정 접근자 확장** (SPEC-COLLECTOR-BACKFILL-016, AC-SDWALK2-001~008, 8건):
+  `CoveredRangeService.walkGapForward()`의 `SINGLE_DATE` 모드 사전 skip 판정(`singleDateWalkDecision()`)이
+  OVERSEAS(FINRA Daily) 캘린더 도메인에 한해 여전히 캐시 판정 접근자(`UsMarketOpenGate.isOpenDay()`,
+  캐시 범위 밖 날짜를 무조건 개장으로 오판하는 fail-open)를 사용하던 구조적 결함을 정정했다(aaa-infra#138,
+  SPEC-COLLECTOR-BACKFILL-015가 DOMESTIC에서 정정한 것과 동일 근본 메커니즘의 OVERSEAS 변형). OVERSEAS는
+  주말 판정이 항상 순수 요일 계산이고 휴장일 캐시 범위도 DOMESTIC보다 넓어(`[올해 1월 1일, 내년 12월 31일]`)
+  노출 조건이 훨씬 좁지만(연도 경계를 넘는 장기 지연 + 그 해 NYSE 개별 휴장일 적중이 동시에 필요), 동일한
+  자기 회복 불가능 고착 체인(오판 개장 → 필러 호출 → 정상 빈 응답 → `kept==0` → 즉시 중단 → 다음 회차 반복)에
+  걸릴 수 있는 구조는 동일했다.
+  - **수정**: `singleDateWalkDecision()`의 도메인 조건부(OVERSEAS만 캐시 판정, 나머지는 정밀 판정)를 제거하고
+    두 도메인 모두 기존 `openDayStrictState()` 헬퍼(→ `UsMarketOpenGate.isOpenDayStrict(LocalDate): Optional<Boolean>`)로
+    일원화했다 — `isOpenDayStrict()`는 SPEC-COLLECTOR-CALENDAR-001이 이미 구현·배포했고 `evaluateFrontGap()`이
+    이미 사용 중이던 기존 접근자이므로, 신규 캘린더 백엔드·캐시·저장소·인터페이스 메서드는 전혀 추가하지 않는
+    순수 배선 변경이다. 조건부 제거로 유일한 호출부를 잃은 캐시 판정 위임 전용 private 헬퍼
+    `isOpenDay(CoveredCalendarDomain, LocalDate)`도 함께 제거했다(dead code).
+  - OVERSEAS도 DOMESTIC과 동일한 개장/휴장/"모름" 3분기 처리를 적용받는다 — 휴장이면 skip 후 walk 계속 진행,
+    개장이면 기존과 동일하게 데이터 저장 단계 진행(회귀 없음), "모름"(`market_calendar` NYSE 행 없음)이면
+    개장으로 낙관 해석하지 않고 이번 호출의 walk 진행을 즉시 중단하며(`covered_until_date` 미갱신, 다음
+    회차에 동일 커서부터 재시도) `CoveredWalkAnomalyKind.CALENDAR_UNKNOWN` 이상 신호를 발생시킨다.
+  - **DOMESTIC(USDKRW)·`RANGE` 모드·`evaluateFrontGap()`·라이브 배치 쿼터 소진 스킵 로직은 완전 무변경**:
+    DOMESTIC의 판정 결과·3분기 동작은 SPEC-015가 이미 확정했고 이 SPEC 이후에도 동일하다(회귀 고정). STOCK
+    범위형 4종(`daily_ohlcv`·`investor_trend`·`short_sale_domestic`·`credit_balance`)의 `RANGE` 모드 판정
+    경로와 앞단 미도달 판정(`evaluateFrontGap()` 계열 — OVERSEAS 분기는 이미 정밀 판정 접근자 사용 중이었음)도
+    변경하지 않는다.
+  - 관련: aaa-infra#138(이 SPEC이 정정, aaa-infra#134와 동일 근본 메커니즘의 OVERSEAS 변형). 선행:
+    SPEC-COLLECTOR-BACKFILL-015(DOMESTIC 정정 완료)·SPEC-COLLECTOR-CALENDAR-001(`isOpenDayStrict()` 양 도메인
+    동시 신설)·SPEC-COLLECTOR-BACKFILL-011(정방향 갭 walk·`evaluateFrontGap()` "모름" 패턴 확립). 이 커밋은
+    코드 수정 배포만 다룬다 — FINRA Daily(`short_sale_overseas`)의 실제 결손 구간 조사·복구는 이 SPEC 범위 밖이다.
+
 - **SINGLE_DATE 정방향 갭 walk 캘린더 판정 fail-open → "모름" 구분 전환** (SPEC-COLLECTOR-BACKFILL-015, AC-SDWALK-001~008, 8건):
   `CoveredRangeService.walkGapForward()`의 `SINGLE_DATE` 모드(USDKRW·FINRA Daily) 사전 skip 판정이 좁은 캐시
   기반 시장 개장일 게이트(`MarketOpenGate.isOpenDay()`, 매일 `[오늘−14일, 오늘+20일]`만 재조회하는 인메모리
