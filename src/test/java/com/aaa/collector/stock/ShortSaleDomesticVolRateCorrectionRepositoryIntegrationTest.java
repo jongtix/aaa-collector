@@ -20,7 +20,6 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
 import javax.sql.DataSource;
-import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Tag;
@@ -41,13 +40,9 @@ import org.testcontainers.junit.jupiter.Testcontainers;
  * {@link ShortSaleDomesticRepository} Track 1/Track 2 정정 조회·UPDATE 통합 테스트
  * (SPEC-COLLECTOR-SHORTSALE-VOLRATE-CORRECTION-001 REQ-SSVC-031~039, plan.md §M4).
  *
- * <p><b>M8 의존성으로 인해 클래스 전체가 {@link Disabled}됐다</b> — {@link ShortSaleDomestic} 엔티티는 이미 {@code
- * vol_rate_verified_at}을 매핑하지만, 이 컬럼을 추가하는 Flyway 마이그레이션(V45, plan.md §M8)은 아직 적용되지 않았다. Hibernate
- * {@code ddl-auto=validate}가 컨텍스트 기동 시점에 전체 엔티티 모델을 실제 스키마와 대조하므로, 이 컬럼이 없는 현재 상태에서는 이 클래스뿐 아니라
- * {@code db-integration} 프로파일을 쓰는 이 모듈의 모든 {@code @SpringBootTest} 통합 테스트가 {@code
- * SchemaManagementException: missing column [vol_rate_verified_at] in table [short_sale_domestic]}로
- * 컨텍스트 기동 자체에 실패한다(2026-08-06 {@code ./gradlew integrationTest --tests
- * ShortSaleDomesticRepositoryTest}로 실측 확인). M8이 V45를 배포하면 이 애너테이션을 제거해 활성화한다.
+ * <p>M8(V45 {@code vol_rate_verified_at} 컬럼 마이그레이션)이 적용되어 이 클래스가 활성화됐다 — 이전에는 {@link
+ * ShortSaleDomestic} 엔티티가 매핑하는 이 컬럼이 실제 스키마에 없어 Hibernate {@code ddl-auto=validate}가 컨텍스트 기동 시점에
+ * {@code SchemaManagementException}을 던졌다(2026-08-06 실측 확인, plan.md §M8 참조).
  */
 @SpringBootTest
 @ActiveProfiles({"test", "db-integration"})
@@ -57,10 +52,6 @@ import org.testcontainers.junit.jupiter.Testcontainers;
         "ShortSaleDomesticRepository Track1/Track2 정정 조회·UPDATE 통합 테스트"
                 + " (SPEC-COLLECTOR-SHORTSALE-VOLRATE-CORRECTION-001 M4)")
 @Tag("integration")
-@Disabled(
-        "M8(V45 vol_rate_verified_at 컬럼 마이그레이션) 완료 전까지 비활성 — 실제 DB 컬럼 부재로"
-                + " Hibernate ddl-auto=validate가 SchemaManagementException을 던진다(2026-08-06 실측 확인)."
-                + " M8 배포 후 이 애너테이션을 제거해 활성화할 것.")
 class ShortSaleDomesticVolRateCorrectionRepositoryIntegrationTest {
 
     @ServiceConnection // @Container 미부착 — 싱글턴 컨테이너 패턴(SharedMySqlContainer 참조).

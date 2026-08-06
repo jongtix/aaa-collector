@@ -110,6 +110,10 @@ public interface ShortSaleDomesticRepository extends JpaRepository<ShortSaleDome
      * 유지한다(AC-18) — {@code short_sale_domestic}은 M1에서 {@code DbGrantVerifier.TIER2_TABLES}에 이미
      * 편입됐다.
      *
+     * <p>네이티브 UPDATE는 영속성 컨텍스트(1차 캐시)를 우회하므로 {@code clearAutomatically = true}로 실행 직후 컨텍스트를 비운다 —
+     * 그렇지 않으면 같은 트랜잭션 안에서 이 UPDATE 이전에 로드된 관리 상태 엔티티가 남아, 이후 조회가 새로 반영된 값 대신 오래된 캐시 인스턴스를 반환한다(M8
+     * 활성화 시 통합 테스트로 실측 확인).
+     *
      * @param id 대상 행 PK
      * @param acmlVol 가드 판정으로 채택된 {@code acml_vol}(MATCHED 재조회값 또는 EVENT_ADJUSTED 역산값)
      * @param shortSellVolRate REQ-SSVC-011 공식({@code daily_ohlcv} 조인)으로 재계산된 값
@@ -117,7 +121,7 @@ public interface ShortSaleDomesticRepository extends JpaRepository<ShortSaleDome
      * @return 영향 행 수(정상 케이스 1, 대상 행이 이미 없으면 0)
      */
     @Transactional
-    @Modifying
+    @Modifying(clearAutomatically = true)
     @Query(
             value =
                     """
@@ -141,13 +145,16 @@ public interface ShortSaleDomesticRepository extends JpaRepository<ShortSaleDome
      * <p>재계산값이 저장값과 같아도(no-op에 가까운 값 재기록) 동일하게 호출한다 — {@code vol_rate_verified_at}은 두 경우 모두 반드시
      * 기록되어야 한다(AC-9d, "UPDATE 문은 실행되지 않거나 no-op UPDATE로 실행되며(구현 선택)"의 no-op UPDATE 선택).
      *
+     * <p>{@link #updateTrack1Correction}와 동일한 이유로 {@code clearAutomatically = true}를 지정한다 — 네이티브
+     * UPDATE는 영속성 컨텍스트를 우회한다.
+     *
      * @param id 대상 행 PK
      * @param shortSellVolRate REQ-SSVC-011 공식으로 재계산된 값
      * @param verifiedAt 검증 완료 시각
      * @return 영향 행 수(정상 케이스 1, 대상 행이 이미 없으면 0)
      */
     @Transactional
-    @Modifying
+    @Modifying(clearAutomatically = true)
     @Query(
             value =
                     """
