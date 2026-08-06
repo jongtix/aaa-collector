@@ -214,6 +214,29 @@ public class ShortSaleCollectionService {
         return fetch(session, symbol, date, date);
     }
 
+    /**
+     * 종목×기간 윈도우 TR04 재조회 — 레거시 {@code acml_vol} 백필
+     * 루프(SPEC-COLLECTOR-SHORTSALE-VOLRATE-CORRECTION-001 M6)가 재사용하는 좁은 스코프 진입점이다.
+     *
+     * <p>{@link #fetchSingleDate}와 동일한 패턴으로 {@link #fetch(LeaseSession, String, LocalDate,
+     * LocalDate)}를 그대로 재사용한다 — 신규 HTTP 경로나 rate-limiting 로직을 추가하지 않는다(REQ-SSVC-070). 임의의 {@code
+     * (from, to)} 기간을 받아 {@link #BACKFILL_LOOKBACK_CALENDAR_DAYS}(90일) 이하 윈도우당 1회 호출로 여러 날짜의 응답을 한
+     * 번에 반환받아, 종목당 다건의 결측 거래일을 개별 단일-날짜 호출 대신 윈도우 단위로 묶어 TR04 호출 횟수를 줄인다(plan.md §M6 "TR04 기간 조회,
+     * 90일 윈도우당 ~60행 반환").
+     *
+     * @param session 호출자가 고정한 per-run 헬스 스냅샷 세션
+     * @param symbol 종목 코드
+     * @param from 조회 시작일 ({@code FID_INPUT_DATE_1})
+     * @param to 조회 종료일 ({@code FID_INPUT_DATE_2})
+     * @return TR04 응답(구간 내 값이 없으면 {@code output2}가 빈 목록일 수 있음)
+     * @throws InterruptedException 게이트 호출 인터럽트 시 전파
+     */
+    public KisShortSaleResponse fetchLegacyBackfillWindow(
+            LeaseSession session, String symbol, LocalDate from, LocalDate to)
+            throws InterruptedException {
+        return fetch(session, symbol, from, to);
+    }
+
     private KisShortSaleResponse fetch(
             LeaseSession session, String symbol, LocalDate from, LocalDate to)
             throws InterruptedException {

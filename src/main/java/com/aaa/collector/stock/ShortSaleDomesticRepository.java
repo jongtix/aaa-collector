@@ -100,6 +100,42 @@ public interface ShortSaleDomesticRepository extends JpaRepository<ShortSaleDome
             @Param("afterId") long afterId, Pageable pageable);
 
     /**
+     * M6 레거시 {@code acml_vol} 백필(종목×기간 윈도우 청킹) 전용 — Track 1 대상 행이 있는 서로 다른 종목 id를 오름차순 커서 페이지네이션으로
+     * 조회한다 (SPEC-COLLECTOR-SHORTSALE-VOLRATE-CORRECTION-001 plan.md §M6, REQ-SSVC-031/032 재사용).
+     *
+     * <p>{@link #findTrack1LegacyBacklogBatch}(id 순 페이지네이션, M4 — 일일 증분 처리용)와는 별도 조회다. M6은 TR04 재조회
+     * 호출 횟수를 줄이기 위해 종목별로 묶어 기간 윈도우 조회를 수행해야 하므로, id가 아닌 종목 단위로 커서를 전진시킨다.
+     *
+     * @param afterStockId 이전 페이지 마지막 종목 id(첫 페이지는 0)
+     * @param pageable 페이지 크기만 사용(정렬은 쿼리에 고정)
+     * @return 종목 id 오름차순 정렬된 목록(빈 목록이면 더 이상 대상 종목 없음)
+     */
+    @Query(
+            "SELECT DISTINCT s.stock.id FROM ShortSaleDomestic s"
+                    + " WHERE s.shortSellQty > 0 AND s.acmlVol IS NULL AND s.stock.id > :afterStockId"
+                    + " ORDER BY s.stock.id ASC")
+    List<Long> findTrack1LegacyBacklogStockIds(
+            @Param("afterStockId") long afterStockId, Pageable pageable);
+
+    /**
+     * M6 레거시 {@code acml_vol} 백필 전용 — 특정 종목의 Track 1 대상 행 전체를 거래일 오름차순으로 조회한다
+     * (SPEC-COLLECTOR-SHORTSALE-VOLRATE-CORRECTION-001 plan.md §M6).
+     *
+     * <p>거래일 오름차순 정렬은 {@code
+     * com.aaa.collector.stock.supply.correction.AcmlVolLegacyBackfillRunner}의 종목×기간 윈도우 그리디 청킹(90일,
+     * {@code ShortSaleCollectionService.BACKFILL_LOOKBACK_CALENDAR_DAYS} 재사용)이 인접 날짜를 하나의 TR04 기간
+     * 조회로 묶기 위한 전제조건이다.
+     *
+     * @param stockId 대상 종목 PK
+     * @return 거래일 오름차순 정렬된 대상 행 목록(빈 목록이면 해당 종목은 이미 전량 처리됨)
+     */
+    @Query(
+            "SELECT s FROM ShortSaleDomestic s JOIN FETCH s.stock"
+                    + " WHERE s.shortSellQty > 0 AND s.acmlVol IS NULL AND s.stock.id = :stockId"
+                    + " ORDER BY s.tradeDate ASC")
+    List<ShortSaleDomestic> findTrack1LegacyBacklogByStock(@Param("stockId") Long stockId);
+
+    /**
      * Track 1 원자적 정정 쓰기 — {@code acml_vol}·{@code short_sell_vol_rate}·{@code
      * vol_rate_verified_at}을 단일 UPDATE 문으로 함께 기록한다 (SPEC-COLLECTOR-SHORTSALE-VOLRATE-CORRECTION-001
      * REQ-SSVC-002, -036).
