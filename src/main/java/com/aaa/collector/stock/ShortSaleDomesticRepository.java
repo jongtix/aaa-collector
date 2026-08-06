@@ -168,4 +168,65 @@ public interface ShortSaleDomesticRepository extends JpaRepository<ShortSaleDome
             @Param("id") Long id,
             @Param("shortSellVolRate") BigDecimal shortSellVolRate,
             @Param("verifiedAt") LocalDateTime verifiedAt);
+
+    /**
+     * T+0 예비치 소급 정정(근본원인 B, aaa-infra#133) 대상 후보 배치 조회
+     * (SPEC-COLLECTOR-SHORTSALE-VOLRATE-CORRECTION-001 REQ-T0R-010~012).
+     *
+     * <p>{@code DATE(created_at) = trade_date}(당일 수집 시그니처 — T+0 예비치 오염 대상)이고 {@code trade_date}가
+     * {@code [from, to]} 구간(REQ-T0R-011 — 하한 2026-06-29 리터럴, 상한은 REQ-T0R-001 실배포일)에 속하는 행만 대상이다.
+     * {@code afterId} 커서 기반 순방향 페이지네이션 — Track 1/Track 2와 동일 근거(REQ-SSVC-032 유사 패턴).
+     *
+     * @param from 하한(inclusive, REQ-T0R-011 — 2026-06-29 리터럴)
+     * @param to 상한(inclusive, REQ-T0R-001 실배포일 — 호출자가 매 실행 재계산해 전달)
+     * @param afterId 이전 페이지 마지막 id(첫 페이지는 0)
+     * @param pageable 페이지 크기만 사용(정렬은 쿼리에 고정)
+     * @return id 오름차순 정렬된 대상 행 목록(빈 목록이면 이번 실행에서 더 이상 대상 없음)
+     */
+    @Query(
+            "SELECT s FROM ShortSaleDomestic s JOIN FETCH s.stock"
+                    + " WHERE FUNCTION('DATE', s.createdAt) = s.tradeDate"
+                    + " AND s.tradeDate BETWEEN :from AND :to AND s.id > :afterId"
+                    + " ORDER BY s.id ASC")
+    List<ShortSaleDomestic> findT0RevisionCandidateBatch(
+            @Param("from") LocalDate from,
+            @Param("to") LocalDate to,
+            @Param("afterId") long afterId,
+            Pageable pageable);
+
+    /**
+     * T+0 예비치 소급 정정 원자적 쓰기 — {@code short_sell_qty}·{@code short_sell_vol_rate}를 KIS TR04 라이브 재조회
+     * 확정치로 갱신한다 (SPEC-COLLECTOR-SHORTSALE-VOLRATE-CORRECTION-001 REQ-T0R-020, -021, -030).
+     *
+     * <p>REQ-T0R-020 — 다른 컬럼으로부터 재계산(recompute)하지 않는다. 이 서비스는 M3의 {@code
+     * AcmlVolReconciliationGuard} 3분기 판정을 거치지 않고 TR04 라이브 재조회 값을 그대로 채택한다(Track 1과의 차이점).
+     *
+     * <p>M1이 편입한 Tier-2 UPDATE 경로를 재사용한다 — 별도 GRANT 불요(REQ-T0R-021). {@code ON DUPLICATE KEY
+     * UPDATE}가 아닌 평이한 {@code UPDATE ... WHERE}를 사용해(REQ-SSVC-061과 동일 근거) {@link
+     * com.aaa.collector.arch.Tier1InsertIgnoreGuardTest}의 {@code TIER2_TABLE_ALLOWLIST}를 무수정으로
+     * 유지한다.
+     *
+     * <p>Track 1/Track 2와 동일한 이유로 네이티브 UPDATE는 영속성 컨텍스트(1차 캐시)를 우회하므로 {@code clearAutomatically =
+     * true}로 실행 직후 컨텍스트를 비운다.
+     *
+     * @param id 대상 행 PK
+     * @param shortSellQty TR04 라이브 재조회 확정 공매도 체결 수량
+     * @param shortSellVolRate TR04 라이브 재조회 확정 공매도 거래량 비중
+     * @return 영향 행 수(정상 케이스 1, 대상 행이 이미 없으면 0)
+     */
+    @Transactional
+    @Modifying(clearAutomatically = true)
+    @Query(
+            value =
+                    """
+                    UPDATE short_sale_domestic
+                    SET short_sell_qty = :shortSellQty,
+                        short_sell_vol_rate = :shortSellVolRate
+                    WHERE id = :id
+                    """,
+            nativeQuery = true)
+    int updateT0RevisionCorrection(
+            @Param("id") Long id,
+            @Param("shortSellQty") long shortSellQty,
+            @Param("shortSellVolRate") BigDecimal shortSellVolRate);
 }
