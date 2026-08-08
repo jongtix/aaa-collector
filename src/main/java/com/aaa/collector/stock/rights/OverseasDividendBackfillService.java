@@ -9,9 +9,11 @@ import com.aaa.collector.stock.CorporateEvent;
 import com.aaa.collector.stock.CorporateEventInserter;
 import com.aaa.collector.stock.Stock;
 import java.time.LocalDate;
+import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
@@ -41,6 +43,7 @@ import org.springframework.web.client.RestClientException;
  * <p>{@link OverseasRightsCollectionService}와 별도 클래스로 분리한 이유(plan.md §C-3): 정기 수집(다중 종목 병렬·프리페치
  * 오케스트레이션)과 백필(단일 종목 청킹) 책임을 나눠 결합도를 낮춘다.
  */
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class OverseasDividendBackfillService {
@@ -50,6 +53,16 @@ public class OverseasDividendBackfillService {
      * 경험적 상한(~50건) 대비 2배 이상의 안전 마진을 확보한다(관측 최고빈도 종목이 2년 구간에 약 24건 생성, spec.md §5.5 RD-5).
      */
     private static final long BACKFILL_RIGHTS_CHUNK_MONTHS = 24L;
+
+    /**
+     * 청크 1개당 절단 의심 임계(원본 {@code output1} 행수, 코드리뷰 W-1) — 2026-08-07 실측(SYMB=O)으로 확인된 경험적 상한(~50건)
+     * 보다 낮게 잡아 조용한 절단이 실제로 발생하기 전에 fail-closed 한다(REQ-ODW-060 페이지 절단 트리거).
+     *
+     * <p>이 값은 {@code rights-by-ice}의 원본 {@code output1} 행수(전 권리유형 — 현금배당뿐 아니라 증자·상장폐지·상환 등 포함)에 대해
+     * 검사한다. 응답이 현금배당 외 권리유형도 함께 반환하므로(§5.5 RD-5 대비 마진 계산은 배당 전용 빈도 기준), 실제 안전 마진은 클래스 상단 Javadoc의
+     * "2배 이상"보다 낙관적일 수 있다 — 원본 행수 기준 검사가 그 낙관성을 상쇄한다.
+     */
+    private static final int BACKFILL_RIGHTS_TRUNCATION_THRESHOLD_ROWS = 40;
 
     private final OverseasRightsCollectionService rightsCollectionService;
     private final DividendAmountPrefetcher dividendAmountPrefetcher;
@@ -76,6 +89,12 @@ public class OverseasDividendBackfillService {
         DividendAmountPrefetch prefetch =
                 dividendAmountPrefetcher.prefetchForBackfill(session, symbol, from, to);
         if (prefetch.prefetchTruncated() > 0 || prefetch.prefetchFailed() > 0) {
+            log.warn(
+                    "[overseas-dividend-backfill] CTRGT011R 백필 프리페치 실패/절단 — symbol={}, "
+                            + "prefetchTruncated={}, prefetchFailed={}",
+                    symbol,
+                    prefetch.prefetchTruncated(),
+                    prefetch.prefetchFailed());
             throw new OverseasDividendBackfillPrefetchFailedException(
                     "CTRGT011R 백필 프리페치 실패/절단 — symbol="
                             + symbol
@@ -96,23 +115,79 @@ public class OverseasDividendBackfillService {
                         .map(CorporateEvent::getEventDate)
                         .min(LocalDate::compareTo)
                         .orElse(null);
+
+        OverseasRightsCollectionResult accResult = accumulator.toResult(1, prefetch);
+        log.info(
+                "[overseas-dividend-backfill] 백필 fetch 완료 — symbol={}, chunks={}, rawRowCount={}, "
+                        + "validRows={}, skippedNonCashRows={}, skippedValidationRows={}, "
+                        + "skippedUnconfirmed={}, skippedScripDividend={}",
+                symbol,
+                estimateChunkCount(from, to),
+                rawRows.size(),
+                validRows.size(),
+                accResult.skippedNonCashRows(),
+                accResult.skippedValidationRows(),
+                accResult.skippedUnconfirmed(),
+                accResult.skippedScripDividend());
+
         return new OverseasDividendBackfillFetch(validRows, oldest, rawRows.size());
     }
 
     /**
      * {@code from}~{@code to}를 {@link #BACKFILL_RIGHTS_CHUNK_MONTHS} 고정 폭 서브윈도우로 나눠 {@link
      * OverseasRightsCollectionService#fetch}를 순차 호출하고 전체 원본 행을 연결한다(REQ-ODW-051a).
+     *
+     * <p>청크 1개의 원본 응답 행수가 {@link #BACKFILL_RIGHTS_TRUNCATION_THRESHOLD_ROWS} 이상이면 절단 의심으로
+     * fail-closed 한다(REQ-ODW-060 페이지 절단 트리거, 코드리뷰 W-1).
      */
+    @SuppressWarnings("PMD.GuardLogStatement") // debug 파라미터 구성 비용은 무시 가능
     private List<KisOverseasRightsResponse.RightsRow> fetchAllChunks(
             String symbol, LeaseSession session, LocalDate from, LocalDate to) {
         List<KisOverseasRightsResponse.RightsRow> rawRows = new ArrayList<>();
+        int totalChunks = estimateChunkCount(from, to);
+        int chunkIndex = 0;
         LocalDate chunkStart = from;
         while (!chunkStart.isAfter(to)) {
+            chunkIndex++;
             LocalDate chunkEnd = chunkStart.plusMonths(BACKFILL_RIGHTS_CHUNK_MONTHS);
             if (chunkEnd.isAfter(to)) {
                 chunkEnd = to;
             }
-            rawRows.addAll(fetchChunk(symbol, session, chunkStart, chunkEnd).output1());
+            List<KisOverseasRightsResponse.RightsRow> chunkRows =
+                    fetchChunk(symbol, session, chunkStart, chunkEnd).output1();
+            log.debug(
+                    "[overseas-dividend-backfill] 청크 조회 완료 — symbol={}, chunk={}/{}, from={}, to={}, "
+                            + "rows={}",
+                    symbol,
+                    chunkIndex,
+                    totalChunks,
+                    chunkStart,
+                    chunkEnd,
+                    chunkRows.size());
+            if (chunkRows.size() >= BACKFILL_RIGHTS_TRUNCATION_THRESHOLD_ROWS) {
+                log.warn(
+                        "[overseas-dividend-backfill] 절단 의심 — symbol={}, chunk={}/{}, from={}, to={}, "
+                                + "rows={}, threshold={}",
+                        symbol,
+                        chunkIndex,
+                        totalChunks,
+                        chunkStart,
+                        chunkEnd,
+                        chunkRows.size(),
+                        BACKFILL_RIGHTS_TRUNCATION_THRESHOLD_ROWS);
+                throw new OverseasDividendBackfillPrefetchFailedException(
+                        "rights-by-ice 백필 청크 절단 의심(경험적 상한 ~50건 근접) — symbol="
+                                + symbol
+                                + ", chunkStart="
+                                + chunkStart
+                                + ", chunkEnd="
+                                + chunkEnd
+                                + ", rows="
+                                + chunkRows.size()
+                                + ", threshold="
+                                + BACKFILL_RIGHTS_TRUNCATION_THRESHOLD_ROWS);
+            }
+            rawRows.addAll(chunkRows);
 
             // REQ-ODW-051b: 청크 N의 to == 청크 N+1의 from(양쪽 포함, 1일 중첩)
             if (!chunkEnd.isBefore(to)) {
@@ -123,6 +198,12 @@ public class OverseasDividendBackfillService {
         return rawRows;
     }
 
+    /** 진행 로그용 예상 청크 개수(정보성 — 실제 청킹 루프의 경계일 중첩과는 ±1 오차 가능). */
+    private static int estimateChunkCount(LocalDate from, LocalDate to) {
+        long totalMonths = Math.max(1, ChronoUnit.MONTHS.between(from, to));
+        return (int) Math.max(1, Math.ceil((double) totalMonths / BACKFILL_RIGHTS_CHUNK_MONTHS));
+    }
+
     /** 청크 1개를 조회하고, 실패/인터럽트를 rawRowCount 조작 없이 예외로 전파한다(REQ-ODW-060). */
     private KisOverseasRightsResponse fetchChunk(
             String symbol, LeaseSession session, LocalDate chunkStart, LocalDate chunkEnd) {
@@ -130,6 +211,12 @@ public class OverseasDividendBackfillService {
             return rightsCollectionService.fetch(session, symbol, chunkStart, chunkEnd);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
+            log.warn(
+                    "[overseas-dividend-backfill] rights-by-ice 청크 인터럽트 — symbol={}, chunkStart={}, "
+                            + "chunkEnd={}",
+                    symbol,
+                    chunkStart,
+                    chunkEnd);
             throw new OverseasDividendBackfillPrefetchFailedException(
                     "rights-by-ice 백필 청크 인터럽트 — symbol="
                             + symbol
@@ -142,6 +229,13 @@ public class OverseasDividendBackfillService {
                 | RestClientException
                 | NoHealthyKeyException
                 | KisTokenIssueException e) {
+            log.warn(
+                    "[overseas-dividend-backfill] rights-by-ice 청크 프리페치 실패 — symbol={}, "
+                            + "chunkStart={}, chunkEnd={}, error={}",
+                    symbol,
+                    chunkStart,
+                    chunkEnd,
+                    e.getMessage());
             throw new OverseasDividendBackfillPrefetchFailedException(
                     "rights-by-ice 백필 청크 프리페치 실패 — symbol="
                             + symbol
