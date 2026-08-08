@@ -350,7 +350,7 @@ class BackfillWindowExecutorTest {
         void capSaturatedException_notRetryable() {
             boolean retryable =
                     executor.isRetryable(
-                            new RevSplitBackfillCapSaturatedException("cap saturated"), 0);
+                            new RevSplitBackfillCapSaturatedException("cap saturated"));
 
             assertThat(retryable).isFalse();
         }
@@ -358,48 +358,21 @@ class BackfillWindowExecutorTest {
         @Test
         @DisplayName("회귀: 일반 RuntimeException은 여전히 재시도 가능(true)")
         void otherRuntimeException_stillRetryable() {
-            boolean retryable = executor.isRetryable(new RuntimeException("transient"), 0);
-
-            assertThat(retryable).isTrue();
-        }
-    }
-
-    @Nested
-    @DisplayName("isRetryable(Exception, int) — 해외 배당 백필 재시도 상한 (코드리뷰 W-2b)")
-    class IsRetryableOverseasDividendBackfillCeiling {
-
-        @Test
-        @DisplayName("attemptCount가 상한 미만이면 재시도 가능(true)")
-        void belowCeiling_stillRetryable() {
-            boolean retryable =
-                    executor.isRetryable(
-                            new OverseasDividendBackfillPrefetchFailedException("transient"), 9);
+            boolean retryable = executor.isRetryable(new RuntimeException("transient"));
 
             assertThat(retryable).isTrue();
         }
 
         @Test
-        @DisplayName("attemptCount가 상한에 도달하면 비재시도(false)로 재분류")
-        void atCeiling_becomesNonRetryable() {
+        @DisplayName(
+                "코드리뷰 W-2b: OverseasDividendBackfillPrefetchFailedException도 이 메서드 단독으로는 재시도 가능(true) —"
+                        + " attemptCount 상한 판정은 BackfillOrchestrator가 별도로 수행한다")
+        void overseasDividendPrefetchFailedException_stillRetryableByTypeAlone() {
             boolean retryable =
                     executor.isRetryable(
-                            new OverseasDividendBackfillPrefetchFailedException("permanent"), 10);
+                            new OverseasDividendBackfillPrefetchFailedException("transient"));
 
-            assertThat(retryable).isFalse();
-        }
-
-        @Test
-        @DisplayName("회귀: 다른 예외 타입은 attemptCount와 무관하게 기존 분류(isRetryable(Exception))를 따른다")
-        void otherExceptionType_ignoresAttemptCount() {
-            boolean retryable =
-                    executor.isRetryable(
-                            new RevSplitBackfillCapSaturatedException("cap saturated"), 0);
-
-            assertThat(retryable).isFalse();
-
-            boolean stillRetryable = executor.isRetryable(new RuntimeException("transient"), 999);
-
-            assertThat(stillRetryable).isTrue();
+            assertThat(retryable).isTrue();
         }
     }
 

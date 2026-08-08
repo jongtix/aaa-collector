@@ -11,6 +11,7 @@ import com.aaa.collector.kis.gate.KeyLeaseRegistry;
 import com.aaa.collector.kis.gate.KeyLeaseRegistry.LeaseSession;
 import com.aaa.collector.stock.Stock;
 import com.aaa.collector.stock.StockRepository;
+import com.aaa.collector.stock.rights.OverseasDividendBackfillPrefetchFailedException;
 import java.time.LocalDate;
 import java.util.List;
 import java.util.Map;
@@ -50,6 +51,13 @@ public class BackfillOrchestrator {
     /** 백필 pending_slots 게이지 집계 대상 상태(REQ-WM-029) — FAILED·COMPLETED는 제외. */
     private static final List<BackfillStatusType> PENDING_STATUSES =
             List.of(BackfillStatusType.PENDING, BackfillStatusType.IN_PROGRESS);
+
+    /**
+     * {@link OverseasDividendBackfillPrefetchFailedException} 재시도 상한(누적 시도 횟수, 코드리뷰 W-2b) — 스케줄
+     * 백필(cron 02:00 KST 1일 1회 기준) 10회 = 약 10일의 여유를 두어 일시적 KIS 장애(레이트리밋·세션실패 등)를 흡수하면서도, 구조적으로 영구
+     * 실패하는 종목이 청크 조회 예산을 무한정 재소모하지 않도록 상한을 둔다.
+     */
+    private static final int OVERSEAS_DIVIDEND_PREFETCH_MAX_RETRY_ATTEMPTS = 10;
 
     private final BackfillStatusSeeder seeder;
     private final BackfillStatusRepository backfillStatusRepository;
@@ -330,14 +338,40 @@ public class BackfillOrchestrator {
                     current.getTargetCode(),
                     current.getDataTable(),
                     e.getMessage());
-            // 코드리뷰 W-2b: attemptCount를 함께 전달해 OverseasDividendBackfillPrefetchFailedException의
-            // 재시도 상한 도달 여부를 판정한다(구조적 영구 실패 종목의 무한 재시도 방지).
             windowExecutor.executeWindowOnError(
-                    current,
-                    e.getMessage(),
-                    windowExecutor.isRetryable(e, current.getAttemptCount()));
+                    current, e.getMessage(), isRetryableWithinCeiling(e, current));
             return new InnerLoopResult(windowsForThis, false);
         }
+    }
+
+    /**
+     * {@link BackfillWindowExecutor#isRetryable(Exception)}의 예외 타입 분류에 status의 누적 시도 횟수({@code
+     * attemptCount})를 추가로 반영한다(코드리뷰 W-2b).
+     *
+     * <p>{@link OverseasDividendBackfillPrefetchFailedException}은 순간 실패(레이트리밋·세션실패·인터럽트 등, 재시도해야 정상
+     * 해소)와 구조적 영구 실패(예: rights-by-ice 절단 의심이 매 스케줄마다 재현되는 종목)를 구분할 수 없는 단일 예외 타입이다 — {@link
+     * com.aaa.collector.stock.RevSplitBackfillCapSaturatedException}처럼 예외 타입 자체를 영구 비재시도로 못 박으면(즉
+     * {@code BackfillWindowExecutor.isRetryable}의 서명·본문을 그 방향으로 확장하면) 순간 실패까지 함께 비재시도(FAILED)로
+     * 오분류되어 REQ-ODW-060의 "재시도 유도" 의도를 해친다. 이 분류를 {@code BackfillWindowExecutor}에 두지 않고 이 오케스트레이터에 둔
+     * 이유: 그 클래스는 이미 PMD {@code TooManyMethods}(임계 20) 경계에 근접해 있어(REQ-ODW-080 배선 등 누적) {@code
+     * isRetryable}의 서명 변경만으로도 임계를 넘김이 실측 확인됐다.
+     *
+     * <p>대신 {@code BackfillStatus.attemptCount}(스케줄 백필마다 {@code fail()}/{@code advance()} 호출 시 누적)가
+     * {@link #OVERSEAS_DIVIDEND_PREFETCH_MAX_RETRY_ATTEMPTS}에 도달한 시점에만 영구 실패로 재분류한다 — GROUP_C는 첫 성공
+     * fetch에서 즉시 COMPLETED되므로(decideGroupC 무조건 완료) 이 카운터는 사실상 "연속 실패 횟수"와 같다. 하루 1회 스케줄(cron 02:00
+     * KST) 기준 임계 도달까지 여러 날의 여유를 두어 일시적 장애를 충분히 흡수하면서도, 구조적으로 영구 실패하는 종목이 청크 조회 예산을 무한정 재소모하지 않도록
+     * 상한을 둔다.
+     *
+     * @param e 분류할 예외
+     * @param status 해당 윈도우의 status(누적 시도 횟수 조회용)
+     * @return {@code true}=재시도 가능(IN_PROGRESS 유지), {@code false}=영구 오류(FAILED)
+     */
+    private boolean isRetryableWithinCeiling(Exception e, BackfillStatus status) {
+        if (e instanceof OverseasDividendBackfillPrefetchFailedException
+                && status.getAttemptCount() >= OVERSEAS_DIVIDEND_PREFETCH_MAX_RETRY_ATTEMPTS) {
+            return false;
+        }
+        return windowExecutor.isRetryable(e);
     }
 
     /** 재조회 status가 COMPLETED인지 확인하고 debug 로그를 남긴다. */

@@ -25,6 +25,7 @@ import com.aaa.collector.stock.Stock;
 import com.aaa.collector.stock.StockRepository;
 import com.aaa.collector.stock.enums.AssetType;
 import com.aaa.collector.stock.enums.Market;
+import com.aaa.collector.stock.rights.OverseasDividendBackfillPrefetchFailedException;
 import java.time.LocalDate;
 import java.util.List;
 import java.util.Map;
@@ -726,6 +727,67 @@ class BackfillOrchestratorTest {
             // (기존 전역 중단 동작과 다른 핵심 변경점: 한 테이블의 인터럽트가 다른 테이블에 전파되지 않음)
             verify(windowExecutor).fetchWindow(eq(second), eq(stock), eq(session));
             verify(windowExecutor).persistWindow(eq(second), eq(stock), any());
+        }
+    }
+
+    @Nested
+    @DisplayName("isRetryableWithinCeiling — 해외 배당 백필 재시도 상한 (코드리뷰 W-2b)")
+    class OverseasDividendPrefetchRetryCeiling {
+
+        @Test
+        @DisplayName("attemptCount가 상한(10) 미만이면 executeWindowOnError가 retryable=true로 호출된다")
+        void belowCeiling_retryableTrue() throws InterruptedException {
+            Stock stock = buildDomesticStock("AAPL");
+            when(stockRepository.findAllWatchlistTradable()).thenReturn(List.of());
+            when(stockRepository.findAllWatchlistOverseasTradable()).thenReturn(List.of(stock));
+
+            BackfillStatus status =
+                    BackfillStatus.builder()
+                            .targetType("STOCK")
+                            .targetCode("AAPL")
+                            .dataTable("corporate_events_dividend_overseas")
+                            .status(BackfillStatusType.IN_PROGRESS)
+                            .staleCount(0)
+                            .attemptCount(9)
+                            .build();
+            when(backfillStatusRepository.findByStatusInAndTargetTypeOrderById(any(), anyString()))
+                    .thenReturn(List.of(status));
+            when(windowExecutor.isRetryable(any())).thenReturn(true);
+            doThrow(new OverseasDividendBackfillPrefetchFailedException("rights-by-ice 절단 의심"))
+                    .when(windowExecutor)
+                    .fetchWindow(eq(status), any(), any());
+
+            orchestrator.run();
+
+            verify(windowExecutor).executeWindowOnError(eq(status), anyString(), eq(true));
+        }
+
+        @Test
+        @DisplayName("attemptCount가 상한(10)에 도달하면 executeWindowOnError가 retryable=false로 호출된다")
+        void atCeiling_retryableFalse() throws InterruptedException {
+            Stock stock = buildDomesticStock("AAPL");
+            when(stockRepository.findAllWatchlistTradable()).thenReturn(List.of());
+            when(stockRepository.findAllWatchlistOverseasTradable()).thenReturn(List.of(stock));
+
+            BackfillStatus status =
+                    BackfillStatus.builder()
+                            .targetType("STOCK")
+                            .targetCode("AAPL")
+                            .dataTable("corporate_events_dividend_overseas")
+                            .status(BackfillStatusType.IN_PROGRESS)
+                            .staleCount(0)
+                            .attemptCount(10)
+                            .build();
+            when(backfillStatusRepository.findByStatusInAndTargetTypeOrderById(any(), anyString()))
+                    .thenReturn(List.of(status));
+            when(windowExecutor.isRetryable(any())).thenReturn(true);
+            doThrow(new OverseasDividendBackfillPrefetchFailedException("rights-by-ice 절단 의심"))
+                    .when(windowExecutor)
+                    .fetchWindow(eq(status), any(), any());
+
+            orchestrator.run();
+
+            verify(windowExecutor).executeWindowOnError(eq(status), anyString(), eq(false));
         }
     }
 
