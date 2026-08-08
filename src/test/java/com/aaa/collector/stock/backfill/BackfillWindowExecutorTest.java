@@ -350,7 +350,7 @@ class BackfillWindowExecutorTest {
         void capSaturatedException_notRetryable() {
             boolean retryable =
                     executor.isRetryable(
-                            new RevSplitBackfillCapSaturatedException("cap saturated"));
+                            new RevSplitBackfillCapSaturatedException("cap saturated"), 0);
 
             assertThat(retryable).isFalse();
         }
@@ -358,7 +358,7 @@ class BackfillWindowExecutorTest {
         @Test
         @DisplayName("회귀: 일반 RuntimeException은 여전히 재시도 가능(true)")
         void otherRuntimeException_stillRetryable() {
-            boolean retryable = executor.isRetryable(new RuntimeException("transient"));
+            boolean retryable = executor.isRetryable(new RuntimeException("transient"), 0);
 
             assertThat(retryable).isTrue();
         }

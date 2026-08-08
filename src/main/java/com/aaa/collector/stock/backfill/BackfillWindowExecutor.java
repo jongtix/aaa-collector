@@ -351,7 +351,7 @@ public class BackfillWindowExecutor {
                                     windowAdvancer.groupAFromDate(), below, stock, session);
             return FetchEnvelope.of(dto, hasData ? hasDataOutcome : exhaustedOutcome);
         } catch (RuntimeException e) {
-            return FetchEnvelope.deferred(dto, e.getMessage(), isRetryable(e));
+            return FetchEnvelope.deferred(dto, e.getMessage(), isRetryable(e, 0));
         }
     }
 
@@ -651,21 +651,10 @@ public class BackfillWindowExecutor {
     }
 
     /**
-     * 예외를 재시도 가능 여부로 분류한다.
+     * 예외를 재시도 가능 여부로 분류한다 — status의 누적 시도 횟수({@code attemptCount})까지 함께 고려한다(코드리뷰 W-2b).
      *
-     * <p>KisTokenIssueException·{@link RevSplitBackfillCapSaturatedException}만 영구 오류(false,
-     * REQ-GC-014 — 후자를 기본값(재시도 가능)에 맡기면 IN_PROGRESS 무한 재시도가 재현된다). 나머지는 모두 재시도(true) — 보수적 기본값.
-     *
-     * @param e 분류할 예외
-     * @return {@code true}=재시도 가능(IN_PROGRESS 유지), {@code false}=영구 오류(FAILED)
-     */
-    public boolean isRetryable(Exception e) {
-        return !(e instanceof KisTokenIssueException)
-                && !(e instanceof RevSplitBackfillCapSaturatedException);
-    }
-
-    /**
-     * 예외를 재시도 가능 여부로 분류한다 — status의 누적 시도 횟수({@code attemptCount})까지 함께 고려하는 확장 오버로드(코드리뷰 W-2b).
+     * <p>KisTokenIssueException·{@link RevSplitBackfillCapSaturatedException}만 즉시 영구 오류(false,
+     * REQ-GC-014 — 후자를 기본값(재시도 가능)에 맡기면 IN_PROGRESS 무한 재시도가 재현된다). 나머지는 기본적으로 재시도(true) — 보수적 기본값.
      *
      * <p>{@link OverseasDividendBackfillPrefetchFailedException}은 순간 실패(레이트리밋·세션실패·인터럽트 등, 재시도해야 정상
      * 해소)와 구조적 영구 실패(예: W-1 절단 의심이 매 스케줄마다 재현되는 종목)를 구분할 수 없는 단일 예외 타입이다 — {@link
@@ -678,7 +667,9 @@ public class BackfillWindowExecutor {
      * 상한을 둔다.
      *
      * @param e 분류할 예외
-     * @param attemptCount 해당 status의 누적 시도 횟수({@code BackfillStatus.getAttemptCount()})
+     * @param attemptCount 해당 status의 누적 시도 횟수({@code BackfillStatus.getAttemptCount()}) —
+     *     attemptCount 기반 상한을 적용하지 않는 호출부는 0을 전달한다(무영향, {@link
+     *     OverseasDividendBackfillPrefetchFailedException}이 아닌 예외는 attemptCount를 참조하지 않는다)
      * @return {@code true}=재시도 가능(IN_PROGRESS 유지), {@code false}=영구 오류(FAILED)
      */
     public boolean isRetryable(Exception e, int attemptCount) {
@@ -686,7 +677,8 @@ public class BackfillWindowExecutor {
                 && attemptCount >= OVERSEAS_DIVIDEND_PREFETCH_MAX_RETRY_ATTEMPTS) {
             return false;
         }
-        return isRetryable(e);
+        return !(e instanceof KisTokenIssueException)
+                && !(e instanceof RevSplitBackfillCapSaturatedException);
     }
 
     // -------------------------------------------------------------------------

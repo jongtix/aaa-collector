@@ -354,7 +354,7 @@ class BackfillWindowExecutorTransactionTest extends WarmStartRedisMockSupport {
             KisTokenIssueException tokenEx =
                     new KisTokenIssueException("test-alias", new RuntimeException("auth error"));
             String errorMsg = tokenEx.getMessage();
-            boolean retryable = windowExecutor.isRetryable(tokenEx);
+            boolean retryable = windowExecutor.isRetryable(tokenEx, 0);
 
             // Act
             windowExecutor.executeWindowOnError(status, errorMsg, retryable);

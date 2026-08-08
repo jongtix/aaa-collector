@@ -9,8 +9,8 @@ package com.aaa.collector.stock;
  * com.aaa.collector.stock.backfill.BackfillTerminationPolicy}가 이를 조용히 COMPLETED로 오판하지 않도록 재시도 없이
  * terminal FAILED로 종단시키는 안전밸브다(REQ-GC-031). 실무상 종목당 이벤트가 극소수(§21 실측 최댓값 1건)라 도달 불가능에 가깝다.
  *
- * <p>{@link com.aaa.collector.stock.backfill.BackfillWindowExecutor#isRetryable(Exception)}이 이 예외를
- * 비재시도(false)로 분류한다(REQ-GC-014) — 기본값(재시도 가능)에 맡기면 IN_PROGRESS 무한 재시도가 재현된다.
+ * <p>{@link com.aaa.collector.stock.backfill.BackfillWindowExecutor#isRetryable(Exception, int)}이 이
+ * 예외를 비재시도(false)로 분류한다(REQ-GC-014) — 기본값(재시도 가능)에 맡기면 IN_PROGRESS 무한 재시도가 재현된다.
  */
 public class RevSplitBackfillCapSaturatedException extends RuntimeException {
 
