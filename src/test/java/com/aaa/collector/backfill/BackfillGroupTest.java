@@ -34,6 +34,15 @@ class BackfillGroupTest {
     }
 
     @Test
+    @DisplayName(
+            "REQ-ODW-080: corporate_events_dividend_overseas(해외 배당) → GROUP_C (corporate_events와 동일"
+                    + " 종료 규칙)")
+    void overseasDividendBackfillTable_isGroupC() {
+        assertThat(BackfillGroup.ofDataTable("corporate_events_dividend_overseas"))
+                .isEqualTo(BackfillGroup.GROUP_C);
+    }
+
+    @Test
     @DisplayName("수급 3종은 GROUP_B (100건 미만 종료 규칙 미적용, 분류 불변)")
     void supplyTables_areGroupB() {
         assertThat(BackfillGroup.ofDataTable("short_sale_domestic"))

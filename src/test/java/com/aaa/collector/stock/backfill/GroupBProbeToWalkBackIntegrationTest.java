@@ -21,6 +21,7 @@ import com.aaa.collector.stock.daily.DomesticDailyOhlcvCollectionService;
 import com.aaa.collector.stock.daily.OverseasDailyOhlcvCollectionService;
 import com.aaa.collector.stock.enums.AssetType;
 import com.aaa.collector.stock.enums.Market;
+import com.aaa.collector.stock.rights.OverseasDividendBackfillService;
 import com.aaa.collector.stock.rights.OverseasSplitCollectionService;
 import com.aaa.collector.stock.supply.CreditBalanceCollectionService;
 import com.aaa.collector.stock.supply.CreditBalanceFetch;
@@ -61,6 +62,7 @@ class GroupBProbeToWalkBackIntegrationTest {
     @Mock private RevSplitCollectionService revSplitService;
     @Mock private DividendScheduleCollectionService dividendService;
     @Mock private OverseasSplitCollectionService overseasSplitService;
+    @Mock private OverseasDividendBackfillService overseasDividendBackfillService;
     @Mock private BackfillMetrics backfillMetrics;
     @Mock private TransactionTemplate transactionTemplate;
     @Mock private LeaseSession session;
@@ -84,6 +86,7 @@ class GroupBProbeToWalkBackIntegrationTest {
                         revSplitService,
                         dividendService,
                         overseasSplitService,
+                        overseasDividendBackfillService,
                         terminationPolicy,
                         windowAdvancer,
                         backfillMetrics,

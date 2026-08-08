@@ -59,17 +59,22 @@ public class BackfillStatusSeeder {
                     "corporate_events_dividend");
 
     /**
-     * 미국 종목 시딩 data_table 집합 — {@code daily_ohlcv}·{@code corporate_events} 2종(수급 3종은 국내 J-market
-     * 전용이라 비대상, AC-7.3).
+     * 미국 종목 시딩 data_table 집합 — {@code daily_ohlcv}·{@code corporate_events}·{@code
+     * corporate_events_dividend_overseas} 3종(수급 3종은 국내 J-market 전용이라 비대상, AC-7.3).
      *
      * <p>[SPEC-COLLECTOR-OVERSEAS-SPLIT-001 REQ-OSPLIT-063, RD-4] {@code corporate_events} 편입 —
      * BACKFILL-007 REQ-BACKFILL-092("미국 corporate_events 백필 제외")를 SPLIT에 한해 개정한다. 미국 종목은 별도 소스 TR
      * {@code CTRGT011R}(해외주식 기간별권리조회 14/15)을 확보했으므로 국내 전용 제약이 소멸했다. {@code daily_ohlcv} 항목은 그대로 두므로
      * 해외 일봉 백필 시딩·GROUP_A 종료·윈도우 전진은 불변(비회귀). 백필 윈도우 실행 시 시장별 소스 분기는 {@code
      * BackfillWindowExecutor}가 담당한다(미국→CTRGT011R, 국내→HHKDB669105C0).
+     *
+     * <p>[SPEC-COLLECTOR-OVERSEAS-DIVIDEND-WINDOW-001 REQ-ODW-080] {@code
+     * corporate_events_dividend_overseas} 편입 — 해외 현금배당 종목지정 백필. 국내 {@code
+     * corporate_events_dividend}와 구분되는 별도 {@code data_table} 논리 키이며, 국내 대응 항목이 없어 {@link
+     * #DOMESTIC_DATA_TABLES}에는 추가하지 않는다.
      */
     private static final List<String> OVERSEAS_DATA_TABLES =
-            List.of("daily_ohlcv", "corporate_events");
+            List.of("daily_ohlcv", "corporate_events", "corporate_events_dividend_overseas");
 
     private final BackfillSeedTargetProvider seedTargetProvider;
     private final BackfillStatusRepository backfillStatusRepository;

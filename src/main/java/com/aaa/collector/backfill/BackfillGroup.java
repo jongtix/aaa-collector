@@ -50,8 +50,14 @@ public enum BackfillGroup {
      * 그룹 C(커서완주·단일콜형) 적용 data_table 집합 (SPEC-COLLECTOR-BACKFILL-GROUPC-001 REQ-GC-002). {@code
      * corporate_events}(SPLIT, 시장무관)만 해당 — {@code corporate_events_dividend}(배당)는 GROUP_A
      * 유지(REQ-GC-005).
+     *
+     * <p>[SPEC-COLLECTOR-OVERSEAS-DIVIDEND-WINDOW-001 REQ-ODW-080] {@code
+     * corporate_events_dividend_overseas}(해외 현금배당 종목지정 백필) 편입 — {@code rights-by-ice} 청크 전체 순회 완료가
+     * fetch 성공 조건이라(plan.md §C-2) SPLIT과 동일하게 fetch 성공 자체가 소진 증거인 그룹 C에 속한다. 국내 배당({@code
+     * corporate_events_dividend})은 GROUP_A로 별도 유지되며 이 테이블에는 국내 대응 항목이 없다.
      */
-    private static final Set<String> GROUP_C_TABLES = Set.of("corporate_events");
+    private static final Set<String> GROUP_C_TABLES =
+            Set.of("corporate_events", "corporate_events_dividend_overseas");
 
     /**
      * data_table명을 종료 규칙 그룹으로 분류한다.

@@ -57,8 +57,11 @@ class BackfillStatusSeederTest {
                     "corporate_events",
                     "corporate_events_dividend");
 
-    // SPEC-COLLECTOR-OVERSEAS-SPLIT-001 REQ-OSPLIT-063: 미국 corporate_events 편입 → 2종
-    private static final List<String> OVERSEAS_TABLES = List.of("daily_ohlcv", "corporate_events");
+    // SPEC-COLLECTOR-OVERSEAS-SPLIT-001 REQ-OSPLIT-063: 미국 corporate_events 편입,
+    // SPEC-COLLECTOR-OVERSEAS-DIVIDEND-WINDOW-001 REQ-ODW-080: corporate_events_dividend_overseas
+    // 편입 → 3종
+    private static final List<String> OVERSEAS_TABLES =
+            List.of("daily_ohlcv", "corporate_events", "corporate_events_dividend_overseas");
 
     @Container @ServiceConnection
     static final MySQLContainer<?> MYSQL = new MySQLContainer<>("mysql:8.4");
@@ -137,11 +140,16 @@ class BackfillStatusSeederTest {
     }
 
     @Nested
-    @DisplayName("AC-13/AC-7.3 미국 종목 시딩 — daily_ohlcv+corporate_events 2행 (수급 3종 미대상)")
+    @DisplayName(
+            "AC-13/AC-7.3/AC-ODW-013 미국 종목 시딩 —"
+                    + " daily_ohlcv+corporate_events+corporate_events_dividend_overseas 3행 (수급 3종 미대상)")
     class UsSeeding {
 
         @Test
-        @DisplayName("REQ-OSPLIT-063: 미국 종목 → daily_ohlcv·corporate_events 2행 생성, 수급 3종 미생성")
+        @DisplayName(
+                "REQ-OSPLIT-063/REQ-ODW-080: 미국 종목 →"
+                        + " daily_ohlcv·corporate_events·corporate_events_dividend_overseas 3행 생성,"
+                        + " 수급 3종 미생성")
         void usStock_seedsDailyOhlcvAndCorporateEvents() {
             saveStock("AAPL", Market.NASDAQ);
 

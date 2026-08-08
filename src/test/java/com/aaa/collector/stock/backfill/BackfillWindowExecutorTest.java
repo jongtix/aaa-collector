@@ -28,6 +28,8 @@ import com.aaa.collector.stock.daily.DomesticDailyOhlcvFetch;
 import com.aaa.collector.stock.daily.OverseasDailyOhlcvCollectionService;
 import com.aaa.collector.stock.enums.AssetType;
 import com.aaa.collector.stock.enums.Market;
+import com.aaa.collector.stock.rights.OverseasDividendBackfillFetch;
+import com.aaa.collector.stock.rights.OverseasDividendBackfillService;
 import com.aaa.collector.stock.rights.OverseasSplitBackfillFetch;
 import com.aaa.collector.stock.rights.OverseasSplitCollectionService;
 import com.aaa.collector.stock.supply.CreditBalanceCollectionService;
@@ -57,6 +59,7 @@ import org.springframework.transaction.support.TransactionTemplate;
  * <p>미국 종목은 {@link OverseasSplitCollectionService}(CTRGT011R), 국내 종목은 {@link
  * RevSplitCollectionService} (HHKDB669105C0)로 각각 라우팅되고 서로 침범하지 않음을 검증한다(fetch·persist 양쪽).
  */
+@SuppressWarnings("PMD.TooManyFields") // 테스트 클래스 — 다수 의존성 검증을 위한 mock 필드 불가피
 @ExtendWith(MockitoExtension.class)
 @DisplayName("BackfillWindowExecutor corporate_events 시장별 소스 분기 단위 테스트")
 class BackfillWindowExecutorTest {
@@ -70,6 +73,7 @@ class BackfillWindowExecutorTest {
     @Mock private RevSplitCollectionService revSplitService;
     @Mock private DividendScheduleCollectionService dividendService;
     @Mock private OverseasSplitCollectionService overseasSplitService;
+    @Mock private OverseasDividendBackfillService overseasDividendBackfillService;
     @Mock private BackfillTerminationPolicy terminationPolicy;
     @Mock private BackfillWindowAdvancer windowAdvancer;
     @Mock private BackfillMetrics backfillMetrics;
@@ -93,6 +97,7 @@ class BackfillWindowExecutorTest {
                         revSplitService,
                         dividendService,
                         overseasSplitService,
+                        overseasDividendBackfillService,
                         terminationPolicy,
                         windowAdvancer,
                         backfillMetrics,
@@ -191,6 +196,39 @@ class BackfillWindowExecutorTest {
     }
 
     @Nested
+    @DisplayName(
+            "fetchWindow — corporate_events_dividend_overseas 배선 (SPEC-COLLECTOR-OVERSEAS-DIVIDEND-WINDOW-001"
+                    + " REQ-ODW-080, AC-ODW-013)")
+    class OverseasDividendBackfillDispatch {
+
+        private BackfillStatus overseasDividendStatus(String symbol) {
+            return BackfillStatus.builder()
+                    .targetType("STOCK")
+                    .targetCode(symbol)
+                    .dataTable("corporate_events_dividend_overseas")
+                    .status(BackfillStatusType.PENDING)
+                    .build();
+        }
+
+        @Test
+        @DisplayName(
+                "AC-ODW-013: corporate_events_dividend_overseas → OverseasDividendBackfillService"
+                        + ".fetchWindowForBackfill(floor, today)")
+        void overseasDividendFetch_routesToNewService() throws InterruptedException {
+            when(windowAdvancer.groupAFromDate()).thenReturn(floor);
+            Stock aapl = stock("AAPL", Market.NASDAQ);
+            when(overseasDividendBackfillService.fetchWindowForBackfill(
+                            eq(aapl), eq(session), eq(floor), any()))
+                    .thenReturn(new OverseasDividendBackfillFetch(List.of(), null, 0));
+
+            executor.fetchWindow(overseasDividendStatus("AAPL"), aapl, session);
+
+            verify(overseasDividendBackfillService)
+                    .fetchWindowForBackfill(eq(aapl), eq(session), eq(floor), any());
+        }
+    }
+
+    @Nested
     @DisplayName("persistWindow — fetchDto 타입별 소스 분기 (AC-13)")
     class PersistDispatch {
 
@@ -239,6 +277,26 @@ class BackfillWindowExecutorTest {
 
             verify(revSplitService).persistWindowForBackfill(fetch);
             verify(overseasSplitService, never()).persistWindowForBackfill(any());
+        }
+
+        @Test
+        @DisplayName(
+                "AC-ODW-013: OverseasDividendBackfillFetch →"
+                        + " overseasDividendBackfillService.persistWindowForBackfill")
+        void overseasDividendFetchDto_routesToNewPersist() {
+            Stock aapl = stock("AAPL", Market.NASDAQ);
+            BackfillStatus status = mockedStatus("AAPL");
+            LocalDate oldest = LocalDate.of(2020, 8, 31);
+            OverseasDividendBackfillFetch fetch =
+                    new OverseasDividendBackfillFetch(List.of(), oldest, 1);
+            when(overseasDividendBackfillService.persistWindowForBackfill(fetch))
+                    .thenReturn(new BackfillWindowResult(oldest, 1, 1));
+            when(terminationPolicy.decide(any()))
+                    .thenReturn(TerminationDecision.completed(0, false));
+
+            executor.persistWindow(status, aapl, FetchEnvelope.notApplicable(fetch));
+
+            verify(overseasDividendBackfillService).persistWindowForBackfill(fetch);
         }
     }
 
@@ -295,6 +353,26 @@ class BackfillWindowExecutorTest {
                     .thenReturn(TerminationDecision.completed(0, false));
 
             executor.persistWindow(status, samsung, FetchEnvelope.notApplicable(fetch));
+
+            verify(status).markVerified(any());
+        }
+
+        @Test
+        @DisplayName(
+                "AC-ODW-013: GROUP_C(corporate_events_dividend_overseas) 완료 시 markVerified 호출"
+                        + " (REQ-ODW-080)")
+        void overseasDividendGroupC_completed_marksVerified() {
+            Stock aapl = stock("AAPL", Market.NASDAQ);
+            BackfillStatus status = mockedStatus("AAPL", "corporate_events_dividend_overseas");
+            LocalDate oldest = LocalDate.of(2020, 8, 31);
+            OverseasDividendBackfillFetch fetch =
+                    new OverseasDividendBackfillFetch(List.of(), oldest, 1);
+            when(overseasDividendBackfillService.persistWindowForBackfill(fetch))
+                    .thenReturn(new BackfillWindowResult(oldest, 1, 1));
+            when(terminationPolicy.decide(any()))
+                    .thenReturn(TerminationDecision.completed(0, false));
+
+            executor.persistWindow(status, aapl, FetchEnvelope.notApplicable(fetch));
 
             verify(status).markVerified(any());
         }

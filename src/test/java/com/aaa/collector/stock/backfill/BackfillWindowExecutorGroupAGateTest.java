@@ -27,6 +27,7 @@ import com.aaa.collector.stock.daily.OverseasDailyOhlcvCollectionService;
 import com.aaa.collector.stock.daily.OverseasDailyOhlcvFetch;
 import com.aaa.collector.stock.enums.AssetType;
 import com.aaa.collector.stock.enums.Market;
+import com.aaa.collector.stock.rights.OverseasDividendBackfillService;
 import com.aaa.collector.stock.rights.OverseasSplitCollectionService;
 import com.aaa.collector.stock.supply.CreditBalanceCollectionService;
 import com.aaa.collector.stock.supply.InvestorTrendCollectionService;
@@ -51,6 +52,7 @@ import org.springframework.transaction.support.TransactionTemplate;
  * 산정·status 전이·staleCount)만 다루고, verified_at·게이지 영속은 {@link
  * com.aaa.collector.backfill.BackfillStatusRepositoryTest}(Testcontainers)가 담당한다.
  */
+@SuppressWarnings("PMD.TooManyFields") // 테스트 클래스 — 다수 의존성 검증을 위한 mock 필드 불가피
 @ExtendWith(MockitoExtension.class)
 @DisplayName("BackfillWindowExecutor GROUP_A daily_ohlcv 종료 확인 게이트 (SPEC-COLLECTOR-BACKFILL-010)")
 class BackfillWindowExecutorGroupAGateTest {
@@ -64,6 +66,7 @@ class BackfillWindowExecutorGroupAGateTest {
     @Mock private RevSplitCollectionService revSplitService;
     @Mock private DividendScheduleCollectionService dividendService;
     @Mock private OverseasSplitCollectionService overseasSplitService;
+    @Mock private OverseasDividendBackfillService overseasDividendBackfillService;
     @Mock private BackfillTerminationPolicy terminationPolicy;
     @Mock private BackfillWindowAdvancer windowAdvancer;
     @Mock private BackfillMetrics backfillMetrics;
@@ -88,6 +91,7 @@ class BackfillWindowExecutorGroupAGateTest {
                         revSplitService,
                         dividendService,
                         overseasSplitService,
+                        overseasDividendBackfillService,
                         terminationPolicy,
                         windowAdvancer,
                         backfillMetrics,

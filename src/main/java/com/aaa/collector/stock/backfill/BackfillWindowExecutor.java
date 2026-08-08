@@ -24,6 +24,8 @@ import com.aaa.collector.stock.daily.DomesticDailyOhlcvFetch;
 import com.aaa.collector.stock.daily.OverseasDailyOhlcvCollectionService;
 import com.aaa.collector.stock.daily.OverseasDailyOhlcvFetch;
 import com.aaa.collector.stock.enums.Market;
+import com.aaa.collector.stock.rights.OverseasDividendBackfillFetch;
+import com.aaa.collector.stock.rights.OverseasDividendBackfillService;
 import com.aaa.collector.stock.rights.OverseasSplitBackfillFetch;
 import com.aaa.collector.stock.rights.OverseasSplitCollectionService;
 import com.aaa.collector.stock.supply.CreditBalanceCollectionService;
@@ -59,14 +61,18 @@ import org.springframework.transaction.support.TransactionTemplate;
 // @MX:ANCHOR: [AUTO] 백필 윈도우 실행 진입점 — INSERT IGNORE+status UPDATE 동일 트랜잭션 묶음 담당
 // @MX:REASON: [AUTO] AC-4.1/4.2 부분 커밋 방지. T7에서 fetchWindow(비tx)/persistWindow(tx)로 경계 분리.
 // @MX:SPEC: SPEC-COLLECTOR-TXBOUNDARY-001
-// PMD.GodClass/CouplingBetweenObjects: GROUP_A/B 전 데이터테이블(daily_ohlcv·investor_trend·
-// credit_balance·short_sale_domestic·corporate_events*)의 fetch/persist 라우팅 fan-in 허브 —
+// PMD.GodClass/CouplingBetweenObjects/CyclomaticComplexity: GROUP_A/B/C 전 데이터테이블(daily_ohlcv·
+// investor_trend·credit_balance·short_sale_domestic·corporate_events*)의 fetch/persist 라우팅 fan-in 허브
+// —
 // SPEC-COLLECTOR-BACKFILL-010 §4.1이 이 클래스에 GROUP_A 종료 확인 게이트를 명시적으로 배치(단일 진입점 유지가
-// probeOutcome 흐름의 정확성 보장에 필수, 분산 시 REQ-TXB-020 비tx 불변식 검증이 어려워짐).
+// probeOutcome 흐름의 정확성 보장에 필수, 분산 시 REQ-TXB-020 비tx 불변식 검증이 어려워짐). data_table 종류가
+// 늘어날수록 routeFetch/routePersist switch 분기 수(=순환 복잡도)가 선형 증가하는 구조적 특성이며,
+// SPEC-COLLECTOR-OVERSEAS-DIVIDEND-WINDOW-001 REQ-ODW-080 배선으로 기본 임계(클래스 80/메서드 10)를 넘었다.
 @SuppressWarnings({
     "PMD.ExcessiveImports", // 다중 수집 서비스 라우팅 구조상 불가피한 import 수
     "PMD.GodClass",
-    "PMD.CouplingBetweenObjects"
+    "PMD.CouplingBetweenObjects",
+    "PMD.CyclomaticComplexity"
 })
 @Slf4j
 @Component
@@ -129,6 +135,7 @@ public class BackfillWindowExecutor {
     private final RevSplitCollectionService revSplitService;
     private final DividendScheduleCollectionService dividendService;
     private final OverseasSplitCollectionService overseasSplitService;
+    private final OverseasDividendBackfillService overseasDividendBackfillService;
     private final BackfillTerminationPolicy terminationPolicy;
     private final BackfillWindowAdvancer windowAdvancer;
     private final BackfillMetrics backfillMetrics;
@@ -208,6 +215,15 @@ public class BackfillWindowExecutor {
             case "corporate_events_dividend" ->
                     dividendService.fetchWindowForBackfill(
                             stock, session, windowAdvancer.groupAFromDate(), anchor);
+            // @MX:NOTE SPEC-COLLECTOR-OVERSEAS-DIVIDEND-WINDOW-001 REQ-ODW-080 — 종목지정 해외 현금배당 백필.
+            // "corporate_events"(SPLIT) case와 구조적으로 대칭(plan.md §C-4): from-date=고정 플로어,
+            // to-date=today(KST). 국내 대응 항목이 없어 시장 분기 없이 단일 서비스로 라우팅한다.
+            case "corporate_events_dividend_overseas" -> {
+                LocalDate floor = windowAdvancer.groupAFromDate();
+                LocalDate to = LocalDate.now(KST);
+                yield overseasDividendBackfillService.fetchWindowForBackfill(
+                        stock, session, floor, to);
+            }
             default -> {
                 log.warn(
                         "[backfill] 알 수 없는 data_table — symbol={}, table={}",
@@ -663,6 +679,10 @@ public class BackfillWindowExecutor {
             // SPEC-COLLECTOR-BACKFILL-009 W2 — DividendRowAccumulator 저장 정책+INSERT IGNORE → 종료 입력.
             // 별도 DTO 타입이라 SPLIT(RevSplitBackfillFetch) 분기와 오염 없이 분리(REQ-BACKFILL-144).
             case DividendBackfillFetch f -> dividendService.persistWindowForBackfill(f);
+            // SPEC-COLLECTOR-OVERSEAS-DIVIDEND-WINDOW-001 REQ-ODW-080 — 해외 현금배당 백필 매핑+INSERT
+            // IGNORE → 종료 입력. 별도 DTO 타입이라 국내 배당(DividendBackfillFetch) 분기와 오염 없이 분리.
+            case OverseasDividendBackfillFetch f ->
+                    overseasDividendBackfillService.persistWindowForBackfill(f);
             default -> {
                 log.warn(
                         "[backfill] 알 수 없는 fetchDto 타입 — type={}",
