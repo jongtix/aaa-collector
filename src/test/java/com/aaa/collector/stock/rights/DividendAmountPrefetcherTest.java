@@ -6,16 +6,19 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.lenient;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.aaa.collector.kis.KisRateLimitException;
 import com.aaa.collector.kis.gate.GuardedKisExecutor;
 import com.aaa.collector.kis.gate.KeyLeaseRegistry;
 import com.aaa.collector.kis.gate.KeyLeaseRegistry.LeaseSession;
 import com.aaa.collector.kis.token.HealthyKeySelector;
 import com.aaa.collector.kis.token.KisAccountCredential;
 import java.net.URI;
+import java.time.LocalDate;
 import java.util.List;
 import java.util.Set;
 import java.util.function.Function;
@@ -263,8 +266,7 @@ class DividendAmountPrefetcherTest {
             assertThat(result.prefetchFailed()).isEqualTo(1);
             assertThat(result.prefetchTruncated()).isZero();
             assertThat(result.amountsByKey())
-                    .containsKey(
-                            new DividendAmountKey("AAPL", java.time.LocalDate.of(2026, 5, 11)));
+                    .containsKey(new DividendAmountKey("AAPL", LocalDate.of(2026, 5, 11)));
         }
 
         @Test
@@ -294,7 +296,7 @@ class DividendAmountPrefetcherTest {
 
             assertThat(result.prefetchFailed()).isEqualTo(1);
             assertThat(result.amountsByKey())
-                    .containsKey(new DividendAmountKey("SD", java.time.LocalDate.of(2026, 5, 20)));
+                    .containsKey(new DividendAmountKey("SD", LocalDate.of(2026, 5, 20)));
         }
 
         @Test
@@ -378,8 +380,7 @@ class DividendAmountPrefetcherTest {
 
             assertThat(result.amountsByKey()).hasSize(1);
             assertThat(result.amountsByKey())
-                    .containsOnlyKeys(
-                            new DividendAmountKey("AAPL", java.time.LocalDate.of(2026, 5, 11)));
+                    .containsOnlyKeys(new DividendAmountKey("AAPL", LocalDate.of(2026, 5, 11)));
         }
 
         @Test
@@ -467,7 +468,7 @@ class DividendAmountPrefetcherTest {
 
             DividendAmountItem item =
                     result.amountsByKey()
-                            .get(new DividendAmountKey("AAPL", java.time.LocalDate.of(2026, 5, 11)))
+                            .get(new DividendAmountKey("AAPL", LocalDate.of(2026, 5, 11)))
                             .getFirst();
             assertThat(item.currencyCode()).isEqualTo("USD");
         }
@@ -504,9 +505,7 @@ class DividendAmountPrefetcherTest {
 
             List<DividendAmountItem> items =
                     result.amountsByKey()
-                            .get(
-                                    new DividendAmountKey(
-                                            "AAPL", java.time.LocalDate.of(2026, 5, 11)));
+                            .get(new DividendAmountKey("AAPL", LocalDate.of(2026, 5, 11)));
             assertThat(items).hasSize(1);
             assertThat(items.getFirst().cashAmount()).isEqualByComparingTo("0.26000");
         }
@@ -543,9 +542,7 @@ class DividendAmountPrefetcherTest {
 
             List<DividendAmountItem> items =
                     result.amountsByKey()
-                            .get(
-                                    new DividendAmountKey(
-                                            "AAPL", java.time.LocalDate.of(2026, 5, 11)));
+                            .get(new DividendAmountKey("AAPL", LocalDate.of(2026, 5, 11)));
             assertThat(items).hasSize(2);
             assertThat(items)
                     .extracting(DividendAmountItem::rghtTypeCd, DividendAmountItem::cashAmount)
@@ -583,7 +580,7 @@ class DividendAmountPrefetcherTest {
 
             DividendAmountItem item =
                     result.amountsByKey()
-                            .get(new DividendAmountKey("AAPL", java.time.LocalDate.of(2026, 5, 11)))
+                            .get(new DividendAmountKey("AAPL", LocalDate.of(2026, 5, 11)))
                             .getFirst();
             assertThat(item.cashAmount()).isNull();
         }
@@ -605,7 +602,7 @@ class DividendAmountPrefetcherTest {
 
             DividendAmountItem item =
                     result.amountsByKey()
-                            .get(new DividendAmountKey("AAPL", java.time.LocalDate.of(2026, 5, 11)))
+                            .get(new DividendAmountKey("AAPL", LocalDate.of(2026, 5, 11)))
                             .getFirst();
             assertThat(item.cashAmount()).isEqualByComparingTo("0.26000");
             assertThat(item.cashAmount().scale()).isEqualTo(5);
@@ -632,7 +629,7 @@ class DividendAmountPrefetcherTest {
 
             DividendAmountItem item =
                     result.amountsByKey()
-                            .get(new DividendAmountKey("AAPL", java.time.LocalDate.of(2026, 5, 11)))
+                            .get(new DividendAmountKey("AAPL", LocalDate.of(2026, 5, 11)))
                             .getFirst();
             // confirmedRow 헬퍼는 cash_alct_rt="0" 고정 — scale 4로 정규화되는지만 확인
             assertThat(item.cashRate()).isEqualByComparingTo("0.0000");
@@ -667,8 +664,7 @@ class DividendAmountPrefetcherTest {
 
             DividendAmountPrefetch result = prefetcher.prefetch(session, Set.of("FCT"));
 
-            DividendAmountKey key =
-                    new DividendAmountKey("FCT", java.time.LocalDate.of(2026, 3, 24));
+            DividendAmountKey key = new DividendAmountKey("FCT", LocalDate.of(2026, 3, 24));
             assertThat(result.scripDividendDates()).containsExactly(key);
             assertThat(result.amountsByKey()).isEmpty();
         }
@@ -704,8 +700,7 @@ class DividendAmountPrefetcherTest {
 
             DividendAmountPrefetch result = prefetcher.prefetch(session, Set.of("AAPL"));
 
-            DividendAmountKey key =
-                    new DividendAmountKey("AAPL", java.time.LocalDate.of(2026, 5, 11));
+            DividendAmountKey key = new DividendAmountKey("AAPL", LocalDate.of(2026, 5, 11));
             assertThat(result.scripDividendDates()).containsExactly(key);
             assertThat(result.amountsByKey()).containsOnlyKeys(key);
             assertThat(result.amountsByKey().get(key)).hasSize(1);
@@ -768,8 +763,7 @@ class DividendAmountPrefetcherTest {
             assertThat(result.prefetchFailed()).isEqualTo(1);
             assertThat(result.scripDividendDates()).isEmpty();
             assertThat(result.amountsByKey())
-                    .containsKey(
-                            new DividendAmountKey("AAPL", java.time.LocalDate.of(2026, 5, 11)));
+                    .containsKey(new DividendAmountKey("AAPL", LocalDate.of(2026, 5, 11)));
         }
     }
 
@@ -801,8 +795,7 @@ class DividendAmountPrefetcherTest {
             DividendAmountPrefetch result = prefetcher.prefetch(session, Set.of("PEP"));
 
             assertThat(result.amountsByKey())
-                    .containsOnlyKeys(
-                            new DividendAmountKey("PEP", java.time.LocalDate.of(2026, 6, 5)));
+                    .containsOnlyKeys(new DividendAmountKey("PEP", LocalDate.of(2026, 6, 5)));
         }
     }
 
@@ -856,6 +849,96 @@ class DividendAmountPrefetcherTest {
                             trContCaptor.capture());
             List<String> capturedTrCont = trContCaptor.getAllValues();
             assertThat(capturedTrCont).containsExactly("", "N");
+        }
+    }
+
+    @Nested
+    @DisplayName(
+            "prefetchForBackfill — 백필 전용 03/75 단일 광폭 콜·PDNO 완전 일치 필터"
+                    + " (SPEC-COLLECTOR-OVERSEAS-DIVIDEND-WINDOW-001 REQ-ODW-052/053)")
+    class PrefetchForBackfill {
+
+        private final LocalDate from = LocalDate.of(2010, 1, 1);
+        private final LocalDate to = LocalDate.of(2026, 6, 28);
+
+        @Test
+        @DisplayName("REQ-ODW-053: PDNO 접두어 매칭 노이즈(V 요청에 U/VV 등 반환)는 완전 일치 필터로 제외된다")
+        void prefixMatchingNoise_excludedByExactPdnoFilter() throws Exception {
+            KisPeriodRightsResponse generalPage =
+                    periodRightsResponse(
+                            List.of(
+                                    confirmedRow(
+                                            "V", RIGHT_TYPE_GENERAL, "20260511", "0.52000", "USD"),
+                                    confirmedRow(
+                                            "VV", RIGHT_TYPE_GENERAL, "20260511", "0.30000", "USD"),
+                                    confirmedRow(
+                                            "VVV",
+                                            RIGHT_TYPE_GENERAL,
+                                            "20260511",
+                                            "0.10000",
+                                            "USD")),
+                            null,
+                            null);
+            stubType(RIGHT_TYPE_GENERAL, generalPage);
+            stubType(RIGHT_TYPE_SPECIAL, emptyPeriodRightsResponse());
+
+            DividendAmountPrefetch result = prefetcher.prefetchForBackfill(session, "V", from, to);
+
+            assertThat(result.amountsByKey()).hasSize(1);
+            assertThat(result.amountsByKey())
+                    .containsOnlyKeys(new DividendAmountKey("V", LocalDate.of(2026, 5, 11)));
+        }
+
+        @Test
+        @DisplayName("REQ-ODW-052: PDNO=요청 심볼로 단일 광폭 범위(from~to) 콜, 74(스크립)는 조회하지 않는다")
+        void singleWideRangeCall_noScripQuery() throws Exception {
+            stubType(RIGHT_TYPE_GENERAL, emptyPeriodRightsResponse());
+            stubType(RIGHT_TYPE_SPECIAL, emptyPeriodRightsResponse());
+
+            prefetcher.prefetchForBackfill(session, "KO", from, to);
+
+            // 03(일반배당)·75(특별배당) 각각 1회씩, 동일 PDNO·동일 광폭 범위로 호출(청킹 없음)
+            verify(guardedKisExecutor, times(2))
+                    .execute(
+                            any(LeaseSession.class),
+                            argThat(
+                                    uriCustomizer -> {
+                                        URI uri =
+                                                uriCustomizer.apply(
+                                                        UriComponentsBuilder.newInstance());
+                                        String s = uri.toString();
+                                        return s.contains("PDNO=KO")
+                                                && s.contains("INQR_STRT_DT=20100101")
+                                                && s.contains("INQR_END_DT=20260628");
+                                    }),
+                            eq(PERIOD_RIGHTS_TR_ID),
+                            eq(KisPeriodRightsResponse.class),
+                            anyString());
+            verify(guardedKisExecutor, never())
+                    .execute(
+                            any(LeaseSession.class),
+                            argThat(rightTypeIs(RIGHT_TYPE_SCRIP)),
+                            eq(PERIOD_RIGHTS_TR_ID),
+                            eq(KisPeriodRightsResponse.class),
+                            anyString());
+        }
+
+        @Test
+        @DisplayName("REQ-ODW-060: 유형 절단/실패는 prefetchTruncated/prefetchFailed로 관측되고 빈 맵으로 폐기된다")
+        void degradedOutcome_reportedViaCounters() throws Exception {
+            stubType(RIGHT_TYPE_GENERAL, emptyPeriodRightsResponse());
+            when(guardedKisExecutor.execute(
+                            any(LeaseSession.class),
+                            argThat(rightTypeIs(RIGHT_TYPE_SPECIAL)),
+                            eq(PERIOD_RIGHTS_TR_ID),
+                            eq(KisPeriodRightsResponse.class),
+                            anyString()))
+                    .thenThrow(new KisRateLimitException("alias-1", "재시도 소진"));
+
+            DividendAmountPrefetch result = prefetcher.prefetchForBackfill(session, "KO", from, to);
+
+            assertThat(result.prefetchFailed()).isEqualTo(1);
+            assertThat(result.amountsByKey()).isEmpty();
         }
     }
 }

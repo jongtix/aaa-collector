@@ -126,11 +126,11 @@ class DividendAmountPrefetcher {
                 nyToday.plusMonths(WINDOW_MONTHS).plusDays(WINDOW_PADDING_DAYS).format(DATE_FMT);
 
         TypePrefetchOutcome general =
-                prefetchType(session, RIGHT_TYPE_GENERAL, trackedSymbols, startDate, endDate);
+                prefetchType(session, RIGHT_TYPE_GENERAL, "", trackedSymbols, startDate, endDate);
         TypePrefetchOutcome special =
-                prefetchType(session, RIGHT_TYPE_SPECIAL, trackedSymbols, startDate, endDate);
+                prefetchType(session, RIGHT_TYPE_SPECIAL, "", trackedSymbols, startDate, endDate);
         TypePrefetchOutcome scrip =
-                prefetchType(session, RIGHT_TYPE_SCRIP, trackedSymbols, startDate, endDate);
+                prefetchType(session, RIGHT_TYPE_SCRIP, "", trackedSymbols, startDate, endDate);
 
         Map<DividendAmountKey, List<DividendAmountItem>> merged = new HashMap<>();
         Set<DividendAmountKey> scripDividendDates = new HashSet<>();
@@ -146,6 +146,49 @@ class DividendAmountPrefetcher {
                 Set.copyOf(scripDividendDates),
                 prefetchTruncated.get(),
                 prefetchFailed.get());
+    }
+
+    /**
+     * 백필 전용 CTRGT011R 프리페치 — 03(일반배당)·75(특별배당)만 조회한다(SPEC-COLLECTOR-OVERSEAS-DIVIDEND-WINDOW-001
+     * REQ-ODW-052). 74(스크립배당)는 백필 대상 아님(정기 수집과 달리 관측 목적 결과가 불필요).
+     *
+     * <p>{@code CTRGT011R}은 이미 커서 페이지네이션을 지원하므로(spec.md §5.6 RD-6) {@code
+     * rights-by-ice}(REQ-ODW-051)와 달리 서브윈도우 청킹이 필요 없다 — {@code from}(공통 anchor)~{@code to}(오늘) 전체
+     * 범위를 단일 페이징 콜로 조회한다.
+     *
+     * <p>PDNO 완전 일치 필터링(REQ-ODW-053): {@code trackedSymbols}를 요청 심볼 단일 집합({@code Set.of(pdno)})으로
+     * 좁혀 {@link #accumulateRow}의 기존 {@code trackedSymbols.contains(symbol)} 필터를 그대로 재사용한다 — {@code
+     * api-specs/kis/28.md} [HARD, 발견] PDNO 접두어 매칭 실측(V/U 종목)이 {@code RGHT_TYPE_CD} 무관 TR-파라미터 레벨
+     * 동작이므로, 03/75 조회에도 동일 방어가 필요하다({@link OverseasSplitMapper}의 {@code
+     * trackedStockBySymbol.containsKey()} 패턴과 동등).
+     *
+     * @param session per-batch lease 세션(호출자가 연 세션을 그대로 상속)
+     * @param pdno 백필 대상 심볼(정확 일치 필터 겸용)
+     * @param from 조회 시작일(공통 anchor, REQ-ODW-052)
+     * @param to 조회 종료일(오늘 KST)
+     * @return 병합된 금액 맵(03/75)·프리페치 관측 카운터. scripDividendDates는 항상 빈 집합(백필 미대상)
+     */
+    @SuppressWarnings("PMD.UseConcurrentHashMap") // 단일 스레드 빌드 후 Map.copyOf로 동결, 이후 읽기 전용 공유
+    DividendAmountPrefetch prefetchForBackfill(
+            LeaseSession session, String pdno, LocalDate from, LocalDate to) {
+        Set<String> trackedSymbols = Set.of(pdno);
+        String startDate = from.format(DATE_FMT);
+        String endDate = to.format(DATE_FMT);
+
+        TypePrefetchOutcome general =
+                prefetchType(session, RIGHT_TYPE_GENERAL, pdno, trackedSymbols, startDate, endDate);
+        TypePrefetchOutcome special =
+                prefetchType(session, RIGHT_TYPE_SPECIAL, pdno, trackedSymbols, startDate, endDate);
+
+        Map<DividendAmountKey, List<DividendAmountItem>> merged = new HashMap<>();
+        AtomicInteger prefetchTruncated = new AtomicInteger();
+        AtomicInteger prefetchFailed = new AtomicInteger();
+
+        applyOutcome(merged, general, RIGHT_TYPE_GENERAL, prefetchTruncated, prefetchFailed);
+        applyOutcome(merged, special, RIGHT_TYPE_SPECIAL, prefetchTruncated, prefetchFailed);
+
+        return new DividendAmountPrefetch(
+                Map.copyOf(merged), Set.of(), prefetchTruncated.get(), prefetchFailed.get());
     }
 
     /**
@@ -231,6 +274,7 @@ class DividendAmountPrefetcher {
     private TypePrefetchOutcome prefetchType(
             LeaseSession session,
             String rghtTypeCd,
+            String pdno,
             Set<String> trackedSymbols,
             String startDate,
             String endDate) {
@@ -243,7 +287,7 @@ class DividendAmountPrefetcher {
             try {
                 response =
                         fetchPeriodRightsPage(
-                                session, rghtTypeCd, startDate, endDate, nk50, fk50, page);
+                                session, rghtTypeCd, pdno, startDate, endDate, nk50, fk50, page);
             } catch (KisRateLimitException
                     | RestClientException
                     | NoHealthyKeyException
@@ -331,6 +375,7 @@ class DividendAmountPrefetcher {
     private KisPeriodRightsResponse fetchPeriodRightsPage(
             LeaseSession session,
             String rghtTypeCd,
+            String pdno,
             String startDate,
             String endDate,
             String nk50,
@@ -344,7 +389,7 @@ class DividendAmountPrefetcher {
                                 .queryParam("INQR_DVSN_CD", INQR_DVSN_LOCAL_DATE)
                                 .queryParam("INQR_STRT_DT", startDate)
                                 .queryParam("INQR_END_DT", endDate)
-                                .queryParam("PDNO", "")
+                                .queryParam("PDNO", pdno)
                                 .queryParam("PRDT_TYPE_CD", "")
                                 .queryParam("CTX_AREA_NK50", nk50)
                                 .queryParam("CTX_AREA_FK50", fk50)

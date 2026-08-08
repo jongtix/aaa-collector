@@ -234,8 +234,11 @@ public class OverseasRightsCollectionService {
      * 반환·다음 공시로 즉시 대체"되어 긴 공시 간격 종목(TSM류)의 회차가 CTRGT011R 확정 전에 영구 누락되는 가시성 윈도우 레이스를 일으킨다(spec.md
      * §1.2). 여러 회차가 한 응답에 섞여도 {@link OverseasRightsRowAccumulator}가 REQ-ODA-020 맵 키 {@code (symbol,
      * record_dt)} 규약을 회차별로 독립 적용하므로 교차 매칭이 발생하지 않는다(REQ-ODW-021).
+     *
+     * <p>패키지 전용 가시성(package-private) — {@link OverseasDividendBackfillService}가 백필 서브윈도우
+     * 청킹(REQ-ODW-051)에서 동일 메서드를 파라미터만 바꿔 재사용한다(정기 수집·백필 공유, 접두어 매칭 문제 없음 — SYMB 단일 심볼 필수 조회).
      */
-    private KisOverseasRightsResponse fetch(
+    KisOverseasRightsResponse fetch(
             KeyLeaseRegistry.LeaseSession session,
             String symbol,
             LocalDate startDate,
