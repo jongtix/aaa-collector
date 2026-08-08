@@ -65,11 +65,18 @@ class DividendAmountPrefetcher {
 
     private static final String DFNT_YN_CONFIRMED = "Y";
 
-    /** 조회 윈도우 폭 — rights-by-ice 오늘±3개월 재사용(RD-4). */
-    private static final long WINDOW_MONTHS = 3L;
+    /**
+     * 조회 윈도우 폭(개월) — {@link OverseasRightsCollectionService}의 정기 수집 {@code rights-by-ice} 명시적 범위
+     * 계산과 반드시 동일 상수를 공유한다(REQ-ODW-011/014, 패키지 전용 가시성). TSM류(anno→record 120~125일) 회차가 확정 시점(약
+     * record_dt+5~8주)까지 롤링 윈도우 안에 남도록 3→4로 확장했다(REQ-ODW-013, spec.md §5.1 RD-1).
+     */
+    static final long WINDOW_MONTHS = 4L;
 
-    /** KST/ET 기준시각 비대칭 흡수용 경계 패딩(D6, RD-4). */
-    private static final long WINDOW_PADDING_DAYS = 1L;
+    /**
+     * KST/ET 기준시각 비대칭 흡수용 경계 패딩(D6, RD-4) — {@link OverseasRightsCollectionService}와
+     * 공유(REQ-ODW-011, 패키지 전용 가시성).
+     */
+    static final long WINDOW_PADDING_DAYS = 1L;
 
     /**
      * 프리페치 유형(03/75)당 페이지 안전 상한(REQ-ODA-012). 전세계 6개월 배당 이벤트는 분기말(3·6·9·12월 말) 특정 이틀에 수백 건 집중되며

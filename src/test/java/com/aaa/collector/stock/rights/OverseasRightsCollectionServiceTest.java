@@ -191,12 +191,65 @@ class OverseasRightsCollectionServiceTest {
     }
 
     @Nested
+    @DisplayName("collect — 명시적 범위 가시성 윈도우 수정 (AC-ODW-001/002, REQ-ODW-010/012/014/020/021)")
+    class ExplicitRangeVisibilityWindow {
+
+        @Test
+        @DisplayName(
+                "AC-ODW-001: TSM류(긴 공시 간격) — 미확정 현재 회차 + 이미 공시된 다음 회차가 한 응답에 동시 포함돼도 "
+                        + "회차별 독립 매칭되어 교차 매칭·중복 계상이 없다")
+        void collect_longAnnouncementGapStock_matchesEachCycleIndependently() throws Exception {
+            // Arrange — TSM류: CTRGT011R 미확정 현재 회차(record_dt=2026-04-13)와
+            // 이미 공시된 다음 회차(record_dt=2026-08-10)가 명시적 범위 조회 응답에 함께 반환된다(§1.2 재현).
+            Stock stock = stockOf("TSM", Market.NYSE, AssetType.STOCK);
+            when(stockRepository.findAllActiveOverseasTradable()).thenReturn(List.of(stock));
+            when(healthyKeySelector.selectHealthy()).thenReturn(List.of(ISA));
+            LocalDate confirmedCycle = LocalDate.of(2026, 4, 13);
+            // 다음 회차(2026-08-10, 미확정)는 CTRGT011R 확정 매칭이 없어 defer된다 — 아래 skippedUnconfirmed 검증 대상.
+            when(guardedKisExecutor.execute(
+                            any(LeaseSession.class),
+                            any(),
+                            anyString(),
+                            eq(KisOverseasRightsResponse.class)))
+                    .thenReturn(
+                            response(
+                                    List.of(
+                                            cashDividendRow("20260413", "20260413", "20260420"),
+                                            cashDividendRow("20260810", "20260810", "20260817"))));
+            // CTRGT011R은 오래된 회차만 확정(dfnt_yn=Y) — 다음 회차는 아직 미확정(REQ-ODA-022 defer)
+            when(dividendAmountPrefetcher.prefetch(any(LeaseSession.class), any()))
+                    .thenReturn(
+                            prefetchWith(
+                                    "TSM",
+                                    confirmedCycle,
+                                    List.of(item(RIGHT_TYPE_GENERAL, "0.66000", "USD"))));
+
+            // Act
+            OverseasRightsCollectionResult result = service.collect();
+
+            // Assert — 확정 회차만 저장되고, 미확정 회차는 defer(교차 매칭 없음, REQ-ODW-021)
+            verify(corporateEventInserter).insertBatchIsolated(inserterCaptor.capture(), any());
+            List<CorporateEvent> saved =
+                    inserterCaptor.getAllValues().stream().flatMap(List::stream).toList();
+            assertThat(saved).hasSize(1);
+            assertThat(saved.getFirst().getEventDate()).isEqualTo(confirmedCycle);
+            assertThat(result)
+                    .extracting(
+                            OverseasRightsCollectionResult::succeededRows,
+                            OverseasRightsCollectionResult::skippedUnconfirmed)
+                    .containsExactly(1, 1);
+        }
+    }
+
+    @Nested
     @DisplayName("collect — 요청 파라미터 (REQ-OVE-021)")
     class RequestParams {
 
         @Test
         @SuppressWarnings("unchecked")
-        @DisplayName("NCOD=US + SYMB, ST_YMD/ED_YMD 공백으로 게이트 호출")
+        @DisplayName(
+                "AC-ODW-003: NCOD=US + SYMB, ST_YMD/ED_YMD가 명시적 오늘±4개월±1일 범위로 채워진다 "
+                        + "(REQ-ODW-010/012/014)")
         void collect_buildsUsRequest() throws Exception {
             // Arrange
             Stock stock = stockOf("AAPL", Market.NASDAQ, AssetType.STOCK);
@@ -217,12 +270,23 @@ class OverseasRightsCollectionServiceTest {
 
             // Assert
             URI uri = uriCaptor.getValue().apply(UriComponentsBuilder.newInstance());
+            LocalDate nyToday = LocalDate.now(java.time.ZoneId.of("America/New_York"));
+            // REQ-ODW-011/014: DividendAmountPrefetcher.WINDOW_MONTHS(4)/WINDOW_PADDING_DAYS(1)와
+            // 동일 상수로 산출된 범위 — 두 TR의 윈도우 동기화를 정적으로 검증한다.
+            String expectedStart =
+                    nyToday.minusMonths(DividendAmountPrefetcher.WINDOW_MONTHS)
+                            .minusDays(DividendAmountPrefetcher.WINDOW_PADDING_DAYS)
+                            .format(java.time.format.DateTimeFormatter.BASIC_ISO_DATE);
+            String expectedEnd =
+                    nyToday.plusMonths(DividendAmountPrefetcher.WINDOW_MONTHS)
+                            .plusDays(DividendAmountPrefetcher.WINDOW_PADDING_DAYS)
+                            .format(java.time.format.DateTimeFormatter.BASIC_ISO_DATE);
             assertThat(uri.toString())
                     .contains("/uapi/overseas-price/v1/quotations/rights-by-ice")
                     .contains("NCOD=US")
                     .contains("SYMB=AAPL")
-                    .contains("ST_YMD=")
-                    .contains("ED_YMD=");
+                    .contains("ST_YMD=" + expectedStart)
+                    .contains("ED_YMD=" + expectedEnd);
         }
 
         @Test

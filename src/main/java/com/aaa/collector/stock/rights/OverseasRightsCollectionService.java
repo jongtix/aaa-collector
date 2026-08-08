@@ -13,6 +13,7 @@ import com.aaa.collector.stock.StockRepository;
 import java.net.URI;
 import java.time.LocalDate;
 import java.time.ZoneId;
+import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
@@ -76,6 +77,8 @@ public class OverseasRightsCollectionService {
 
     private static final ZoneId NEW_YORK = ZoneId.of("America/New_York");
 
+    private static final DateTimeFormatter DATE_FMT = DateTimeFormatter.BASIC_ISO_DATE;
+
     private final StockRepository stockRepository;
     private final CorporateEventInserter corporateEventInserter;
     private final GuardedKisExecutor guardedKisExecutor;
@@ -125,13 +128,16 @@ public class OverseasRightsCollectionService {
         DividendAmountPrefetch prefetch =
                 dividendAmountPrefetcher.prefetch(session, trackedSymbols);
 
+        // REQ-ODW-010/012/014: 정기 수집 명시적 범위 — DividendAmountPrefetcher와 동일 상수 공유(REQ-ODW-011)
+        CollectionWindow window = CollectionWindow.of(nyToday);
+
         // 종목별 병렬 collectStock이 공유하는 검증·매핑·카운팅 협력자(1회 collect()당 신규 인스턴스)
         OverseasRightsRowAccumulator accumulator = new OverseasRightsRowAccumulator();
 
         // REQ-OVE-028: Virtual Thread executor — 종목별 블로킹을 commonPool 점유 없이 처리. parallelStream 금지.
         try (ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor()) {
             for (Stock stock : activeStocks) {
-                executor.submit(() -> collectStock(stock, session, prefetch, accumulator));
+                executor.submit(() -> collectStock(stock, session, prefetch, accumulator, window));
             }
         } // close() blocks until all submitted tasks complete
 
@@ -162,11 +168,13 @@ public class OverseasRightsCollectionService {
             Stock stock,
             KeyLeaseRegistry.LeaseSession session,
             DividendAmountPrefetch prefetch,
-            OverseasRightsRowAccumulator accumulator) {
+            OverseasRightsRowAccumulator accumulator,
+            CollectionWindow window) {
 
         String symbol = stock.getSymbol();
         try {
-            KisOverseasRightsResponse response = fetch(session, symbol);
+            KisOverseasRightsResponse response =
+                    fetch(session, symbol, window.startDate(), window.endDate());
 
             // REQ-OVE-027: rt_cd=0이어도 output1 비면 종목 skip
             if (response.output1().isEmpty()) {
@@ -219,18 +227,47 @@ public class OverseasRightsCollectionService {
         }
     }
 
-    /** 게이트를 경유해 종목별 권리종합을 조회한다(REQ-OVE-021 — NCOD=US, ST/ED 공백=오늘±3개월). */
-    private KisOverseasRightsResponse fetch(KeyLeaseRegistry.LeaseSession session, String symbol)
+    /**
+     * 게이트를 경유해 종목별 권리종합을 명시적 날짜범위로 조회한다(REQ-OVE-021 — NCOD=US).
+     *
+     * <p>{@code ST_YMD}/{@code ED_YMD}를 공백이 아닌 명시적 달력범위로 지정한다(REQ-ODW-010) — 공백 파라미터는 "최근 1회차만
+     * 반환·다음 공시로 즉시 대체"되어 긴 공시 간격 종목(TSM류)의 회차가 CTRGT011R 확정 전에 영구 누락되는 가시성 윈도우 레이스를 일으킨다(spec.md
+     * §1.2). 여러 회차가 한 응답에 섞여도 {@link OverseasRightsRowAccumulator}가 REQ-ODA-020 맵 키 {@code (symbol,
+     * record_dt)} 규약을 회차별로 독립 적용하므로 교차 매칭이 발생하지 않는다(REQ-ODW-021).
+     */
+    private KisOverseasRightsResponse fetch(
+            KeyLeaseRegistry.LeaseSession session,
+            String symbol,
+            LocalDate startDate,
+            LocalDate endDate)
             throws InterruptedException {
         Function<UriBuilder, URI> uriCustomizer =
                 uri ->
                         uri.path(PATH)
                                 .queryParam("NCOD", NATION_CODE)
                                 .queryParam("SYMB", symbol)
-                                .queryParam("ST_YMD", "")
-                                .queryParam("ED_YMD", "")
+                                .queryParam("ST_YMD", startDate.format(DATE_FMT))
+                                .queryParam("ED_YMD", endDate.format(DATE_FMT))
                                 .build();
         return guardedKisExecutor.execute(
                 session, uriCustomizer, TR_ID, KisOverseasRightsResponse.class);
+    }
+
+    /**
+     * 정기 수집 명시적 범위(REQ-ODW-010/014) — {@link DividendAmountPrefetcher#WINDOW_MONTHS}/{@link
+     * DividendAmountPrefetcher#WINDOW_PADDING_DAYS}와 동일 계산식을 재사용해 {@code rights-by-ice}/{@code
+     * CTRGT011R} 두 TR의 윈도우가 항상 동기화되도록 보장한다(REQ-ODW-011 — 코드 리뷰로 두 계산식이 동일 상수를 참조함을 정적 확인 가능,
+     * AC-ODW-003).
+     */
+    private record CollectionWindow(LocalDate startDate, LocalDate endDate) {
+        static CollectionWindow of(LocalDate nyToday) {
+            LocalDate startDate =
+                    nyToday.minusMonths(DividendAmountPrefetcher.WINDOW_MONTHS)
+                            .minusDays(DividendAmountPrefetcher.WINDOW_PADDING_DAYS);
+            LocalDate endDate =
+                    nyToday.plusMonths(DividendAmountPrefetcher.WINDOW_MONTHS)
+                            .plusDays(DividendAmountPrefetcher.WINDOW_PADDING_DAYS);
+            return new CollectionWindow(startDate, endDate);
+        }
     }
 }
