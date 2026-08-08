@@ -25,6 +25,7 @@ import com.aaa.collector.stock.daily.OverseasDailyOhlcvCollectionService;
 import com.aaa.collector.stock.daily.OverseasDailyOhlcvFetch;
 import com.aaa.collector.stock.enums.Market;
 import com.aaa.collector.stock.rights.OverseasDividendBackfillFetch;
+import com.aaa.collector.stock.rights.OverseasDividendBackfillPrefetchFailedException;
 import com.aaa.collector.stock.rights.OverseasDividendBackfillService;
 import com.aaa.collector.stock.rights.OverseasSplitBackfillFetch;
 import com.aaa.collector.stock.rights.OverseasSplitCollectionService;
@@ -126,6 +127,13 @@ public class BackfillWindowExecutor {
     /** GROUP_A daily_ohlcv 단일 호출 잠정 종료 임계(거래일). decideGroupA 임계값 100·{@code <} 비교와 동일(불변). */
     private static final int SINGLE_CALL_ROW_CAP = 100;
 
+    /**
+     * {@link OverseasDividendBackfillPrefetchFailedException} 재시도 상한(누적 시도 횟수, 코드리뷰 W-2b) — 스케줄
+     * 백필(cron 02:00 KST 1일 1회 기준) 10회 = 약 10일의 여유를 두어 일시적 KIS 장애(레이트리밋·세션실패 등)를 흡수하면서도, 구조적으로 영구
+     * 실패하는 종목이 청크 조회 예산을 무한정 재소모하지 않도록 상한을 둔다.
+     */
+    private static final int OVERSEAS_DIVIDEND_PREFETCH_MAX_RETRY_ATTEMPTS = 10;
+
     private final BackfillStatusRepository backfillStatusRepository;
     private final DomesticDailyOhlcvCollectionService domesticOhlcvService;
     private final OverseasDailyOhlcvCollectionService overseasOhlcvService;
@@ -218,8 +226,16 @@ public class BackfillWindowExecutor {
             // @MX:NOTE SPEC-COLLECTOR-OVERSEAS-DIVIDEND-WINDOW-001 REQ-ODW-080 — 종목지정 해외 현금배당 백필.
             // "corporate_events"(SPLIT) case와 구조적으로 대칭(plan.md §C-4): from-date=고정 플로어,
             // to-date=today(KST). 국내 대응 항목이 없어 시장 분기 없이 단일 서비스로 라우팅한다.
+            // 코드리뷰 W-2a: 고정 플로어(1950-01-01)를 모든 종목에 그대로 적용하면 대부분의 청크가 상장일 이전 빈
+            // 구간을 조회해 종목당 ~39회 순차 청크 호출이 발생한다(GROUP_B GROUP_B_GLOBAL_FLOOR 클램프 선례와 동일
+            // 아이디어). listedDate가 anchor(고정 플로어)보다 최근이면 listedDate를 사용하고, listedDate가 anchor보다
+            // 과거(비정상 데이터)이거나 null이면 기존 anchor를 그대로 유지한다.
             case "corporate_events_dividend_overseas" -> {
-                LocalDate floor = windowAdvancer.groupAFromDate();
+                LocalDate fixedFloor = windowAdvancer.groupAFromDate();
+                LocalDate floor =
+                        stock.getListedDate() != null && stock.getListedDate().isAfter(fixedFloor)
+                                ? stock.getListedDate()
+                                : fixedFloor;
                 LocalDate to = LocalDate.now(KST);
                 yield overseasDividendBackfillService.fetchWindowForBackfill(
                         stock, session, floor, to);
@@ -646,6 +662,31 @@ public class BackfillWindowExecutor {
     public boolean isRetryable(Exception e) {
         return !(e instanceof KisTokenIssueException)
                 && !(e instanceof RevSplitBackfillCapSaturatedException);
+    }
+
+    /**
+     * 예외를 재시도 가능 여부로 분류한다 — status의 누적 시도 횟수({@code attemptCount})까지 함께 고려하는 확장 오버로드(코드리뷰 W-2b).
+     *
+     * <p>{@link OverseasDividendBackfillPrefetchFailedException}은 순간 실패(레이트리밋·세션실패·인터럽트 등, 재시도해야 정상
+     * 해소)와 구조적 영구 실패(예: W-1 절단 의심이 매 스케줄마다 재현되는 종목)를 구분할 수 없는 단일 예외 타입이다 — {@link
+     * RevSplitBackfillCapSaturatedException}처럼 예외 타입 자체를 영구 비재시도로 못 박으면 순간 실패까지 함께 비재시도(FAILED)로
+     * 오분류되어 REQ-ODW-060의 "재시도 유도" 의도를 해친다. 대신 {@code BackfillStatus.attemptCount}(스케줄 백필마다 {@code
+     * fail()}/{@code advance()} 호출 시 누적, {@link com.aaa.collector.backfill.BackfillStatus})가 {@link
+     * #OVERSEAS_DIVIDEND_PREFETCH_MAX_RETRY_ATTEMPTS}에 도달한 시점에만 영구 실패로 재분류한다 — GROUP_C는 첫 성공
+     * fetch에서 즉시 COMPLETED되므로(decideGroupC 무조건 완료) 이 카운터는 사실상 "연속 실패 횟수"와 같다. 하루 1회 스케줄(cron 02:00
+     * KST) 기준 임계 도달까지 여러 날의 여유를 두어 일시적 장애를 충분히 흡수하면서도, 구조적으로 영구 실패하는 종목이 청크 조회 예산을 무한정 재소모하지 않도록
+     * 상한을 둔다.
+     *
+     * @param e 분류할 예외
+     * @param attemptCount 해당 status의 누적 시도 횟수({@code BackfillStatus.getAttemptCount()})
+     * @return {@code true}=재시도 가능(IN_PROGRESS 유지), {@code false}=영구 오류(FAILED)
+     */
+    public boolean isRetryable(Exception e, int attemptCount) {
+        if (e instanceof OverseasDividendBackfillPrefetchFailedException
+                && attemptCount >= OVERSEAS_DIVIDEND_PREFETCH_MAX_RETRY_ATTEMPTS) {
+            return false;
+        }
+        return isRetryable(e);
     }
 
     // -------------------------------------------------------------------------

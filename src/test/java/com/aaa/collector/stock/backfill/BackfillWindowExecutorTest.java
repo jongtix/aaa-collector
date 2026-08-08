@@ -29,6 +29,7 @@ import com.aaa.collector.stock.daily.OverseasDailyOhlcvCollectionService;
 import com.aaa.collector.stock.enums.AssetType;
 import com.aaa.collector.stock.enums.Market;
 import com.aaa.collector.stock.rights.OverseasDividendBackfillFetch;
+import com.aaa.collector.stock.rights.OverseasDividendBackfillPrefetchFailedException;
 import com.aaa.collector.stock.rights.OverseasDividendBackfillService;
 import com.aaa.collector.stock.rights.OverseasSplitBackfillFetch;
 import com.aaa.collector.stock.rights.OverseasSplitCollectionService;
@@ -226,6 +227,46 @@ class BackfillWindowExecutorTest {
             verify(overseasDividendBackfillService)
                     .fetchWindowForBackfill(eq(aapl), eq(session), eq(floor), any());
         }
+
+        @Test
+        @DisplayName("코드리뷰 W-2a: listedDate가 anchor(고정 플로어)보다 최근이면 listedDate를 floor로 사용")
+        void overseasDividendFetch_clampsFloorToListedDateWhenLater() throws InterruptedException {
+            when(windowAdvancer.groupAFromDate()).thenReturn(floor);
+            LocalDate listedDate = LocalDate.of(1980, 3, 17); // anchor(1950-01-01)보다 최근
+            Stock aapl =
+                    Stock.builder()
+                            .symbol("AAPL")
+                            .nameKo("AAPL")
+                            .market(Market.NASDAQ)
+                            .assetType(AssetType.STOCK)
+                            .active(true)
+                            .listedDate(listedDate)
+                            .build();
+            when(overseasDividendBackfillService.fetchWindowForBackfill(
+                            eq(aapl), eq(session), eq(listedDate), any()))
+                    .thenReturn(new OverseasDividendBackfillFetch(List.of(), null, 0));
+
+            executor.fetchWindow(overseasDividendStatus("AAPL"), aapl, session);
+
+            verify(overseasDividendBackfillService)
+                    .fetchWindowForBackfill(eq(aapl), eq(session), eq(listedDate), any());
+        }
+
+        @Test
+        @DisplayName("코드리뷰 W-2a: listedDate가 null이면 anchor(고정 플로어)를 그대로 사용")
+        void overseasDividendFetch_fallsBackToAnchorWhenListedDateNull()
+                throws InterruptedException {
+            when(windowAdvancer.groupAFromDate()).thenReturn(floor);
+            Stock aapl = stock("AAPL", Market.NASDAQ); // listedDate 미설정(null)
+            when(overseasDividendBackfillService.fetchWindowForBackfill(
+                            eq(aapl), eq(session), eq(floor), any()))
+                    .thenReturn(new OverseasDividendBackfillFetch(List.of(), null, 0));
+
+            executor.fetchWindow(overseasDividendStatus("AAPL"), aapl, session);
+
+            verify(overseasDividendBackfillService)
+                    .fetchWindowForBackfill(eq(aapl), eq(session), eq(floor), any());
+        }
     }
 
     @Nested
@@ -320,6 +361,45 @@ class BackfillWindowExecutorTest {
             boolean retryable = executor.isRetryable(new RuntimeException("transient"));
 
             assertThat(retryable).isTrue();
+        }
+    }
+
+    @Nested
+    @DisplayName("isRetryable(Exception, int) — 해외 배당 백필 재시도 상한 (코드리뷰 W-2b)")
+    class IsRetryableOverseasDividendBackfillCeiling {
+
+        @Test
+        @DisplayName("attemptCount가 상한 미만이면 재시도 가능(true)")
+        void belowCeiling_stillRetryable() {
+            boolean retryable =
+                    executor.isRetryable(
+                            new OverseasDividendBackfillPrefetchFailedException("transient"), 9);
+
+            assertThat(retryable).isTrue();
+        }
+
+        @Test
+        @DisplayName("attemptCount가 상한에 도달하면 비재시도(false)로 재분류")
+        void atCeiling_becomesNonRetryable() {
+            boolean retryable =
+                    executor.isRetryable(
+                            new OverseasDividendBackfillPrefetchFailedException("permanent"), 10);
+
+            assertThat(retryable).isFalse();
+        }
+
+        @Test
+        @DisplayName("회귀: 다른 예외 타입은 attemptCount와 무관하게 기존 분류(isRetryable(Exception))를 따른다")
+        void otherExceptionType_ignoresAttemptCount() {
+            boolean retryable =
+                    executor.isRetryable(
+                            new RevSplitBackfillCapSaturatedException("cap saturated"), 0);
+
+            assertThat(retryable).isFalse();
+
+            boolean stillRetryable = executor.isRetryable(new RuntimeException("transient"), 999);
+
+            assertThat(stillRetryable).isTrue();
         }
     }
 

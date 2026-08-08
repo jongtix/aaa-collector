@@ -11,16 +11,21 @@ package com.aaa.collector.stock.rights;
  *
  * <p>{@code rights-by-ice}는 서브윈도우 청크 중 하나라도 실패하면(REQ-ODW-051a) 이미 성공한 다른 청크가 있어도 fetch 전체를 실패로 처리한다
  * — 부분 청크만 반영된 상태로 COMPLETED 오판되는 것을 방지한다.
+ *
+ * <p>코드리뷰 W-2b: {@code public}으로 공개해 {@link
+ * com.aaa.collector.stock.backfill.BackfillWindowExecutor#isRetryable(Exception, int)}가 재시도 횟수 상한
+ * 도달 시 이 예외를 비재시도(terminal FAILED)로 재분류할 수 있도록 한다 — 구조적으로 영구 실패하는 종목이 스케줄 백필마다 무한정 청크 조회 예산을 재소모하는
+ * 것을 막는다.
  */
-class OverseasDividendBackfillPrefetchFailedException extends RuntimeException {
+public class OverseasDividendBackfillPrefetchFailedException extends RuntimeException {
 
     private static final long serialVersionUID = 1L;
 
-    OverseasDividendBackfillPrefetchFailedException(String message) {
+    public OverseasDividendBackfillPrefetchFailedException(String message) {
         super(message);
     }
 
-    OverseasDividendBackfillPrefetchFailedException(String message, Throwable cause) {
+    public OverseasDividendBackfillPrefetchFailedException(String message, Throwable cause) {
         super(message, cause);
     }
 }

@@ -330,8 +330,12 @@ public class BackfillOrchestrator {
                     current.getTargetCode(),
                     current.getDataTable(),
                     e.getMessage());
+            // 코드리뷰 W-2b: attemptCount를 함께 전달해 OverseasDividendBackfillPrefetchFailedException의
+            // 재시도 상한 도달 여부를 판정한다(구조적 영구 실패 종목의 무한 재시도 방지).
             windowExecutor.executeWindowOnError(
-                    current, e.getMessage(), windowExecutor.isRetryable(e));
+                    current,
+                    e.getMessage(),
+                    windowExecutor.isRetryable(e, current.getAttemptCount()));
             return new InnerLoopResult(windowsForThis, false);
         }
     }
