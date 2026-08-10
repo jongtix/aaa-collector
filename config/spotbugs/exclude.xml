@@ -82,6 +82,22 @@
     </Match>
 
     <!--
+        EI_EXPOSE_REP2: Spring DI 생성자 주입 패턴 (kis.token/kis.websocket/market.indicator/
+        market.session과 동일). BackfillWindowExecutor는 List<BackfillRouteHandler>→Map 변환이
+        필요해 생성자를 수동 작성했는데(Lombok @RequiredArgsConstructor로 표현 불가), 그 결과
+        생성자 파라미터를 그대로 final 필드에 저장하는 나머지 싱글톤 Bean(backfillStatusRepository/
+        backfillMetrics/transactionTemplate/backfillProperties)에 대해 SpotBugs가 EI_EXPOSE_REP2를
+        신규 flag한다. 본질은 위 4개 패키지 항목과 동일한 Spring DI 생성자 주입 표준 패턴이며
+        방어적 복사가 불필요하다 — 이 클래스에 한해 클래스 단위로 제외한다(패키지 전체가 아니라
+        이 클래스만 수동 생성자를 쓰므로 패키지 단위 예외는 과광범위).
+        (SPEC-COLLECTOR-BACKFILL-ROUTER-001, user-approved 2026-08-10)
+    -->
+    <Match>
+        <Class name="com.aaa.collector.stock.backfill.BackfillWindowExecutor"/>
+        <Bug pattern="EI_EXPOSE_REP2"/>
+    </Match>
+
+    <!--
         CIPHER_INTEGRITY / PADDING_ORACLE: KIS Open API 프로토콜 강제 사양.
         KIS WebSocket은 AES-256-CBC + PKCS5Padding을 서버가 지정하므로 알고리즘 변경 불가.
         외부 네트워크에서 수신한 암호문을 신뢰 채널(KIS 서버 직접 연결)에서만 처리함.

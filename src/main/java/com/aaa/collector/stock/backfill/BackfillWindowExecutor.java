@@ -130,13 +130,9 @@ public class BackfillWindowExecutor {
      * Spring이 {@code List<BackfillRouteHandler>}(각 {@code @Component} 핸들러 7종)를 자동 수집해 주입한다 — 신규
      * {@code data_table} 추가 시 이 생성자·클래스 본체는 무변경(REQ-ROUTER-040).
      *
-     * <p>{@code @lombok.Generated}: List→Map 변환이 필요해 Lombok {@code @RequiredArgsConstructor}로 표현할 수
-     * 없어 수동 작성했으나, 본질은 Spring DI 생성자 주입(단순 필드 대입 + 1회 스트림 변환)이다. 이 태그가 없으면 SpotBugs가
-     * EI_EXPOSE_REP2를 신규 flag한다 — 이 프로젝트가 동일 사유(싱글톤 Bean 생성자 주입, 방어적 복사 불필요)로 {@code
-     * config/spotbugs/exclude.xml}에 kis.token/kis.websocket/market.indicator/ market.session 패키지
-     * 예외를 이미 두고 있는 것과 같은 판단이다. user-approved(옵션 B), M5.
+     * <p>List→Map 변환이 필요해 Lombok {@code @RequiredArgsConstructor}로 표현할 수 없어 수동 작성했다(EI_EXPOSE_REP2
+     * 예외는 {@code config/spotbugs/exclude.xml} 참조, user-approved 2026-08-10).
      */
-    @lombok.Generated
     public BackfillWindowExecutor(
             BackfillStatusRepository backfillStatusRepository,
             DomesticDailyOhlcvCollectionService domesticOhlcvService,
