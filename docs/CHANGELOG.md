@@ -40,6 +40,19 @@
   - **W-3**: `OverseasDividendBackfillService`에 청크별 debug 로그·절단 의심 warn·완료 info·실패 warn 로그 추가(`OverseasSplitBackfillService`와 동일 `[overseas-*]` 태그 컨벤션).
   - 부수 리팩터: `BackfillWindowExecutor.isRetryable` 오버로드(2인자)를 원래 1인자 서명으로 원복하고, attemptCount 기반 판정을 `BackfillOrchestrator`로 재배치 — 서명 확장만으로 발생한 PMD `TooManyMethods`(임계 20, `BackfillWindowExecutor`가 이미 임계에 근접) 위반을 신규 suppression 없이 해소.
 
+## [Unreleased] — feature/SPEC-COLLECTOR-BACKFILL-ROUTER-001
+
+### Changed
+
+- **`BackfillWindowExecutor` Strategy/Registry 리팩토링** (SPEC-COLLECTOR-BACKFILL-ROUTER-001, DDD ANALYZE-PRESERVE-IMPROVE):
+  `routeFetch`/`routePersist` 두 개의 `switch` 문으로 전 `data_table`(7종)의 fetch/persist를 라우팅하던 God-Object 패턴을 해소했다.
+  - `BackfillRouteHandler`(신규 인터페이스) + Spring 컬렉션 주입 레지스트리 도입 — `dataTable()`/`fetch()`/`persist()` 계약으로 신규 `data_table` 추가 시 핸들러 1개만 구현하면 되도록 확장성 확보.
+  - 기존 15개 협업 서비스 필드 중 7개(`daily_ohlcv`·`short_sale_domestic`·`investor_trend`·`credit_balance`·`corporate_events`·`corporate_events_dividend`·`corporate_events_dividend_overseas`)를 각각 전담 핸들러(`DailyOhlcvRouteHandler`, `ShortSaleDomesticRouteHandler`, `InvestorTrendRouteHandler`, `CreditBalanceRouteHandler`, `CorporateEventsRouteHandler`, `CorporateEventsDividendRouteHandler`, `CorporateEventsDividendOverseasRouteHandler`)로 이관.
+  - `BackfillWindowExecutor` 생성자를 15개 협업 필드에서 `List<BackfillRouteHandler>` 단일 파라미터로 축소.
+  - GROUP_A `daily_ohlcv` 종료 게이트(`buildEnvelope`), `@Transactional` 트랜잭션 경계(`fetchWindow` 비트랜잭션/`persistWindow` 트랜잭션), `BackfillGroup`/`BackfillTerminationPolicy` 디스패치는 전부 리팩토링 전과 동등하게 보존 — `BackfillOrchestrator`/`BackfillTerminationPolicy`/`BackfillGroup` 3개 협업 클래스는 무변경.
+  - PMD `EI_EXPOSE_REP2` 예외를 `exclude.xml`로 이관.
+  - 회귀 없음(Scenario 1~7 전부 PASS, 기존 3종 테스트 재작성 + 핸들러별 신규 단위 테스트 7개 추가).
+
 ## [Unreleased] — feature/SPEC-ETF-001
 
 ### Added
