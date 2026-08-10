@@ -56,8 +56,8 @@ import org.springframework.transaction.support.TransactionTemplate;
 // PMD.GodClass/CouplingBetweenObjects: routeFetch/routePersist switch 제거로 순환 복잡도는 해소됐으나
 // (REQ-ROUTER-030), 트랜잭션 경계·GROUP_A 종료 게이트·TerminationPolicy 디스패치 3종 교차관심사가 여전히
 // BackfillGroup·TerminationDecision·BackfillWindowOutcome·2개 daily 서비스(exhaustion probe 전용, §B 보존
-// 대상)·BackfillRouteHandler 등 다수 협업 클래스를 참조해 CouplingBetweenObjects 임계(25)를 소폭 초과한다
-// (REQ-ROUTER-031 잔류 항목 정당화).
+// 대상)·BackfillRouteHandler·handlerMap 등을 포함해 협업 클래스 27개를 참조, CouplingBetweenObjects
+// 임계(25)를 소폭 초과한다(억제 제거 후 pmdMain 재측정 실측치, REQ-ROUTER-031 잔류 항목 정당화).
 @SuppressWarnings({
     "PMD.ExcessiveImports", // 트랜잭션/게이트/종료판정 협업 클래스 수 불가피
     "PMD.GodClass",
