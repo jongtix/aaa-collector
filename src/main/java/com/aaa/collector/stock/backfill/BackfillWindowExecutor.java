@@ -13,33 +13,21 @@ import com.aaa.collector.backfill.BackfillWindowResult;
 import com.aaa.collector.backfill.TerminationDecision;
 import com.aaa.collector.kis.gate.KeyLeaseRegistry.LeaseSession;
 import com.aaa.collector.kis.token.KisTokenIssueException;
-import com.aaa.collector.stock.DividendBackfillFetch;
-import com.aaa.collector.stock.DividendScheduleCollectionService;
 import com.aaa.collector.stock.RevSplitBackfillCapSaturatedException;
-import com.aaa.collector.stock.RevSplitBackfillFetch;
-import com.aaa.collector.stock.RevSplitCollectionService;
 import com.aaa.collector.stock.Stock;
 import com.aaa.collector.stock.daily.DomesticDailyOhlcvCollectionService;
 import com.aaa.collector.stock.daily.DomesticDailyOhlcvFetch;
 import com.aaa.collector.stock.daily.OverseasDailyOhlcvCollectionService;
 import com.aaa.collector.stock.daily.OverseasDailyOhlcvFetch;
 import com.aaa.collector.stock.enums.Market;
-import com.aaa.collector.stock.rights.OverseasDividendBackfillFetch;
-import com.aaa.collector.stock.rights.OverseasDividendBackfillService;
-import com.aaa.collector.stock.rights.OverseasSplitBackfillFetch;
-import com.aaa.collector.stock.rights.OverseasSplitCollectionService;
-import com.aaa.collector.stock.supply.CreditBalanceCollectionService;
-import com.aaa.collector.stock.supply.CreditBalanceFetch;
-import com.aaa.collector.stock.supply.InvestorTrendCollectionService;
-import com.aaa.collector.stock.supply.InvestorTrendFetch;
-import com.aaa.collector.stock.supply.ShortSaleCollectionService;
-import com.aaa.collector.stock.supply.ShortSaleFetch;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
+import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
-import lombok.RequiredArgsConstructor;
+import java.util.stream.Collectors;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
@@ -61,22 +49,22 @@ import org.springframework.transaction.support.TransactionTemplate;
 // @MX:ANCHOR: [AUTO] 백필 윈도우 실행 진입점 — INSERT IGNORE+status UPDATE 동일 트랜잭션 묶음 담당
 // @MX:REASON: [AUTO] AC-4.1/4.2 부분 커밋 방지. T7에서 fetchWindow(비tx)/persistWindow(tx)로 경계 분리.
 // @MX:SPEC: SPEC-COLLECTOR-TXBOUNDARY-001
-// PMD.GodClass/CouplingBetweenObjects/CyclomaticComplexity: GROUP_A/B/C 전 데이터테이블(daily_ohlcv·
-// investor_trend·credit_balance·short_sale_domestic·corporate_events*)의 fetch/persist 라우팅 fan-in 허브
-// —
-// SPEC-COLLECTOR-BACKFILL-010 §4.1이 이 클래스에 GROUP_A 종료 확인 게이트를 명시적으로 배치(단일 진입점 유지가
-// probeOutcome 흐름의 정확성 보장에 필수, 분산 시 REQ-TXB-020 비tx 불변식 검증이 어려워짐). data_table 종류가
-// 늘어날수록 routeFetch/routePersist switch 분기 수(=순환 복잡도)가 선형 증가하는 구조적 특성이며,
-// SPEC-COLLECTOR-OVERSEAS-DIVIDEND-WINDOW-001 REQ-ODW-080 배선으로 기본 임계(클래스 80/메서드 10)를 넘었다.
+// SPEC-COLLECTOR-BACKFILL-ROUTER-001: routeFetch/routePersist의 data_table별 switch 분기는
+// BackfillRouteHandler 구현체(Spring List 주입 → dataTable() 키 Map)로 이관됐다. 이 클래스는 이제
+// handlerMap 조회 1회로 위임하며, GROUP_A 종료 확인 게이트(§4.1)·트랜잭션 경계·TerminationPolicy
+// 디스패치라는 교차관심사 3종만 소유한다(단일 진입점 유지가 probeOutcome 흐름의 정확성 보장에 필수).
+// PMD.GodClass/CouplingBetweenObjects: routeFetch/routePersist switch 제거로 순환 복잡도는 해소됐으나
+// (REQ-ROUTER-030), 트랜잭션 경계·GROUP_A 종료 게이트·TerminationPolicy 디스패치 3종 교차관심사가 여전히
+// BackfillGroup·TerminationDecision·BackfillWindowOutcome·2개 daily 서비스(exhaustion probe 전용, §B 보존
+// 대상)·BackfillRouteHandler 등 다수 협업 클래스를 참조해 CouplingBetweenObjects 임계(25)를 소폭 초과한다
+// (REQ-ROUTER-031 잔류 항목 정당화).
 @SuppressWarnings({
-    "PMD.ExcessiveImports", // 다중 수집 서비스 라우팅 구조상 불가피한 import 수
+    "PMD.ExcessiveImports", // 트랜잭션/게이트/종료판정 협업 클래스 수 불가피
     "PMD.GodClass",
-    "PMD.CouplingBetweenObjects",
-    "PMD.CyclomaticComplexity"
+    "PMD.CouplingBetweenObjects"
 })
 @Slf4j
 @Component
-@RequiredArgsConstructor
 public class BackfillWindowExecutor {
 
     private static final int MAX_ERROR_LENGTH = 512;
@@ -129,18 +117,48 @@ public class BackfillWindowExecutor {
     private final BackfillStatusRepository backfillStatusRepository;
     private final DomesticDailyOhlcvCollectionService domesticOhlcvService;
     private final OverseasDailyOhlcvCollectionService overseasOhlcvService;
-    private final ShortSaleCollectionService shortSaleService;
-    private final InvestorTrendCollectionService investorTrendService;
-    private final CreditBalanceCollectionService creditBalanceService;
-    private final RevSplitCollectionService revSplitService;
-    private final DividendScheduleCollectionService dividendService;
-    private final OverseasSplitCollectionService overseasSplitService;
-    private final OverseasDividendBackfillService overseasDividendBackfillService;
     private final BackfillTerminationPolicy terminationPolicy;
     private final BackfillWindowAdvancer windowAdvancer;
     private final BackfillMetrics backfillMetrics;
     private final TransactionTemplate transactionTemplate;
     private final BackfillProperties backfillProperties;
+
+    /** {@code dataTable()} 키로 색인한 라우팅 핸들러 맵(SPEC-COLLECTOR-BACKFILL-ROUTER-001 REQ-ROUTER-003). */
+    private final Map<String, BackfillRouteHandler> handlerMap;
+
+    /**
+     * Spring이 {@code List<BackfillRouteHandler>}(각 {@code @Component} 핸들러 7종)를 자동 수집해 주입한다 — 신규
+     * {@code data_table} 추가 시 이 생성자·클래스 본체는 무변경(REQ-ROUTER-040).
+     *
+     * <p>{@code @lombok.Generated}: List→Map 변환이 필요해 Lombok {@code @RequiredArgsConstructor}로 표현할 수
+     * 없어 수동 작성했으나, 본질은 Spring DI 생성자 주입(단순 필드 대입 + 1회 스트림 변환)이다. 이 태그가 없으면 SpotBugs가
+     * EI_EXPOSE_REP2를 신규 flag한다 — 이 프로젝트가 동일 사유(싱글톤 Bean 생성자 주입, 방어적 복사 불필요)로 {@code
+     * config/spotbugs/exclude.xml}에 kis.token/kis.websocket/market.indicator/ market.session 패키지
+     * 예외를 이미 두고 있는 것과 같은 판단이다. user-approved(옵션 B), M5.
+     */
+    @lombok.Generated
+    public BackfillWindowExecutor(
+            BackfillStatusRepository backfillStatusRepository,
+            DomesticDailyOhlcvCollectionService domesticOhlcvService,
+            OverseasDailyOhlcvCollectionService overseasOhlcvService,
+            BackfillTerminationPolicy terminationPolicy,
+            BackfillWindowAdvancer windowAdvancer,
+            BackfillMetrics backfillMetrics,
+            TransactionTemplate transactionTemplate,
+            BackfillProperties backfillProperties,
+            List<BackfillRouteHandler> handlers) {
+        this.backfillStatusRepository = backfillStatusRepository;
+        this.domesticOhlcvService = domesticOhlcvService;
+        this.overseasOhlcvService = overseasOhlcvService;
+        this.terminationPolicy = terminationPolicy;
+        this.windowAdvancer = windowAdvancer;
+        this.backfillMetrics = backfillMetrics;
+        this.transactionTemplate = transactionTemplate;
+        this.backfillProperties = backfillProperties;
+        this.handlerMap =
+                handlers.stream()
+                        .collect(Collectors.toMap(BackfillRouteHandler::dataTable, h -> h));
+    }
 
     /**
      * [T7] 비트랜잭션 fetch 단계 — 해당 서비스의 fetchWindow를 라우팅한다 (REQ-TXB-020).
@@ -175,7 +193,11 @@ public class BackfillWindowExecutor {
         return buildEnvelope(resolved, stock, session, dataTable, dto);
     }
 
-    /** 서비스별 fetchWindow로 라우팅한다 (기존 dataTable 분기 — 시그니처·동작 불변). */
+    /**
+     * {@code dataTable()} 키로 {@link #handlerMap}을 조회해 해당 {@link BackfillRouteHandler#fetch}로
+     * 위임한다(SPEC-COLLECTOR-BACKFILL-ROUTER-001 REQ-ROUTER-003). 미등록 data_table은 기존 default 분기와 동일하게
+     * warn 로그 후 {@code null}을 반환한다(REQ-ROUTER-004).
+     */
     private Object routeFetch(
             String dataTable,
             BackfillStatus resolved,
@@ -183,63 +205,15 @@ public class BackfillWindowExecutor {
             Stock stock,
             LeaseSession session)
             throws InterruptedException {
-        return switch (dataTable) {
-            case "daily_ohlcv" -> {
-                if (OVERSEAS_MARKETS.contains(stock.getMarket())) {
-                    yield overseasOhlcvService.fetchWindow(anchor, stock, session);
-                }
-                // @MX:NOTE SPEC-COLLECTOR-BACKFILL-005 고정 플로어 — 상폐 종목 초기 윈도우 오종료 해소
-                LocalDate from = windowAdvancer.groupAFromDate();
-                yield domesticOhlcvService.fetchWindow(from, anchor, stock, session);
-            }
-            case "short_sale_domestic" -> shortSaleService.fetchWindow(resolved, stock, session);
-            case "investor_trend" -> investorTrendService.fetchWindow(anchor, stock, session);
-            case "credit_balance" -> creditBalanceService.fetchWindow(resolved, stock, session);
-            // @MX:NOTE SPEC-COLLECTOR-BACKFILL-007 W3 + SPEC-COLLECTOR-OVERSEAS-SPLIT-001
-            // REQ-OSPLIT-063 —
-            // 종목지정 SPLIT 백필. from-date=고정 플로어(REQ-BACKFILL-094), to-date=today(KST,
-            // REQ-BACKFILL-095).
-            // 시장별 소스 분기: 미국→CTRGT011R(OverseasSplitCollectionService), 국내→HHKDB669105C0(RevSplit).
-            case "corporate_events" -> {
-                LocalDate floor = windowAdvancer.groupAFromDate();
-                LocalDate to = LocalDate.now(KST);
-                if (OVERSEAS_MARKETS.contains(stock.getMarket())) {
-                    yield overseasSplitService.fetchWindowForBackfill(stock, session, floor, to);
-                }
-                yield revSplitService.fetchWindowForBackfill(stock, session, floor, to);
-            }
-            // @MX:NOTE SPEC-COLLECTOR-BACKFILL-009 W2 — 종목지정 현금배당 백필(SPLIT과 별도 data_table 논리 키).
-            // from-date=고정 플로어(REQ-BACKFILL-126). SPLIT(rev-split) 분기 불변(REQ-BACKFILL-144).
-            // SPEC-COLLECTOR-BACKFILL-GROUPC-001 REQ-GC-011: to-date=today 고정 버그를 anchor(윈도우 진행점)로
-            // 교체 — GROUP_A 이월 워크가 실제로 전진하도록 복구.
-            case "corporate_events_dividend" ->
-                    dividendService.fetchWindowForBackfill(
-                            stock, session, windowAdvancer.groupAFromDate(), anchor);
-            // @MX:NOTE SPEC-COLLECTOR-OVERSEAS-DIVIDEND-WINDOW-001 REQ-ODW-080 — 종목지정 해외 현금배당 백필.
-            // "corporate_events"(SPLIT) case와 구조적으로 대칭(plan.md §C-4): from-date=고정 플로어,
-            // to-date=today(KST). 국내 대응 항목이 없어 시장 분기 없이 단일 서비스로 라우팅한다.
-            // 코드리뷰 W-2a: 고정 플로어(1950-01-01)를 모든 종목에 그대로 적용하면 대부분의 청크가 상장일 이전 빈
-            // 구간을 조회해 종목당 ~39회 순차 청크 호출이 발생한다(GROUP_B GROUP_B_GLOBAL_FLOOR 클램프 선례와 동일
-            // 아이디어). listedDate가 anchor(고정 플로어)보다 최근이면 listedDate를 사용하고, listedDate가 anchor보다
-            // 과거(비정상 데이터)이거나 null이면 기존 anchor를 그대로 유지한다.
-            case "corporate_events_dividend_overseas" -> {
-                LocalDate fixedFloor = windowAdvancer.groupAFromDate();
-                LocalDate floor =
-                        stock.getListedDate() != null && stock.getListedDate().isAfter(fixedFloor)
-                                ? stock.getListedDate()
-                                : fixedFloor;
-                LocalDate to = LocalDate.now(KST);
-                yield overseasDividendBackfillService.fetchWindowForBackfill(
-                        stock, session, floor, to);
-            }
-            default -> {
-                log.warn(
-                        "[backfill] 알 수 없는 data_table — symbol={}, table={}",
-                        stock.getSymbol(),
-                        dataTable);
-                yield null;
-            }
-        };
+        BackfillRouteHandler handler = handlerMap.get(dataTable);
+        if (handler == null) {
+            log.warn(
+                    "[backfill] 알 수 없는 data_table — symbol={}, table={}",
+                    stock.getSymbol(),
+                    dataTable);
+            return null;
+        }
+        return handler.fetch(resolved, anchor, stock, session);
     }
 
     /**
@@ -666,9 +640,11 @@ public class BackfillWindowExecutor {
     // -------------------------------------------------------------------------
 
     /**
-     * fetchDto 타입에 따라 서비스의 persistWindow로 라우팅한다.
-     *
-     * <p>fetchDto가 {@code null}이면 알 수 없는 dataTable로 간주해 {@link BackfillWindowResult#EMPTY}를 반환한다.
+     * {@code dataTable()} 키로 {@link #handlerMap}을 조회해 해당 {@link BackfillRouteHandler#persist}로
+     * 위임한다(SPEC-COLLECTOR-BACKFILL-ROUTER-001 REQ-ROUTER-003). fetchDto가 {@code null}이거나 dataTable이
+     * 미등록이면 기존과 동일하게 {@link BackfillWindowResult#EMPTY}를 반환한다(REQ-ROUTER-004). fetchDto의 런타임 타입별
+     * 위임(예: {@code DomesticDailyOhlcvFetch} → domesticOhlcvService)은 각 핸들러의 {@code persist} 본체 내부에서
+     * 수행된다.
      */
     private BackfillWindowResult routePersist(
             String dataTable, BackfillStatus status, Stock stock, Object fetchDto) {
@@ -679,30 +655,15 @@ public class BackfillWindowExecutor {
                     dataTable);
             return BackfillWindowResult.EMPTY;
         }
-        return switch (fetchDto) {
-            case DomesticDailyOhlcvFetch f -> domesticOhlcvService.persistWindow(stock, f);
-            case OverseasDailyOhlcvFetch f -> overseasOhlcvService.persistWindow(stock, f);
-            case ShortSaleFetch f -> shortSaleService.persistWindow(status, stock, f);
-            case InvestorTrendFetch f -> investorTrendService.persistWindow(stock, f);
-            case CreditBalanceFetch f -> creditBalanceService.persistWindow(status, stock, f);
-            // SPEC-COLLECTOR-BACKFILL-007 W4 — 국내 매핑+CorporateEventInserter INSERT IGNORE → 종료 입력
-            case RevSplitBackfillFetch f -> revSplitService.persistWindowForBackfill(f);
-            // SPEC-COLLECTOR-OVERSEAS-SPLIT-001 REQ-OSPLIT-063 — 미국 SPLIT 매핑+INSERT IGNORE → 종료 입력
-            case OverseasSplitBackfillFetch f -> overseasSplitService.persistWindowForBackfill(f);
-            // SPEC-COLLECTOR-BACKFILL-009 W2 — DividendRowAccumulator 저장 정책+INSERT IGNORE → 종료 입력.
-            // 별도 DTO 타입이라 SPLIT(RevSplitBackfillFetch) 분기와 오염 없이 분리(REQ-BACKFILL-144).
-            case DividendBackfillFetch f -> dividendService.persistWindowForBackfill(f);
-            // SPEC-COLLECTOR-OVERSEAS-DIVIDEND-WINDOW-001 REQ-ODW-080 — 해외 현금배당 백필 매핑+INSERT
-            // IGNORE → 종료 입력. 별도 DTO 타입이라 국내 배당(DividendBackfillFetch) 분기와 오염 없이 분리.
-            case OverseasDividendBackfillFetch f ->
-                    overseasDividendBackfillService.persistWindowForBackfill(f);
-            default -> {
-                log.warn(
-                        "[backfill] 알 수 없는 fetchDto 타입 — type={}",
-                        fetchDto.getClass().getSimpleName());
-                yield BackfillWindowResult.EMPTY;
-            }
-        };
+        BackfillRouteHandler handler = handlerMap.get(dataTable);
+        if (handler == null) {
+            log.warn(
+                    "[backfill] persistWindow 스킵 (미등록 data_table) — symbol={}, table={}",
+                    status.getTargetCode(),
+                    dataTable);
+            return BackfillWindowResult.EMPTY;
+        }
+        return handler.persist(status, stock, fetchDto);
     }
 
     // @MX:NOTE: [AUTO] GROUP_B 초기 anchor — delisted_at 데이터 종점 우선, 미확정은 어제(KST)

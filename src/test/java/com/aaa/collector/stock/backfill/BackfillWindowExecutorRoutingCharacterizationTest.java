@@ -94,23 +94,34 @@ class BackfillWindowExecutorRoutingCharacterizationTest {
 
     @BeforeEach
     void setUp() {
+        // SPEC-COLLECTOR-BACKFILL-ROUTER-001 M5: 생성자가 List<BackfillRouteHandler>를 받도록 변경됐다.
+        // 이 테스트가 원래 검증하던 대상(각 협업 서비스가 올바른 인자로 호출되는가)을 그대로 유지하기 위해,
+        // 핸들러 mock이 아닌 "실제 핸들러 구현체"를 이 서비스 mock들로 직접 생성해 주입한다 — 핸들러 본체는
+        // 이관 전 switch case 본체를 그대로 옮긴 것이므로(REQ-ROUTER-021/-022), 실제 구현체를 쓰면 아래
+        // when(...)/verify(...) 대상(서비스 mock)과 인자 검증 로직이 리팩토링 전후로 완전히 동일하게 유지된다.
+        List<BackfillRouteHandler> handlers =
+                List.of(
+                        new DailyOhlcvRouteHandler(
+                                domesticOhlcvService, overseasOhlcvService, windowAdvancer),
+                        new ShortSaleDomesticRouteHandler(shortSaleService),
+                        new InvestorTrendRouteHandler(investorTrendService),
+                        new CreditBalanceRouteHandler(creditBalanceService),
+                        new CorporateEventsRouteHandler(
+                                revSplitService, overseasSplitService, windowAdvancer),
+                        new CorporateEventsDividendRouteHandler(dividendService, windowAdvancer),
+                        new CorporateEventsDividendOverseasRouteHandler(
+                                overseasDividendBackfillService, windowAdvancer));
         executor =
                 new BackfillWindowExecutor(
                         backfillStatusRepository,
                         domesticOhlcvService,
                         overseasOhlcvService,
-                        shortSaleService,
-                        investorTrendService,
-                        creditBalanceService,
-                        revSplitService,
-                        dividendService,
-                        overseasSplitService,
-                        overseasDividendBackfillService,
                         terminationPolicy,
                         windowAdvancer,
                         backfillMetrics,
                         transactionTemplate,
-                        new BackfillProperties());
+                        new BackfillProperties(),
+                        handlers);
 
         // resolveAnchor 공통 경로 고정 — lastCollectedDate·lastRowCount 둘 다 non-null이라
         // BackfillWindowExecutor.resolveAnchor는 전 data_table 공통으로 windowAdvancer.nextAnchor()로

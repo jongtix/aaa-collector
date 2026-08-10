@@ -75,23 +75,32 @@ class GroupBProbeToWalkBackIntegrationTest {
         BackfillTerminationPolicy terminationPolicy = new BackfillTerminationPolicy(3);
         BackfillWindowAdvancer windowAdvancer =
                 new BackfillWindowAdvancer(LocalDate.of(1950, 1, 1), 10);
+        // SPEC-COLLECTOR-BACKFILL-ROUTER-001 M5: 생성자가 List<BackfillRouteHandler>를 받도록 변경됐다.
+        // 실제 핸들러 구현체를 서비스 mock으로 직접 생성해 주입해, 검증 대상(서비스 mock)과 인자 검증 로직을
+        // 리팩토링 전후로 동일하게 유지한다(REQ-ROUTER-021/-022 — 핸들러 본체는 기존 switch case 그대로).
+        List<BackfillRouteHandler> handlers =
+                List.of(
+                        new DailyOhlcvRouteHandler(
+                                domesticOhlcvService, overseasOhlcvService, windowAdvancer),
+                        new ShortSaleDomesticRouteHandler(shortSaleService),
+                        new InvestorTrendRouteHandler(investorTrendService),
+                        new CreditBalanceRouteHandler(creditBalanceService),
+                        new CorporateEventsRouteHandler(
+                                revSplitService, overseasSplitService, windowAdvancer),
+                        new CorporateEventsDividendRouteHandler(dividendService, windowAdvancer),
+                        new CorporateEventsDividendOverseasRouteHandler(
+                                overseasDividendBackfillService, windowAdvancer));
         executor =
                 new BackfillWindowExecutor(
                         backfillStatusRepository,
                         domesticOhlcvService,
                         overseasOhlcvService,
-                        shortSaleService,
-                        investorTrendService,
-                        creditBalanceService,
-                        revSplitService,
-                        dividendService,
-                        overseasSplitService,
-                        overseasDividendBackfillService,
                         terminationPolicy,
                         windowAdvancer,
                         backfillMetrics,
                         transactionTemplate,
-                        new BackfillProperties());
+                        new BackfillProperties(),
+                        handlers);
     }
 
     private void executeWindow(BackfillStatus status, Stock stock) throws InterruptedException {

@@ -87,23 +87,32 @@ class BackfillWindowExecutorTest {
 
     @BeforeEach
     void setUp() {
+        // SPEC-COLLECTOR-BACKFILL-ROUTER-001 M5: 생성자가 List<BackfillRouteHandler>를 받도록 변경됐다.
+        // 실제 핸들러 구현체를 서비스 mock으로 직접 생성해 주입해, 검증 대상(서비스 mock)과 인자 검증 로직을
+        // 리팩토링 전후로 동일하게 유지한다(REQ-ROUTER-021/-022 — 핸들러 본체는 기존 switch case 그대로).
+        List<BackfillRouteHandler> handlers =
+                List.of(
+                        new DailyOhlcvRouteHandler(
+                                domesticOhlcvService, overseasOhlcvService, windowAdvancer),
+                        new ShortSaleDomesticRouteHandler(shortSaleService),
+                        new InvestorTrendRouteHandler(investorTrendService),
+                        new CreditBalanceRouteHandler(creditBalanceService),
+                        new CorporateEventsRouteHandler(
+                                revSplitService, overseasSplitService, windowAdvancer),
+                        new CorporateEventsDividendRouteHandler(dividendService, windowAdvancer),
+                        new CorporateEventsDividendOverseasRouteHandler(
+                                overseasDividendBackfillService, windowAdvancer));
         executor =
                 new BackfillWindowExecutor(
                         backfillStatusRepository,
                         domesticOhlcvService,
                         overseasOhlcvService,
-                        shortSaleService,
-                        investorTrendService,
-                        creditBalanceService,
-                        revSplitService,
-                        dividendService,
-                        overseasSplitService,
-                        overseasDividendBackfillService,
                         terminationPolicy,
                         windowAdvancer,
                         backfillMetrics,
                         transactionTemplate,
-                        new BackfillProperties());
+                        new BackfillProperties(),
+                        handlers);
     }
 
     private Stock stock(String symbol, Market market) {
@@ -327,6 +336,11 @@ class BackfillWindowExecutorTest {
         void overseasDividendFetchDto_routesToNewPersist() {
             Stock aapl = stock("AAPL", Market.NASDAQ);
             BackfillStatus status = mockedStatus("AAPL");
+            // SPEC-COLLECTOR-BACKFILL-ROUTER-001 M5: routePersist가 이제 dataTable 키로 핸들러를 조회한다
+            // (REQ-ROUTER-003) — mockedStatus(symbol)의 기본 dataTable="corporate_events"는 이 fetchDto
+            // 타입(OverseasDividendBackfillFetch)의 실제 논리 키가 아니므로 명시적으로 재정의한다. fetchDto
+            // 인스턴스 타입만으로 분기하던 구 switch 시절에는 무관했던 값이 이제는 라우팅 키로 쓰인다.
+            when(status.getDataTable()).thenReturn("corporate_events_dividend_overseas");
             LocalDate oldest = LocalDate.of(2020, 8, 31);
             OverseasDividendBackfillFetch fetch =
                     new OverseasDividendBackfillFetch(List.of(), oldest, 1);
