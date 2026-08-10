@@ -4,6 +4,42 @@
 
 ---
 
+## [Unreleased] — feature/SPEC-COLLECTOR-OVERSEAS-DIVIDEND-WINDOW-001
+
+### Fixed
+
+- **해외 현금배당 수집 가시성 윈도우 레이스 수정** (SPEC-COLLECTOR-OVERSEAS-DIVIDEND-WINDOW-001, AC-ODW-001~003/010/011, 원인①):
+  `OverseasRightsCollectionService.fetch()`가 KIS `rights-by-ice`(`HHDFS78330900`)를 `ST_YMD`/`ED_YMD` 공백 파라미터로 조회하면
+  종목당 현재/다음 1개 회차만 반환되어, 다음 배당이 공시(`anno_dt`)되는 즉시 아직 미확정인 이전 회차가 응답에서 사라지는 구조적 결함이 있었다
+  (공시 간격이 긴 종목 — TSM 120~125일, AMAT 58~71일 — 은 확정 TR `CTRGT011R`이 확정하기 전에 다음 공시로 대체되어 영구 누락).
+  `fetch(session, symbol)`을 `fetch(session, symbol, startDate, endDate)`로 확장해 명시적 달력 범위(`오늘±WINDOW_MONTHS±WINDOW_PADDING_DAYS`)로
+  조회하도록 수정했다 — `DividendAmountPrefetcher.WINDOW_MONTHS`와 동일 상수를 재사용해 두 TR의 윈도우를 항상 동기화한다.
+  `DividendAmountPrefetcher.WINDOW_MONTHS`도 `3`→`4`(개월)로 확장해(TSM류 확정 지연 여유) 안전 마진을 넓혔다.
+  정기 수집의 기존 짧은 공시 간격 종목(O·KO·JPM 등) 매칭 로직·저장 행은 회귀 없이 유지된다.
+
+### Added
+
+- **해외 현금배당 종목지정 과거 백필 fetch/persist 신설** (SPEC-COLLECTOR-OVERSEAS-DIVIDEND-WINDOW-001, AC-ODW-004~009/012~015, 원인②):
+  기존 해외 배당 백필 경로 부재(수집기 가동 시작 2026-04-30 이전 이력·원인①이 이미 발생시킨 과거 누락분 소급 불가)를 해소했다.
+  - `OverseasDividendBackfillService`(신규): `rights-by-ice`(날짜 소스, `SYMB=<심볼>` 서브윈도우 청킹)와 `CTRGT011R`(금액 소스, `PDNO=<심볼>` 03/75 단일 광폭 페이징)을 조합해 완전한 `CorporateEvent`를 구성한다.
+    - `rights-by-ice` 서브윈도우 청킹(기본 24개월, 인접 청크 경계일 1일 중첩) — 2026-08-07 프로브로 확인된 광폭 단일콜 ~50건 상한 조용한 절단을 회피.
+    - `CTRGT011R` 응답을 `pdno == 요청 심볼` 완전 일치로 필터링 — PDNO 접두어 매칭 노이즈(예: `PDNO=V` 조회 시 VRNS/VONG 등) 제외.
+    - persist는 Tier-1 `INSERT IGNORE`(`uk_corporate_events` 4컬럼 유니크 키)로만 쓰고 `@Transactional(propagation = MANDATORY)`로 `BackfillWindowExecutor.routePersist` 트랜잭션 경계 밖 호출 시 즉시 실패한다.
+    - `rights-by-ice` 청크 또는 `CTRGT011R` 조회가 실패하면 `rawRowCount`를 조작해 폐기하지 않고 `OverseasDividendBackfillPrefetchFailedException`을 던져 `BackfillOrchestrator`가 재시도(`IN_PROGRESS` 유지)하도록 한다.
+  - `OverseasDividendBackfillFetch`(신규 record DTO), `OverseasDividendBackfillPrefetchFailedException`(신규 예외).
+  - `DividendAmountPrefetcher`: `pdno` 파라미터화 + 신규 `prefetchForBackfill(session, pdno, from, to)` — 기존 정기 수집 `prefetch()` 호출부는 무변경.
+  - **배선**: `BackfillGroup.GROUP_C_TABLES`·`BackfillStatusSeeder.OVERSEAS_DATA_TABLES`·`BackfillWindowExecutor.routeFetch`/`routePersist`에 신규 `data_table` 키 `corporate_events_dividend_overseas`를 편입 — 기존 `"corporate_events"`(SPLIT)·`"corporate_events_dividend"`(국내 배당) 경로는 무변경.
+  - **테스트**: `OverseasDividendBackfillServiceTest`/`OverseasDividendBackfillTest`(청크 경계·PDNO 필터·실패 전파), `OverseasDividendBackfillIntegrationTest`(Testcontainers MySQL — MANDATORY 트랜잭션 가드 + `INSERT IGNORE` 멱등성 2건: 동일 fetch 재실행 시 행 수 불변, 청크 경계 중복 반환 행이 단일 저장으로 흡수됨), `BackfillGroupTest`/`BackfillStatusSeederTest`/`BackfillWindowExecutorTest` 라우팅·시딩 회귀.
+
+### Fixed
+
+- **코드리뷰 remediation W-1/W-2/W-3** (SPEC-COLLECTOR-OVERSEAS-DIVIDEND-WINDOW-001, `/moai review` PASS-WITH-DEBT 후속):
+  - **W-1**: `OverseasDividendBackfillService.fetchAllChunks`에 청크 원본 응답 행수 절단 감지 임계(`BACKFILL_RIGHTS_TRUNCATION_THRESHOLD_ROWS=40`) 추가 — 임계 이상이면 fail-closed(`OverseasDividendBackfillPrefetchFailedException`).
+  - **W-2a**: 백필 시작일(`floor`)을 고정 anchor 대신 `stock.getListedDate()`가 더 최근이면 상장일로 클램프해 불필요한 조회 범위를 줄임.
+  - **W-2b**: `OverseasDividendBackfillPrefetchFailedException`에 누적 시도 횟수(`attemptCount`) 기반 재시도 상한(10회, 스케줄 1일 1회 기준 약 10일 여유)을 도입 — 판정 로직은 `BackfillWindowExecutor`(PMD `TooManyMethods` 임계 회피)가 아닌 `BackfillOrchestrator.isRetryableWithinCeiling`(private)에 위치.
+  - **W-3**: `OverseasDividendBackfillService`에 청크별 debug 로그·절단 의심 warn·완료 info·실패 warn 로그 추가(`OverseasSplitBackfillService`와 동일 `[overseas-*]` 태그 컨벤션).
+  - 부수 리팩터: `BackfillWindowExecutor.isRetryable` 오버로드(2인자)를 원래 1인자 서명으로 원복하고, attemptCount 기반 판정을 `BackfillOrchestrator`로 재배치 — 서명 확장만으로 발생한 PMD `TooManyMethods`(임계 20, `BackfillWindowExecutor`가 이미 임계에 근접) 위반을 신규 suppression 없이 해소.
+
 ## [Unreleased] — feature/SPEC-ETF-001
 
 ### Added
