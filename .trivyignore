@@ -1,0 +1,11 @@
+# CVE-2026-56408 | libexpat HIGH
+# 사유: 상류-지연(upstream-lag) — alpine 저장소에 수정판 2.8.2-r0 게시됨,
+#       eclipse-temurin:21-jre-alpine base 이미지가 아직 재빌드되지 않아 미반영. 레포 내 교정 수단 없음(REQ-CVE-016).
+# 승인: 2026-08-19 (사용자) | 만료: 2026-09-18 (승인일+30일, REQ-CVE-022 기본값)
+CVE-2026-56408 exp:2026-09-18
+
+# CVE-2026-2100 | p11-kit, p11-kit-trust HIGH
+# 사유: 상류-지연(upstream-lag) — alpine 저장소에 수정판 0.26.2-r0 게시됨,
+#       eclipse-temurin:21-jre-alpine base 이미지가 아직 재빌드되지 않아 미반영. 레포 내 교정 수단 없음(REQ-CVE-016).
+# 승인: 2026-08-19 (사용자) | 만료: 2026-09-18 (승인일+30일, REQ-CVE-022 기본값)
+CVE-2026-2100 exp:2026-09-18
