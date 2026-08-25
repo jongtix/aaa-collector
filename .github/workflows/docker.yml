@@ -70,7 +70,7 @@ jobs:
 
       - name: Setup Buildx
         if: ${{ steps.tag.outputs.valid == 'true' }}
-        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+        uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
 
       # CVE 스캔 게이트 계약: 1) 로컬 적재만 수행(push 아님) 2) Trivy로 스캔
       # 3) 스캔 통과 시에만 아래 Push 스텝에서 GHCR로 올린다.
