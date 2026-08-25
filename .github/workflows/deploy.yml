@@ -34,17 +34,19 @@ jobs:
           _parse_env() { awk -F= -v key="$1" '$1==key{v=$2; gsub(/^[ \t"'"'"']+|[ \t"'"'"']+$/, "", v); print v; exit}' "$2"; }
           AAA_SSD_BASE=$(_parse_env  'AAA_SSD_BASE'        "$AAA_INFRA_DIR/.env")
           MYSQL_DATABASE=$(_parse_env 'MYSQL_DATABASE'      "$AAA_SSD_BASE/secrets/.env.common")
-          FLYWAY_PASS=$(_parse_env   'MYSQL_FLYWAY_PASSWORD' "$AAA_SSD_BASE/secrets/.env.collector")
-          echo "::add-mask::$FLYWAY_PASS"
 
-          if [ -z "$AAA_SSD_BASE" ] || [ -z "$MYSQL_DATABASE" ] || [ -z "$FLYWAY_PASS" ]; then
+          if [ -z "$AAA_SSD_BASE" ] || [ -z "$MYSQL_DATABASE" ]; then
             echo "has_migrations=true" >> $GITHUB_OUTPUT
             echo "detail=환경변수 읽기 실패 — 안전을 위해 수동 처리" >> $GITHUB_OUTPUT
             exit 0
           fi
 
-          DB_VERSION=$(docker exec -e MYSQL_PWD="$FLYWAY_PASS" aaa-mysql \
-            mysql -uflyway "$MYSQL_DATABASE" \
+          # SPEC-INFRA-DB-BACKUP-001 M8 / REQ-MIG-001: 패스워드를 워크플로 셸 변수로
+          # 읽지 않는다 — aaa-mysql 컨테이너 내부의 /run/secrets/flyway.cnf
+          # (aaa-infra docker-compose.yml ro 마운트, PREP-6 사용자 수동 생성 600 권한)를
+          # --defaults-extra-file로 직접 참조해 docker-inspect 노출을 원천 차단한다.
+          DB_VERSION=$(docker exec aaa-mysql \
+            mysql --defaults-extra-file=/run/secrets/flyway.cnf "$MYSQL_DATABASE" \
             -sNe "SELECT version FROM flyway_schema_history \
                   WHERE success=1 ORDER BY installed_rank DESC LIMIT 1" \
             2>/dev/null || echo "")

@@ -32,8 +32,11 @@
 #   KIS_ACCT_ISA_APP_SECRET   (또는 KIS_PROBE_APP_SECRET 로 override)
 #   DB_HOST / DB_PORT / DB_NAME / DB_USER   DB 접속 정보 (SELECT 권한만 필요 — 이 스크립트는
 #                                            읽기 전용이다)
-#   MYSQL_PWD                  DB 접속 비밀번호 — mysql CLI가 자동 인식(-p 인자 미사용,
-#                               ps/docker top 비노출, guard-credential-exposure.sh 안전 패턴)
+#   MYSQL_DEFAULTS_EXTRA_FILE   DB 접속 비밀번호를 담은 cnf 파일 경로(600 권한) —
+#                               `mysql --defaults-extra-file`로 전달(SPEC-INFRA-DB-BACKUP-001
+#                               M8 / REQ-MIG-002(a), ps/docker top 비노출). cnf 파일은
+#                               `[client]\npassword=...` 형식만 두고 user=는 지정하지
+#                               않는다 — DB_USER를 통한 명시적 -u와 충돌하지 않도록.
 #
 # 대상 지정 (둘 중 하나, 필수):
 #   TARGETS_FILE=path/to/targets.tsv   "종목코드<TAB>YYYYMMDD" 1행 1건 형식
@@ -52,7 +55,7 @@
 # 보안 (CLAUDE.md Security 준수):
 #   - .env 파일을 읽지 않는다. export된 환경변수만 사용한다.
 #   - KIS 시크릿은 stdin으로만 전달(kis-probe.sh 패턴 답습, ps 비노출).
-#   - DB 비밀번호는 MYSQL_PWD 환경변수로만 전달(-p 인자 미사용).
+#   - DB 비밀번호는 --defaults-extra-file cnf 파일로만 전달(SPEC-INFRA-DB-BACKUP-001 M8).
 #   - 응답의 access_token은 REDACT.
 #
 set -euo pipefail
@@ -74,11 +77,11 @@ APPSECRET="${KIS_PROBE_APP_SECRET:-${KIS_ACCT_ISA_APP_SECRET:-}}"
 : "${DB_PORT:?DB_PORT 미설정}"
 : "${DB_NAME:?DB_NAME 미설정}"
 : "${DB_USER:?DB_USER 미설정}"
-: "${MYSQL_PWD:?MYSQL_PWD 미설정 (DB 비밀번호 — -p 인자 대신 이 환경변수를 사용할 것)}"
+: "${MYSQL_DEFAULTS_EXTRA_FILE:?MYSQL_DEFAULTS_EXTRA_FILE 미설정 (--defaults-extra-file 인자로 사용할 cnf 파일 경로, 600 권한)}"
 
-# --- DB 조회 헬퍼 — 읽기 전용(SELECT만), -p 인자 미사용(MYSQL_PWD가 mysql CLI에 의해 자동 인식됨) ---
+# --- DB 조회 헬퍼 — 읽기 전용(SELECT만), --defaults-extra-file로 비밀번호 전달(SPEC-INFRA-DB-BACKUP-001 M8) ---
 mysql_query() { # $1=SQL. stdout: 탭 구분 결과(헤더 없음, -N -B)
-  mysql -h "$DB_HOST" -P "$DB_PORT" -u "$DB_USER" -N -B "$DB_NAME" -e "$1"
+  mysql --defaults-extra-file="$MYSQL_DEFAULTS_EXTRA_FILE" -h "$DB_HOST" -P "$DB_PORT" -u "$DB_USER" -N -B "$DB_NAME" -e "$1"
 }
 
 get_token() { # stdout: bearer token
