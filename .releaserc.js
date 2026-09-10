@@ -13,9 +13,11 @@ const PARSER_OPTS = {
 module.exports = {
     branches: ["main"],
     plugins: [
-        // 커밋 메시지 분석 → 릴리즈 타입 결정 (feat→minor, fix/perf→patch, !→major)
+        // 커밋 메시지 분석 → 릴리즈 타입 결정 (feat→minor, fix/perf/migration→patch, !→major)
         // custom 규칙 먼저 확인 → 매칭 없으면 기본 규칙 폴백 (feat, fix, perf, revert, breaking)
         // 기본 규칙에도 없는 타입(chore, docs, style 등)은 릴리즈를 트리거하지 않음
+        // migration(🗃️)은 patch로 취급 — Flyway는 collector 기동 시 실행되므로 스키마 변경만 있는
+        // 커밋도 반드시 Release→Docker→Deploy를 유발해야 한다(V48이 배포되지 않은 2026-09-03 사례)
         [
             "@semantic-release/commit-analyzer",
             {
@@ -25,6 +27,7 @@ module.exports = {
                     { type: "feat", release: "minor" },
                     { type: "fix", release: "patch" },
                     { type: "perf", release: "patch" },
+                    { type: "migration", release: "patch" },
                     { breaking: true, release: "major" },
                 ],
             },
