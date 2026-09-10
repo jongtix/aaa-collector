@@ -22,6 +22,16 @@ RUN ./gradlew build -x check --no-daemon -Pversion=${VERSION}
 # digest pin: 이미지 변경 시 docker manifest inspect로 AMD64 digest 재조회 필요
 FROM eclipse-temurin:21-jre-alpine@sha256:974b08960c5d96694c780e65b2d5705268ab1e1ca1a0dd0caf4ba6c3fe34d699
 
+# 베이스 이미지(Alpine 3.24) 내장 OS 패키지 CVE 대응 (CVE-2026-14456, CVE-2026-76956/76957, 2026-09-10) —
+# 위 digest 재조회로 해소되는지 실측 확인한 결과, 현재 태그의 최신 digest도 CVE 공개일 이전 빌드라
+# 동일하게 취약한 버전(openssl 3.5.7-r0, libexpat 2.8.3-r0)을 그대로 포함한다(2026-09-10 pull+apk info 확인).
+# Alpine 3.24 저장소에는 수정판(3.5.8-r0, 2.8.4-r0)이 이미 배포돼 있으므로, 베이스 이미지 리빌드를
+# 기다리지 않고 해당 패키지만 타겟 업그레이드한다 — JDK/JRE 계층의 digest 고정(재현성)은 그대로 유지.
+# 만료 게이트: AlpineOsPackageOverrideExpiryTest(src/test/.../arch/)가 REVIEW_BY(2026-12-09)까지
+# 미해소 시 ./gradlew test 실패, 그 전에 베이스 이미지가 리빌드되어 이 CVE들을 흡수했는지 확인한다 —
+# 흡수했다면 이 RUN 줄과 해당 테스트를 함께 삭제한다.
+RUN apk upgrade --no-cache openssl libcrypto3 libssl3 libexpat
+
 # 비루트 유저 생성 + 로그 디렉토리 준비 (read_only 컨테이너에서 collector 유저 쓰기 권한 보장)
 RUN addgroup -S -g 1004 collector && adduser -S -u 1004 collector -G collector \
     && mkdir -p /var/log/aaa-collector/dump && chown -R collector:collector /var/log/aaa-collector
