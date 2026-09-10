@@ -18,6 +18,14 @@ java {
     }
 }
 
+// --- Spring Boot BOM 관리 버전 덮어쓰기 (CVE 게이트 대응, 2026-09-10) ---
+// 실제 버전 값은 gradle/libs.versions.toml 단일 소스(CLAUDE.md)에서 관리한다 — 여기서는 값을
+// 하드코딩하지 않고 카탈로그를 참조만 한다. 만료 게이트(DependencyVersionOverrideExpiryTest,
+// 2026-12-09)가 지나면, Boot가 이 CVE들을 흡수했는지 확인 후 흡수했다면 이 블록 + 카탈로그의
+// tomcat/netty 항목 + 해당 테스트를 함께 제거한다.
+extra["tomcat.version"] = libs.versions.tomcat.get()
+extra["netty.version"] = libs.versions.netty.get()
+
 // --- JaCoCo 버전 고정 (libs.versions.toml 단일 소스) ---
 jacoco {
     toolVersion = libs.versions.jacoco.get()

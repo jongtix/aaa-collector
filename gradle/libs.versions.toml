@@ -13,6 +13,13 @@ jacoco = "0.8.13"
 # micrometer-registry-prometheus는 Spring Boot BOM(spring-boot 3.5.15 → micrometer 1.15.12)이 관리하나,
 # 의존성 버전 단일 소스 원칙(CLAUDE.md)에 따라 BOM 관리 버전과 동일하게 명시 핀 고정한다.
 micrometer = "1.17.1"
+# tomcat-embed-core/netty는 Spring Boot BOM(3.5.16, 3.5.x 최신)이 관리하는 기본값에 CRITICAL CVE가 있어
+# (CVE-2026-65182/65905/68525, CVE-2026-75595, 2026-09-10) 상위로 덮어쓴다 — micrometer와 동일한 이유로
+# 의존성 버전 단일 소스 원칙(CLAUDE.md)에 따라 여기 명시한다. 만료 게이트:
+# DependencyVersionOverrideExpiryTest(2026-12-09까지 미해소 시 ./gradlew test 실패, Boot가 흡수하면
+# 이 두 줄 + build.gradle.kts 덮어쓰기 블록 + 해당 테스트를 함께 삭제).
+tomcat = "10.1.59"
+netty = "4.1.138.Final"
 
 [libraries]
 # Spring Boot (버전은 spring-dependency-management가 관리)
