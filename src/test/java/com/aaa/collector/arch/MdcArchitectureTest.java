@@ -17,13 +17,12 @@ import org.slf4j.MDC;
  */
 @SuppressWarnings({
     "PMD.TestClassWithoutTestCases", // ArchUnit은 @ArchTest로 규칙을 선언하며 @Test 메서드를 사용하지 않음
-    "PMD.FieldNamingConventions", // ArchUnit @ArchTest 필드는 규칙 가독성을 위해 camelCase 관례 사용
-    "PMD.UseUtilityClass" // ArchUnit 테스트 클래스는 static @ArchTest 필드만 가지므로 private 생성자 불필요
+    "PMD.FieldNamingConventions" // ArchUnit @ArchTest 필드는 규칙 가독성을 위해 camelCase 관례 사용
 })
 @AnalyzeClasses(
         packages = "com.aaa.collector",
         importOptions = ImportOption.DoNotIncludeTests.class)
-class MdcArchitectureTest {
+final class MdcArchitectureTest {
 
     @ArchTest
     static final ArchRule noDirectMdcPutExceptSafeMdc =
@@ -88,4 +87,6 @@ class MdcArchitectureTest {
                             "com.fasterxml..",
                             "io.micrometer..")
                     .because("common 패키지는 공용 유틸리티로서 특정 피처 패키지에 의존해서는 안 된다.");
+
+    private MdcArchitectureTest() {}
 }
