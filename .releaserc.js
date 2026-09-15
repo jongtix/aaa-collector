@@ -5,9 +5,17 @@
 const HEADER_PATTERN =
     /^(?:[\p{Emoji_Presentation}\p{Extended_Pictographic}]\uFE0F?\s*)?(\w+)(?:\(([\w$.\-*\s]*)\))?(!)??:\s(.*)$/u;
 
+// breakingHeaderPattern: PARSER_OPTS가 이 옵션을 덮어쓰지 않으면, preset이 로드하는
+// 업스트림 기본 정규식 /^(\w*)(?:\((.*)\))?!: (.*)$/ 이 선행 이모지를 거부한다
+// - 증상: `✨ feat(api)!:` 가 breaking으로 인식되지 않아 major가 조용히 minor로 떨어진다
+// - 이모지 접두부는 위 HEADER_PATTERN과 문자 단위로 동일하게 유지 — 두 정규식이 갈라지면 같은 침묵 결함이 재발한다
+const BREAKING_HEADER_PATTERN =
+    /^(?:[\p{Emoji_Presentation}\p{Extended_Pictographic}]\uFE0F?\s*)?(\w*)(?:\((.*)\))?!: (.*)$/u;
+
 const PARSER_OPTS = {
     headerPattern: HEADER_PATTERN,
     headerCorrespondence: ["type", "scope", "breaking", "subject"],
+    breakingHeaderPattern: BREAKING_HEADER_PATTERN,
 };
 
 module.exports = {
