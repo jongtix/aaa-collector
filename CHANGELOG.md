@@ -4,6 +4,10 @@
 
 ## [Unreleased]
 
+### Changed
+
+- docker.yml에 Trivy CVE 게이트/빌드 실패 시 독립 Telegram 알림 스텝 추가(SPEC-INFRA-CVE-SCAN-004 M1) — deploy.yml의 workflow_run 게이팅과 무관하게 항상 발동, 기존 시스템봇 재사용
+
 ### Added
 
 - CI/CD 룰셋 강화 (SPEC-INFRA-CICD-002)
