@@ -121,3 +121,29 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      # SPEC-INFRA-CVE-SCAN-004 M1: deploy.yml은 workflow_run 게이팅(conclusion
+      # == 'success') 때문에 이 job이 실패하면 job 전체가 skip되어 그 안의
+      # "Notify on failure" 스텝도 함께 skip된다 — 이 job 자신에 독립 알림
+      # 스텝을 둬서 deploy.yml의 게이팅과 무관하게 항상 발동하게 한다(REQ-CVE-001/003).
+      # 기존 시스템봇 시크릿을 그대로 재사용한다(REQ-CVE-005, EXC-3).
+      - name: Notify on failure
+        if: failure()
+        env:
+          BOT_TOKEN: ${{ secrets.TELEGRAM_SYSTEM_BOT_TOKEN }}
+          CHAT_ID: ${{ secrets.TELEGRAM_OPERATOR_CHAT_ID }}
+          TAG: ${{ steps.tag.outputs.tag }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          echo "::add-mask::$BOT_TOKEN"
+          echo "::add-mask::$CHAT_ID"
+          set +x
+          NL=$'\n'
+          RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          DISPLAY_TAG="${TAG:-$REF_NAME}"
+          TEXT="🔒 <b>[CVE 게이트] aaa-collector 빌드 실패</b>${NL}상태: 태그 ${DISPLAY_TAG} 빌드 또는 CVE 스캔에서 실패 — GHCR push 차단됨(배포 없음).${NL}확인: ${RUN_URL} 에서 실패 원인 확인 → 필요 시 .trivyignore 예외 등록 후 gh run rerun --failed 로 동일 태그 재실행(project-instructions.md § Git Rules 참조)"
+          printf 'url = "https://api.telegram.org/bot%s/sendMessage"\n' "$BOT_TOKEN" \
+            | curl -sf -K - \
+              --data-urlencode "chat_id=${CHAT_ID}" \
+              --data-urlencode "parse_mode=HTML" \
+              --data-urlencode "text=${TEXT}"
