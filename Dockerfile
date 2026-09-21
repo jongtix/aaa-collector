@@ -1,6 +1,6 @@
 # === Build stage ===
 # digest pin: 이미지 변경 시 docker manifest inspect로 AMD64 digest 재조회 필요
-FROM eclipse-temurin:21-jdk-alpine@sha256:6ea5548706b60ac0a602eaf48af74792cbab012d90e811ca8db6184b16b5c3d6 AS build
+FROM eclipse-temurin:21-jdk-alpine@sha256:cd87715a8d45cfaa42419207c64680234f62785c49055cccd20437b5c9018380 AS build
 WORKDIR /collector
 
 # 릴리스 태그 버전 주입 (docker.yml이 --build-arg VERSION=<태그-v제거> 로 전달)
@@ -20,7 +20,7 @@ RUN ./gradlew build -x check --no-daemon -Pversion=${VERSION}
 
 # === Runtime stage ===
 # digest pin: 이미지 변경 시 docker manifest inspect로 AMD64 digest 재조회 필요
-FROM eclipse-temurin:21-jre-alpine@sha256:974b08960c5d96694c780e65b2d5705268ab1e1ca1a0dd0caf4ba6c3fe34d699
+FROM eclipse-temurin:21-jre-alpine@sha256:1a29e1fe337eb28b5bec30f0ee8ed29f0ff80ab6f75dcf9313efe82911065a52
 
 # 베이스 이미지(Alpine 3.24) 내장 OS 패키지 CVE 대응 (CVE-2026-14456, CVE-2026-76956/76957, 2026-09-10) —
 # 위 digest 재조회로 해소되는지 실측 확인한 결과, 현재 태그의 최신 digest도 CVE 공개일 이전 빌드라
