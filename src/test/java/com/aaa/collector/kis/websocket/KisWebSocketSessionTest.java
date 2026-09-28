@@ -657,19 +657,25 @@ class KisWebSocketSessionTest {
         }
 
         @Test
-        @DisplayName("REQ-WSEXIT-004: 세이프모드 활성 상태에서 재연결 성공 시 exit(alias) 호출")
-        void reconnectSuccess_whileSafeModeActive_callsExit() throws Exception {
+        @DisplayName(
+                "REQ-WSRES2-008 재현-우선(반전): 재연결(핸드셰이크+재구독 전송) 성공만으로는 exit(alias)가 미호출된다 —"
+                        + " 개정 전 원 테스트는 exit(ALIAS) 1회 호출을 단언했다(SPEC-COLLECTOR-WS-SAFEMODE-EXIT-001"
+                        + " REQ-WSEXIT-004 '지점 2'). SPEC-COLLECTOR-WS-RESILIENCE-002가 이 전제를 개정 — 안전모드"
+                        + " 능동 해제는 실제 구독 성공 확인(지점 1)에 의해서만 이루어진다.")
+        void reconnectSuccess_whileSafeModeActive_doesNotCallExitWithoutSubscriptionConfirmation()
+                throws Exception {
             // Arrange
             when(webSocketSafeModeManager.isActive(ALIAS)).thenReturn(true);
             arrangeReconnectSuccess();
             ZonedDateTime marketOpen =
                     ZonedDateTime.of(2025, 1, 6, 10, 0, 0, 0, ZoneId.of("Asia/Seoul"));
 
-            // Act
+            // Act — 재연결(핸드셰이크+재구독 메시지 전송) 성공. 구독 성공 응답(handleSubscriptionSuccess)은
+            // 별도 비동기 Type B 메시지로 도착하므로 여기서는 시뮬레이션하지 않는다.
             session.handleDisconnect(marketOpen);
 
-            // Assert
-            verify(webSocketSafeModeManager, times(1)).exit(ALIAS);
+            // Assert — 지점 1(구독 성공 확인) 없이는 exit()가 호출되지 않아야 한다(REQ-WSRES2-008)
+            verify(webSocketSafeModeManager, never()).exit(any());
         }
 
         @Test

@@ -390,12 +390,13 @@ public class KisWebSocketSession {
                     attempt,
                     resubscribed);
             reconnectAttempt.set(0);
-            // @MX:NOTE: [AUTO] 이 exit는 '구독-실패 진입 후 실제 재연결' 경로에서만 도달. '재연결-실패 5회 진입' 동일
-            // 세션은 handleDisconnect 재발생 불가로 여기 재도달 못 함 — 그 케이스는 TTL 만료+익일 openAll 재편입(AR-1)이
-            // 담당(SPEC-COLLECTOR-WS-SAFEMODE-EXIT-001 §5.2).
-            if (webSocketSafeModeManager.isActive(alias)) {
-                webSocketSafeModeManager.exit(alias);
-            }
+            // @MX:NOTE: [AUTO] REQ-WSRES2-008 개정(SPEC-COLLECTOR-WS-RESILIENCE-002) — 이 지점(SPEC-
+            // COLLECTOR-WS-SAFEMODE-EXIT-001 REQ-WSEXIT-004 "지점 2")의 능동 exit() 호출을 제거했다. 원래는
+            // 핸드셰이크 성공 + 재구독 메시지 "전송" 성공만으로(실제 KIS측 구독 수락 확인 없이) 안전모드를 해제했는데, 2026-09-28
+            // 인시던트에서 이것이 approval_key 인증 실패와 결합해 "재연결 성공→안전모드 해제→재구독 전송→invalid
+            // approval→안전모드 재진입→disconnect→재연결" 무한 루프를 유발했다(spec.md §1 결함②). 안전모드 능동 해제는 이제
+            // 오직 지점 1(handleSubscriptionSuccess, 실제 구독 성공 확인)에 의해서만 이루어진다 — 조건부 도달 케이스의
+            // 해제 지연(재구독 응답 왕복 시간 수준)은 명시적으로 수용된 트레이드오프다(acceptance.md 엣지 케이스 E2).
         } catch (Exception e) {
             int currentAttempt = reconnectAttempt.get();
             // connect()는 RuntimeException("WebSocket 연결 실패: alias", cause)을 던짐 —
