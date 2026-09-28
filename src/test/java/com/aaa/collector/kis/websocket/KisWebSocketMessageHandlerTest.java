@@ -11,8 +11,11 @@ import static org.mockito.Mockito.when;
 import ch.qos.logback.classic.Level;
 import ch.qos.logback.classic.Logger;
 import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.classic.spi.ThrowableProxyUtil;
 import ch.qos.logback.core.read.ListAppender;
 import com.aaa.collector.common.safemode.SafeModeManager;
+import com.aaa.collector.common.safemode.SafeModeRepository;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.nio.charset.StandardCharsets;
 import java.time.Clock;
 import java.time.Instant;
@@ -873,6 +876,147 @@ class KisWebSocketMessageHandlerTest {
             // Assert
             assertThat(handler.getAesKey("H0STCNT0")).isNotNull();
             verify(webSocketSafeModeManager, never()).enter(any(), any());
+        }
+    }
+
+    // ──────────────────────────────────────────────────────────────────
+    // approval_key 로그 유출 방지 (SPEC-COLLECTOR-WS-RESILIENCE-002 F2)
+    // ──────────────────────────────────────────────────────────────────
+
+    @Nested
+    @DisplayName("approval_key 인증 실패 경로 — 승인키 로그 비노출(F2)")
+    class AuthFailureLogRedaction {
+
+        /** 2026-09-28 인시던트 실측 msg1에 실려 오는 승인키(UUID) — 어떤 로그에도 나타나선 안 된다. */
+        private static final String LEAKED_KEY = "32b39a3b-467d-4266-bf35-7709892eff52";
+
+        private static final String AUTH_FAILURE_JSON =
+                """
+                {
+                  "header": {"tr_id": "H0STASP0", "tr_key": "005930"},
+                  "body": {
+                    "rt_cd": "1",
+                    "msg1": "invalid approval : 32b39a3b-467d-4266-bf35-7709892eff52"
+                  }
+                }
+                """;
+
+        private Logger handlerLogger;
+        private ListAppender<ILoggingEvent> listAppender;
+
+        /** 안전모드 진입 ERROR 로그(예외 포함)는 SafeModeManager 로거가 남기므로 같은 어펜더를 함께 붙인다. */
+        private Logger safeModeLogger() {
+            return (Logger) LoggerFactory.getLogger(SafeModeManager.class);
+        }
+
+        @BeforeEach
+        void attachLogAppender() {
+            handlerLogger = (Logger) LoggerFactory.getLogger(KisWebSocketMessageHandler.class);
+            listAppender = new ListAppender<>();
+            listAppender.start();
+            handlerLogger.addAppender(listAppender);
+            safeModeLogger().addAppender(listAppender);
+        }
+
+        @AfterEach
+        void detachLogAppender() {
+            handlerLogger.detachAppender(listAppender);
+            safeModeLogger().detachAppender(listAppender);
+            listAppender.stop();
+        }
+
+        /** 캡처된 모든 로그 이벤트의 메시지 + 예외 메시지/스택 전문을 이어붙인다. */
+        private String allCapturedLogText() {
+            StringBuilder text = new StringBuilder();
+            for (ILoggingEvent event : listAppender.list) {
+                text.append(event.getFormattedMessage()).append('\n');
+                if (event.getThrowableProxy() != null) {
+                    text.append(ThrowableProxyUtil.asString(event.getThrowableProxy()))
+                            .append('\n');
+                }
+            }
+            return text.toString();
+        }
+
+        @Test
+        @DisplayName("F2 재현-우선: 인증 실패 WARN 로그에 승인키가 없고 trId와 고정 분류 토큰이 남는다")
+        void authFailure_warnLog_omitsApprovalKey_keepsTrIdAndClassification() {
+            // Act
+            handler.handleTextMessage(session, new TextMessage(AUTH_FAILURE_JSON));
+
+            // Assert
+            assertThat(allCapturedLogText()).doesNotContain(LEAKED_KEY);
+            boolean hasClassifiedWarn =
+                    listAppender.list.stream()
+                            .anyMatch(
+                                    event ->
+                                            event.getLevel() == Level.WARN
+                                                    && event.getFormattedMessage()
+                                                            .contains("H0STASP0")
+                                                    && event.getFormattedMessage()
+                                                            .contains("INVALID_APPROVAL"));
+            assertThat(hasClassifiedWarn).isTrue();
+        }
+
+        @Test
+        @DisplayName("F2 재현-우선: 연속 5회 실패로 안전모드 진입 시 예외 메시지·스택·ERROR 로그에도 승인키가 없다")
+        void authFailure_safeModeEntryPath_omitsApprovalKeyFromExceptionAndErrorLog() {
+            // Arrange — 실제 SafeModeManager(레거시 생성자)가 진입 시 cause를 ERROR로 남긴다
+            SafeModeManager realSafeModeManager =
+                    new SafeModeManager(
+                            mock(SafeModeRepository.class), new SimpleMeterRegistry(), "ws");
+            KisWebSocketMessageHandler realHandler =
+                    new KisWebSocketMessageHandler(ALIAS, tickPublisher, realSafeModeManager);
+            TextMessage authFailureMessage = new TextMessage(AUTH_FAILURE_JSON);
+
+            // Act
+            for (int i = 0; i < 5; i++) {
+                realHandler.handleTextMessage(session, authFailureMessage);
+            }
+
+            // Assert — 진입 ERROR 로그가 실제로 남았음을 확인한 뒤(공허한 통과 방지) 유출 여부를 단언
+            boolean hasSafeModeEntryError =
+                    listAppender.list.stream()
+                            .anyMatch(
+                                    event ->
+                                            event.getLevel() == Level.ERROR
+                                                    && event.getThrowableProxy() != null);
+            assertThat(hasSafeModeEntryError).isTrue();
+            assertThat(allCapturedLogText()).doesNotContain(LEAKED_KEY);
+        }
+
+        @Test
+        @DisplayName("F2: SUBSCRIBE 대신 UNSUBSCRIBE로 상관된 인증 실패 응답의 로그에도 승인키가 없다")
+        void authFailure_correlatedAsUnsubscribe_omitsApprovalKey() {
+            // Arrange
+            handler.recordPending(
+                    "H0STASP0", "005930", KisWebSocketMessageHandler.Direction.UNSUBSCRIBE);
+
+            // Act
+            handler.handleTextMessage(session, new TextMessage(AUTH_FAILURE_JSON));
+
+            // Assert
+            assertThat(listAppender.list).isNotEmpty();
+            assertThat(allCapturedLogText()).doesNotContain(LEAKED_KEY);
+        }
+
+        @Test
+        @DisplayName("F2: 인증 실패 처리 중 콜백이 예외를 던져 파싱 오류 로그가 남아도 원문 승인키가 없다")
+        void authFailure_whenCallbackThrows_parseErrorLogOmitsApprovalKey() {
+            // Arrange
+            handler.setAuthFailureCallback(
+                    () -> {
+                        throw new IllegalStateException("콜백 오류");
+                    });
+
+            // Act
+            handler.handleTextMessage(session, new TextMessage(AUTH_FAILURE_JSON));
+
+            // Assert
+            boolean hasParseErrorLog =
+                    listAppender.list.stream().anyMatch(event -> event.getLevel() == Level.ERROR);
+            assertThat(hasParseErrorLog).isTrue();
+            assertThat(allCapturedLogText()).doesNotContain(LEAKED_KEY);
         }
     }
 }
