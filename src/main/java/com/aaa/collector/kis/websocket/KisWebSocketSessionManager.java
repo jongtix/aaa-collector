@@ -8,6 +8,8 @@ import com.aaa.collector.kis.token.KisTokenService;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Tags;
 import java.time.Clock;
+import java.time.Duration;
+import java.time.ZonedDateTime;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -457,6 +459,20 @@ public class KisWebSocketSessionManager implements SmartLifecycle {
         unassignSubscription("H0STASP0", symbol);
     }
 
+    /**
+     * 전 세션에 대해 유휴 단절 워치독 판정을 수행한다(REQ-WSRES2-001~005).
+     *
+     * <p>{@link KisWebSocketScheduler}가 주기적으로 호출한다. 개별 세션 판정({@link
+     * KisWebSocketSession#checkIdleWatchdog})이 각자 장외 예외(REQ-WSRES2-003)와 재진입 방지(엣지 케이스 E1)를 담당하므로,
+     * 이 메서드는 단순히 전 세션에 위임한다.
+     *
+     * @param idleThreshold 유휴 판정 임계값
+     * @param now 판정 기준 시각
+     */
+    public void checkIdleWatchdogs(Duration idleThreshold, ZonedDateTime now) {
+        sessions.values().forEach(session -> session.checkIdleWatchdog(idleThreshold, now));
+    }
+
     // ──────────────────────────────────────────────────────────────────
     // 내부 메서드
     // ──────────────────────────────────────────────────────────────────
@@ -487,7 +503,8 @@ public class KisWebSocketSessionManager implements SmartLifecycle {
     /** 기본 프로덕션 세션 팩토리. */
     private KisWebSocketSession createDefaultSession(String alias, String approvalKey) {
         KisWebSocketMessageHandler handler =
-                new KisWebSocketMessageHandler(alias, tickPublisher, webSocketSafeModeManager);
+                new KisWebSocketMessageHandler(
+                        alias, tickPublisher, webSocketSafeModeManager, clock);
         KisWebSocketSession session =
                 new KisWebSocketSession(
                         alias,

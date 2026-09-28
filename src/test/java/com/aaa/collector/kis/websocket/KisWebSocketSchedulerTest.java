@@ -2,6 +2,7 @@ package com.aaa.collector.kis.websocket;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -13,6 +14,10 @@ import ch.qos.logback.core.read.ListAppender;
 import com.aaa.collector.common.gate.MarketOpenGate;
 import com.aaa.collector.common.gate.UsMarketOpenGate;
 import java.lang.reflect.Method;
+import java.time.Clock;
+import java.time.Duration;
+import java.time.Instant;
+import java.time.ZoneId;
 import java.util.List;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -35,6 +40,8 @@ class KisWebSocketSchedulerTest {
     @Mock private MarketOpenGate marketOpenGate;
     @Mock private UsMarketOpenGate usMarketOpenGate;
     @Mock private WsRecoveryProperties wsRecoveryProperties;
+    @Mock private WsIdleWatchdogProperties wsIdleWatchdogProperties;
+    @Mock private Clock clock;
 
     @InjectMocks private KisWebSocketScheduler scheduler;
 
@@ -327,6 +334,45 @@ class KisWebSocketSchedulerTest {
     }
 
     // ──────────────────────────────────────────────────────────────────
+    // 유휴 단절 워치독 cron (REQ-WSRES2-001~005)
+    // ──────────────────────────────────────────────────────────────────
+
+    @Nested
+    @DisplayName("유휴 단절 워치독 cron(checkIdleWatchdog)")
+    class IdleWatchdogCron {
+
+        @Test
+        @DisplayName("활성화 상태 — sessionManager.checkIdleWatchdogs가 설정된 임계값으로 호출된다")
+        void enabled_callsSessionManagerCheckIdleWatchdogsWithConfiguredThreshold() {
+            // Arrange
+            when(wsIdleWatchdogProperties.isEnabled()).thenReturn(true);
+            when(wsIdleWatchdogProperties.getIdleThresholdSeconds()).thenReturn(60L);
+            Instant fixedNow = Instant.parse("2026-09-28T02:00:00Z");
+            when(clock.instant()).thenReturn(fixedNow);
+            when(clock.getZone()).thenReturn(ZoneId.of("Asia/Seoul"));
+
+            // Act
+            scheduler.checkIdleWatchdog();
+
+            // Assert
+            verify(sessionManager).checkIdleWatchdogs(eq(Duration.ofSeconds(60L)), any());
+        }
+
+        @Test
+        @DisplayName("비활성화 상태 — sessionManager.checkIdleWatchdogs가 호출되지 않는다")
+        void disabled_doesNotCallSessionManager() {
+            // Arrange
+            when(wsIdleWatchdogProperties.isEnabled()).thenReturn(false);
+
+            // Act
+            scheduler.checkIdleWatchdog();
+
+            // Assert
+            verify(sessionManager, never()).checkIdleWatchdogs(any(), any());
+        }
+    }
+
+    // ──────────────────────────────────────────────────────────────────
     // @Scheduled cron 어노테이션 검증 (fixedDelay 금지)
     // ──────────────────────────────────────────────────────────────────
 
@@ -340,7 +386,8 @@ class KisWebSocketSchedulerTest {
             // Arrange
             String[] methodNames = {
                 "openDomesticSession", "closeDomesticSession",
-                "openOverseasSession", "closeOverseasSession"
+                "openOverseasSession", "closeOverseasSession",
+                "checkIdleWatchdog"
             };
 
             for (String methodName : methodNames) {

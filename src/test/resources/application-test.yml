@@ -12,6 +12,8 @@ kis:
 aaa:
   ws-recovery:
     enabled: false  # @SpringBootTest ApplicationReadyEvent 발화 시 실 WS 연결 방지 (REQ-WSREC-051)
+  ws-idle-watchdog:
+    enabled: false  # @SpringBootTest 컨텍스트에서 30초 주기 cron이 불필요하게 동작하는 것을 방지(SPEC-COLLECTOR-WS-RESILIENCE-002)
   catchup:
     enabled: false
 
