@@ -7,6 +7,7 @@ import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.timeout;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -35,6 +36,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
@@ -644,6 +646,57 @@ class KisWebSocketSessionManagerTest {
             for (KisWebSocketSession mockSession : mockSessions) {
                 verify(mockSession).checkIdleWatchdog(threshold, now);
             }
+        }
+    }
+
+    // ──────────────────────────────────────────────────────────────────
+    // approval_key 인증 실패 콜백 배선 (REQ-WSRES2-007/009)
+    // ──────────────────────────────────────────────────────────────────
+
+    @Nested
+    @DisplayName("approval_key 인증 실패 콜백 배선(wireCallbacks)")
+    class AuthFailureCallbackWiring {
+
+        @Test
+        @DisplayName(
+                "REQ-WSRES2-007: approvalKeyReissueCallback 배선 — 실행 시 무효화→재발급→세션 갱신 순으로" + " 호출된다")
+        void approvalKeyReissueCallback_invalidatesReissuesAndUpdatesSession() {
+            // Arrange
+            KisWebSocketMessageHandler mockHandler = mock(KisWebSocketMessageHandler.class);
+            KisWebSocketSession mockSession = mock(KisWebSocketSession.class);
+            when(kisTokenService.reissueApprovalKey("wire-test-alias")).thenReturn("fresh-key");
+            ArgumentCaptor<Runnable> callbackCaptor = ArgumentCaptor.forClass(Runnable.class);
+
+            // Act
+            manager.wireCallbacks(mockHandler, mockSession, "wire-test-alias");
+            verify(mockHandler).setApprovalKeyReissueCallback(callbackCaptor.capture());
+            callbackCaptor.getValue().run();
+
+            // Assert — 비동기(가상 스레드) 실행이므로 timeout으로 대기
+            verify(kisTokenService, timeout(5000)).invalidateApprovalKey("wire-test-alias");
+            verify(kisTokenService, timeout(5000)).reissueApprovalKey("wire-test-alias");
+            verify(mockSession, timeout(5000)).updateApprovalKey("fresh-key");
+        }
+
+        @Test
+        @DisplayName("REQ-WSRES2-007 회귀: 재발급 실패 시 세션 갱신은 호출되지 않고 예외 없이 완료된다")
+        void
+                approvalKeyReissueCallback_reissueFails_doesNotUpdateSessionAndCompletesWithoutThrow() {
+            // Arrange
+            KisWebSocketMessageHandler mockHandler = mock(KisWebSocketMessageHandler.class);
+            KisWebSocketSession mockSession = mock(KisWebSocketSession.class);
+            when(kisTokenService.reissueApprovalKey("wire-test-alias"))
+                    .thenThrow(new RuntimeException("재발급 실패"));
+            ArgumentCaptor<Runnable> callbackCaptor = ArgumentCaptor.forClass(Runnable.class);
+
+            // Act
+            manager.wireCallbacks(mockHandler, mockSession, "wire-test-alias");
+            verify(mockHandler).setApprovalKeyReissueCallback(callbackCaptor.capture());
+            callbackCaptor.getValue().run();
+
+            // Assert
+            verify(kisTokenService, timeout(5000)).reissueApprovalKey("wire-test-alias");
+            verify(mockSession, timeout(1000).times(0)).updateApprovalKey(anyString());
         }
     }
 

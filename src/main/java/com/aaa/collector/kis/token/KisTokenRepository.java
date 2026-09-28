@@ -76,6 +76,19 @@ public class KisTokenRepository {
         return Optional.ofNullable(redisTemplate.opsForValue().get(approvalKeyKey(alias)));
     }
 
+    /**
+     * Redis에서 WebSocket 승인키를 삭제한다(REQ-WSRES2-007).
+     *
+     * <p>구독 응답으로 approval_key 인증 실패(예: {@code msg1="invalid approval : <key>"})가 확인되면, KIS 서버측에서 이미
+     * 무효화된 캐시 키를 이후 재연결 시도가 재사용하지 않도록 즉시 삭제한다(SPEC-COLLECTOR-WS-RESILIENCE-002). 삭제 이후 {@link
+     * KisTokenService#getValidApprovalKey}는 캐시 미스로 새 승인키를 발급받는다(기존 Lazy 갱신 경로 재사용).
+     *
+     * @param alias 계정 식별자
+     */
+    public void deleteApprovalKey(String alias) {
+        redisTemplate.delete(approvalKeyKey(alias));
+    }
+
     private String tokenKey(String alias) {
         return TOKEN_KEY_PREFIX + alias;
     }

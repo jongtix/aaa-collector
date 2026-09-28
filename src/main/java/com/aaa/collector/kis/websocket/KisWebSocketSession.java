@@ -50,7 +50,15 @@ public class KisWebSocketSession {
     private static final int SUBSCRIPTION_KEY_PARTS = 2;
 
     private final String alias;
-    private final String approvalKey;
+
+    /**
+     * WebSocket 접속용 승인키(REQ-WSRES2-007) — {@code final}이 아니다. approval_key 인증 실패 식별 시 {@link
+     * #updateApprovalKey}로 세션 생존 기간 내 갱신되어, 재연결 후 재구독({@link #resubscribeAll})이 무효화된 동일 키를 재사용하지
+     * 않도록 한다. 갱신은 별도 스레드(승인키 재발급 콜백)에서 발생할 수 있으므로 {@code volatile}로 가시성을 보장한다.
+     */
+    @SuppressWarnings("PMD.AvoidUsingVolatile")
+    private volatile String approvalKey;
+
     private final WebSocketClient webSocketClient;
     private final KisWebSocketMessageHandler messageHandler;
     private final KisMarketSchedule marketSchedule;
@@ -291,6 +299,20 @@ public class KisWebSocketSession {
                     idleThreshold.toSeconds());
             attemptReconnect();
         }
+    }
+
+    /**
+     * 재발급된 approval_key로 세션의 승인키를 갱신한다(REQ-WSRES2-007).
+     *
+     * <p>{@link KisWebSocketSessionManager}가 인증 실패 감지 후 새 승인키 발급에 성공하면 호출한다. 이후 {@link
+     * #subscribe}/{@link #resubscribeAll}이 전송하는 SUBSCRIBE 메시지는 이 새 키를 사용한다 — 무효화된 동일 키를 재사용해 무한 루프가
+     * 지속되는 것을 막는다(spec.md §1 결함②).
+     *
+     * @param newApprovalKey 새로 발급된 승인키
+     */
+    public void updateApprovalKey(String newApprovalKey) {
+        this.approvalKey = newApprovalKey;
+        log.info("[{}] approval_key 갱신 완료 — 다음 SUBSCRIBE부터 신규 키 적용 (REQ-WSRES2-007)", alias);
     }
 
     /**

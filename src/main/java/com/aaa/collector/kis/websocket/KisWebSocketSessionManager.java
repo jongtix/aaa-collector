@@ -57,6 +57,7 @@ public class KisWebSocketSessionManager implements SmartLifecycle {
     private final Sleeper sleeper;
     private final Clock clock;
     private final KisWebSocketSessionFactory sessionFactory;
+    private final ApprovalKeyReissuer approvalKeyReissuer;
 
     /** alias → 세션 맵. */
     private final Map<String, KisWebSocketSession> sessions = new ConcurrentHashMap<>();
@@ -125,6 +126,7 @@ public class KisWebSocketSessionManager implements SmartLifecycle {
         this.clock = clock;
         this.sessionFactory =
                 (sessionFactory != null) ? sessionFactory : this::createDefaultSession;
+        this.approvalKeyReissuer = new ApprovalKeyReissuer(kisTokenService);
         registerMetrics(meterRegistry);
     }
 
@@ -515,8 +517,26 @@ public class KisWebSocketSessionManager implements SmartLifecycle {
                         webSocketSafeModeManager,
                         sleeper,
                         clock);
+        wireCallbacks(handler, session, alias);
+        return session;
+    }
+
+    /**
+     * 세션 생성 직후 핸들러 콜백을 배선한다(REQ-WS-020, REQ-WSRES2-007).
+     *
+     * <p>{@link #createDefaultSession}에서 분리한 이유는 단위 테스트에서 실제 {@link StandardWebSocketClient}(네트워크
+     * I/O)를 우회하면서도 콜백 배선 자체를 mock 객체로 직접 검증하기 위함이다. package-private: 테스트에서 직접 호출 가능.
+     *
+     * @param handler 배선 대상 메시지 핸들러
+     * @param session 배선 대상 세션
+     * @param alias 계정 식별자(승인키 재발급 시 사용)
+     */
+    void wireCallbacks(
+            KisWebSocketMessageHandler handler, KisWebSocketSession session, String alias) {
         // afterConnectionClosed → session.handleDisconnect() 경로 연결 (CR-01 fix, REQ-WS-020)
         handler.setDisconnectCallback(session::handleDisconnect);
-        return session;
+        // 인증 실패 식별 → approval_key 무효화+재발급 후 살아있는 세션에 즉시 주입 (REQ-WSRES2-007)
+        handler.setApprovalKeyReissueCallback(
+                () -> approvalKeyReissuer.reissueAsync(alias, session));
     }
 }

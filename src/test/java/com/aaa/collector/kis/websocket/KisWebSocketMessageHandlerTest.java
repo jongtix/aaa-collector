@@ -493,6 +493,129 @@ class KisWebSocketMessageHandlerTest {
     }
 
     // ──────────────────────────────────────────────────────────────────
+    // approval_key 인증 실패 식별 + 재발급 트리거 (REQ-WSRES2-006/007, AC-4/AC-5)
+    // ──────────────────────────────────────────────────────────────────
+
+    @Nested
+    @DisplayName("Type B — approval_key 인증 실패 식별")
+    class TypeBAuthFailure {
+
+        private String subscribeFailureJson(String msg1) {
+            return """
+                    {
+                      "header": {"tr_id": "H0STASP0", "tr_key": "005930"},
+                      "body": {
+                        "rt_cd": "1",
+                        "msg1": "%s"
+                      }
+                    }
+                    """
+                    .replace("%s", msg1);
+        }
+
+        @Test
+        @DisplayName(
+                "AC-4 재현-우선(실측): msg1=\"invalid approval : <key>\"(2026-09-28 인시던트 실측,"
+                        + " VictoriaLogs 66건 확인) → 인증성 실패 분기 발화(authFailureCallback +"
+                        + " approvalKeyReissueCallback 각 1회 호출)")
+        void realIncidentInvalidApprovalMsg1_triggersAuthFailurePath() {
+            Runnable authFailureCallback = mock(Runnable.class);
+            Runnable reissueCallback = mock(Runnable.class);
+            handler.setAuthFailureCallback(authFailureCallback);
+            handler.setApprovalKeyReissueCallback(reissueCallback);
+
+            handler.handleTextMessage(
+                    session,
+                    new TextMessage(
+                            subscribeFailureJson(
+                                    "invalid approval : 32b39a3b-467d-4266-bf35-7709892eff52")));
+
+            verify(authFailureCallback, times(1)).run();
+            verify(reissueCallback, times(1)).run();
+        }
+
+        @Test
+        @DisplayName(
+                "AC-4 대조군 1(실측): msg1=\"ALREADY IN USE appkey\"(rt_cd=9, 2026-07-28 별도 인시던트"
+                        + " 실측 — 동시 사용 충돌이지 키 무효화가 아니므로 명시적으로 제외) → 인증성 실패 분기 미발화")
+        void realAlreadyInUseAppkeyMsg1_doesNotTriggerAuthFailurePath() {
+            Runnable authFailureCallback = mock(Runnable.class);
+            Runnable reissueCallback = mock(Runnable.class);
+            handler.setAuthFailureCallback(authFailureCallback);
+            handler.setApprovalKeyReissueCallback(reissueCallback);
+
+            handler.handleTextMessage(
+                    session, new TextMessage(subscribeFailureJson("ALREADY IN USE appkey")));
+
+            verify(authFailureCallback, never()).run();
+            verify(reissueCallback, never()).run();
+        }
+
+        @Test
+        @DisplayName("AC-4 대조군 2: msg1=\"SUBSCRIBE FAIL\"(일반 구독 실패) → 인증성 실패 분기 미발화")
+        void genericSubscribeFailMsg1_doesNotTriggerAuthFailurePath() {
+            Runnable authFailureCallback = mock(Runnable.class);
+            Runnable reissueCallback = mock(Runnable.class);
+            handler.setAuthFailureCallback(authFailureCallback);
+            handler.setApprovalKeyReissueCallback(reissueCallback);
+
+            handler.handleTextMessage(
+                    session, new TextMessage(subscribeFailureJson("SUBSCRIBE FAIL")));
+
+            verify(authFailureCallback, never()).run();
+            verify(reissueCallback, never()).run();
+        }
+
+        @Test
+        @DisplayName(
+                "AC-4 대조군 3(실측): msg1=\"UNSUBSCRIBE ERROR(not found!)\"(api-specs/kis 실측) — SUBSCRIBE"
+                        + " 방향으로 상관되더라도 인증성 실패로 오분류되지 않는다")
+        void realUnsubscribeErrorMsg1_doesNotTriggerAuthFailurePath() {
+            Runnable authFailureCallback = mock(Runnable.class);
+            Runnable reissueCallback = mock(Runnable.class);
+            handler.setAuthFailureCallback(authFailureCallback);
+            handler.setApprovalKeyReissueCallback(reissueCallback);
+
+            handler.handleTextMessage(
+                    session,
+                    new TextMessage(subscribeFailureJson("UNSUBSCRIBE ERROR(not found!)")));
+
+            verify(authFailureCallback, never()).run();
+            verify(reissueCallback, never()).run();
+        }
+
+        @Test
+        @DisplayName("AC-4 대조군 4(경계): msg1=\"\"(빈 문자열) → 인증성 실패 분기 미발화")
+        void emptyMsg1_doesNotTriggerAuthFailurePath() {
+            Runnable authFailureCallback = mock(Runnable.class);
+            Runnable reissueCallback = mock(Runnable.class);
+            handler.setAuthFailureCallback(authFailureCallback);
+            handler.setApprovalKeyReissueCallback(reissueCallback);
+
+            handler.handleTextMessage(session, new TextMessage(subscribeFailureJson("")));
+
+            verify(authFailureCallback, never()).run();
+            verify(reissueCallback, never()).run();
+        }
+
+        @Test
+        @DisplayName(
+                "AC-5: 인증성 실패도 subscriptionFailureCount에 반영되어 5회째 안전모드 진입(REQ-WSRES2-010"
+                        + " 임계값 비상쇄 회귀 방지)")
+        void authFailure_stillCountsTowardSafeModeThreshold() {
+            TextMessage authFailureMessage =
+                    new TextMessage(
+                            subscribeFailureJson(
+                                    "invalid approval : 32b39a3b-467d-4266-bf35-7709892eff52"));
+            for (int i = 0; i < 5; i++) {
+                handler.handleTextMessage(session, authFailureMessage);
+            }
+
+            verify(webSocketSafeModeManager, times(1)).enter(any(), any());
+        }
+    }
+
+    // ──────────────────────────────────────────────────────────────────
     // 유휴 단절 워치독 — 마지막 수신 시각 추적 (REQ-WSRES2-001, AC-1)
     // ──────────────────────────────────────────────────────────────────
 

@@ -323,6 +323,25 @@ class KisWebSocketSessionTest {
             assertThat(payload).contains("005930");
             assertThat(payload).contains("\"tr_type\":\"1\"");
         }
+
+        @Test
+        @DisplayName(
+                "REQ-WSRES2-007: updateApprovalKey 이후 subscribe는 새 승인키를 사용한다(무효화된 동일 키 재사용 방지)")
+        void afterUpdateApprovalKey_subscribeUsesNewKey() throws Exception {
+            // Arrange
+            String newApprovalKey = "fresh-reissued-approval-key";
+            session.updateApprovalKey(newApprovalKey);
+
+            // Act
+            session.subscribe("H0STCNT0", "005930");
+
+            // Assert
+            ArgumentCaptor<TextMessage> captor = ArgumentCaptor.forClass(TextMessage.class);
+            verify(rawSession, atLeastOnce()).sendMessage(captor.capture());
+            String payload = captor.getValue().getPayload();
+            assertThat(payload).contains(newApprovalKey);
+            assertThat(payload).doesNotContain(APPROVAL_KEY);
+        }
     }
 
     // ──────────────────────────────────────────────────────────────────
