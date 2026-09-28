@@ -32,15 +32,18 @@ import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
 /**
- * REQ-WSEXIT-004 통합 검증 — 재연결 성공 훅포인트(hookpoint 2)의 exit(alias) 호출이 실제 Redis 상태를 즉시 되돌리는지 검증한다
- * (SPEC-COLLECTOR-WS-SAFEMODE-EXIT-001).
+ * REQ-WSRES2-008 통합 검증(REQ-WSEXIT-004 개정) — 재연결 성공 훅포인트(hookpoint 2)만으로는 더 이상 안전모드를 능동 해제하지 않음을 실제
+ * Redis 상태로 검증한다 (SPEC-COLLECTOR-WS-RESILIENCE-002, 원 동작은 SPEC-COLLECTOR-WS-SAFEMODE-EXIT-001
+ * REQ-WSEXIT-004 "지점 2").
  *
- * <p>{@link SafeModeManagerIntegrationTest}와 동일한 실제 Redis Testcontainers 패턴을 사용하되, WS 세이프모드 TTL을
- * 2초로 단축한 전용 {@link SafeModeBackoffPolicy}를 주입한다. TTL이 만료되기 전에 재연결 성공 경로(hookpoint 2)를 동기적으로 구동하여,
- * 관측된 해제가 능동적 {@code exit()} 호출에 의한 것이지 TTL 자연 만료에 의한 것이 아님을 시간창(2초) 안에서 입증한다.
+ * <p>2026-09-28 인시던트에서 이 지점 2의 조기 해제가 approval_key 인증 실패와 결합해 무한 재연결 루프를 유발했다(spec.md §1 결함②).
+ * {@link SafeModeManagerIntegrationTest}와 동일한 실제 Redis Testcontainers 패턴을 사용하되, WS 세이프모드 TTL을 2초로
+ * 단축한 전용 {@link SafeModeBackoffPolicy}를 주입한다 — 재연결 성공 경로(hookpoint 2)를 TTL 만료 전에 동기적으로 구동해도 안전모드가
+ * 여전히 활성 상태(Redis 키 존재)로 남아있음을 확인함으로써, 관측된 유지가 TTL 자연 만료 유예 때문이 아니라 hookpoint 2의 exit() 호출 자체가
+ * 제거되었기 때문임을 입증한다.
  */
 @Testcontainers
-@DisplayName("KisWebSocketSession 재연결 성공 → SafeMode exit() 통합 검증 (REQ-WSEXIT-004)")
+@DisplayName("KisWebSocketSession 재연결 성공만으로는 SafeMode 미해제 (REQ-WSRES2-008, REQ-WSEXIT-004 개정)")
 @Tag("integration")
 class KisWebSocketSessionSafeModeExitIntegrationTest {
 
@@ -83,8 +86,12 @@ class KisWebSocketSessionSafeModeExitIntegrationTest {
     }
 
     @Test
-    @DisplayName("2초 TTL로 세이프모드 진입 후, TTL 만료 전 재연결 성공(hookpoint 2)을 구동하면 즉시 해제된다(exit() 귀속 증명)")
-    void reconnectSuccess_beforeTtlExpiry_immediatelyClearsSafeMode() throws Exception {
+    @DisplayName(
+            "REQ-WSRES2-008 재현-우선(반전): 2초 TTL로 세이프모드 진입 후, TTL 만료 전 재연결 성공(hookpoint 2)만"
+                    + " 구동해도 세이프모드가 해제되지 않는다(exit() 미호출 귀속 증명) — 개정 전 이 테스트는 즉시 해제를"
+                    + " 단언했다")
+    void reconnectSuccess_beforeTtlExpiry_doesNotClearSafeModeWithoutSubscriptionConfirmation()
+            throws Exception {
         // Arrange — 2초 TTL로 세이프모드 진입
         webSocketSafeModeManager.enter(ALIAS, new RuntimeException("재연결 5회 연속 실패(시뮬레이션)"));
         assertThat(webSocketSafeModeManager.isActive(ALIAS)).isTrue();
@@ -122,13 +129,14 @@ class KisWebSocketSessionSafeModeExitIntegrationTest {
 
             ZonedDateTime marketOpen = ZonedDateTime.now(fixedClock);
 
-            // Act — 재연결 성공 경로(hookpoint 2)를 동기적으로 구동
+            // Act — 재연결 성공 경로(hookpoint 2)를 동기적으로 구동 (구독 성공 응답은 시뮬레이션하지 않음)
             session.handleDisconnect(marketOpen);
 
-            // Assert — TTL(2초) 만료 전에 즉시 확인. isActive()=false + Redis 키 자체가 부재(DEL, REQ-WSEXIT-007과의
-            // 조합 검증)해야 exit()에 의한 능동 해제로 귀속할 수 있다(TTL 자연 만료라면 이 시점엔 아직 키가 남아있어야 함).
-            assertThat(webSocketSafeModeManager.isActive(ALIAS)).isFalse();
-            assertThat(redisTemplate.hasKey(KEY_PREFIX + ALIAS)).isFalse();
+            // Assert — TTL(2초) 만료 전에 즉시 확인. isActive()=true + Redis 키가 여전히 존재해야
+            // REQ-WSRES2-008(hookpoint 2 exit() 제거)이 올바르게 적용되었음을 입증할 수 있다 — 만약 exit()가
+            // 여전히 호출된다면 이 시점에 이미 키가 삭제되어 있을 것이다.
+            assertThat(webSocketSafeModeManager.isActive(ALIAS)).isTrue();
+            assertThat(redisTemplate.hasKey(KEY_PREFIX + ALIAS)).isTrue();
         }
     }
 }
