@@ -13,7 +13,9 @@ import java.time.ZonedDateTime;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.web.socket.TextMessage;
 import org.springframework.web.socket.WebSocketHttpHeaders;
@@ -49,6 +51,18 @@ public class KisWebSocketSession {
     /** "trId|trKey" 구독 키 분리 시 예상 파트 수. */
     private static final int SUBSCRIPTION_KEY_PARTS = 2;
 
+    /**
+     * 인증 실패 회로차단기(REQ-WSRES2-009) 판정 창(윈도우) 크기 — OQ-3 설계 (b): 안전모드(REQ-WS-022)와 완전히 독립된 별도 축. 이 창 내
+     * 인증 실패 횟수가 {@link #AUTH_FAILURE_CIRCUIT_THRESHOLD} 이상이면 재연결 자체의 지연 하한을 강제한다.
+     */
+    private static final Duration AUTH_FAILURE_CIRCUIT_WINDOW = Duration.ofSeconds(30);
+
+    /** 창 내 인증 실패 허용 횟수 상한(REQ-WSRES2-009) — 초과 시 회로차단기 발동. */
+    private static final int AUTH_FAILURE_CIRCUIT_THRESHOLD = 3;
+
+    /** 회로차단기 발동 시 강제되는 재연결 지연 하한(밀리초, safety-critical) — REQ-WSRES2-009. */
+    private static final long AUTH_FAILURE_CIRCUIT_COOLDOWN_MS = 30_000L;
+
     private final String alias;
 
     /**
@@ -82,6 +96,18 @@ public class KisWebSocketSession {
 
     /** 연속 재연결 시도 횟수 (성공 시 0으로 초기화). */
     private final AtomicInteger reconnectAttempt = new AtomicInteger(0);
+
+    /**
+     * 재연결 진행 중 재진입 방지 플래그(엣지 케이스 E1) — 유휴 워치독의 강제 재연결과 실제 소켓 종료(disconnect) 이벤트가 근접한 시점에 함께 발생해도 중복
+     * 재연결 시도를 유발하지 않도록 한다. 신규 스레드/타이머 없이 기존 동기 재연결 흐름 안에서 CAS로 처리한다.
+     */
+    private final AtomicBoolean reconnecting = new AtomicBoolean(false);
+
+    /** 인증 실패 회로차단기(REQ-WSRES2-009) 판정 창 내 발생 횟수 — 세이프모드 카운터와 완전히 독립된 별도 상태. */
+    private final AtomicInteger authFailureWindowCount = new AtomicInteger(0);
+
+    /** 인증 실패 회로차단기 판정 창의 시작 시각. {@code null}이면 창이 아직 열리지 않은 상태. */
+    private final AtomicReference<Instant> authFailureWindowStart = new AtomicReference<>();
 
     /** {@code true}이면 정상 종료로 인한 disconnect — 재연결 차단. */
     @SuppressWarnings("PMD.AvoidUsingVolatile")
@@ -302,6 +328,25 @@ public class KisWebSocketSession {
     }
 
     /**
+     * approval_key 인증 실패 발생을 회로차단기 판정 창에 기록한다(REQ-WSRES2-009).
+     *
+     * <p>{@link KisWebSocketMessageHandler}가 인증 실패를 식별할 때마다 콜백으로 호출된다. 판정 창이 만료되었으면(초기 상태 포함) 새 창을
+     * 열고, 만료 전이면 창 내 발생 횟수를 누적한다. 이 상태는 {@link SafeModeManager}(REQ-WSRES-011~013 TTL· 백오프)와 완전히
+     * 독립적이다(acceptance.md 엣지 케이스 E3).
+     */
+    public void recordAuthFailure() {
+        Instant now = clock.instant();
+        Instant windowStart = authFailureWindowStart.get();
+        if (windowStart == null
+                || Duration.between(windowStart, now).compareTo(AUTH_FAILURE_CIRCUIT_WINDOW) > 0) {
+            authFailureWindowStart.set(now);
+            authFailureWindowCount.set(1);
+        } else {
+            authFailureWindowCount.incrementAndGet();
+        }
+    }
+
+    /**
      * 재발급된 approval_key로 세션의 승인키를 갱신한다(REQ-WSRES2-007).
      *
      * <p>{@link KisWebSocketSessionManager}가 인증 실패 감지 후 새 승인키 발급에 성공하면 호출한다. 이후 {@link
@@ -361,21 +406,57 @@ public class KisWebSocketSession {
     /**
      * 지수 백오프를 적용하여 재연결을 시도한다.
      *
-     * <p>5회 연속 실패 시 안전 모드에 진입하고 재시도를 중단한다 (REQ-WS-022).
+     * <p>5회 연속 실패 시 안전 모드에 진입하고 재시도를 중단한다 (REQ-WS-022). 재진입 방지 플래그(엣지 케이스 E1)로 유휴 워치독과 실제
+     * disconnect 이벤트가 근접해 발생해도 중복 재연결을 막는다 — 진행 중인 재연결이 있으면 새 트리거는 조용히 무시된다. 인증 실패
+     * 회로차단기(REQ-WSRES2-009)가 발동 중이면 재연결 지연을 하한({@value #AUTH_FAILURE_CIRCUIT_COOLDOWN_MS}ms)까지 강제한다
+     * — 안전모드 임계값(REQ-WS-022)이나 이 메서드의 실패/성공 계수 로직 자체는 전혀 건드리지 않는 별도 축이다 (REQ-WSRES2-010).
      */
     private void attemptReconnect() {
-        int attempt = reconnectAttempt.getAndIncrement();
-        long delayMs = ExponentialBackoff.delay(attempt, BASE_RECONNECT_DELAY_MS).toMillis();
-
-        try {
-            sleeper.sleep(delayMs);
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            log.warn("[{}] 재연결 대기 중 인터럽트", alias);
+        if (!reconnecting.compareAndSet(false, true)) {
+            log.debug("[{}] 재연결 이미 진행 중 — 중복 트리거 무시(워치독/disconnect 경합 방지)", alias);
             return;
         }
+        try {
+            int attempt = reconnectAttempt.getAndIncrement();
+            long delayMs = ExponentialBackoff.delay(attempt, BASE_RECONNECT_DELAY_MS).toMillis();
 
-        reconnectInternal(attempt);
+            if (isAuthFailureCircuitOpen()) {
+                delayMs = Math.max(delayMs, AUTH_FAILURE_CIRCUIT_COOLDOWN_MS);
+                log.warn(
+                        "[{}] 인증 실패 반복 감지 — 회로차단기 발동, 재연결 지연 {}ms로 강제 (REQ-WSRES2-009)",
+                        alias,
+                        delayMs);
+            }
+
+            try {
+                sleeper.sleep(delayMs);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                log.warn("[{}] 재연결 대기 중 인터럽트", alias);
+                return;
+            }
+
+            reconnectInternal(attempt);
+        } finally {
+            reconnecting.set(false);
+        }
+    }
+
+    /**
+     * 인증 실패 회로차단기 발동 여부를 판정한다(REQ-WSRES2-009) — 최근 판정 창 내 인증 실패 횟수가 임계값 이상인가.
+     *
+     * <p>창이 만료되었으면(자연 리셋) 발동하지 않은 것으로 본다. {@link SafeModeManager}의 TTL·백오프(REQ-WSRES-011~013)와 완전히
+     * 독립된 판정이다(acceptance.md 엣지 케이스 E3) — {@code webSocketSafeModeManager.isActive(alias)}를 전혀 참조하지
+     * 않는다.
+     */
+    private boolean isAuthFailureCircuitOpen() {
+        Instant windowStart = authFailureWindowStart.get();
+        boolean windowExpired =
+                windowStart == null
+                        || Duration.between(windowStart, clock.instant())
+                                        .compareTo(AUTH_FAILURE_CIRCUIT_WINDOW)
+                                > 0;
+        return !windowExpired && authFailureWindowCount.get() >= AUTH_FAILURE_CIRCUIT_THRESHOLD;
     }
 
     @SuppressWarnings("PMD.AvoidCatchingGenericException")

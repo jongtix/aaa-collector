@@ -3,6 +3,7 @@ package com.aaa.collector.kis.websocket;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.atLeastOnce;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -26,6 +27,7 @@ import java.time.ZoneId;
 import java.time.ZonedDateTime;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
+import java.util.concurrent.atomic.AtomicBoolean;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -536,6 +538,160 @@ class KisWebSocketSessionTest {
 
             // Assert
             verify(sleeper, never()).sleep(any(Long.class));
+        }
+    }
+
+    // ──────────────────────────────────────────────────────────────────
+    // 재연결 재진입 방지 (엣지 케이스 E1)
+    // ──────────────────────────────────────────────────────────────────
+
+    @Nested
+    @DisplayName("재연결 재진입 방지(E1)")
+    class ReconnectReentrancyGuard {
+
+        @Test
+        @DisplayName("E1: 재연결(sleep) 진행 중 또 다른 트리거(워치독/disconnect 경합)가 재진입해도 중복 재연결을 유발하지 않는다")
+        void reentrantTriggerDuringReconnect_doesNotDuplicateReconnect() throws Exception {
+            // Arrange
+            ZonedDateTime marketOpen =
+                    ZonedDateTime.of(2025, 1, 6, 10, 0, 0, 0, ZoneId.of("Asia/Seoul"));
+            when(marketSchedule.isDomesticOpen(any())).thenReturn(true);
+            when(marketSchedule.isOverseasOpen(any())).thenReturn(false);
+            when(webSocketClient.execute(any(), any(WebSocketHttpHeaders.class), any(URI.class)))
+                    .thenReturn(handshakeFuture);
+            when(handshakeFuture.get()).thenReturn(rawSession);
+            // sleep() 도중 재진입 트리거를 1회만 시뮬레이션 — 첫 재연결이 아직 진행 중인 상태에서 두 번째 트리거가 도착하는 경합
+            AtomicBoolean reentered = new AtomicBoolean(false);
+            doAnswer(
+                            invocation -> {
+                                if (reentered.compareAndSet(false, true)) {
+                                    session.handleDisconnect(marketOpen);
+                                }
+                                return null;
+                            })
+                    .when(sleeper)
+                    .sleep(any(Long.class));
+
+            // Act
+            session.handleDisconnect(marketOpen);
+
+            // Assert — setUp() 1회 + 바깥쪽 재연결 1회만 실제 handshake로 이어져야 한다(재진입 트리거는 무시)
+            verify(webSocketClient, times(2))
+                    .execute(any(), any(WebSocketHttpHeaders.class), any(URI.class));
+        }
+    }
+
+    // ──────────────────────────────────────────────────────────────────
+    // 인증 실패 회로차단기 (REQ-WSRES2-009/010, OQ-3 설계 (b) 독립 카운터)
+    // ──────────────────────────────────────────────────────────────────
+
+    @Nested
+    @DisplayName("인증 실패 회로차단기(recordAuthFailure)")
+    class AuthFailureCircuitBreaker {
+
+        @Test
+        @DisplayName(
+                "AC-7 재현-우선: 판정 창 내 인증 실패 3회 이상 반복 후 재연결 시도 시, 재연결 지연이 회로차단기 하한(30000ms)"
+                        + " 이상으로 강제된다(REQ-WSRES2-009)")
+        void authFailureThresholdExceeded_forcesReconnectDelayToCooldownFloor() throws Exception {
+            // Arrange
+            Instant now = Instant.parse("2026-09-28T02:23:48Z");
+            when(clock.instant()).thenReturn(now);
+            when(marketSchedule.isDomesticOpen(any())).thenReturn(true);
+            when(marketSchedule.isOverseasOpen(any())).thenReturn(false);
+            when(webSocketClient.execute(any(), any(WebSocketHttpHeaders.class), any(URI.class)))
+                    .thenReturn(handshakeFuture);
+            when(handshakeFuture.get()).thenReturn(rawSession);
+            ZonedDateTime marketOpen = now.atZone(ZoneId.of("Asia/Seoul"));
+
+            // Act — 판정 창 내 인증 실패 3회 기록(2026-09-28 인시던트 재현 — 동일 무효 키로 매초 반복)
+            session.recordAuthFailure();
+            session.recordAuthFailure();
+            session.recordAuthFailure();
+            session.handleDisconnect(marketOpen);
+
+            // Assert — attempt=0의 기본 지수 백오프(1000ms)가 아니라 회로차단기 하한(30000ms) 이상으로 강제되어야 한다
+            ArgumentCaptor<Long> delayCaptor = ArgumentCaptor.forClass(Long.class);
+            verify(sleeper).sleep(delayCaptor.capture());
+            assertThat(delayCaptor.getValue()).isGreaterThanOrEqualTo(30_000L);
+        }
+
+        @Test
+        @DisplayName("AC-7 오탐 방지: 판정 창 내 인증 실패가 임계값(3회) 미만이면 기존 지수 백오프(1000ms)가 그대로 적용된다")
+        void authFailureBelowThreshold_doesNotForceCooldown() throws Exception {
+            // Arrange
+            Instant now = Instant.parse("2026-09-28T02:23:48Z");
+            when(clock.instant()).thenReturn(now);
+            when(marketSchedule.isDomesticOpen(any())).thenReturn(true);
+            when(marketSchedule.isOverseasOpen(any())).thenReturn(false);
+            when(webSocketClient.execute(any(), any(WebSocketHttpHeaders.class), any(URI.class)))
+                    .thenReturn(handshakeFuture);
+            when(handshakeFuture.get()).thenReturn(rawSession);
+            ZonedDateTime marketOpen = now.atZone(ZoneId.of("Asia/Seoul"));
+
+            // Act — 임계값(3회) 미만
+            session.recordAuthFailure();
+            session.recordAuthFailure();
+            session.handleDisconnect(marketOpen);
+
+            // Assert
+            ArgumentCaptor<Long> delayCaptor = ArgumentCaptor.forClass(Long.class);
+            verify(sleeper).sleep(delayCaptor.capture());
+            assertThat(delayCaptor.getValue())
+                    .isEqualTo(ExponentialBackoff.delay(0, 1000).toMillis());
+        }
+
+        @Test
+        @DisplayName(
+                "AC-8/REQ-WSRES2-010: 회로차단기 발동 중에도 기존 REQ-WS-022(5회 연속 재연결 실패 → 안전모드) 임계값은"
+                        + " 정상 발동한다 — 두 방어선이 서로를 무력화하지 않는다")
+        void circuitBreakerActive_doesNotSuppressExistingSafeModeThreshold() throws Exception {
+            // Arrange — 회로차단기 발동 조건(창 내 인증 실패 3회 이상) + 재연결 자체는 계속 실패(핸드셰이크 예외)
+            Instant now = Instant.parse("2026-09-28T02:23:48Z");
+            when(clock.instant()).thenReturn(now);
+            when(marketSchedule.isDomesticOpen(any())).thenReturn(true);
+            when(marketSchedule.isOverseasOpen(any())).thenReturn(false);
+            when(webSocketClient.execute(any(), any(WebSocketHttpHeaders.class), any(URI.class)))
+                    .thenThrow(new RuntimeException("연결 실패"));
+            ZonedDateTime marketOpen = now.atZone(ZoneId.of("Asia/Seoul"));
+            session.recordAuthFailure();
+            session.recordAuthFailure();
+            session.recordAuthFailure();
+
+            // Act — 5회 연속 재연결 실패
+            for (int i = 0; i < 5; i++) {
+                session.handleDisconnect(marketOpen);
+            }
+
+            // Assert — 회로차단기가 재연결 지연만 늘렸을 뿐, REQ-WS-022 임계값 카운팅·발동 자체는 그대로 동작해야 한다
+            verify(webSocketSafeModeManager, times(1))
+                    .enter(any(String.class), any(Throwable.class));
+        }
+
+        @Test
+        @DisplayName(
+                "E3: recordAuthFailure()와 회로차단기 판정 경로는 webSocketSafeModeManager(TTL·백오프,"
+                        + " REQ-WSRES-011~013)와 전혀 상호작용하지 않는다 — 재연결 성공 시에도 세이프모드 상태 전환과"
+                        + " 무관하게 독립적으로 동작한다")
+        void authFailureCircuit_neverInteractsWithSafeModeManager() throws Exception {
+            // Arrange — 회로차단기 발동 조건(3회) + 재연결은 성공(REQ-WSRES2-008 이후 성공만으로는 exit() 호출 자체가 없음)
+            Instant now = Instant.parse("2026-09-28T02:23:48Z");
+            when(clock.instant()).thenReturn(now);
+            when(marketSchedule.isDomesticOpen(any())).thenReturn(true);
+            when(marketSchedule.isOverseasOpen(any())).thenReturn(false);
+            when(webSocketClient.execute(any(), any(WebSocketHttpHeaders.class), any(URI.class)))
+                    .thenReturn(handshakeFuture);
+            when(handshakeFuture.get()).thenReturn(rawSession);
+            ZonedDateTime marketOpen = now.atZone(ZoneId.of("Asia/Seoul"));
+
+            // Act
+            session.recordAuthFailure();
+            session.recordAuthFailure();
+            session.recordAuthFailure();
+            session.handleDisconnect(marketOpen);
+
+            // Assert — 회로차단기 판정·기록 경로 자체가 webSocketSafeModeManager에 어떤 메서드도 호출하지 않는다
+            verifyNoInteractions(webSocketSafeModeManager);
         }
     }
 
