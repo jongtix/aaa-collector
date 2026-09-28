@@ -70,6 +70,9 @@ public class KisWebSocketSession {
      * #updateApprovalKey}로 세션 생존 기간 내 갱신되어, 재연결 후 재구독({@link #resubscribeAll})이 무효화된 동일 키를 재사용하지
      * 않도록 한다. 갱신은 별도 스레드(승인키 재발급 콜백)에서 발생할 수 있으므로 {@code volatile}로 가시성을 보장한다.
      */
+    // @MX:WARN: [AUTO] 승인키를 세션 밖 스레드(ApprovalKeyReissuer 가상 스레드)가 updateApprovalKey로 덮어쓴다
+    // @MX:REASON: volatile은 가시성만 보장하고 갱신 순서는 보장하지 않는다 — 재발급이 겹치면 마지막에 끝난 스레드의 키(이미 무효화됐을
+    // 수 있는 키)가 남으므로 alias별 단일 비행(ApprovalKeyReissuer)이 깨지면 이 필드가 stale 키를 잡는다
     @SuppressWarnings("PMD.AvoidUsingVolatile")
     private volatile String approvalKey;
 
@@ -101,6 +104,9 @@ public class KisWebSocketSession {
      * 재연결 진행 중 재진입 방지 플래그(엣지 케이스 E1) — 유휴 워치독의 강제 재연결과 실제 소켓 종료(disconnect) 이벤트가 근접한 시점에 함께 발생해도 중복
      * 재연결 시도를 유발하지 않도록 한다. 신규 스레드/타이머 없이 기존 동기 재연결 흐름 안에서 CAS로 처리한다.
      */
+    // @MX:WARN: [AUTO] reconnecting CAS 가드 — 재연결 진행 중 도착한 트리거(워치독/실제 disconnect)를 조용히 버린다
+    // @MX:REASON: 진행 중 재연결이 끝나기 전에 새 연결이 다시 끊기면 그 disconnect가 유실되고(DEBUG 로그뿐) 복구가 장중 워치독에만
+    // 의존한다 — 중복 재연결 방지(E1)와 맞바꾼 수용된 트레이드오프이며, 대기 플래그 도입 시 재검토한다
     private final AtomicBoolean reconnecting = new AtomicBoolean(false);
 
     /** 인증 실패 회로차단기(REQ-WSRES2-009) 판정 창 내 발생 횟수 — 세이프모드 카운터와 완전히 독립된 별도 상태. */
@@ -411,6 +417,9 @@ public class KisWebSocketSession {
      * 회로차단기(REQ-WSRES2-009)가 발동 중이면 재연결 지연을 하한({@value #AUTH_FAILURE_CIRCUIT_COOLDOWN_MS}ms)까지 강제한다
      * — 안전모드 임계값(REQ-WS-022)이나 이 메서드의 실패/성공 계수 로직 자체는 전혀 건드리지 않는 별도 축이다 (REQ-WSRES2-010).
      */
+    // @MX:WARN: [AUTO] CAS로 재진입을 막는 동기 재연결 — sleeper.sleep() 동안 reconnecting=true를 점유한다
+    // @MX:REASON: 백오프/회로차단기 지연 동안 도착하는 다른 트리거는 전부 무시되고, finally의 reconnecting.set(false)가 해제의
+    // 유일한 경로다 — 이 finally가 깨지면 재연결이 영구 차단된다
     private void attemptReconnect() {
         if (!reconnecting.compareAndSet(false, true)) {
             log.debug("[{}] 재연결 이미 진행 중 — 중복 트리거 무시(워치독/disconnect 경합 방지)", alias);
