@@ -126,7 +126,7 @@ public class KisWebSocketSessionManager implements SmartLifecycle {
         this.clock = clock;
         this.sessionFactory =
                 (sessionFactory != null) ? sessionFactory : this::createDefaultSession;
-        this.approvalKeyReissuer = new ApprovalKeyReissuer(kisTokenService);
+        this.approvalKeyReissuer = new ApprovalKeyReissuer(kisTokenService, clock);
         registerMetrics(meterRegistry);
     }
 
