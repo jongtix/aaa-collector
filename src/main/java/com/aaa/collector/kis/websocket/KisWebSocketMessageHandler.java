@@ -60,6 +60,17 @@ public class KisWebSocketMessageHandler extends TextWebSocketHandler {
      */
     private static final String AUTH_FAILURE_MSG_PREFIX = "invalid approval";
 
+    /**
+     * 인증 실패 응답을 로그·예외 메시지에 남길 때 원문 msg1 대신 쓰는 고정 분류 토큰.
+     *
+     * <p>이 msg1은 {@code invalid approval : <승인키>} 형태로 승인키를 그대로 실어 오므로, 인증 실패 경로에서는 msg1 원문을 로그·예외
+     * 메시지에 절대 남기지 않는다(SPEC-COLLECTOR-WS-RESILIENCE-002, 프로젝트 규칙: API 키 로그 마스킹).
+     */
+    private static final String AUTH_FAILURE_LOG_TOKEN = "INVALID_APPROVAL_KEY";
+
+    /** 파싱 오류 로그에서 인증 실패 응답 원문을 대체하는 문구. */
+    private static final String AUTH_FAILURE_PAYLOAD_OMITTED = "[approval_key 인증 실패 응답 — 원문 생략]";
+
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
 
     /** 세션 식별자 (안전 모드 alias로 사용). */
@@ -404,7 +415,11 @@ public class KisWebSocketMessageHandler extends TextWebSocketHandler {
                 if (RT_CD_SUCCESS.equals(rtCd)) {
                     log.info("[{}] 구독 해제 확인: trId={}, msg={}", alias, trId, msg1);
                 } else {
-                    log.warn("[{}] 구독 해제 오류(무해) — 카운트 미반영: trId={}, msg={}", alias, trId, msg1);
+                    log.warn(
+                            "[{}] 구독 해제 오류(무해) — 카운트 미반영: trId={}, msg={}",
+                            alias,
+                            trId,
+                            redactAuthFailure(msg1));
                 }
                 return;
             }
@@ -413,18 +428,21 @@ public class KisWebSocketMessageHandler extends TextWebSocketHandler {
             if (RT_CD_SUCCESS.equals(rtCd)) {
                 handleSubscriptionSuccess(trId, body);
             } else if (isAuthFailure(msg1)) {
-                handleAuthFailure(trId, msg1);
+                handleAuthFailure(trId);
             } else {
                 handleGenericSubscriptionFailure(trId, rtCd, msg1);
             }
 
         } catch (Exception e) {
-            log.error(
-                    "[{}] Type B 메시지 파싱 오류: {}",
-                    alias,
-                    raw.substring(0, Math.min(200, raw.length())),
-                    e);
+            log.error("[{}] Type B 메시지 파싱 오류: {}", alias, payloadForLog(raw), e);
         }
+    }
+
+    /** 파싱 오류 로그에 실을 원문 조각 — 인증 실패 응답 원문에는 승인키가 들어 있으므로 원문을 남기지 않고 고정 문구로 대체한다. */
+    private static String payloadForLog(String raw) {
+        return raw.contains(AUTH_FAILURE_MSG_PREFIX)
+                ? AUTH_FAILURE_PAYLOAD_OMITTED
+                : raw.substring(0, Math.min(200, raw.length()));
     }
 
     /**
@@ -432,11 +450,15 @@ public class KisWebSocketMessageHandler extends TextWebSocketHandler {
      * 기존 REQ-WS-016 임계값 카운팅에는 그대로 반영된다 — 신규 회로차단기(REQ-WSRES2-009)는 재연결 시도 "빈도"를 별도 축에서 통제할 뿐, 이
      * 안전모드 진입 임계값 자체를 대체하거나 상쇄하지 않는다(REQ-WSRES2-010).
      */
-    private void handleAuthFailure(String trId, String msg1) {
-        log.warn("[{}] 구독 실패(approval_key 인증) — 재발급 트리거: trId={}, msg={}", alias, trId, msg1);
+    private void handleAuthFailure(String trId) {
+        log.warn(
+                "[{}] 구독 실패(approval_key 인증) — 재발급 트리거: trId={}, 분류={}",
+                alias,
+                trId,
+                AUTH_FAILURE_LOG_TOKEN);
         authFailureCallback.run();
         approvalKeyReissueCallback.run();
-        incrementFailureCountAndMaybeEnterSafeMode(msg1);
+        incrementFailureCountAndMaybeEnterSafeMode(AUTH_FAILURE_LOG_TOKEN);
     }
 
     /** 일반 구독 실패(REQ-WSRES-008) 처리. */
@@ -445,13 +467,22 @@ public class KisWebSocketMessageHandler extends TextWebSocketHandler {
         incrementFailureCountAndMaybeEnterSafeMode(msg1);
     }
 
-    /** 연속 구독 실패 카운터를 증가시키고, 임계값 도달 시 안전 모드에 진입한다(REQ-WS-016). */
-    private void incrementFailureCountAndMaybeEnterSafeMode(String msg1) {
+    /**
+     * 연속 구독 실패 카운터를 증가시키고, 임계값 도달 시 안전 모드에 진입한다(REQ-WS-016).
+     *
+     * @param failureDetail 예외 메시지에 실을 실패 사유 — 인증 실패 경로는 원문 msg1이 아니라 고정 분류 토큰을 넘겨야 한다
+     */
+    private void incrementFailureCountAndMaybeEnterSafeMode(String failureDetail) {
         int count = subscriptionFailureCount.incrementAndGet();
         if (count >= SAFE_MODE_FAILURE_THRESHOLD) {
             webSocketSafeModeManager.enter(
-                    alias, new RuntimeException("구독 연속 실패 " + count + "회: " + msg1));
+                    alias, new RuntimeException("구독 연속 실패 " + count + "회: " + failureDetail));
         }
+    }
+
+    /** 로그용 msg1 — 인증 실패 msg1은 승인키를 싣고 오므로 고정 분류 토큰으로 대체한다. */
+    private static String redactAuthFailure(String msg1) {
+        return isAuthFailure(msg1) ? AUTH_FAILURE_LOG_TOKEN : msg1;
     }
 
     /**
