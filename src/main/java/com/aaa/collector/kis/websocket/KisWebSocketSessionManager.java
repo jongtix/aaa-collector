@@ -522,7 +522,7 @@ public class KisWebSocketSessionManager implements SmartLifecycle {
     }
 
     /**
-     * 세션 생성 직후 핸들러 콜백을 배선한다(REQ-WS-020, REQ-WSRES2-007).
+     * 세션 생성 직후 핸들러 콜백을 배선한다(REQ-WS-020, REQ-WSRES2-007, REQ-WSRES2-009).
      *
      * <p>{@link #createDefaultSession}에서 분리한 이유는 단위 테스트에서 실제 {@link StandardWebSocketClient}(네트워크
      * I/O)를 우회하면서도 콜백 배선 자체를 mock 객체로 직접 검증하기 위함이다. package-private: 테스트에서 직접 호출 가능.
@@ -535,6 +535,8 @@ public class KisWebSocketSessionManager implements SmartLifecycle {
             KisWebSocketMessageHandler handler, KisWebSocketSession session, String alias) {
         // afterConnectionClosed → session.handleDisconnect() 경로 연결 (CR-01 fix, REQ-WS-020)
         handler.setDisconnectCallback(session::handleDisconnect);
+        // 인증 실패 발생 → 세션의 회로차단기 판정 창 갱신 (REQ-WSRES2-009)
+        handler.setAuthFailureCallback(session::recordAuthFailure);
         // 인증 실패 식별 → approval_key 무효화+재발급 후 살아있는 세션에 즉시 주입 (REQ-WSRES2-007)
         handler.setApprovalKeyReissueCallback(
                 () -> approvalKeyReissuer.reissueAsync(alias, session));

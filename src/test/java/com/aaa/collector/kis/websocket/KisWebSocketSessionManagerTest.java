@@ -659,6 +659,25 @@ class KisWebSocketSessionManagerTest {
 
         @Test
         @DisplayName(
+                "REQ-WSRES2-009: authFailureCallback 배선 — 실행 시 session.recordAuthFailure()가"
+                        + " 호출된다")
+        void authFailureCallback_invokesSessionRecordAuthFailure() {
+            // Arrange
+            KisWebSocketMessageHandler mockHandler = mock(KisWebSocketMessageHandler.class);
+            KisWebSocketSession mockSession = mock(KisWebSocketSession.class);
+            ArgumentCaptor<Runnable> callbackCaptor = ArgumentCaptor.forClass(Runnable.class);
+
+            // Act
+            manager.wireCallbacks(mockHandler, mockSession, "wire-test-alias");
+            verify(mockHandler).setAuthFailureCallback(callbackCaptor.capture());
+            callbackCaptor.getValue().run();
+
+            // Assert
+            verify(mockSession).recordAuthFailure();
+        }
+
+        @Test
+        @DisplayName(
                 "REQ-WSRES2-007: approvalKeyReissueCallback 배선 — 실행 시 무효화→재발급→세션 갱신 순으로" + " 호출된다")
         void approvalKeyReissueCallback_invalidatesReissuesAndUpdatesSession() {
             // Arrange
