@@ -119,4 +119,16 @@ class KisTokenRepositoryTest {
 
         assertThat(result).isEmpty();
     }
+
+    @Test
+    @DisplayName(
+            "deleteApprovalKey — delete(key) 호출, key 패턴이 cache:kis:approval_key:{alias}"
+                    + " (REQ-WSRES2-007)")
+    void deleteApprovalKey_callsDeleteWithApprovalKeyPattern() {
+        String alias = "test-alias";
+
+        repository.deleteApprovalKey(alias);
+
+        verify(redisTemplate).delete("cache:kis:approval_key:" + alias);
+    }
 }

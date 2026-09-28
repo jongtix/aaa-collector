@@ -311,6 +311,20 @@ public class KisTokenService {
     }
 
     /**
+     * 캐시된 WebSocket 승인키를 무효화한다(REQ-WSRES2-007).
+     *
+     * <p>구독 응답으로 approval_key 인증 실패가 확인되면(예: {@code msg1="invalid approval : <key>"}), KIS 서버측에서 이미
+     * 무효화된 캐시 키를 이후 재연결 시도가 재사용하지 않도록 즉시 삭제한다(SPEC-COLLECTOR-WS-RESILIENCE-002). {@link
+     * com.aaa.collector.kis.websocket.KisWebSocketSessionManager}가 인증 실패 감지 직후 이 메서드를 호출한 뒤 {@link
+     * #reissueApprovalKey(String)}로 새 승인키를 즉시 발급하여 살아있는 세션에 주입한다.
+     *
+     * @param alias 계정 식별자
+     */
+    public void invalidateApprovalKey(String alias) {
+        kisTokenRepository.deleteApprovalKey(alias);
+    }
+
+    /**
      * 유효한 WebSocket 승인키를 반환하는 Lazy 갱신 진입점.
      *
      * <p>Redis에 승인키가 존재하면 그대로 반환한다. 존재하지 않으면 {@link KisTokenClient#requestApprovalKey}를 호출하여 새 승인키를

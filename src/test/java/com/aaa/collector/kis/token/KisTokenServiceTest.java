@@ -865,6 +865,20 @@ class KisTokenServiceTest {
         verify(kisTokenClient, never()).requestApprovalKey(any());
     }
 
+    // ── invalidateApprovalKey (REQ-WSRES2-007) ──────────────────────────────────
+
+    @Test
+    @DisplayName(
+            "invalidateApprovalKey — KisTokenRepository.deleteApprovalKey(alias) 위임 호출"
+                    + " (REQ-WSRES2-007)")
+    void invalidateApprovalKey_delegatesToRepositoryDelete() {
+        // Act
+        kisTokenService.invalidateApprovalKey("test");
+
+        // Assert
+        verify(kisTokenRepository).deleteApprovalKey("test");
+    }
+
     // ── Helper ────────────────────────────────────────────────────────────────
 
     private KisTokenResponse tokenResponse(String token, LocalDateTime expiredAt) {

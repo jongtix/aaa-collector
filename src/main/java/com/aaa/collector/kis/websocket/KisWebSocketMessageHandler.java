@@ -51,6 +51,15 @@ public class KisWebSocketMessageHandler extends TextWebSocketHandler {
     /** KIS PINGPONG 트랜잭션 ID. */
     private static final String TR_ID_PINGPONG = "PINGPONG";
 
+    /**
+     * approval_key 인증 실패 msg1 판별 접두 문자열(REQ-WSRES2-006).
+     *
+     * <p>2026-09-28 인시던트 대응 SPEC(SPEC-COLLECTOR-WS-RESILIENCE-002) Run 단계에서 VictoriaLogs 실측으로 확정한
+     * 유일한 실제 관측 패턴 — 2026-09-01~09-28 구간 66건 전량이 이 접두어로 시작하는 byte-identical 메시지였다(progress.md
+     * §E.3). "ALREADY IN USE appkey"(rt_cd=9, 별도 근본원인 — 동시 사용 충돌이지 키 무효화가 아님)는 의도적으로 제외한다.
+     */
+    private static final String AUTH_FAILURE_MSG_PREFIX = "invalid approval";
+
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
 
     /** 세션 식별자 (안전 모드 alias로 사용). */
@@ -117,6 +126,20 @@ public class KisWebSocketMessageHandler extends TextWebSocketHandler {
     @SuppressWarnings("PMD.AvoidUsingVolatile")
     private volatile Runnable disconnectCallback = () -> {};
 
+    /**
+     * approval_key 인증 실패 발생을 세션에 알리는 콜백(REQ-WSRES2-009) — {@link
+     * KisWebSocketSession#recordAuthFailure}로 연결되어 회로차단기 판정 창(윈도우)을 갱신한다. 기본값은 no-op.
+     */
+    @SuppressWarnings("PMD.AvoidUsingVolatile")
+    private volatile Runnable authFailureCallback = () -> {};
+
+    /**
+     * approval_key 무효화+재발급을 트리거하는 콜백(REQ-WSRES2-007) — {@link KisWebSocketSessionManager}가 세션 생성 시
+     * 주입한다. 기본값은 no-op.
+     */
+    @SuppressWarnings("PMD.AvoidUsingVolatile")
+    private volatile Runnable approvalKeyReissueCallback = () -> {};
+
     public KisWebSocketMessageHandler(
             String alias,
             KisTickPublisher tickPublisher,
@@ -160,6 +183,30 @@ public class KisWebSocketMessageHandler extends TextWebSocketHandler {
      */
     public void setDisconnectCallback(Runnable callback) {
         this.disconnectCallback = callback;
+    }
+
+    /**
+     * approval_key 인증 실패 발생 콜백을 등록한다(REQ-WSRES2-009).
+     *
+     * <p>{@link KisWebSocketSessionManager#createDefaultSession}에서 세션 생성 직후 호출되어 {@link
+     * KisWebSocketSession#recordAuthFailure}로 연결된다.
+     *
+     * @param callback 인증 실패 발생 시 실행할 콜백
+     */
+    public void setAuthFailureCallback(Runnable callback) {
+        this.authFailureCallback = callback;
+    }
+
+    /**
+     * approval_key 무효화+재발급 트리거 콜백을 등록한다(REQ-WSRES2-007).
+     *
+     * <p>{@link KisWebSocketSessionManager#createDefaultSession}에서 세션 생성 직후 호출되어 살아있는 세션의 승인키를 즉시
+     * 갱신하는 경로로 연결된다.
+     *
+     * @param callback 인증 실패 식별 시 실행할 콜백
+     */
+    public void setApprovalKeyReissueCallback(Runnable callback) {
+        this.approvalKeyReissueCallback = callback;
     }
 
     /**
@@ -365,14 +412,10 @@ public class KisWebSocketMessageHandler extends TextWebSocketHandler {
             // direction == SUBSCRIBE
             if (RT_CD_SUCCESS.equals(rtCd)) {
                 handleSubscriptionSuccess(trId, body);
+            } else if (isAuthFailure(msg1)) {
+                handleAuthFailure(trId, msg1);
             } else {
-                // 구독 실패(REQ-WSRES-008)
-                log.warn("[{}] 구독 실패: trId={}, rt_cd={}, msg={}", alias, trId, rtCd, msg1);
-                int count = subscriptionFailureCount.incrementAndGet();
-                if (count >= SAFE_MODE_FAILURE_THRESHOLD) {
-                    webSocketSafeModeManager.enter(
-                            alias, new RuntimeException("구독 연속 실패 " + count + "회: " + msg1));
-                }
+                handleGenericSubscriptionFailure(trId, rtCd, msg1);
             }
 
         } catch (Exception e) {
@@ -381,6 +424,33 @@ public class KisWebSocketMessageHandler extends TextWebSocketHandler {
                     alias,
                     raw.substring(0, Math.min(200, raw.length())),
                     e);
+        }
+    }
+
+    /**
+     * approval_key 인증 실패(REQ-WSRES2-006) 처리 — 일반 구독 실패와 별도 경로로 식별해 무효화+재발급을 트리거한다 (REQ-WSRES2-007).
+     * 기존 REQ-WS-016 임계값 카운팅에는 그대로 반영된다 — 신규 회로차단기(REQ-WSRES2-009)는 재연결 시도 "빈도"를 별도 축에서 통제할 뿐, 이
+     * 안전모드 진입 임계값 자체를 대체하거나 상쇄하지 않는다(REQ-WSRES2-010).
+     */
+    private void handleAuthFailure(String trId, String msg1) {
+        log.warn("[{}] 구독 실패(approval_key 인증) — 재발급 트리거: trId={}, msg={}", alias, trId, msg1);
+        authFailureCallback.run();
+        approvalKeyReissueCallback.run();
+        incrementFailureCountAndMaybeEnterSafeMode(msg1);
+    }
+
+    /** 일반 구독 실패(REQ-WSRES-008) 처리. */
+    private void handleGenericSubscriptionFailure(String trId, String rtCd, String msg1) {
+        log.warn("[{}] 구독 실패: trId={}, rt_cd={}, msg={}", alias, trId, rtCd, msg1);
+        incrementFailureCountAndMaybeEnterSafeMode(msg1);
+    }
+
+    /** 연속 구독 실패 카운터를 증가시키고, 임계값 도달 시 안전 모드에 진입한다(REQ-WS-016). */
+    private void incrementFailureCountAndMaybeEnterSafeMode(String msg1) {
+        int count = subscriptionFailureCount.incrementAndGet();
+        if (count >= SAFE_MODE_FAILURE_THRESHOLD) {
+            webSocketSafeModeManager.enter(
+                    alias, new RuntimeException("구독 연속 실패 " + count + "회: " + msg1));
         }
     }
 
@@ -411,6 +481,18 @@ public class KisWebSocketMessageHandler extends TextWebSocketHandler {
         if (webSocketSafeModeManager.isActive(alias)) {
             webSocketSafeModeManager.exit(alias);
         }
+    }
+
+    /**
+     * KIS 구독 실패 응답의 msg1이 approval_key 인증 실패를 나타내는지 판별한다(REQ-WSRES2-006).
+     *
+     * <p>판별 근거는 클래스 상단 {@link #AUTH_FAILURE_MSG_PREFIX} 문서 참조 — 실측 66건 전량 이 접두어로 시작.
+     *
+     * @param msg1 KIS 구독 응답 body의 msg1 필드
+     * @return 인증 실패로 판단되면 {@code true}
+     */
+    private static boolean isAuthFailure(String msg1) {
+        return msg1 != null && msg1.startsWith(AUTH_FAILURE_MSG_PREFIX);
     }
 
     /** PINGPONG 메시지에 PongMessage로 응답. */
