@@ -6,10 +6,13 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
+import java.time.Clock;
+import java.time.Instant;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.web.socket.CloseStatus;
 import org.springframework.web.socket.PongMessage;
@@ -55,6 +58,14 @@ public class KisWebSocketMessageHandler extends TextWebSocketHandler {
 
     private final KisTickPublisher tickPublisher;
     private final SafeModeManager webSocketSafeModeManager;
+    private final Clock clock;
+
+    /**
+     * 마지막으로 서버 메시지를 수신한 시각(REQ-WSRES2-001) — Type A 틱, Type B 제어 메시지, PINGPONG을 모두 포함해 {@link
+     * #handleTextMessage}의 최상단에서 매 수신마다 갱신한다. 유휴 단절 워치독({@link KisWebSocketSession})이 이 값을 조회해 경과
+     * 시간을 판정한다.
+     */
+    private final AtomicReference<Instant> lastMessageReceivedAt;
 
     /**
      * trId 기준 AES 키 맵. Type A 메시지의 헤더에서 trId를 사용할 수 있으므로 trId를 키로 저장한다. 동시 접근을 대비하여
@@ -110,10 +121,28 @@ public class KisWebSocketMessageHandler extends TextWebSocketHandler {
             String alias,
             KisTickPublisher tickPublisher,
             SafeModeManager webSocketSafeModeManager) {
+        this(alias, tickPublisher, webSocketSafeModeManager, Clock.systemDefaultZone());
+    }
+
+    /**
+     * 유휴 워치독(REQ-WSRES2-001) 검증을 위해 {@link Clock}을 주입 가능한 생성자.
+     *
+     * @param alias 세션 식별자
+     * @param tickPublisher 틱 발행기
+     * @param webSocketSafeModeManager WS 세이프모드 관리자
+     * @param clock 마지막 수신 시각 기록에 사용할 시계(테스트에서 고정 시각 주입 가능)
+     */
+    public KisWebSocketMessageHandler(
+            String alias,
+            KisTickPublisher tickPublisher,
+            SafeModeManager webSocketSafeModeManager,
+            Clock clock) {
         super();
         this.alias = alias;
         this.tickPublisher = tickPublisher;
         this.webSocketSafeModeManager = webSocketSafeModeManager;
+        this.clock = clock;
+        this.lastMessageReceivedAt = new AtomicReference<>(clock.instant());
     }
 
     // ──────────────────────────────────────────────────────────────────
@@ -131,6 +160,15 @@ public class KisWebSocketMessageHandler extends TextWebSocketHandler {
      */
     public void setDisconnectCallback(Runnable callback) {
         this.disconnectCallback = callback;
+    }
+
+    /**
+     * 마지막으로 서버 메시지를 수신한 시각을 반환한다(REQ-WSRES2-001, 유휴 워치독 판정용).
+     *
+     * @return 마지막 수신 시각. 메시지를 한 번도 받지 못했으면 핸들러 생성 시각
+     */
+    public Instant getLastMessageReceivedAt() {
+        return lastMessageReceivedAt.get();
     }
 
     @Override
@@ -190,6 +228,9 @@ public class KisWebSocketMessageHandler extends TextWebSocketHandler {
         if (raw.isEmpty()) {
             return;
         }
+
+        // 유휴 단절 워치독(REQ-WSRES2-001) — Type A/B/PINGPONG 모든 수신 경로를 포괄하는 단일 갱신 지점
+        lastMessageReceivedAt.set(clock.instant());
 
         char first = raw.charAt(0);
         if (first == '0' || first == '1') { // '0'=비암호화, '1'=암호화 Type A 식별자

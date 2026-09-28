@@ -3,6 +3,7 @@ package com.aaa.collector.kis.websocket;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.atLeastOnce;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
@@ -19,6 +20,8 @@ import com.aaa.collector.common.retry.Sleeper;
 import com.aaa.collector.common.safemode.SafeModeManager;
 import java.net.URI;
 import java.time.Clock;
+import java.time.Duration;
+import java.time.Instant;
 import java.time.ZoneId;
 import java.time.ZonedDateTime;
 import java.util.concurrent.CompletableFuture;
@@ -388,6 +391,132 @@ class KisWebSocketSessionTest {
                     captor.getAllValues().stream()
                             .anyMatch(msg -> msg.getPayload().contains("\"tr_type\":\"2\""));
             assertThat(hasUnsubscribeMsg).isTrue();
+        }
+    }
+
+    // ──────────────────────────────────────────────────────────────────
+    // 유휴 단절 워치독 (REQ-WSRES2-001~005)
+    // ──────────────────────────────────────────────────────────────────
+
+    @Nested
+    @DisplayName("유휴 단절 워치독(checkIdleWatchdog)")
+    class IdleWatchdog {
+
+        private static final Duration IDLE_THRESHOLD = Duration.ofSeconds(60);
+
+        @Test
+        @DisplayName("AC-1 재현-우선: 유휴 임계값 초과 + 장중 → 강제 재연결(기존 재연결 경로, Sleeper.sleep() 호출)")
+        void idleExceedsThreshold_duringMarketHours_triggersForcedReconnect() throws Exception {
+            // Arrange — 마지막 수신 이후 61초 경과(임계값 60초 초과)
+            Instant now = Instant.parse("2026-09-28T02:00:00Z");
+            Instant lastReceived = now.minusSeconds(61);
+            when(clock.instant()).thenReturn(now);
+            when(messageHandler.getLastMessageReceivedAt()).thenReturn(lastReceived);
+            when(marketSchedule.isDomesticOpen(any())).thenReturn(true);
+            when(marketSchedule.isOverseasOpen(any())).thenReturn(false);
+            ZonedDateTime nowZoned = now.atZone(ZoneId.of("Asia/Seoul"));
+
+            // Act
+            session.checkIdleWatchdog(IDLE_THRESHOLD, nowZoned);
+
+            // Assert — 기존 재연결 경로(지수 백오프) 재사용 확인
+            verify(sleeper, atLeastOnce()).sleep(any(Long.class));
+            // setUp()에서 1회 + 워치독 강제 재연결에서 1회 = 2회
+            verify(webSocketClient, times(2))
+                    .execute(any(), any(WebSocketHttpHeaders.class), any(URI.class));
+        }
+
+        @Test
+        @DisplayName("AC-1 오탐 방지: 유휴 시간이 임계값 이내면 재연결이 트리거되지 않는다")
+        void idleWithinThreshold_doesNotTriggerReconnect() throws Exception {
+            // Arrange — 마지막 수신 이후 30초 경과(임계값 60초 미만)
+            Instant now = Instant.parse("2026-09-28T02:00:00Z");
+            Instant lastReceived = now.minusSeconds(30);
+            when(clock.instant()).thenReturn(now);
+            when(messageHandler.getLastMessageReceivedAt()).thenReturn(lastReceived);
+            when(marketSchedule.isDomesticOpen(any())).thenReturn(true);
+            when(marketSchedule.isOverseasOpen(any())).thenReturn(false);
+            ZonedDateTime nowZoned = now.atZone(ZoneId.of("Asia/Seoul"));
+
+            // Act
+            session.checkIdleWatchdog(IDLE_THRESHOLD, nowZoned);
+
+            // Assert
+            verify(sleeper, never()).sleep(any(Long.class));
+        }
+
+        @Test
+        @DisplayName("AC-3: 장외 시간이면 유휴 초과라도 워치독이 강제 재연결을 트리거하지 않는다(REQ-WS-021 동일 정책)")
+        void idleExceedsThreshold_outsideMarketHours_doesNotTriggerReconnect() throws Exception {
+            // Arrange — 유휴 초과지만 국내·해외 모두 장외
+            Instant now = Instant.parse("2026-09-28T02:00:00Z");
+            Instant lastReceived = now.minusSeconds(120);
+            when(clock.instant()).thenReturn(now);
+            when(messageHandler.getLastMessageReceivedAt()).thenReturn(lastReceived);
+            when(marketSchedule.isDomesticOpen(any())).thenReturn(false);
+            when(marketSchedule.isOverseasOpen(any())).thenReturn(false);
+            ZonedDateTime nowZoned = now.atZone(ZoneId.of("Asia/Seoul"));
+
+            // Act
+            session.checkIdleWatchdog(IDLE_THRESHOLD, nowZoned);
+
+            // Assert
+            verify(sleeper, never()).sleep(any(Long.class));
+        }
+
+        @Test
+        @DisplayName("AC-2: 워치독 강제 재연결 시 WARN 이상 로그에 alias 포함")
+        void idleExceedsThreshold_logsWarnWithAlias() throws Exception {
+            // Arrange
+            Logger sessionLogger = (Logger) LoggerFactory.getLogger(KisWebSocketSession.class);
+            ListAppender<ILoggingEvent> listAppender = new ListAppender<>();
+            listAppender.start();
+            sessionLogger.addAppender(listAppender);
+            try {
+                Instant now = Instant.parse("2026-09-28T02:00:00Z");
+                Instant lastReceived = now.minusSeconds(90);
+                when(clock.instant()).thenReturn(now);
+                when(messageHandler.getLastMessageReceivedAt()).thenReturn(lastReceived);
+                when(marketSchedule.isDomesticOpen(any())).thenReturn(true);
+                when(marketSchedule.isOverseasOpen(any())).thenReturn(false);
+                ZonedDateTime nowZoned = now.atZone(ZoneId.of("Asia/Seoul"));
+
+                // Act
+                session.checkIdleWatchdog(IDLE_THRESHOLD, nowZoned);
+
+                // Assert
+                boolean hasExpectedWarnLog =
+                        listAppender.list.stream()
+                                .anyMatch(
+                                        event ->
+                                                event.getLevel() == Level.WARN
+                                                        && event.getFormattedMessage()
+                                                                .contains(ALIAS)
+                                                        && event.getFormattedMessage()
+                                                                .contains("유휴"));
+                assertThat(hasExpectedWarnLog).isTrue();
+            } finally {
+                sessionLogger.detachAppender(listAppender);
+                listAppender.stop();
+            }
+        }
+
+        @Test
+        @DisplayName("정상 종료(close) 후에는 유휴 초과라도 워치독이 재연결을 트리거하지 않는다")
+        void idleExceedsThreshold_afterGracefulClose_doesNotTriggerReconnect() throws Exception {
+            // Arrange
+            session.close();
+            Instant now = Instant.parse("2026-09-28T02:00:00Z");
+            Instant lastReceived = now.minusSeconds(120);
+            when(clock.instant()).thenReturn(now);
+            lenient().when(messageHandler.getLastMessageReceivedAt()).thenReturn(lastReceived);
+            ZonedDateTime nowZoned = now.atZone(ZoneId.of("Asia/Seoul"));
+
+            // Act
+            session.checkIdleWatchdog(IDLE_THRESHOLD, nowZoned);
+
+            // Assert
+            verify(sleeper, never()).sleep(any(Long.class));
         }
     }
 

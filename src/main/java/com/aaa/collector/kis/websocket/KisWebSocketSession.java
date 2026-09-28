@@ -7,6 +7,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import java.net.URI;
 import java.time.Clock;
+import java.time.Duration;
+import java.time.Instant;
 import java.time.ZonedDateTime;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
@@ -256,6 +258,39 @@ public class KisWebSocketSession {
         }
 
         attemptReconnect();
+    }
+
+    /**
+     * 유휴 단절 워치독 판정을 수행한다(REQ-WSRES2-001~005).
+     *
+     * <p>마지막 수신({@link KisWebSocketMessageHandler#getLastMessageReceivedAt}) 이후 경과 시간이 {@code
+     * idleThreshold}를 초과하고 장중이면(REQ-WSRES2-003, REQ-WS-021과 동일 장외 예외) 기존 재연결 경로({@link
+     * #attemptReconnect}, 지수 백오프 포함)를 통해 강제 재연결을 트리거한다. 정상 종료된 세션에는 적용하지 않는다.
+     *
+     * @param idleThreshold 유휴 판정 임계값
+     * @param now 판정 기준 시각(장외 판정 + 로그용)
+     */
+    public void checkIdleWatchdog(Duration idleThreshold, ZonedDateTime now) {
+        if (closed) {
+            return;
+        }
+
+        boolean marketOpen =
+                marketSchedule.isDomesticOpen(now) || marketSchedule.isOverseasOpen(now);
+        if (!marketOpen) {
+            return; // REQ-WSRES2-003 — 장외에는 애초에 틱이 없으므로 유휴가 정상
+        }
+
+        Instant lastReceived = messageHandler.getLastMessageReceivedAt();
+        Duration idleDuration = Duration.between(lastReceived, clock.instant());
+        if (idleDuration.compareTo(idleThreshold) > 0) {
+            log.warn(
+                    "[{}] 유휴 워치독 — 마지막 수신 이후 {}초 경과(임계값 {}초 초과) — 강제 재연결 (REQ-WSRES2-002)",
+                    alias,
+                    idleDuration.toSeconds(),
+                    idleThreshold.toSeconds());
+            attemptReconnect();
+        }
     }
 
     /**

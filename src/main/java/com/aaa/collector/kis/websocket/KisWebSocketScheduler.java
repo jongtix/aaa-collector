@@ -2,6 +2,9 @@ package com.aaa.collector.kis.websocket;
 
 import com.aaa.collector.common.gate.MarketOpenGate;
 import com.aaa.collector.common.gate.UsMarketOpenGate;
+import java.time.Clock;
+import java.time.Duration;
+import java.time.ZonedDateTime;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
 import lombok.RequiredArgsConstructor;
@@ -22,7 +25,7 @@ import org.springframework.stereotype.Component;
 @Slf4j
 @Component
 @RequiredArgsConstructor
-@EnableConfigurationProperties(WsRecoveryProperties.class)
+@EnableConfigurationProperties({WsRecoveryProperties.class, WsIdleWatchdogProperties.class})
 @SuppressWarnings("PMD.AvoidCatchingGenericException")
 public class KisWebSocketScheduler {
 
@@ -35,6 +38,8 @@ public class KisWebSocketScheduler {
     // @MX:SPEC: SPEC-COLLECTOR-USMKT-001
     private final UsMarketOpenGate usMarketOpenGate;
     private final WsRecoveryProperties wsRecoveryProperties;
+    private final WsIdleWatchdogProperties wsIdleWatchdogProperties;
+    private final Clock clock;
 
     // 재진입 방지 플래그 (EtfRepresentativeScheduler 패턴 참고)
     // package-private: 테스트에서 직접 접근 가능
@@ -162,6 +167,22 @@ public class KisWebSocketScheduler {
         } catch (Exception e) {
             log.error("해외 WebSocket 장 종료 중 오류", e);
         }
+    }
+
+    /**
+     * 유휴 단절 워치독 판정 cron(REQ-WSRES2-001~005) — 2026-09-28 인시던트(오류 신호 없이 18분+ 틱 수신 침묵) 재발 방지. 30초 주기로
+     * 전 세션의 마지막 수신 시각을 조회해 임계값({@link WsIdleWatchdogProperties#getIdleThresholdSeconds}) 초과 여부를
+     * 판정한다 — 판정 주기가 임계값(기본 60초)보다 충분히 짧아야 유휴 초과 상태를 지연 없이 포착한다.
+     */
+    @Scheduled(cron = "*/30 * * * * *", zone = "Asia/Seoul")
+    public void checkIdleWatchdog() {
+        if (!wsIdleWatchdogProperties.isEnabled()) {
+            return;
+        }
+        Duration idleThreshold =
+                Duration.ofSeconds(wsIdleWatchdogProperties.getIdleThresholdSeconds());
+        ZonedDateTime now = ZonedDateTime.now(clock);
+        sessionManager.checkIdleWatchdogs(idleThreshold, now);
     }
 
     /**

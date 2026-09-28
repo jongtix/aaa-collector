@@ -22,6 +22,9 @@ import com.aaa.collector.kis.token.KisProperties;
 import com.aaa.collector.kis.token.KisTokenService;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.time.Clock;
+import java.time.Duration;
+import java.time.ZoneId;
+import java.time.ZonedDateTime;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -616,6 +619,31 @@ class KisWebSocketSessionManagerTest {
 
             // Assert — 사용된 trId가 HDFSCNT0 + HDFSASP0 2개만
             assertThat(usedTrIds).containsExactlyInAnyOrder("HDFSCNT0", "HDFSASP0");
+        }
+    }
+
+    // ──────────────────────────────────────────────────────────────────
+    // 유휴 단절 워치독 전파 (REQ-WSRES2-001~005)
+    // ──────────────────────────────────────────────────────────────────
+
+    @Nested
+    @DisplayName("유휴 단절 워치독 전파(checkIdleWatchdogs)")
+    class IdleWatchdogPropagation {
+
+        @Test
+        @DisplayName("checkIdleWatchdogs — 모든 세션에 대해 checkIdleWatchdog(threshold, now)가 호출된다")
+        void checkIdleWatchdogs_callsCheckIdleWatchdogOnEverySession() {
+            // Arrange
+            Duration threshold = Duration.ofSeconds(60);
+            ZonedDateTime now = ZonedDateTime.of(2026, 9, 28, 11, 0, 0, 0, ZoneId.of("Asia/Seoul"));
+
+            // Act
+            manager.checkIdleWatchdogs(threshold, now);
+
+            // Assert — SESSION_COUNT(5)개 세션 전부 판정 호출
+            for (KisWebSocketSession mockSession : mockSessions) {
+                verify(mockSession).checkIdleWatchdog(threshold, now);
+            }
         }
     }
 

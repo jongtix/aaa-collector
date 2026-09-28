@@ -14,6 +14,9 @@ import ch.qos.logback.classic.spi.ILoggingEvent;
 import ch.qos.logback.core.read.ListAppender;
 import com.aaa.collector.common.safemode.SafeModeManager;
 import java.nio.charset.StandardCharsets;
+import java.time.Clock;
+import java.time.Instant;
+import java.time.ZoneId;
 import java.util.Base64;
 import javax.crypto.Cipher;
 import javax.crypto.spec.IvParameterSpec;
@@ -486,6 +489,107 @@ class KisWebSocketMessageHandlerTest {
             handler.handleTextMessage(session, new TextMessage(json));
             // 예외가 발생하지 않으면 성공
             verify(tickPublisher, never()).publish(any());
+        }
+    }
+
+    // ──────────────────────────────────────────────────────────────────
+    // 유휴 단절 워치독 — 마지막 수신 시각 추적 (REQ-WSRES2-001, AC-1)
+    // ──────────────────────────────────────────────────────────────────
+
+    @Nested
+    @DisplayName("유휴 워치독 — 마지막 수신 시각 추적")
+    class LastMessageReceivedTracking {
+
+        @Test
+        @DisplayName("REQ-WSRES2-001: 핸들러 생성 직후 마지막 수신 시각은 생성 시각(Clock 기준)으로 초기화된다")
+        void freshHandler_initializesLastMessageReceivedAtToConstructionTime() {
+            // Arrange
+            Instant fixedNow = Instant.parse("2026-09-28T01:50:00Z");
+            Clock fixedClock = Clock.fixed(fixedNow, ZoneId.of("Asia/Seoul"));
+
+            // Act
+            KisWebSocketMessageHandler freshHandler =
+                    new KisWebSocketMessageHandler(
+                            ALIAS, tickPublisher, webSocketSafeModeManager, fixedClock);
+
+            // Assert
+            assertThat(freshHandler.getLastMessageReceivedAt()).isEqualTo(fixedNow);
+        }
+
+        @Test
+        @DisplayName("REQ-WSRES2-001: Type A 틱 데이터 수신 시 마지막 수신 시각이 갱신된다")
+        void typeAMessage_updatesLastMessageReceivedAt() {
+            // Arrange — 생성 시각보다 나중 시각을 반환하도록 Clock을 재구성
+            Instant constructionTime = Instant.parse("2026-09-28T01:50:00Z");
+            Instant messageTime = Instant.parse("2026-09-28T01:50:30Z");
+            java.util.concurrent.atomic.AtomicReference<Instant> clockValue =
+                    new java.util.concurrent.atomic.AtomicReference<>(constructionTime);
+            Clock mutableClock =
+                    new Clock() {
+                        @Override
+                        public ZoneId getZone() {
+                            return ZoneId.of("Asia/Seoul");
+                        }
+
+                        @Override
+                        public Clock withZone(ZoneId zone) {
+                            return this;
+                        }
+
+                        @Override
+                        public Instant instant() {
+                            return clockValue.get();
+                        }
+                    };
+            KisWebSocketMessageHandler clockedHandler =
+                    new KisWebSocketMessageHandler(
+                            ALIAS, tickPublisher, webSocketSafeModeManager, mutableClock);
+            clockValue.set(messageTime);
+
+            // Act — 평문 Type A 메시지 수신
+            clockedHandler.handleTextMessage(
+                    session, new TextMessage("0|H0STCNT0|001|005930^72500"));
+
+            // Assert
+            assertThat(clockedHandler.getLastMessageReceivedAt()).isEqualTo(messageTime);
+        }
+
+        @Test
+        @DisplayName("REQ-WSRES2-001: PINGPONG 수신도 마지막 수신 시각 갱신에 포함된다")
+        void pingPongMessage_updatesLastMessageReceivedAt() {
+            // Arrange
+            Instant constructionTime = Instant.parse("2026-09-28T01:50:00Z");
+            Instant pingTime = Instant.parse("2026-09-28T01:50:45Z");
+            java.util.concurrent.atomic.AtomicReference<Instant> clockValue =
+                    new java.util.concurrent.atomic.AtomicReference<>(constructionTime);
+            Clock mutableClock =
+                    new Clock() {
+                        @Override
+                        public ZoneId getZone() {
+                            return ZoneId.of("Asia/Seoul");
+                        }
+
+                        @Override
+                        public Clock withZone(ZoneId zone) {
+                            return this;
+                        }
+
+                        @Override
+                        public Instant instant() {
+                            return clockValue.get();
+                        }
+                    };
+            KisWebSocketMessageHandler clockedHandler =
+                    new KisWebSocketMessageHandler(
+                            ALIAS, tickPublisher, webSocketSafeModeManager, mutableClock);
+            clockValue.set(pingTime);
+            String pingpongJson = "{\"header\":{\"tr_id\":\"PINGPONG\",\"tr_key\":\"\"}}";
+
+            // Act
+            clockedHandler.handleTextMessage(session, new TextMessage(pingpongJson));
+
+            // Assert
+            assertThat(clockedHandler.getLastMessageReceivedAt()).isEqualTo(pingTime);
         }
     }
 
