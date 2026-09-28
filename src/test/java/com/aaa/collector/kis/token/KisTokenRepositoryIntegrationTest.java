@@ -89,4 +89,36 @@ class KisTokenRepositoryIntegrationTest {
 
         assertThat(result).isEmpty();
     }
+
+    @Test
+    @DisplayName("AC-5: saveApprovalKey 후 deleteApprovalKey → findApprovalKey가 Optional.empty() 반환")
+    void deleteApprovalKey_thenFindApprovalKey_returnsEmpty() {
+        // Arrange — approval_key TTL은 24시간 고정이라 벽시계 경쟁이 없다
+        String alias = "approval-delete-alias";
+        repository.saveApprovalKey(alias, "approval-key-to-delete");
+        assertThat(repository.findApprovalKey(alias)).contains("approval-key-to-delete");
+
+        // Act
+        repository.deleteApprovalKey(alias);
+        Optional<String> result = repository.findApprovalKey(alias);
+
+        // Assert
+        assertThat(result).isEmpty();
+    }
+
+    @Test
+    @DisplayName("AC-5: deleteApprovalKey는 대상 alias의 승인키만 지우고 다른 alias 승인키는 보존한다")
+    void deleteApprovalKey_leavesOtherAliasKeyIntact() {
+        // Arrange
+        repository.saveApprovalKey("approval-target-alias", "target-key");
+        repository.saveApprovalKey("approval-bystander-alias", "bystander-key");
+
+        // Act
+        repository.deleteApprovalKey("approval-target-alias");
+
+        // Assert
+        assertThat(repository.findApprovalKey("approval-target-alias")).isEmpty();
+        assertThat(repository.findApprovalKey("approval-bystander-alias"))
+                .contains("bystander-key");
+    }
 }

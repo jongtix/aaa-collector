@@ -13,10 +13,13 @@ import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.net.URI;
 import java.time.Clock;
 import java.time.Duration;
+import java.time.Instant;
+import java.time.ZoneId;
 import java.time.ZonedDateTime;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -62,8 +65,21 @@ class KisWebSocketAuthFailureCircuitIntegrationTest {
     /** TTL 자연 만료+재진입을 테스트 실행 시간 내에서 실증하기 위한 짧은 TTL. */
     private static final Duration SHORT_TTL = Duration.ofSeconds(1);
 
+    /**
+     * AC-7/AC-8 전용 세이프모드 TTL — 시간은 주입한 Clock/Sleeper로만 흐르므로 실제 Redis TTL이 테스트 도중 만료되면 안 된다. 느린 CI
+     * 머신에서도 경쟁이 없도록 충분히 길게 잡는다(벽시계 60초 이상).
+     */
+    private static final Duration LONG_TTL = Duration.ofHours(1);
+
+    /** 회로차단기(REQ-WSRES2-009) 재연결 지연 하한(밀리초) — {@code KisWebSocketSession}의 값과 같아야 한다. */
+    private static final long CIRCUIT_COOLDOWN_MS = 30_000L;
+
+    /** AC-7 가상 시간 관측 창(초). */
+    private static final long BOUND_WINDOW_SECONDS = 300L;
+
     private LettuceConnectionFactory connectionFactory;
     private SafeModeManager webSocketSafeModeManager;
+    private SafeModeManager longTtlSafeModeManager;
 
     @BeforeEach
     void setUp() {
@@ -79,6 +95,12 @@ class KisWebSocketAuthFailureCircuitIntegrationTest {
         SafeModeBackoffPolicy shortTtlPolicy = new SafeModeBackoffPolicy(SHORT_TTL, SHORT_TTL);
         webSocketSafeModeManager =
                 new SafeModeManager(repository, new SimpleMeterRegistry(), "ws", shortTtlPolicy);
+        longTtlSafeModeManager =
+                new SafeModeManager(
+                        repository,
+                        new SimpleMeterRegistry(),
+                        "ws",
+                        new SafeModeBackoffPolicy(LONG_TTL, LONG_TTL.multipliedBy(4)));
     }
 
     @AfterEach
@@ -164,6 +186,136 @@ class KisWebSocketAuthFailureCircuitIntegrationTest {
             assertThat(recordedDelays).isNotEmpty();
             assertThat(recordedDelays.get(recordedDelays.size() - 1))
                     .isGreaterThanOrEqualTo(30_000L);
+        }
+    }
+
+    @Test
+    @DisplayName("AC-7: 인증 실패가 반복되는 300초(가상 시간) 동안 재연결 시도 횟수는 회로차단기 하한으로 정해진 상한을 넘지 않는다")
+    void repeatedAuthFailures_boundReconnectAttemptsWithinVirtualWindow() throws Exception {
+        // Arrange — 시간은 Sleeper가 가상 시계를 전진시키는 방식으로만 흐른다(실제 sleep·벽시계 단언 없음)
+        String alias = "auth-circuit-it-ac7-alias";
+        MutableTestClock clock = new MutableTestClock(Instant.parse("2026-09-28T01:00:00Z"));
+        List<Long> recordedDelays = new CopyOnWriteArrayList<>();
+        Sleeper virtualTimeSleeper =
+                millis -> {
+                    recordedDelays.add(millis);
+                    clock.advance(Duration.ofMillis(millis));
+                };
+        KisWebSocketMessageHandler handler =
+                new KisWebSocketMessageHandler(
+                        alias, mock(KisTickPublisher.class), longTtlSafeModeManager, clock);
+        WebSocketClient webSocketClient = mock(WebSocketClient.class);
+        KisMarketSchedule marketSchedule = mock(KisMarketSchedule.class);
+        when(marketSchedule.isDomesticOpen(any())).thenReturn(true);
+        when(marketSchedule.isOverseasOpen(any())).thenReturn(false);
+        AtomicInteger executeCalls = new AtomicInteger();
+
+        try (WebSocketSession rawSession = mock(WebSocketSession.class)) {
+            when(rawSession.isOpen()).thenReturn(true);
+            @SuppressWarnings("unchecked")
+            CompletableFuture<WebSocketSession> handshakeFuture = mock(CompletableFuture.class);
+            when(handshakeFuture.get()).thenReturn(rawSession);
+            when(webSocketClient.execute(any(), any(WebSocketHttpHeaders.class), any(URI.class)))
+                    .thenAnswer(
+                            invocation -> {
+                                executeCalls.incrementAndGet();
+                                return handshakeFuture;
+                            });
+
+            KisWebSocketSession session =
+                    new KisWebSocketSession(
+                            alias,
+                            APPROVAL_KEY,
+                            webSocketClient,
+                            handler,
+                            marketSchedule,
+                            longTtlSafeModeManager,
+                            virtualTimeSleeper,
+                            clock);
+            handler.setAuthFailureCallback(session::recordAuthFailure);
+            handler.setApprovalKeyReissueCallback(() -> {});
+            session.connect(WS_URL);
+            executeCalls.set(0); // 초기 접속은 "재연결 시도"가 아니므로 제외
+
+            // Act — 재연결 직후 재구독이 거절되고(5건) 서버가 소켓을 끊는 사이클을 창이 끝날 때까지 반복
+            Instant windowEnd = clock.instant().plusSeconds(BOUND_WINDOW_SECONDS);
+            TextMessage authFailureMessage = new TextMessage(authFailureJson());
+            int iterations = 0;
+            while (clock.instant().isBefore(windowEnd) && iterations < 1_000) {
+                for (int i = 0; i < 5; i++) {
+                    handler.handleTextMessage(rawSession, authFailureMessage);
+                }
+                session.handleDisconnect(ZonedDateTime.ofInstant(clock.instant(), clock.getZone()));
+                iterations++;
+            }
+
+            // Assert — 사이클마다 지연 하한(30초)이 강제되므로 300초 창 안의 재연결 시도는 창/하한 + 1 이하.
+            // 하한이 없으면(사이클당 1초 백오프) 같은 창에서 수백 회가 된다.
+            long maxAttempts = BOUND_WINDOW_SECONDS * 1_000L / CIRCUIT_COOLDOWN_MS + 1;
+            assertThat(executeCalls.get()).isPositive().isLessThanOrEqualTo((int) maxAttempts);
+            assertThat(recordedDelays)
+                    .allSatisfy(d -> assertThat(d).isGreaterThanOrEqualTo(30_000L));
+        }
+    }
+
+    @Test
+    @DisplayName("AC-8: 회로차단기가 발동 중이어도 REQ-WS-022 임계값(연속 5회 재연결 실패)은 그대로 안전모드에 진입시킨다")
+    void circuitOpen_doesNotCancelReconnectFailureSafeModeThreshold() throws Exception {
+        // Arrange — 시계를 고정해 회로차단기 판정 창이 테스트 내내 열려 있도록 한다(벽시계 의존 제거)
+        String alias = "auth-circuit-it-ac8-alias";
+        Clock frozenClock =
+                Clock.fixed(Instant.parse("2026-09-28T01:00:00Z"), ZoneId.of("Asia/Seoul"));
+        List<Long> recordedDelays = new CopyOnWriteArrayList<>();
+        Sleeper recordingSleeper = recordedDelays::add;
+        KisWebSocketMessageHandler handler =
+                new KisWebSocketMessageHandler(
+                        alias, mock(KisTickPublisher.class), longTtlSafeModeManager, frozenClock);
+        WebSocketClient webSocketClient = mock(WebSocketClient.class);
+        KisMarketSchedule marketSchedule = mock(KisMarketSchedule.class);
+        when(marketSchedule.isDomesticOpen(any())).thenReturn(true);
+        when(marketSchedule.isOverseasOpen(any())).thenReturn(false);
+
+        try (WebSocketSession rawSession = mock(WebSocketSession.class)) {
+            when(rawSession.isOpen()).thenReturn(true);
+            @SuppressWarnings("unchecked")
+            CompletableFuture<WebSocketSession> handshakeFuture = mock(CompletableFuture.class);
+            when(handshakeFuture.get()).thenReturn(rawSession);
+            when(webSocketClient.execute(any(), any(WebSocketHttpHeaders.class), any(URI.class)))
+                    .thenReturn(handshakeFuture);
+
+            KisWebSocketSession session =
+                    new KisWebSocketSession(
+                            alias,
+                            APPROVAL_KEY,
+                            webSocketClient,
+                            handler,
+                            marketSchedule,
+                            longTtlSafeModeManager,
+                            recordingSleeper,
+                            frozenClock);
+            session.connect(WS_URL);
+
+            // 이후 모든 재연결 핸드셰이크가 실패하도록 전환
+            when(webSocketClient.execute(any(), any(WebSocketHttpHeaders.class), any(URI.class)))
+                    .thenThrow(new IllegalStateException("핸드셰이크 실패"));
+
+            // 회로차단기 발동(판정 창 내 인증 실패 3회 = 임계값) — 세이프모드 카운터(handler)와 무관하게 세션 상태만 갱신
+            for (int i = 0; i < 3; i++) {
+                session.recordAuthFailure();
+            }
+            assertThat(longTtlSafeModeManager.isActive(alias)).isFalse();
+
+            // Act — 재연결 5회 연속 실패
+            ZonedDateTime marketOpen = ZonedDateTime.now(frozenClock);
+            for (int i = 0; i < 5; i++) {
+                session.handleDisconnect(marketOpen);
+            }
+
+            // Assert — 두 방어선이 서로를 무력화하지 않는다: (1) 5회 실패 후 안전모드 진입, (2) 그 5회 모두 회로차단기 지연 하한이 적용됨
+            assertThat(longTtlSafeModeManager.isActive(alias)).isTrue();
+            assertThat(recordedDelays).hasSize(5);
+            assertThat(recordedDelays)
+                    .allSatisfy(d -> assertThat(d).isGreaterThanOrEqualTo(CIRCUIT_COOLDOWN_MS));
         }
     }
 }
