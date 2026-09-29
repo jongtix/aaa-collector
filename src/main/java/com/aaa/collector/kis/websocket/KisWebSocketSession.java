@@ -270,6 +270,10 @@ public class KisWebSocketSession {
      *
      * <p>테스트에서는 {@link #handleDisconnect(ZonedDateTime)}를 직접 호출하여 동기적으로 검증한다.
      */
+    // @MX:WARN: [AUTO] Spring WebSocket 이벤트 스레드를 블로킹하지 않도록 별도 Virtual Thread에서 실행 —
+    // 이 스레드는 별도 생명주기 관리 없이 fire-and-forget으로 시작된다
+    // @MX:REASON: handleDisconnect(ZonedDateTime)가 reconnecting CAS 가드(:107)로 재진입을 막으므로 스레드 자체의
+    // 완료를 추적하지 않아도 중복 재연결로는 이어지지 않는다 — 다만 예외 발생 시 별도 알림 없이 조용히 소멸한다
     public void handleDisconnect() {
         Thread.ofVirtual()
                 .name("ws-reconnect-" + alias)
