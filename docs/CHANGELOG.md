@@ -4,6 +4,25 @@
 
 ---
 
+## [Unreleased] — feature/SPEC-COLLECTOR-WS-RESILIENCE-002
+
+### Added
+
+- **WebSocket 유휴 단절 워치독** (SPEC-COLLECTOR-WS-RESILIENCE-002, REQ-WSRES2-001~005, v1.81.0):
+  세션별 마지막 수신 시각을 추적(`KisWebSocketMessageHandler`)하고, 설정된 임계값(기본 60초, `aaa.ws-idle-watchdog.idle-threshold-seconds`)을 초과하면 기존 지수 백오프 경로로 강제 재연결한다.
+  30초 주기 cron(`KisWebSocketScheduler`, `*/30 * * * * *`)이 전 세션에 전파하며, 장외 시간에는 예외 처리한다(REQ-WS-021 계약 보존). 강제 재연결 발생 시 WARN 레벨로 alias·경과 시간·임계값을 로그에 남긴다.
+- **approval_key 인증 실패 식별 + 무효화·재발급** (SPEC-COLLECTOR-WS-RESILIENCE-002, REQ-WSRES2-006~007, v1.81.0):
+  VictoriaLogs 실측(2026-09-28 인시던트, 66건 전량 확인)으로 확정한 `isAuthFailure(msg1)`(`msg1.startsWith("invalid approval")`) 판별 분기를 `handleTypeB`에 추가. 식별 시 `KisTokenService.invalidateApprovalKey`로 무효화, 재발급 후 살아있는 세션에 `KisWebSocketSession.updateApprovalKey`로 즉시 주입한다.
+- **인증 실패 재연결 회로차단기** (SPEC-COLLECTOR-WS-RESILIENCE-002, REQ-WSRES2-009~010, v1.81.0):
+  독립 카운터 기반 회로차단기(판정 창 30초·임계값 3회·쿨다운 하한 30초)를 기존 안전모드 TTL/백오프와 완전히 별도 축으로 추가 — 상태를 공유하지 않아 REQ-WSRES2-010(비상쇄)을 만족한다.
+
+### Fixed
+
+- **REQ-WSEXIT-004 개정 — 재연결 성공만으로 안전모드 해제 금지** (SPEC-COLLECTOR-WS-RESILIENCE-002, REQ-WSRES2-008, v1.81.0):
+  `KisWebSocketSession.reconnectInternal()`의 안전모드 능동 해제 호출(지점 2)을 제거 — 안전모드 해제는 오직 실제 구독 성공 확인(지점 1, `handleSubscriptionSuccess`)에 의해서만 이루어지도록 하여, 2026-09-28 인시던트의 무한 재연결 루프 메커니즘(핸드셰이크+재전송만으로 안전모드가 조기 해제되어 다음 인증 실패로 즉시 재진입하는 경쟁)을 차단한다.
+- **approval_key 재발급 fan-out 레이스 + 로그 노출 수정** (SPEC-COLLECTOR-WS-RESILIENCE-002, sync-audit 수정 델타, v1.81.1):
+  동시 다발적 인증 실패가 재발급을 중복 트리거하지 않도록 single-flight 가드 및 최소 재발급 간격(60초)을 추가하고, approval_key 값이 로그·예외 메시지에 노출되지 않도록 마스킹했다.
+
 ## [Unreleased] — feature/SPEC-COLLECTOR-OVERSEAS-DIVIDEND-WINDOW-001
 
 ### Fixed
