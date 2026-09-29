@@ -4,6 +4,14 @@
 
 ## [Unreleased]
 
+### Added
+
+- `notification_log` 테이블 Flyway 마이그레이션 신설 (SPEC-NOTIFIER-SCHEMA-001 M1, REQ-NOTIFIER-SCHEMA-001~007/011~012)
+  - `src/main/resources/db/migration/V49__notifier_create_notification_log.sql` — aaa-notifier(Phase 3 알림 서비스)의 텔레그램 발송 사건을 이벤트 소싱식(INSERT-ONLY)으로 저장하는 테이블 신설. 1행 = 발송 사건 1건, 갱신형 `send_status` 컬럼 없이 `trace_id`로 같은 알림의 이력을 연결
+  - 이 레포 최초의 `notifier_` 접두사 마이그레이션(기존 V1~V48은 전부 `collector_`/`analyzer_` 접두사) — [ADR-016](../../aaa-infra/docs/ADR/ADR-016-flyway-schema-migration.md) 결정 2의 중앙집중 Flyway 소유 구조에 따라 collector가 notifier분 DDL도 단독 소유
+  - collector는 이 테이블에 대응하는 JPA 엔티티를 갖지 않음(Hibernate `ddl-auto=validate` 검증 범위 밖) — notifier가 직접 접근하고 collector 도메인 모델과 무관하기 때문
+  - 라이브 NAS 배포 확인 완료(2026-09-29): `flyway_schema_history` version=49 success, `DESCRIBE notification_log` 16개 컬럼 전건 스펙 일치
+
 ### Changed
 
 - docker.yml에 Trivy CVE 게이트/빌드 실패 시 독립 Telegram 알림 스텝 추가(SPEC-INFRA-CVE-SCAN-004 M1) — deploy.yml의 workflow_run 게이팅과 무관하게 항상 발동, 기존 시스템봇 재사용
