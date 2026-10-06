@@ -7,41 +7,15 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import com.aaa.collector.kis.token.KisAccountCredential;
 import com.aaa.collector.kis.token.KisProperties;
 import io.github.bucket4j.Bucket;
-import io.github.bucket4j.TimeMeter;
 import java.util.List;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.atomic.AtomicLong;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
-
-/** 가상 시간 제어를 위한 TimeMeter 구현체. currentTimeMs를 직접 조작할 수 있다. */
-class ManualTimeMeter implements TimeMeter {
-
-    private final AtomicLong currentMs;
-
-    ManualTimeMeter(long initialMs) {
-        this.currentMs = new AtomicLong(initialMs);
-    }
-
-    void advanceMs(long deltaMs) {
-        currentMs.addAndGet(deltaMs);
-    }
-
-    @Override
-    public long currentTimeNanos() {
-        return currentMs.get() * 1_000_000L;
-    }
-
-    @Override
-    public boolean isWallClockBased() {
-        return false;
-    }
-}
 
 class KisRateLimiterTest {
 
