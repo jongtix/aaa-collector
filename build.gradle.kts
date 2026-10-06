@@ -218,7 +218,7 @@ spotbugs {
 // 없어(빌드/정적분석 전용) 런타임 아티팩트에는 영향이 없다.
 dependencyManagement {
     dependencies {
-        dependency("org.apache.commons:commons-lang3:3.20.0")
+        dependency("org.apache.commons:commons-lang3:3.21.0")
     }
 }
 
