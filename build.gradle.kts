@@ -25,6 +25,7 @@ java {
 // tomcat/netty 항목 + 해당 테스트를 함께 제거한다.
 extra["tomcat.version"] = libs.versions.tomcat.get()
 extra["netty.version"] = libs.versions.netty.get()
+extra["jackson-bom.version"] = libs.versions.jackson2Bom.get() // 실측: jackson-2-bom.version은 무효, 이 키만 유효
 
 // --- JaCoCo 버전 고정 (libs.versions.toml 단일 소스) ---
 jacoco {

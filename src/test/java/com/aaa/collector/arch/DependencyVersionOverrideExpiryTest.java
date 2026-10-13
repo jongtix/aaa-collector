@@ -26,6 +26,15 @@ class DependencyVersionOverrideExpiryTest {
 
     private static final LocalDate REVIEW_BY = LocalDate.of(2026, 12, 9);
 
+    /**
+     * {@code jackson2Bom} 덮어쓰기(jackson-core CVE-2026-89407·89425, jackson-databind
+     * CVE-2026-68497·91776·91777 대응, 2026-10-13)용 만료 게이트. 만료 시 조치: Spring Boot 최신판이 jackson ≥
+     * 2.21.7을 관리하는지 확인한다. 흡수했다면 카탈로그의 {@code jackson2Bom} 항목, {@code build.gradle.kts}의 {@code
+     * extra["jackson-bom.version"]} 줄, 이 테스트 메서드를 함께 삭제한다. 아직 미흡수라면 {@link #JACKSON_REVIEW_BY}를
+     * 갱신한다.
+     */
+    private static final LocalDate JACKSON_REVIEW_BY = LocalDate.of(2026, 12, 30);
+
     @Test
     @DisplayName("tomcat-embed/netty 버전 덮어쓰기 검토 기한이 지나지 않아야 한다")
     void tomcatNettyVersionOverrideMustBeReviewedBeforeExpiry() {
@@ -36,5 +45,17 @@ class DependencyVersionOverrideExpiryTest {
                                 + "흡수했다면 카탈로그의 tomcat/netty 항목, build.gradle.kts의 덮어쓰기 블록, 이 테스트를 함께 "
                                 + "삭제한다. 아직 미흡수이면 REVIEW_BY를 갱신한다.")
                 .isBefore(REVIEW_BY);
+    }
+
+    @Test
+    @DisplayName("jackson-bom 버전 덮어쓰기 검토 기한이 지나지 않아야 한다")
+    void jacksonBomVersionOverrideMustBeReviewedBeforeExpiry() {
+        assertThat(LocalDate.now())
+                .as(
+                        "gradle/libs.versions.toml의 jackson2Bom 버전 덮어쓰기(CVE-2026-89407/89425/68497/91776/91777 "
+                                + "대응) 검토 기한이 지났다. Spring Boot 최신판이 이 CVE들을 흡수했는지 확인하고, 흡수했다면 "
+                                + "카탈로그의 jackson2Bom 항목, build.gradle.kts의 jackson-bom.version 줄, 이 테스트 메서드를 "
+                                + "함께 삭제한다. 아직 미흡수이면 JACKSON_REVIEW_BY를 갱신한다.")
+                .isBefore(JACKSON_REVIEW_BY);
     }
 }
