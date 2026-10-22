@@ -1,0 +1,12 @@
+// CI 전용 Gradle init 스크립트 — release.yml의 dependency-scan job에서만 --init-script로 주입한다.
+// (SPEC-INFRA-PRSCAN-001: REQ-PRSCAN-004 해석된 런타임 의존성 평가, REQ-PRSCAN-007 저장소 변경 없음)
+//
+// bootJar에 실리는 구성(productionRuntimeClasspath)에만 의존성 잠금을 켜서, --write-locks 실행 시
+// BOM이 관리하는 버전까지 반영된 해석 결과가 작업 공간의 gradle.lockfile에 기록되게 한다.
+// Trivy fs는 빌드 파일을 해석하지 못하고 *gradle.lockfile만 읽으므로 이 잠금 상태가 스캔 입력이다.
+// 빌드 정의(build.gradle.kts 등)는 바꾸지 않으며, 생성된 gradle.lockfile은 커밋하지 않는다.
+allprojects {
+    configurations.matching { it.name == "productionRuntimeClasspath" }.configureEach {
+        resolutionStrategy.activateDependencyLocking()
+    }
+}

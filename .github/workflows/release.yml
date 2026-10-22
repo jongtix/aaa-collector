@@ -35,6 +35,59 @@ jobs:
         # includes jacoco 85% line coverage gate transitively via check dependsOn jacocoTestCoverageVerification
         run: ./gradlew check
 
+  # PR 시점 의존성 취약점 스캔 (SPEC-INFRA-PRSCAN-001)
+  # PR을 main에 합친 결과에서 bootJar에 실리는 런타임 의존성(productionRuntimeClasspath)의 해석된 버전을
+  # CI 작업 공간에서만 임시 잠금 상태(gradle.lockfile)로 만들어 Trivy가 읽게 한다. 잠금 파일과 빌드 정의는
+  # 저장소에 커밋하지 않는다. 판정 기준은 docker.yml의 Trivy 게이트와 같다(CRITICAL,HIGH + 수정판이 있는 것만,
+  # 저장소 루트 .trivyignore 자동 소비).
+  # [실패 시 운영 절차] 의존성을 수정판으로 올리거나, 사용자가 승인한 .trivyignore 예외를 등록한다
+  # (만료일 = 승인일 + 30일). 이 job의 결과를 건너뛰는 조건은 두지 않는다.
+  dependency-scan:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup JDK 21
+        uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
+        with:
+          java-version: 21
+          distribution: temurin
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
+
+      # 잠금 상태 생성 스텝 — 이름은 "Derive"로 시작한다(실패 스텝을 이름으로 식별).
+      # init 스크립트는 CI 작업 공간에서만 쓰이며 gradle.lockfile은 이 작업 공간 밖으로 나가지 않는다.
+      - name: Derive lock state of production runtime classpath
+        run: ./gradlew dependencies --configuration productionRuntimeClasspath --write-locks --init-script .github/gradle/dependency-scan-lock.init.gradle --no-daemon
+
+      # 입력 확인 스텝 — 이름은 "Assert"로 시작한다.
+      # trivy fs는 지원 파일이 없거나 GAV 줄이 하나도 없어도 종료 코드 0으로 끝나므로 빈 입력을 직접 막는다.
+      # test -s는 잠금 파일이 아예 없는 경우를, grep은 'empty=…' 줄뿐인 잠금을 잡는다.
+      - name: Assert lock state is non-empty
+        run: |
+          set -euo pipefail
+          test -s gradle.lockfile
+          grep -qE '^[A-Za-z0-9_.-]+:[A-Za-z0-9_.-]+:[^=]+=' gradle.lockfile
+
+      - name: Trivy dependency scan
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          scanners: vuln
+          vuln-type: library
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          exit-code: '1'
+
   release:
     needs: test
     if: github.event_name == 'push'
