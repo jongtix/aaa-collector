@@ -6,7 +6,7 @@
 // Trivy fs는 빌드 파일을 해석하지 못하고 *gradle.lockfile만 읽으므로 이 잠금 상태가 스캔 입력이다.
 // 빌드 정의(build.gradle.kts 등)는 바꾸지 않으며, 생성된 gradle.lockfile은 커밋하지 않는다.
 allprojects {
-    configurations.matching { it.name == "productionRuntimeClasspath" }.configureEach {
+    configurations.matching { it.name == "nonexistentClasspath" }.configureEach {
         resolutionStrategy.activateDependencyLocking()
     }
 }
