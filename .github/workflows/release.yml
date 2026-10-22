@@ -88,6 +88,25 @@ jobs:
           ignore-unfixed: true
           exit-code: '1'
 
+      # 임시 진단 스텝(병합 금지, C-T02 (c)(d)) — Trivy 판정 이후에 실행해 스캔 입력에 영향이 없다.
+      - name: Diag print production lock
+        if: always()
+        run: |
+          echo "DIAG_PROD_LOCK_BEGIN"
+          grep -E '^[A-Za-z0-9_.-]+:[A-Za-z0-9_.-]+:[^=]+=' gradle.lockfile | sed 's/=.*//' | sort
+          echo "DIAG_PROD_LOCK_END"
+          echo "DIAG_KEY_GAVS"
+          grep -E '^io\.netty:netty-codec:|^org\.apache\.tomcat\.embed:tomcat-embed-core:|^com\.fasterxml\.jackson\.core:jackson-databind:' gradle.lockfile | sed 's/=.*//'
+
+      - name: Diag runtimeClasspath lock
+        if: always()
+        run: |
+          rm -f gradle.lockfile settings-gradle.lockfile
+          ./gradlew dependencies --configuration runtimeClasspath --write-locks --init-script .github/gradle/diag-runtime.init.gradle --no-daemon
+          echo "DIAG_RUNTIME_LOCK_BEGIN"
+          grep -E '^[A-Za-z0-9_.-]+:[A-Za-z0-9_.-]+:[^=]+=' gradle.lockfile | sed 's/=.*//' | sort
+          echo "DIAG_RUNTIME_LOCK_END"
+
   release:
     needs: test
     if: github.event_name == 'push'

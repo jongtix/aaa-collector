@@ -1,0 +1,6 @@
+// 임시 진단용(병합 금지): runtimeClasspath 잠금 생성 (SPEC-INFRA-PRSCAN-001 C-T02 (d))
+allprojects {
+    configurations.matching { it.name == "runtimeClasspath" }.configureEach {
+        resolutionStrategy.activateDependencyLocking()
+    }
+}
