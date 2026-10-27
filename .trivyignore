@@ -17,14 +17,7 @@
 # digest 스캔에서 취약점 0건으로 확인돼 base 이미지 쪽에서 이미 해소됐다.
 # 재발하면 그때 새 승인일·만료일로 다시 등록한다.
 
-# CVE-2026-47884, CVE-2026-47890 | org.springframework:spring-webmvc 6.2.19 CRITICAL
-# 사유: 상류-지연(upstream-lag) — 무료(OSS) 수정판은 Spring Framework 7.0.9뿐이다(6.2.20은
-#       Enterprise Support Only, spring.io/security 2026-08-20 공지). 7.x는 Spring Boot 4.x 메이저
-#       마이그레이션이 필요하고 3.5.x(6.2.x 계열)에는 무료 수정판이 없어 레포 내 교정 수단 없음(REQ-CVE-016).
-# 영향 조건 부재: src/main에 XsltView·SseEmitter·text/event-stream·@Controller·@RestController
-#       사용 0건(2026-10-13 git grep). CVE-2026-47884는 XsltView + "/**" 매핑, CVE-2026-47890은
-#       SSE 뷰 렌더링 조건에서만 성립한다.
-# 구조적 해소: Boot 4.x 마이그레이션 SPEC 착지 후 이 예외를 제거한다(만료 전 착지 목표).
-# 승인: 2026-10-13 (사용자) | 만료: 2026-11-12 (승인일+30일, REQ-CVE-022 기본값)
-CVE-2026-47884 exp:2026-11-12
-CVE-2026-47890 exp:2026-11-12
+# 2026-10-27: CVE-2026-47884·CVE-2026-47890(spring-webmvc 6.2.19) 예외 제거.
+# Spring Boot 4.1.2 전환(SPEC-INFRA-BOOT4-001, v1.81.5 배포)으로 spring-webmvc가 7.0.10(수정판 7.0.9 이상)이
+# 됐고, 배포 컨테이너 jar에서 spring-webmvc-7.0.10.jar를 확인했다(6.2.19 없음).
+# 재발하면 그때 새 승인일·만료일로 다시 등록한다.
