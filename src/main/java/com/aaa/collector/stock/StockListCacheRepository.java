@@ -1,14 +1,14 @@
 package com.aaa.collector.stock;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.core.type.TypeReference;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import java.util.List;
 import java.util.Optional;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Repository;
+import tools.jackson.core.JacksonException;
+import tools.jackson.core.type.TypeReference;
+import tools.jackson.databind.ObjectMapper;
 
 /**
  * 관심 종목 목록을 Redis에 캐싱하는 레포지토리.
@@ -46,7 +46,7 @@ public class StockListCacheRepository {
         try {
             String json = objectMapper.writeValueAsString(stocks);
             redisTemplate.opsForValue().set(CACHE_KEY, json);
-        } catch (JsonProcessingException e) {
+        } catch (JacksonException e) {
             log.warn("종목 목록 JSON 직렬화 실패 — 캐시 미갱신, sync 계속 진행", e);
         } catch (Exception e) {
             log.warn("종목 목록 캐시 저장 실패 (Redis 오류) — sync 계속 진행", e);
@@ -70,7 +70,7 @@ public class StockListCacheRepository {
             }
             List<CachedStock> stocks = objectMapper.readValue(json, new TypeReference<>() {});
             return Optional.of(stocks);
-        } catch (JsonProcessingException e) {
+        } catch (JacksonException e) {
             log.warn("종목 목록 JSON 역직렬화 실패 — Optional.empty() 반환 (캐시 미스 처리)", e);
             return Optional.empty();
         } catch (Exception e) {

@@ -18,15 +18,6 @@ java {
     }
 }
 
-// --- Spring Boot BOM 관리 버전 덮어쓰기 (CVE 게이트 대응, 2026-09-10) ---
-// 실제 버전 값은 gradle/libs.versions.toml 단일 소스(CLAUDE.md)에서 관리한다 — 여기서는 값을
-// 하드코딩하지 않고 카탈로그를 참조만 한다. 만료 게이트(DependencyVersionOverrideExpiryTest,
-// 2026-12-09)가 지나면, Boot가 이 CVE들을 흡수했는지 확인 후 흡수했다면 이 블록 + 카탈로그의
-// tomcat/netty 항목 + 해당 테스트를 함께 제거한다.
-extra["tomcat.version"] = libs.versions.tomcat.get()
-extra["netty.version"] = libs.versions.netty.get()
-extra["jackson-bom.version"] = libs.versions.jackson2Bom.get() // 실측: jackson-2-bom.version은 무효, 이 키만 유효
-
 // --- JaCoCo 버전 고정 (libs.versions.toml 단일 소스) ---
 jacoco {
     toolVersion = libs.versions.jacoco.get()
@@ -147,7 +138,8 @@ repositories {
 
 dependencies {
     // --- Runtime ---
-    implementation(libs.spring.boot.starter.web)          // 내장 Tomcat, Spring MVC, Jackson
+    implementation(libs.spring.boot.starter.webmvc)       // 내장 Tomcat, Spring MVC, Jackson
+    implementation(libs.spring.boot.starter.restclient)   // 외부 API 클라이언트용 RestClient.Builder 자동 구성 (Boot 4 분리 모듈)
     implementation(libs.spring.boot.starter.actuator)     // 헬스체크 + Prometheus 노출 엔드포인트
     implementation(libs.micrometer.registry.prometheus)   // /actuator/prometheus (VictoriaMetrics 호환) 노출
     implementation(libs.spring.boot.starter.data.jpa)     // JPA + Hibernate
@@ -155,7 +147,7 @@ dependencies {
     implementation(libs.spring.boot.starter.websocket)    // KIS WebSocket 클라이언트 (StandardWebSocketClient)
     implementation(libs.bucket4j)                          // KIS API TPS 20 rate limiting
     runtimeOnly(libs.mysql.connector)                     // MySQL JDBC 드라이버
-    runtimeOnly(libs.flyway.core)                         // Flyway 스키마 마이그레이션
+    implementation(libs.spring.boot.starter.flyway)       // Flyway 스키마 마이그레이션 자동 구성 (Boot 4 분리 모듈, flyway-core 포함)
     runtimeOnly(libs.flyway.mysql)                        // Flyway MySQL 방언
 
     // --- Lombok ---
@@ -170,6 +162,7 @@ dependencies {
     testImplementation(libs.testcontainers.junit)          // Testcontainers JUnit 5 확장
     testImplementation(libs.testcontainers.mysql)          // Testcontainers MySQL
     testImplementation(libs.spring.boot.testcontainers)    // @ServiceConnection 지원
+    testImplementation(libs.spring.boot.resttestclient)    // TestRestTemplate + @AutoConfigureTestRestTemplate (Boot 4 분리 모듈)
     testImplementation(libs.flyway.core)                    // 테스트에서 Flyway 빈 직접 참조
     testRuntimeOnly(libs.commons.codec)                    // Testcontainers MySQLContainer가 요구하는 전이 의존성
     testImplementation(libs.pmd.java)                      // PMD RuleSetLoader API — ruleset.xml 파싱 검증

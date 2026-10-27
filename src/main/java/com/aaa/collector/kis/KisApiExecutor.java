@@ -3,9 +3,6 @@ package com.aaa.collector.kis;
 import com.aaa.collector.kis.token.KisAccountCredential;
 import com.aaa.collector.kis.token.KisProperties;
 import com.aaa.collector.kis.token.KisTokenService;
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
@@ -18,6 +15,10 @@ import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
 import org.springframework.web.client.RestClientResponseException;
 import org.springframework.web.util.UriBuilder;
+import tools.jackson.core.JacksonException;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.json.JsonMapper;
 
 /** KIS REST API 공통 실행기. 인증 헤더 조립, 응답 검증을 일괄 처리한다. */
 @Slf4j
@@ -26,7 +27,10 @@ import org.springframework.web.util.UriBuilder;
 public class KisApiExecutor {
 
     private static final String EGW00201 = "EGW00201";
-    private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
+    // Jackson 3 기본값(후행 토큰 실패·원시 타입 null 실패 등)이 아니라 Jackson 2 기본값으로 만들어 Boot 3.5 시절과 같은 입력을 같은 값으로
+    // 읽는다(SPEC-INFRA-BOOT4-001 REQ-BOOT4-011).
+    private static final ObjectMapper OBJECT_MAPPER =
+            JsonMapper.builderWithJackson2Defaults().build();
 
     private final RestClient kisRestClient;
     private final KisProperties kisProperties;
@@ -181,8 +185,8 @@ public class KisApiExecutor {
         try {
             JsonNode node = OBJECT_MAPPER.readTree(bodyText);
             JsonNode msgCd = node.get("msg_cd");
-            return msgCd != null && EGW00201.equals(msgCd.asText());
-        } catch (JsonProcessingException e) {
+            return msgCd != null && EGW00201.equals(msgCd.asString());
+        } catch (JacksonException e) {
             // 파싱 실패 시 false 반환 → 영구 오류 경로로 진행 (잘못된 retry-vs-permanent 판별 방지).
             // bodyText는 onStatus(5xx) 핸들러에서만 전달되는 HTTP 5xx 응답 본문이다. 자격증명
             // (appkey/appsecret/token)은 요청 헤더에만 있고 KIS 응답 본문에 반영되지 않으므로 warn 로깅 안전.

@@ -4,13 +4,11 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import com.aaa.collector.stock.enums.AssetType;
 import com.aaa.collector.stock.enums.Market;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.PropertyNamingStrategies;
-import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import java.nio.charset.StandardCharsets;
 import java.time.LocalDate;
 import java.util.List;
 import java.util.Optional;
+import java.util.TimeZone;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -19,10 +17,14 @@ import org.junit.jupiter.api.Test;
 import org.springframework.data.redis.connection.RedisStandaloneConfiguration;
 import org.springframework.data.redis.connection.lettuce.LettuceConnectionFactory;
 import org.springframework.data.redis.core.StringRedisTemplate;
-import org.springframework.http.converter.json.Jackson2ObjectMapperBuilder;
 import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
+import tools.jackson.databind.DeserializationFeature;
+import tools.jackson.databind.MapperFeature;
+import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.PropertyNamingStrategies;
+import tools.jackson.databind.json.JsonMapper;
 
 @Testcontainers
 @DisplayName("StockListCacheRepository 통합 테스트")
@@ -48,10 +50,13 @@ class StockListCacheRepositoryIntegrationTest {
         redisTemplate.afterPropertiesSet();
 
         ObjectMapper objectMapper =
-                new Jackson2ObjectMapperBuilder()
+                // Boot 3.5 Jackson2ObjectMapperBuilder 기본값(모르는 필드 허용·기본 뷰 포함 끔)과 같게 Jackson 2 기본값
+                // 위에 명시한다.
+                JsonMapper.builderWithJackson2Defaults()
                         .propertyNamingStrategy(PropertyNamingStrategies.SNAKE_CASE)
-                        .timeZone("Asia/Seoul")
-                        .modulesToInstall(new JavaTimeModule())
+                        .defaultTimeZone(TimeZone.getTimeZone("Asia/Seoul"))
+                        .disable(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES)
+                        .disable(MapperFeature.DEFAULT_VIEW_INCLUSION)
                         .build();
         repository = new StockListCacheRepository(redisTemplate, objectMapper);
     }

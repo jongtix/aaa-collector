@@ -2,12 +2,13 @@ package com.aaa.collector.stock.daily;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.PropertyNamingStrategies;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
+import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.PropertyNamingStrategies;
+import tools.jackson.databind.json.JsonMapper;
 
 @DisplayName("KisOverseasDailyOhlcvResponse 역직렬화 단위 테스트 (명세22 HHDFS76240000)")
 class KisOverseasDailyOhlcvResponseTest {
@@ -46,7 +47,9 @@ class KisOverseasDailyOhlcvResponseTest {
     @BeforeEach
     void setUp() {
         objectMapper =
-                new ObjectMapper().setPropertyNamingStrategy(PropertyNamingStrategies.SNAKE_CASE);
+                JsonMapper.builderWithJackson2Defaults()
+                        .propertyNamingStrategy(PropertyNamingStrategies.SNAKE_CASE)
+                        .build();
     }
 
     @Nested

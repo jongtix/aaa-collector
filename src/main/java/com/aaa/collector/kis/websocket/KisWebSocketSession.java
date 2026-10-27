@@ -3,8 +3,6 @@ package com.aaa.collector.kis.websocket;
 import com.aaa.collector.common.retry.ExponentialBackoff;
 import com.aaa.collector.common.retry.Sleeper;
 import com.aaa.collector.common.safemode.SafeModeManager;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.node.ObjectNode;
 import java.net.URI;
 import java.time.Clock;
 import java.time.Duration;
@@ -22,6 +20,9 @@ import org.springframework.web.socket.WebSocketHttpHeaders;
 import org.springframework.web.socket.WebSocketSession;
 import org.springframework.web.socket.client.WebSocketClient;
 import org.springframework.web.socket.handler.ConcurrentWebSocketSessionDecorator;
+import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.json.JsonMapper;
+import tools.jackson.databind.node.ObjectNode;
 
 /**
  * KIS WebSocket 단일 세션 래퍼.
@@ -40,7 +41,9 @@ public class KisWebSocketSession {
     /** 재연결 기본 지연 (밀리초). */
     private static final long BASE_RECONNECT_DELAY_MS = 1_000L;
 
-    private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
+    // Jackson 2 기본값으로 만들어 Boot 3.5 시절과 같은 구독 메시지를 쓴다(SPEC-INFRA-BOOT4-001 REQ-BOOT4-011).
+    private static final ObjectMapper OBJECT_MAPPER =
+            JsonMapper.builderWithJackson2Defaults().build();
 
     /** ConcurrentWebSocketSessionDecorator 전송 타임아웃 (밀리초). */
     private static final int SEND_TIME_LIMIT_MS = 10_000;

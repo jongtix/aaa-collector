@@ -11,16 +11,16 @@ import static com.github.tomakehurst.wiremock.core.WireMockConfiguration.wireMoc
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.PropertyNamingStrategies;
 import com.github.tomakehurst.wiremock.WireMockServer;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
-import org.springframework.http.converter.json.MappingJackson2HttpMessageConverter;
+import org.springframework.http.converter.json.JacksonJsonHttpMessageConverter;
 import org.springframework.web.client.RestClient;
 import org.springframework.web.client.RestClientException;
+import tools.jackson.databind.PropertyNamingStrategies;
+import tools.jackson.databind.json.JsonMapper;
 
 class KisTokenClientTest {
 
@@ -33,8 +33,10 @@ class KisTokenClientTest {
         wireMockServer = new WireMockServer(wireMockConfig().dynamicPort());
         wireMockServer.start();
 
-        ObjectMapper objectMapper =
-                new ObjectMapper().setPropertyNamingStrategy(PropertyNamingStrategies.SNAKE_CASE);
+        JsonMapper objectMapper =
+                JsonMapper.builderWithJackson2Defaults()
+                        .propertyNamingStrategy(PropertyNamingStrategies.SNAKE_CASE)
+                        .build();
         RestClient restClient =
                 RestClient.builder()
                         .baseUrl(wireMockServer.baseUrl())
@@ -42,7 +44,7 @@ class KisTokenClientTest {
                                 converters -> {
                                     converters.clear();
                                     converters.add(
-                                            new MappingJackson2HttpMessageConverter(objectMapper));
+                                            new JacksonJsonHttpMessageConverter(objectMapper));
                                 })
                         .build();
         kisTokenClient = new KisTokenClient(restClient);

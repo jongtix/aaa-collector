@@ -4,11 +4,12 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
-import org.springframework.boot.actuate.autoconfigure.health.HealthContributorAutoConfiguration;
-import org.springframework.boot.actuate.autoconfigure.health.HealthEndpointAutoConfiguration;
-import org.springframework.boot.actuate.health.HealthEndpointGroup;
-import org.springframework.boot.actuate.health.HealthEndpointGroups;
 import org.springframework.boot.autoconfigure.AutoConfigurations;
+import org.springframework.boot.health.actuate.endpoint.HealthEndpointGroup;
+import org.springframework.boot.health.actuate.endpoint.HealthEndpointGroups;
+import org.springframework.boot.health.autoconfigure.actuate.endpoint.HealthEndpointAutoConfiguration;
+import org.springframework.boot.health.autoconfigure.contributor.HealthContributorAutoConfiguration;
+import org.springframework.boot.health.autoconfigure.registry.HealthContributorRegistryAutoConfiguration;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 
 /**
@@ -29,8 +30,14 @@ class HealthEndpointGroupsConfigurationTest {
     private final ApplicationContextRunner contextRunner =
             new ApplicationContextRunner()
                     .withConfiguration(
+                            // Boot 4: HealthContributorRegistry 빈이
+                            // HealthEndpointAutoConfiguration에서
+                            // HealthContributorRegistryAutoConfiguration으로 분리됐고,
+                            // HealthEndpointAutoConfiguration은
+                            // 그 빈을 조건으로 한다 — 함께 로드해야 HealthEndpointGroups가 만들어진다.
                             AutoConfigurations.of(
                                     HealthContributorAutoConfiguration.class,
+                                    HealthContributorRegistryAutoConfiguration.class,
                                     HealthEndpointAutoConfiguration.class))
                     .withPropertyValues(
                             "management.endpoint.health.probes.enabled=true",

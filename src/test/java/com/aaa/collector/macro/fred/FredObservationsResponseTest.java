@@ -2,16 +2,17 @@ package com.aaa.collector.macro.fred;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
+import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.json.JsonMapper;
 
 /** T3 RED — FRED Observations 응답 DTO 역직렬화 테스트 (SPEC-COLLECTOR-MACRO-EXT-001 REQ-MACRO-EXT-031). */
 @DisplayName("FredObservationsResponse — 역직렬화 테스트")
 class FredObservationsResponseTest {
 
-    private final ObjectMapper objectMapper = new ObjectMapper();
+    private final ObjectMapper objectMapper = JsonMapper.builderWithJackson2Defaults().build();
 
     @Nested
     @DisplayName("정상 응답 역직렬화")

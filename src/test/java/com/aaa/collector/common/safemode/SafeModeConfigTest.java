@@ -79,7 +79,7 @@ class SafeModeConfigTest {
                 .set(
                         org.mockito.ArgumentMatchers.eq("safe_mode:collector:ws:ws-session"),
                         org.mockito.ArgumentMatchers.eq("ON"),
-                        org.mockito.ArgumentMatchers.any());
+                        org.mockito.ArgumentMatchers.any(Duration.class));
     }
 
     @Test

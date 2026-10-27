@@ -1,13 +1,13 @@
 package com.aaa.collector.stock.grade;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import java.time.ZonedDateTime;
 import java.util.Map;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Repository;
+import tools.jackson.core.JacksonException;
+import tools.jackson.databind.ObjectMapper;
 
 /**
  * 종목 등급을 Redis에 캐싱하는 레포지토리.
@@ -49,7 +49,7 @@ public class GradeCacheRepository {
                     objectMapper.writeValueAsString(
                             Map.of("grade", grade.name(), "gradedAt", gradedAt));
             redisTemplate.opsForValue().set("cache:grade:" + symbol, json);
-        } catch (JsonProcessingException e) {
+        } catch (JacksonException e) {
             log.warn("등급 캐시 JSON 직렬화 실패 — symbol={}, grade={}", symbol, grade, e);
         } catch (Exception e) {
             log.warn("등급 캐시 저장 실패 (Redis 오류) — symbol={}, grade={}", symbol, grade, e);

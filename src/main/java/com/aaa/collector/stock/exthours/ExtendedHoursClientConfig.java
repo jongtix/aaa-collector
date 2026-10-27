@@ -2,7 +2,7 @@ package com.aaa.collector.stock.exthours;
 
 import java.time.Duration;
 import org.springframework.boot.http.client.ClientHttpRequestFactoryBuilder;
-import org.springframework.boot.http.client.ClientHttpRequestFactorySettings;
+import org.springframework.boot.http.client.HttpClientSettings;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.web.client.RestClient;
@@ -34,8 +34,8 @@ public class ExtendedHoursClientConfig {
      */
     @Bean
     RestClient yahooExtendedHoursRestClient(RestClient.Builder builder) {
-        ClientHttpRequestFactorySettings settings =
-                ClientHttpRequestFactorySettings.defaults()
+        HttpClientSettings settings =
+                HttpClientSettings.defaults()
                         .withConnectTimeout(CONNECT_TIMEOUT)
                         .withReadTimeout(READ_TIMEOUT);
         return builder.baseUrl(YAHOO_EXTENDED_HOURS_BASE_URL)

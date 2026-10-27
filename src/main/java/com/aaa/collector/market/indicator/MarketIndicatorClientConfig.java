@@ -2,7 +2,7 @@ package com.aaa.collector.market.indicator;
 
 import java.time.Duration;
 import org.springframework.boot.http.client.ClientHttpRequestFactoryBuilder;
-import org.springframework.boot.http.client.ClientHttpRequestFactorySettings;
+import org.springframework.boot.http.client.HttpClientSettings;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.web.client.RestClient;
@@ -24,8 +24,8 @@ public class MarketIndicatorClientConfig {
     private static final Duration READ_TIMEOUT = Duration.ofSeconds(60);
 
     private RestClient build(RestClient.Builder builder, String baseUrl) {
-        ClientHttpRequestFactorySettings settings =
-                ClientHttpRequestFactorySettings.defaults()
+        HttpClientSettings settings =
+                HttpClientSettings.defaults()
                         .withConnectTimeout(CONNECT_TIMEOUT)
                         .withReadTimeout(READ_TIMEOUT);
         return builder.baseUrl(baseUrl)

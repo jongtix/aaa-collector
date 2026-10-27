@@ -2,19 +2,19 @@ package com.aaa.collector.stock.shortsale.overseas;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import java.time.LocalDate;
 import java.util.List;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
+import tools.jackson.core.type.TypeReference;
+import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.json.JsonMapper;
 
 @DisplayName("FinraRegShoDailyResponse 역직렬화")
 class FinraRegShoDailyResponseTest {
 
-    private final ObjectMapper objectMapper =
-            new ObjectMapper().registerModule(new JavaTimeModule());
+    private final ObjectMapper objectMapper = JsonMapper.builderWithJackson2Defaults().build();
 
     @Nested
     @DisplayName("regShoDaily 실측 응답(명세 00)")
@@ -68,5 +68,5 @@ class FinraRegShoDailyResponseTest {
 
     /** {@code List<FinraRegShoDailyResponse>}용 Jackson TypeReference. */
     private static final class FinraRegShoDailyResponseListType
-            extends com.fasterxml.jackson.core.type.TypeReference<List<FinraRegShoDailyResponse>> {}
+            extends TypeReference<List<FinraRegShoDailyResponse>> {}
 }

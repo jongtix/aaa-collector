@@ -16,8 +16,6 @@ import com.aaa.collector.kis.token.HealthyKeySelector;
 import com.aaa.collector.kis.token.KisAccountCredential;
 import com.aaa.collector.kis.token.KisProperties;
 import com.aaa.collector.kis.token.KisTokenService;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.PropertyNamingStrategies;
 import com.github.tomakehurst.wiremock.WireMockServer;
 import java.time.LocalDate;
 import java.util.List;
@@ -30,8 +28,10 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.Mockito;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.http.converter.json.MappingJackson2HttpMessageConverter;
+import org.springframework.http.converter.json.JacksonJsonHttpMessageConverter;
 import org.springframework.web.client.RestClient;
+import tools.jackson.databind.PropertyNamingStrategies;
+import tools.jackson.databind.json.JsonMapper;
 
 @ExtendWith(MockitoExtension.class)
 @DisplayName("KisHolidayClient — 국내휴장일조회 (CTCA0903R, opnd_yn)")
@@ -51,8 +51,10 @@ class KisHolidayClientTest {
         wireMockServer = new WireMockServer(wireMockConfig().dynamicPort());
         wireMockServer.start();
 
-        ObjectMapper objectMapper =
-                new ObjectMapper().setPropertyNamingStrategy(PropertyNamingStrategies.SNAKE_CASE);
+        JsonMapper objectMapper =
+                JsonMapper.builderWithJackson2Defaults()
+                        .propertyNamingStrategy(PropertyNamingStrategies.SNAKE_CASE)
+                        .build();
         RestClient restClient =
                 RestClient.builder()
                         .baseUrl(wireMockServer.baseUrl())
@@ -60,7 +62,7 @@ class KisHolidayClientTest {
                                 converters -> {
                                     converters.clear();
                                     converters.add(
-                                            new MappingJackson2HttpMessageConverter(objectMapper));
+                                            new JacksonJsonHttpMessageConverter(objectMapper));
                                 })
                         .build();
 

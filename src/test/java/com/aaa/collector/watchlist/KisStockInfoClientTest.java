@@ -25,8 +25,6 @@ import com.aaa.collector.kis.token.KisProperties;
 import com.aaa.collector.kis.token.KisTokenService;
 import com.aaa.collector.stock.enums.AssetType;
 import com.aaa.collector.stock.enums.Market;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.PropertyNamingStrategies;
 import com.github.tomakehurst.wiremock.WireMockServer;
 import java.net.URI;
 import java.time.LocalDate;
@@ -41,10 +39,12 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.Mockito;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.http.converter.json.MappingJackson2HttpMessageConverter;
+import org.springframework.http.converter.json.JacksonJsonHttpMessageConverter;
 import org.springframework.web.client.RestClient;
 import org.springframework.web.client.RestClientException;
 import org.springframework.web.util.UriBuilder;
+import tools.jackson.databind.PropertyNamingStrategies;
+import tools.jackson.databind.json.JsonMapper;
 
 @ExtendWith(MockitoExtension.class)
 class KisStockInfoClientTest {
@@ -93,8 +93,10 @@ class KisStockInfoClientTest {
         wireMockServer = new WireMockServer(wireMockConfig().dynamicPort());
         wireMockServer.start();
 
-        ObjectMapper objectMapper =
-                new ObjectMapper().setPropertyNamingStrategy(PropertyNamingStrategies.SNAKE_CASE);
+        JsonMapper objectMapper =
+                JsonMapper.builderWithJackson2Defaults()
+                        .propertyNamingStrategy(PropertyNamingStrategies.SNAKE_CASE)
+                        .build();
         RestClient restClient =
                 RestClient.builder()
                         .baseUrl(wireMockServer.baseUrl())
@@ -102,7 +104,7 @@ class KisStockInfoClientTest {
                                 converters -> {
                                     converters.clear();
                                     converters.add(
-                                            new MappingJackson2HttpMessageConverter(objectMapper));
+                                            new JacksonJsonHttpMessageConverter(objectMapper));
                                 })
                         .build();
 
