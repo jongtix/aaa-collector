@@ -186,7 +186,7 @@ import org.springframework.transaction.support.TransactionTemplate;
             // (smoke 회귀 방지).
             T0rCorrectionStatusRepository.class
         })
-class SmokeMockitoBase {
+public class SmokeMockitoBase {
 
     protected SmokeMockitoBase() {}
 }

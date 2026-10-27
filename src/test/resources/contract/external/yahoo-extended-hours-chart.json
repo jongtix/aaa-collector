@@ -1,0 +1,28 @@
+{
+  "chart": {
+    "result": [{
+      "meta": {
+        "symbol": "AAPL",
+        "hasPrePostMarketData": true,
+        "chartPreviousClose": 295.95,
+        "regularMarketPrice": 293.08,
+        "currentTradingPeriod": {
+          "pre":     { "start": 1750752000, "end": 1750757400 },
+          "regular": { "start": 1750757400, "end": 1750780800 },
+          "post":    { "start": 1750780800, "end": 1750795200 }
+        }
+      },
+      "timestamp": [1750752060, 1750752120, 1750752180],
+      "indicators": {
+        "quote": [{
+          "open":  [294.0, 294.5, 295.0],
+          "high":  [294.5, 295.0, 295.5],
+          "low":   [293.5, 294.0, 294.5],
+          "close": [294.1, 294.8, 295.25],
+          "volume":[0, 0, 0]
+        }]
+      }
+    }],
+    "error": null
+  }
+}

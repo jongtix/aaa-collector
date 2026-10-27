@@ -1,0 +1,28 @@
+[
+  {
+    "result": 1,
+    "cur_unit": "JPY(100)",
+    "ttb": "1,047.61",
+    "tts": "1,068.78",
+    "deal_bas_r": "1,058.2",
+    "bkpr": "1,058",
+    "yy_efee_r": "0",
+    "ten_dd_efee_r": "0",
+    "kftc_bkpr": "1,058",
+    "kftc_deal_bas_r": "1,058.2",
+    "cur_nm": "일본 옌"
+  },
+  {
+    "result": 1,
+    "cur_unit": "USD",
+    "ttb": "1,508.16",
+    "tts": "1,538.63",
+    "deal_bas_r": "1,523.4",
+    "bkpr": "1,523",
+    "yy_efee_r": "0",
+    "ten_dd_efee_r": "0",
+    "kftc_bkpr": "1,523",
+    "kftc_deal_bas_r": "1,523.4",
+    "cur_nm": "미국 달러"
+  }
+]

@@ -1,0 +1,21 @@
+{
+  "status": "000",
+  "message": "정상",
+  "page_no": 1,
+  "page_count": 100,
+  "total_count": 3861,
+  "total_page": 39,
+  "list": [
+    {
+      "corp_code": "00260453",
+      "corp_name": "삼성자산운용",
+      "stock_code": "",
+      "corp_cls": "E",
+      "report_nm": "증권발행실적보고서(집합투자증권)(삼성아세안플러스베트남증권자투자신탁UH[주식])",
+      "rcept_no": "20260625000025",
+      "flr_nm": "삼성자산운용",
+      "rcept_dt": "20260625",
+      "rm": ""
+    }
+  ]
+}

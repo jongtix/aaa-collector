@@ -1,0 +1,20 @@
+{
+  "count": 9512,
+  "offset": 0,
+  "limit": 100000,
+  "sort_order": "asc",
+  "observations": [
+    {
+      "realtime_start": "2026-06-18",
+      "realtime_end": "2026-06-18",
+      "date": "2026-06-11",
+      "value": "19.44"
+    },
+    {
+      "realtime_start": "2026-06-18",
+      "realtime_end": "2026-06-18",
+      "date": "2026-06-12",
+      "value": "."
+    }
+  ]
+}
