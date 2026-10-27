@@ -1,0 +1,3 @@
+Date|Symbol|ShortVolume|ShortExemptVolume|TotalVolume|Market
+20260619|AAPL|5159846|85357|18442863|B,Q,N
+20260619|MSFT|2133700|1200|6021455|B,Q,N

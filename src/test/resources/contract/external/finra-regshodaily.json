@@ -1,0 +1,5 @@
+[
+  {"reportingFacilityCode":"NCTRF","marketCode":"B","tradeReportDate":"2026-01-06","securitiesInformationProcessorSymbolIdentifier":"AAPL","shortParQuantity":69397,"shortExemptParQuantity":20,"totalParQuantity":154130},
+  {"reportingFacilityCode":"NQTRF","marketCode":"Q","tradeReportDate":"2026-01-06","securitiesInformationProcessorSymbolIdentifier":"AAPL","shortParQuantity":4891733,"shortExemptParQuantity":85087,"totalParQuantity":17699980},
+  {"reportingFacilityCode":"NYTRF","marketCode":"N","tradeReportDate":"2026-01-06","securitiesInformationProcessorSymbolIdentifier":"AAPL","shortParQuantity":198716.5,"shortExemptParQuantity":250,"totalParQuantity":588753}
+]
