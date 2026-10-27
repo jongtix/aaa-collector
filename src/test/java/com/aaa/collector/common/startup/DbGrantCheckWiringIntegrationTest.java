@@ -19,12 +19,13 @@ import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.autoconfigure.flyway.FlywayMigrationStrategy;
+import org.springframework.boot.flyway.autoconfigure.FlywayMigrationStrategy;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
 import org.springframework.context.ApplicationContext;
 import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Import;
 import org.springframework.context.annotation.Primary;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.test.context.ActiveProfiles;
@@ -48,6 +49,9 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 // 없다(그 컨테이너는 이미 스키마명 "test"로 기동되어 있고, 계정 미러 스크립트도 test.* 대상으로
 // 하드코딩되어 있다). 그래서 이 클래스는 SharedMySqlContainer.MYSQL을 참조하지 않는 전용
 // (비공유) 컨테이너를 쓴다 — SharedContainerGuardTest 스캔 대상이 아니다.
+// Boot 4(Spring Framework 7.0): @Nested 클래스에서는 바깥 클래스의 정적 @TestConfiguration이 기본 설정으로 감지만 되고
+// 무시되므로(테스트 로그 경고) 명시적으로 가져온다 — 없으면 Tier-2 GRANT 부트스트랩이 빠져 컨텍스트 기동이 실패한다.
+@Import(DbGrantCheckWiringIntegrationTest.Tier2GrantBootstrapConfig.class)
 @SpringBootTest
 @ActiveProfiles({"test", "db-integration"})
 @Testcontainers

@@ -7,8 +7,6 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import java.time.ZoneId;
 import java.time.ZonedDateTime;
 import org.junit.jupiter.api.BeforeEach;
@@ -21,6 +19,9 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.ValueOperations;
+import tools.jackson.core.JacksonException;
+import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.json.JsonMapper;
 
 @ExtendWith(MockitoExtension.class)
 @DisplayName("GradeCacheRepository 단위 테스트")
@@ -35,7 +36,7 @@ class GradeCacheRepositoryTest {
 
     @BeforeEach
     void setUp() {
-        ObjectMapper objectMapper = new ObjectMapper().registerModule(new JavaTimeModule());
+        ObjectMapper objectMapper = JsonMapper.builderWithJackson2Defaults().build();
         repository = new GradeCacheRepository(redisTemplate, objectMapper);
     }
 
@@ -117,10 +118,8 @@ class GradeCacheRepositoryTest {
             ObjectMapper failingMapper = mock(ObjectMapper.class);
             try {
                 when(failingMapper.writeValueAsString(org.mockito.ArgumentMatchers.any()))
-                        .thenThrow(
-                                new com.fasterxml.jackson.core.JsonProcessingException(
-                                        "직렬화 실패") {});
-            } catch (com.fasterxml.jackson.core.JsonProcessingException e) {
+                        .thenThrow(new JacksonException("직렬화 실패") {});
+            } catch (JacksonException e) {
                 throw new AssertionError("Test setup failed: could not configure mock mapper", e);
             }
             GradeCacheRepository failingRepo =

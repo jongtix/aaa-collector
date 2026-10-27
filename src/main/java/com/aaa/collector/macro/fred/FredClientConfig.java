@@ -2,7 +2,7 @@ package com.aaa.collector.macro.fred;
 
 import java.time.Duration;
 import org.springframework.boot.http.client.ClientHttpRequestFactoryBuilder;
-import org.springframework.boot.http.client.ClientHttpRequestFactorySettings;
+import org.springframework.boot.http.client.HttpClientSettings;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.web.client.RestClient;
@@ -29,8 +29,8 @@ public class FredClientConfig {
      */
     @Bean
     RestClient macroFredRestClient(RestClient.Builder restClientBuilder) {
-        ClientHttpRequestFactorySettings settings =
-                ClientHttpRequestFactorySettings.defaults()
+        HttpClientSettings settings =
+                HttpClientSettings.defaults()
                         .withConnectTimeout(CONNECT_TIMEOUT)
                         .withReadTimeout(READ_TIMEOUT);
 

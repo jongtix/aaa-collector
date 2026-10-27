@@ -10,6 +10,9 @@ spring:
   jackson:
     time-zone: Asia/Seoul
     property-naming-strategy: SNAKE_CASE
+    # Boot 4(Jackson 3) 자동 구성 매퍼를 Boot 3.5(Jackson 2) 시절 기본값으로 맞춘다 — 외부 API 응답 파싱(RestClient.Builder 8개 설정)과
+    # cache:stock:list·cache:grade:* 형식을 그대로 유지한다. Jackson 3 기본값 채택은 후속 SPEC 소관(SPEC-INFRA-BOOT4-001 design.md D2).
+    use-jackson2-defaults: true
   datasource:
     url: jdbc:mysql://${MYSQL_HOST}:${MYSQL_PORT}/${MYSQL_DATABASE}?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=Asia/Seoul
     username: collector

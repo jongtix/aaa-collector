@@ -1,7 +1,6 @@
 package com.aaa.collector.stock;
 
 import java.math.BigDecimal;
-import java.sql.Date;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.Collection;
@@ -202,9 +201,10 @@ public interface ShortSaleOverseasRepository extends JpaRepository<ShortSaleOver
     }
 
     /**
-     * 주어진 종목 집합 + 범위 내 이미 적재된 {@code (stock_id, short_interest_date)} 쌍을 {@code java.sql.Date}로
-     * 조회한다. 공개 API는 {@link #findExistingInterestPairsByStockIds} default 메서드가 {@code Map<Long,
-     * Set<LocalDate>>}로 조립해 노출한다(native DATE → LocalDate 컨버터 미등록 회피).
+     * 주어진 종목 집합 + 범위 내 이미 적재된 {@code (stock_id, short_interest_date)} 쌍을 {@link LocalDate}로 조회한다.
+     * 공개 API는 {@link #findExistingInterestPairsByStockIds} default 메서드가 {@code Map<Long,
+     * Set<LocalDate>>}로 조립해 노출한다(Hibernate 7은 native DATE 컬럼을 {@code java.sql.Date}가 아니라 {@link
+     * LocalDate}로 돌려준다 — SPEC-INFRA-BOOT4-001).
      *
      * <p>종목 집합이 비어 있으면 호출하지 않는다(IN 빈 절 회피, 호출처 책임).
      */
@@ -245,7 +245,7 @@ public interface ShortSaleOverseasRepository extends JpaRepository<ShortSaleOver
                         Collectors.groupingBy(
                                 StockSettlementPairRow::getStockId,
                                 Collectors.mapping(
-                                        row -> row.getSettlementDate().toLocalDate(),
+                                        StockSettlementPairRow::getSettlementDate,
                                         Collectors.toCollection(HashSet::new))));
     }
 
@@ -298,7 +298,7 @@ public interface ShortSaleOverseasRepository extends JpaRepository<ShortSaleOver
     interface StockSettlementPairRow {
         Long getStockId();
 
-        Date getSettlementDate();
+        LocalDate getSettlementDate();
     }
 
     /**

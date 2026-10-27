@@ -2,20 +2,20 @@ package com.aaa.collector.stock.shortsale.overseas;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.List;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
+import tools.jackson.core.type.TypeReference;
+import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.json.JsonMapper;
 
 @DisplayName("FinraConsolidatedShortInterestResponse 역직렬화")
 class FinraConsolidatedShortInterestResponseTest {
 
-    private final ObjectMapper objectMapper =
-            new ObjectMapper().registerModule(new JavaTimeModule());
+    private final ObjectMapper objectMapper = JsonMapper.builderWithJackson2Defaults().build();
 
     @Nested
     @DisplayName("consolidatedShortInterest 실측 응답(명세 01)")
@@ -155,6 +155,5 @@ class FinraConsolidatedShortInterestResponseTest {
 
     /** {@code List<FinraConsolidatedShortInterestResponse>}용 Jackson TypeReference. */
     private static final class FinraConsolidatedShortInterestResponseListType
-            extends com.fasterxml.jackson.core.type.TypeReference<
-                    List<FinraConsolidatedShortInterestResponse>> {}
+            extends TypeReference<List<FinraConsolidatedShortInterestResponse>> {}
 }

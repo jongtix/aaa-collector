@@ -3,7 +3,7 @@ package com.aaa.collector.stock.shortsale.overseas.backfill;
 import java.time.Duration;
 import lombok.RequiredArgsConstructor;
 import org.springframework.boot.http.client.ClientHttpRequestFactoryBuilder;
-import org.springframework.boot.http.client.ClientHttpRequestFactorySettings;
+import org.springframework.boot.http.client.HttpClientSettings;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.web.client.RestClient;
@@ -35,8 +35,8 @@ public class FinraCdnBackfillConfig {
      */
     @Bean
     RestClient finraCdnRestClient(RestClient.Builder restClientBuilder) {
-        ClientHttpRequestFactorySettings settings =
-                ClientHttpRequestFactorySettings.defaults()
+        HttpClientSettings settings =
+                HttpClientSettings.defaults()
                         .withConnectTimeout(CONNECT_TIMEOUT)
                         .withReadTimeout(READ_TIMEOUT);
 

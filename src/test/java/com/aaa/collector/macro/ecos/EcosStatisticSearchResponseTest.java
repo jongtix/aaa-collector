@@ -2,10 +2,11 @@ package com.aaa.collector.macro.ecos;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
+import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.json.JsonMapper;
 
 /**
  * T1 RED — ECOS StatisticSearch 응답 DTO 역직렬화 테스트.
@@ -15,7 +16,7 @@ import org.junit.jupiter.api.Test;
 @DisplayName("EcosStatisticSearchResponse — 역직렬화 테스트")
 class EcosStatisticSearchResponseTest {
 
-    private final ObjectMapper objectMapper = new ObjectMapper();
+    private final ObjectMapper objectMapper = JsonMapper.builderWithJackson2Defaults().build();
 
     @Nested
     @DisplayName("정상 응답 역직렬화")

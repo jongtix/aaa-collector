@@ -2,8 +2,6 @@ package com.aaa.collector.kis.websocket;
 
 import com.aaa.collector.common.logging.TraceIdManager;
 import com.aaa.collector.common.safemode.SafeModeManager;
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.time.Clock;
@@ -19,6 +17,9 @@ import org.springframework.web.socket.PongMessage;
 import org.springframework.web.socket.TextMessage;
 import org.springframework.web.socket.WebSocketSession;
 import org.springframework.web.socket.handler.TextWebSocketHandler;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.json.JsonMapper;
 
 /**
  * KIS WebSocket 메시지 핸들러 (Type A/B 파싱, AES 복호화, PINGPONG 응답).
@@ -71,7 +72,10 @@ public class KisWebSocketMessageHandler extends TextWebSocketHandler {
     /** 파싱 오류 로그에서 인증 실패 응답 원문을 대체하는 문구. */
     private static final String AUTH_FAILURE_PAYLOAD_OMITTED = "[approval_key 인증 실패 응답 — 원문 생략]";
 
-    private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
+    // Jackson 3 기본값(후행 토큰 실패·원시 타입 null 실패 등)이 아니라 Jackson 2 기본값으로 만들어 Boot 3.5 시절과 같은 입력을 같은 값으로
+    // 읽는다(SPEC-INFRA-BOOT4-001 REQ-BOOT4-011).
+    private static final ObjectMapper OBJECT_MAPPER =
+            JsonMapper.builderWithJackson2Defaults().build();
 
     /** 세션 식별자 (안전 모드 alias로 사용). */
     private final String alias;
@@ -392,15 +396,15 @@ public class KisWebSocketMessageHandler extends TextWebSocketHandler {
             JsonNode body = root.path("body");
 
             // PINGPONG: header.tr_id = "PINGPONG" — 방향 조회 이전에 조기 반환(REQ-WSRES-006)
-            String trId = header.path("tr_id").asText();
+            String trId = header.path("tr_id").asString();
             if (TR_ID_PINGPONG.equals(trId)) {
                 handlePingPong(session, raw, alias);
                 return;
             }
 
-            String trKey = header.path("tr_key").asText();
-            String rtCd = body.path("rt_cd").asText();
-            String msg1 = body.path("msg1").asText();
+            String trKey = header.path("tr_key").asString();
+            String rtCd = body.path("rt_cd").asString();
+            String msg1 = body.path("msg1").asString();
 
             Direction direction = pendingByKey.remove(trId + ":" + trKey);
             if (direction == null) {
@@ -502,8 +506,8 @@ public class KisWebSocketMessageHandler extends TextWebSocketHandler {
         if (output.isMissingNode()) {
             log.warn("[{}] 구독 성공 응답에 AES 키(output) 누락 — trId={} (비표준 KIS 응답)", alias, trId);
         } else {
-            String iv = output.path("iv").asText();
-            String key = output.path("key").asText();
+            String iv = output.path("iv").asString();
+            String key = output.path("key").asString();
             registerAesKey(trId, new AesKey(iv, key));
             log.info("[{}] AES 키 저장: trId={}", alias, trId);
         }

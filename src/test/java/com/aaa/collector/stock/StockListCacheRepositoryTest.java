@@ -12,9 +12,6 @@ import static org.mockito.Mockito.when;
 
 import com.aaa.collector.stock.enums.AssetType;
 import com.aaa.collector.stock.enums.Market;
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import java.time.LocalDate;
 import java.util.List;
 import java.util.Optional;
@@ -27,6 +24,9 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.ValueOperations;
+import tools.jackson.core.JacksonException;
+import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.json.JsonMapper;
 
 @ExtendWith(MockitoExtension.class)
 @DisplayName("StockListCacheRepository 단위 테스트")
@@ -41,7 +41,7 @@ class StockListCacheRepositoryTest {
 
     @BeforeEach
     void setUp() {
-        ObjectMapper objectMapper = new ObjectMapper().registerModule(new JavaTimeModule());
+        ObjectMapper objectMapper = JsonMapper.builderWithJackson2Defaults().build();
         repository = new StockListCacheRepository(redisTemplate, objectMapper);
     }
 
@@ -92,8 +92,7 @@ class StockListCacheRepositoryTest {
         void save_jsonSerializationException_doesNotPropagate() throws Exception {
             // Arrange
             ObjectMapper mockMapper = mock(ObjectMapper.class);
-            when(mockMapper.writeValueAsString(any()))
-                    .thenThrow(new JsonProcessingException("test") {});
+            when(mockMapper.writeValueAsString(any())).thenThrow(new JacksonException("test") {});
             StockListCacheRepository repo = new StockListCacheRepository(redisTemplate, mockMapper);
 
             // Act & Assert
@@ -120,8 +119,8 @@ class StockListCacheRepositoryTest {
                             AssetType.STOCK,
                             LocalDate.of(1975, 6, 11));
             String json =
-                    new ObjectMapper()
-                            .registerModule(new JavaTimeModule())
+                    JsonMapper.builderWithJackson2Defaults()
+                            .build()
                             .writeValueAsString(List.of(expected));
             when(valueOps.get(CACHE_KEY)).thenReturn(json);
 
