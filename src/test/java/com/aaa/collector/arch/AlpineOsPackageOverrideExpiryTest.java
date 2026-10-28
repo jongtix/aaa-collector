@@ -13,7 +13,7 @@ import org.junit.jupiter.api.Test;
  * <p>베이스 이미지({@code eclipse-temurin:21-jre-alpine})는 digest로 고정돼 있어 재현 가능하지만, 그 안에 내장된 Alpine OS
  * 패키지는 이미지가 리빌드되기 전까지 그대로 남는다. 2026-09-10 실측 확인 결과 해당 태그의 최신 digest조차 CVE 공개일 이전 빌드라 동일하게 취약했으므로,
  * digest 재고정 대신 {@code Dockerfile}에서 해당 패키지만 타겟 업그레이드했다(업계 관행: 재고정이 1순위이나 통하지 않을 때 타겟 패치가 차선책 —
- * {@link DependencyVersionOverrideExpiryTest}와 동일한 문제 구조).
+ * Boot 4 전환 때 삭제된 {@code DependencyVersionOverrideExpiryTest}와 동일한 문제 구조).
  *
  * <p>2026-10-27에 brotli-libs(CVE-2026-111497, 수정판 1.2.1-r0)가 같은 줄에 추가됐다. 이 만료 게이트가 함께 관리한다.
  *
