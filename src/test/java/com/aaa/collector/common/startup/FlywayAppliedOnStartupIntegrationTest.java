@@ -28,7 +28,7 @@ import org.testcontainers.junit.jupiter.Testcontainers;
  *
  * <p>Boot 4는 Flyway 자동구성을 별도 스타터({@code spring-boot-starter-flyway})로 분리했다. 스타터가 빠지면 {@code
  * flyway-core}가 클래스패스에 있어도 마이그레이션이 조용히 실행되지 않으므로, 컨텍스트 기동만으로 {@code flyway_schema_history}의 최신 성공
- * 버전이 {@code 49}가 되고 {@code ddl-auto=validate}를 통과함을 고정한다. 이력 테이블은 Flyway API가 아니라 SQL로 읽어 Flyway
+ * 버전이 {@code 50}이 되고 {@code ddl-auto=validate}를 통과함을 고정한다. 이력 테이블은 Flyway API가 아니라 SQL로 읽어 Flyway
  * 메이저 버전 차이와 무관하게 판정한다.
  *
  * <p>컨텍스트 구성(프로파일·목 빈)은 {@code DatabaseMigrationIntegrationTest}와 같게 두어 컨텍스트 캐시를 공유한다. 조회만 하지만 공유
@@ -39,7 +39,7 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 @Testcontainers
 @Transactional
 @Tag("integration")
-@DisplayName("Flyway 기동 시 자동 적용 회귀 가드 — 최신 성공 버전 49 + validate")
+@DisplayName("Flyway 기동 시 자동 적용 회귀 가드 — 최신 성공 버전 50 + validate")
 class FlywayAppliedOnStartupIntegrationTest {
 
     @ServiceConnection // @Container 미부착 — 싱글턴 컨테이너 패턴(SharedMySqlContainer 참조)
@@ -59,8 +59,8 @@ class FlywayAppliedOnStartupIntegrationTest {
     @Autowired private Environment environment;
 
     @Test
-    @DisplayName("기동만으로 flyway_schema_history 최신 성공 버전이 49다")
-    void latestSuccessfulVersionIs49() {
+    @DisplayName("기동만으로 flyway_schema_history 최신 성공 버전이 50다")
+    void latestSuccessfulVersionIs50() {
         String latest =
                 jdbcTemplate.queryForObject(
                         "SELECT version FROM flyway_schema_history "
@@ -68,7 +68,7 @@ class FlywayAppliedOnStartupIntegrationTest {
                                 + "ORDER BY installed_rank DESC LIMIT 1",
                         String.class);
 
-        assertThat(latest).isEqualTo("49");
+        assertThat(latest).isEqualTo("50");
     }
 
     @Test
