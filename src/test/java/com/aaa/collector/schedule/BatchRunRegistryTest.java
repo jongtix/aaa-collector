@@ -155,7 +155,7 @@ class BatchRunRegistryTest {
                     .isEqualTo(10_800L);
             assertThat(entry(registry, "domestic-financial-ratio").marginSeconds())
                     .isEqualTo(28_800L);
-            assertThat(entry(registry, "domestic-news").marginSeconds()).isEqualTo(7_200L);
+            assertThat(entry(registry, "domestic-news").marginSeconds()).isEqualTo(3_600L);
         }
 
         @Test

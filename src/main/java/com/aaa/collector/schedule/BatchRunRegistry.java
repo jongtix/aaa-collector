@@ -125,7 +125,7 @@ public class BatchRunRegistry {
                         "domestic-news",
                         BatchCrons.DOMESTIC_NEWS_CRON,
                         BatchCrons.DOMESTIC_NEWS_ZONE,
-                        Duration.ofHours(2).toSeconds()),
+                        Duration.ofHours(1).toSeconds()),
                 new BatchRunEntry(
                         "domestic-etf-representative",
                         BatchCrons.DOMESTIC_ETF_REPRESENTATIVE_CRON,
