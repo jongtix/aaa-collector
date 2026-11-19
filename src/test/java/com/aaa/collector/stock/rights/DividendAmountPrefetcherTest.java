@@ -11,6 +11,7 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.aaa.collector.kis.KisApiBusinessException;
 import com.aaa.collector.kis.KisRateLimitException;
 import com.aaa.collector.kis.gate.GuardedKisExecutor;
 import com.aaa.collector.kis.gate.KeyLeaseRegistry;
@@ -297,6 +298,55 @@ class DividendAmountPrefetcherTest {
             assertThat(result.prefetchFailed()).isEqualTo(1);
             assertThat(result.amountsByKey())
                     .containsKey(new DividendAmountKey("SD", LocalDate.of(2026, 5, 20)));
+        }
+
+        @Test
+        @DisplayName("75가 비즈니스 오류(KisApiBusinessException) — 75만 폐기(FAILED), 03은 독립적으로 완주")
+        void specialTypeBusinessError_generalStillSucceeds() throws Exception {
+            stubType(
+                    RIGHT_TYPE_GENERAL,
+                    periodRightsResponse(
+                            List.of(
+                                    confirmedRow(
+                                            "AAPL",
+                                            RIGHT_TYPE_GENERAL,
+                                            "20260511",
+                                            "0.26000",
+                                            "USD")),
+                            null,
+                            null));
+            when(guardedKisExecutor.execute(
+                            any(LeaseSession.class),
+                            argThat(rightTypeIs(RIGHT_TYPE_SPECIAL)),
+                            eq(PERIOD_RIGHTS_TR_ID),
+                            eq(KisPeriodRightsResponse.class),
+                            anyString()))
+                    .thenThrow(new KisApiBusinessException("1", "OPSQ0008", "후처리 오류"));
+
+            DividendAmountPrefetch result = prefetcher.prefetch(session, Set.of("AAPL"));
+
+            assertThat(result.prefetchFailed()).isEqualTo(1);
+            assertThat(result.prefetchTruncated()).isZero();
+            assertThat(result.amountsByKey())
+                    .containsKey(new DividendAmountKey("AAPL", LocalDate.of(2026, 5, 11)));
+        }
+
+        @Test
+        @DisplayName("03·75·74 모두 비즈니스 오류 — 예외 없이 prefetchFailed=3 관측(전면 실패 판정은 호출자 책임)")
+        void allTypesBusinessError_failedCountThree() throws Exception {
+            when(guardedKisExecutor.execute(
+                            any(LeaseSession.class),
+                            any(),
+                            eq(PERIOD_RIGHTS_TR_ID),
+                            eq(KisPeriodRightsResponse.class),
+                            anyString()))
+                    .thenThrow(new KisApiBusinessException("1", "OPSQ0008", "후처리 오류"));
+
+            DividendAmountPrefetch result = prefetcher.prefetch(session, Set.of("AAPL"));
+
+            assertThat(result.prefetchFailed()).isEqualTo(3);
+            assertThat(result.amountsByKey()).isEmpty();
+            assertThat(result.scripDividendDates()).isEmpty();
         }
 
         @Test

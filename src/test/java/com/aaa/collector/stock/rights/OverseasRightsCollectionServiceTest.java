@@ -1,6 +1,7 @@
 package com.aaa.collector.stock.rights;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
@@ -558,6 +559,21 @@ class OverseasRightsCollectionServiceTest {
             assertThat(result.succeededRows()).isZero();
             assertThat(result.prefetchFailed()).isEqualTo(2);
             assertThat(result.skippedUnconfirmed()).isZero();
+            verify(corporateEventInserter, never()).insertBatchIsolated(any(), any());
+        }
+
+        @Test
+        @DisplayName("프리페치 세 유형(03/75/74) 전부 실패 — 완료로 처리하지 않고 예외로 올린다")
+        void collect_allPrefetchTypesFailed_throws() throws Exception {
+            Stock stock = stockOf("AAPL", Market.NASDAQ, AssetType.STOCK);
+            when(stockRepository.findAllActiveOverseasTradable()).thenReturn(List.of(stock));
+            when(healthyKeySelector.selectHealthy()).thenReturn(List.of(ISA));
+            when(dividendAmountPrefetcher.prefetch(any(LeaseSession.class), any()))
+                    .thenReturn(new DividendAmountPrefetch(Map.of(), Set.of(), 0, 3));
+
+            assertThatThrownBy(service::collect)
+                    .isInstanceOf(OverseasRightsPrefetchAllFailedException.class);
+
             verify(corporateEventInserter, never()).insertBatchIsolated(any(), any());
         }
     }
