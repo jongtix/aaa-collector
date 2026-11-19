@@ -224,6 +224,92 @@ class GuardedKisExecutorTest {
         }
 
         @Test
+        @DisplayName("retryable(OPSQ0008 후처리 오류) 1회 후 성공 — 다른 키로 재시도해 성공 응답 반환")
+        void execute_opsq0008ThenSuccess_retriesWithOtherKey() throws Exception {
+            when(healthyKeySelector.selectHealthy()).thenReturn(List.of(K1, K2));
+            KisRateLimiter limiterK1 = mock(KisRateLimiter.class);
+            KisRateLimiter limiterK2 = mock(KisRateLimiter.class);
+            when(kisRateLimiterRegistry.forAlias("isa")).thenReturn(limiterK1);
+            when(kisRateLimiterRegistry.forAlias("gold")).thenReturn(limiterK2);
+            StubResponse stub = new StubResponse();
+            when(kisApiExecutor.executeGet(eq(K1), any(), eq(TR_ID), eq(StubResponse.class)))
+                    .thenThrow(
+                            new KisApiBusinessException("1", "OPSQ0008", "호출 후처리(MCI전송) 오류 입니다."));
+            when(kisApiExecutor.executeGet(eq(K2), any(), eq(TR_ID), eq(StubResponse.class)))
+                    .thenReturn(stub);
+
+            LeaseSession session = keyLeaseRegistry.openSession();
+            StubResponse result = gate.execute(session, URI_CUSTOMIZER, TR_ID, StubResponse.class);
+
+            assertThat(result).isSameAs(stub);
+            verify(kisApiExecutor, times(1))
+                    .executeGet(eq(K1), any(), eq(TR_ID), eq(StubResponse.class));
+            verify(kisApiExecutor, times(1))
+                    .executeGet(eq(K2), any(), eq(TR_ID), eq(StubResponse.class));
+        }
+
+        @Test
+        @DisplayName("retryable(OPSQ0008 후처리 오류) 소진 — 마지막 KisApiBusinessException을 그대로 전파")
+        void execute_opsq0008Exhausted_propagatesLastBusinessException() throws Exception {
+            when(healthyKeySelector.selectHealthy()).thenReturn(List.of(K1, K2));
+            KisRateLimiter limiter = mock(KisRateLimiter.class);
+            when(kisRateLimiterRegistry.forAlias(anyString())).thenReturn(limiter);
+            KisApiBusinessException opsq0008 =
+                    new KisApiBusinessException("1", "OPSQ0008", "호출 후처리(MCI전송) 오류 입니다.");
+            when(kisApiExecutor.executeGet(any(), any(), eq(TR_ID), eq(StubResponse.class)))
+                    .thenThrow(opsq0008);
+
+            LeaseSession session = keyLeaseRegistry.openSession();
+
+            assertThatThrownBy(
+                            () -> gate.execute(session, URI_CUSTOMIZER, TR_ID, StubResponse.class))
+                    .isSameAs(opsq0008);
+
+            verify(kisApiExecutor, times(3))
+                    .executeGet(any(), any(), eq(TR_ID), eq(StubResponse.class));
+        }
+
+        @Test
+        @DisplayName("tr_cont 오버로드도 OPSQ0008은 재시도한다")
+        void execute_trContOverload_opsq0008Retried() throws Exception {
+            when(healthyKeySelector.selectHealthy()).thenReturn(List.of(K1, K2));
+            KisRateLimiter limiter = mock(KisRateLimiter.class);
+            when(kisRateLimiterRegistry.forAlias(anyString())).thenReturn(limiter);
+            StubResponse stub = new StubResponse();
+            when(kisApiExecutor.executeGet(
+                            any(), any(), eq(TR_ID), eq(StubResponse.class), eq("N")))
+                    .thenThrow(new KisApiBusinessException("1", "OPSQ0008", "후처리 오류"))
+                    .thenReturn(stub);
+
+            LeaseSession session = keyLeaseRegistry.openSession();
+            StubResponse result =
+                    gate.execute(session, URI_CUSTOMIZER, TR_ID, StubResponse.class, "N");
+
+            assertThat(result).isSameAs(stub);
+        }
+
+        @Test
+        @DisplayName("OPSQ0008과 유사하지만 다른 msg_cd(OPSQ0009) — 재시도 없이 즉시 전파, executeGet 1회")
+        void execute_otherOpsqCode_notRetried() throws Exception {
+            when(healthyKeySelector.selectHealthy()).thenReturn(List.of(K1, K2));
+            KisRateLimiter limiter = mock(KisRateLimiter.class);
+            when(kisRateLimiterRegistry.forAlias("isa")).thenReturn(limiter);
+            KisApiBusinessException other = new KisApiBusinessException("1", "OPSQ0009", "기타 오류");
+            when(kisApiExecutor.executeGet(eq(K1), any(), eq(TR_ID), eq(StubResponse.class)))
+                    .thenThrow(other);
+
+            LeaseSession session = keyLeaseRegistry.openSession();
+
+            assertThatThrownBy(
+                            () -> gate.execute(session, URI_CUSTOMIZER, TR_ID, StubResponse.class))
+                    .isSameAs(other);
+
+            verify(kisApiExecutor, times(1))
+                    .executeGet(eq(K1), any(), eq(TR_ID), eq(StubResponse.class));
+            verify(sleeper, never()).sleep(anyLong());
+        }
+
+        @Test
         @DisplayName("retryable(RestClientException) — 소진까지 재시도 후 전파(RETRY-001 D2 보존)")
         void execute_restClientException_retriesThenPropagates() throws Exception {
             when(healthyKeySelector.selectHealthy()).thenReturn(List.of(K1, K2));

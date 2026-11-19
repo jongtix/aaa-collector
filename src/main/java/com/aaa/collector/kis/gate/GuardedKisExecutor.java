@@ -2,6 +2,7 @@ package com.aaa.collector.kis.gate;
 
 import com.aaa.collector.common.retry.RetryExecutor;
 import com.aaa.collector.common.retry.Sleeper;
+import com.aaa.collector.kis.KisApiBusinessException;
 import com.aaa.collector.kis.KisApiExecutor;
 import com.aaa.collector.kis.KisApiResponse;
 import com.aaa.collector.kis.KisRateLimitException;
@@ -29,8 +30,9 @@ import org.springframework.web.util.UriBuilder;
  * finally release}를 수행한다. retryable 실패 시 직전 막힌 키를 회피해 다른 한가한 키로 재선택한다(re-lease, AC-3).
  *
  * <p><strong>retryable 단일 선언(REQ-KISGATE-003a/004):</strong> {@link
- * KisRateLimitException}(EGW00201) ∪ {@link RestClientException} 하위타입만 retryable. 그 외(비즈니스/응답 검증
- * 오류)는 즉시 전파(AC-9). 기존 {@link RetryExecutor} /{@link KisRateLimiter}/{@link
+ * KisRateLimitException}(EGW00201) ∪ {@link RestClientException} 하위타입 ∪ msg_cd가 {@code OPSQ0008}(호출
+ * 후처리(MCI전송) 오류 — 게이트웨이 일시 장애)인 {@link KisApiBusinessException}만 retryable. 그 외(다른 비즈니스/응답 검증 오류)는
+ * 즉시 전파(AC-9). 기존 {@link RetryExecutor} /{@link KisRateLimiter}/{@link
  * KisRateLimiterRegistry}/{@link Sleeper}를 재사용한다 — 신규 재시도·rate-limit 엔진 도입 없음.
  *
  * <p><strong>경로별 미세차는 파라미터로 흡수(REQ-KISGATE-003b/040):</strong> throttle on/off를 {@code boolean
@@ -52,13 +54,20 @@ public class GuardedKisExecutor {
 
     private static final long BACKOFF_BASE_DELAY_MS = 500L;
 
+    /** KIS 게이트웨이의 일시적 "호출 후처리(MCI전송) 오류" msg_cd — 동일 요청 재시도 시 성공할 수 있다. */
+    private static final String MSG_CD_POST_PROCESSING_ERROR = "OPSQ0008";
+
     /**
-     * retryable 단일 선언(REQ-KISGATE-003a): EGW00201(KisRateLimitException) ∪ RestClientException
-     * 하위타입. 그 외(KisApiBusinessException·KisApiResponseException·NoHealthyKeyException 등)는 false →
-     * 즉시 전파.
+     * retryable 단일 선언(REQ-KISGATE-003a): EGW00201(KisRateLimitException) ∪ RestClientException 하위타입
+     * ∪ msg_cd=OPSQ0008인 KisApiBusinessException. 그 외(다른 KisApiBusinessException·
+     * KisApiResponseException·NoHealthyKeyException 등)는 false → 즉시 전파.
      */
     private static final Predicate<RuntimeException> RETRYABLE =
-            ex -> ex instanceof KisRateLimitException || ex instanceof RestClientException;
+            ex ->
+                    ex instanceof KisRateLimitException
+                            || ex instanceof RestClientException
+                            || (ex instanceof KisApiBusinessException business
+                                    && MSG_CD_POST_PROCESSING_ERROR.equals(business.getMsgCd()));
 
     private final KisRateLimiterRegistry kisRateLimiterRegistry;
     private final KisApiExecutor kisApiExecutor;
