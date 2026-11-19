@@ -120,13 +120,19 @@ public class OverseasRightsCollectionService {
             return new OverseasRightsCollectionResult(total, 0, total, 0, 0, 0, 0, 0, 0, 0);
         }
 
-        // REQ-ODA-010~017: CTRGT011R 금액 프리페치 — VT 루프 전 단일 스레드로 완료(REQ-ODA-060 전면 실패 시 빈 맵)
+        // REQ-ODA-010~017: CTRGT011R 금액 프리페치 — VT 루프 전 단일 스레드로 완료(REQ-ODA-060 전 유형 실패 시 예외로 배치 중단)
         Set<String> trackedSymbols = new HashSet<>();
         for (Stock stock : activeStocks) {
             trackedSymbols.add(stock.getSymbol());
         }
         DividendAmountPrefetch prefetch =
                 dividendAmountPrefetcher.prefetch(session, trackedSymbols);
+
+        // 세 유형 전부 실패면 금액 맵이 비어 배당 행이 0건이다 — 완료로 계측하지 않도록 예외로 올린다(스케줄러 예외 분기)
+        if (prefetch.prefetchFailed() >= DividendAmountPrefetcher.REGULAR_PREFETCH_TYPE_COUNT) {
+            throw new OverseasRightsPrefetchAllFailedException(
+                    "CTRGT011R 프리페치 전 유형 실패 — prefetchFailed=" + prefetch.prefetchFailed());
+        }
 
         // REQ-ODW-010/012/014: 정기 수집 명시적 범위 — DividendAmountPrefetcher와 동일 상수 공유(REQ-ODW-011)
         CollectionWindow window = CollectionWindow.of(nyToday);

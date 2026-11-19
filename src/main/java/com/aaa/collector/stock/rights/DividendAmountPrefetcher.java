@@ -1,5 +1,6 @@
 package com.aaa.collector.stock.rights;
 
+import com.aaa.collector.kis.KisApiBusinessException;
 import com.aaa.collector.kis.KisRateLimitException;
 import com.aaa.collector.kis.gate.GuardedKisExecutor;
 import com.aaa.collector.kis.gate.KeyLeaseRegistry.LeaseSession;
@@ -63,6 +64,9 @@ class DividendAmountPrefetcher {
      */
     static final String RIGHT_TYPE_SCRIP = "74";
 
+    /** 정기 수집 {@link #prefetch}가 조회하는 권리유형 수(03/75/74) — {@code prefetchFailed}가 이 값이면 전면 실패다. */
+    static final int REGULAR_PREFETCH_TYPE_COUNT = 3;
+
     private static final String DFNT_YN_CONFIRMED = "Y";
 
     /**
@@ -105,8 +109,10 @@ class DividendAmountPrefetcher {
      * CTRGT011R을 03·75·74 각각 독립 전체조회+페이징하여 금액 맵(03/75)과 스크립배당 관측 날짜 집합(74)을 구축한다(REQ-ODA-010, 017,
      * aaa-infra#64).
      *
-     * <p>한 유형의 페이징 실패/절단이 다른 유형에 영향을 주지 않는다. 세 유형 모두 페이징 개시 전에 실패하면(세션/토큰 등, REQ-ODA-060) 빈 맵/빈
-     * 집합으로 진행한다 — 결과적으로 이번 배치는 해외 배당 행을 하나도 생성하지 않는다(REQ-ODA-022 경유, 호출자 책임).
+     * <p>한 유형의 페이징 실패/절단이 다른 유형에 영향을 주지 않는다(KIS 비즈니스 오류 포함 — 해당 유형만 FAILED). 세 유형 모두 페이징 개시 전에
+     * 실패하면(세션/토큰 등, REQ-ODA-060) 빈 맵/빈 집합과 {@code prefetchFailed=3}을 반환한다 — 이 경우 배치를 완료로 처리하지 않는
+     * 판단은 호출자({@link OverseasRightsCollectionService#collect()}, {@link
+     * #REGULAR_PREFETCH_TYPE_COUNT} 비교) 책임이다.
      *
      * <p>74(스크립/주식배당)는 {@code cash_alct_rt}/{@code alct_frcr_unpr}가 0으로 오기 때문에 금액 병합 맵에는 절대 반영하지
      * 않는다 — 날짜만 별도 {@link DividendAmountPrefetch#scripDividendDates()}로 분리 보존한다(REQ-ODA-071).
@@ -291,9 +297,10 @@ class DividendAmountPrefetcher {
             } catch (KisRateLimitException
                     | RestClientException
                     | NoHealthyKeyException
-                    | KisTokenIssueException e) {
+                    | KisTokenIssueException
+                    | KisApiBusinessException e) {
                 log.warn(
-                        "[overseas-rights] CTRGT011R 페이징 실패(재시도 소진/키 없음/토큰) — rghtTypeCd={}, page={},"
+                        "[overseas-rights] CTRGT011R 페이징 실패(재시도 소진/키 없음/토큰/비즈니스 오류) — rghtTypeCd={}, page={},"
                                 + " error={}",
                         rghtTypeCd,
                         page,

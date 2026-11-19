@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import com.aaa.collector.observability.BatchMetrics;
@@ -101,6 +102,17 @@ class OverseasRightsSchedulerTest {
             when(collectionService.collect()).thenThrow(new RuntimeException("수집 예외"));
 
             assertThatCode(scheduler::collectRights).doesNotThrowAnyException();
+        }
+
+        @Test
+        @DisplayName("프리페치 전면 실패 예외 — 흡수하되 완료 계측은 하지 않는다(실행 누락 알람 유지)")
+        void collectRights_prefetchAllFailed_doesNotRecordCompletion() {
+            when(collectionService.collect())
+                    .thenThrow(new OverseasRightsPrefetchAllFailedException("전면 실패"));
+
+            assertThatCode(scheduler::collectRights).doesNotThrowAnyException();
+
+            verifyNoInteractions(batchMetrics);
         }
     }
 
